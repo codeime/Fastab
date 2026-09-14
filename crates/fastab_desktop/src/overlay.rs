@@ -1181,10 +1181,18 @@ impl OverlayController {
                 .and_then(|(buffer, cursor)| predicted_buffer_after_insert(buffer, *cursor, &insertion, deletion))
             {
                 self.state.update(cx, |overlay, cx| {
-                    // Bind suppression to the exact post-accept edit-buffer
-                    // notification. A bare one-shot flag could consume the
-                    // user's next real keypress when the PTY drops the ack.
+                    // Bind suppression to the post-accept buffer. Cursor is
+                    // recorded but not required to match: figterm/IME often
+                    // ack the same text with a different caret, and treating
+                    // that as a fresh complete would show the accepted row.
                     overlay.mark_suppress_unchanged_completion(expected_buffer, expected_cursor);
+                    cx.notify();
+                });
+            } else {
+                // Prediction needs a char-boundary cursor. If it fails, still
+                // eat the next buffer tick rather than re-show the accepted row.
+                self.state.update(cx, |overlay, cx| {
+                    overlay.mark_suppress_next_completion();
                     cx.notify();
                 });
             }
@@ -2459,6 +2467,18 @@ mod tests {
         overlay.mark_suppress_unchanged_completion(expected_buffer, expected_cursor);
         assert!(!overlay.take_suppress_completion_for("git commitx", 11));
         assert!(!overlay.take_suppress_completion_for("git commit", 10));
+    }
+
+    #[test]
+    fn predicted_suppression_still_hides_when_the_caret_drifts() {
+        let Some((expected_buffer, expected_cursor)) = predicted_buffer_after_insert("git ch", 6, "eckout", 0) else {
+            panic!("expected a predictable insertion");
+        };
+        assert_eq!(expected_buffer, "git checkout");
+        let mut overlay = OverlayState::new();
+        overlay.mark_suppress_unchanged_completion(expected_buffer.clone(), expected_cursor);
+        assert_ne!(expected_cursor, 8);
+        assert!(overlay.take_suppress_completion_for("git checkout", 8));
     }
 
     #[test]

@@ -4,6 +4,11 @@
 
 - 变更：产品更名为 Fastab（bundle `app.fastab`，CLI `ftab`，PTY `fastabterm`）
 - 修复：`git ch` 后按 Tab 不再因为历史前缀把空格转成反斜杠（`git checkout\`）
+- 修复：Enter 整行接受且没有新参数时，若 shell 回写的光标位置有偏差，不再把刚接受的那一行再弹出来
+
+## v3.0.0-beta.9
+
+- 修复：Enter 整行接受且没有新参数时，若 shell 回写的光标位置有偏差，不再把刚接受的那一行再弹出来
 
 ## v3.0.0-beta.8
 
