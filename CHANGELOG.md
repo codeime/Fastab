@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.0.0-beta.9
+
+- fix: after Enter-accepting a completion with no new argument, do not re-show the accepted row when the shell ack has a drifted caret
+
 ## v3.0.0-beta.8
 
 - fix: Tab on `git ch` no longer inserts a trailing backslash from history prefixes (`git checkout\`)
