@@ -2016,4 +2016,18 @@ mod tests {
         let items = vec![item("checkout", "subcommand"), item("cherry-pick", "subcommand")];
         assert_eq!(tab_prefix_insertion(0, &items, "che"), None);
     }
+
+    #[test]
+    fn tab_prefix_of_checkout_history_keeps_the_trailing_space() {
+        let items = vec![
+            item("checkout main", "history"),
+            item("checkout master", "history"),
+            item("checkout -b feat", "history"),
+            item("checkout", "subcommand"),
+        ];
+        assert_eq!(
+            tab_prefix_insertion(0, &items, "ch"),
+            Some(TabPrefix::Partial("checkout ".into()))
+        );
+    }
 }

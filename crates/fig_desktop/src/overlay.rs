@@ -1080,7 +1080,7 @@ impl OverlayController {
                 true
             },
             Some(TabPrefix::Partial(shared)) => {
-                let (search, completes_the_row) = {
+                let (search, completes_the_row, kind) = {
                     let overlay = self.state.read(cx);
                     let Some(item) = overlay.selected_item() else {
                         return false;
@@ -1088,6 +1088,7 @@ impl OverlayController {
                     (
                         item.query_term.clone().unwrap_or_else(|| overlay.search_term.clone()),
                         prefix_completes_row(&shared, item),
+                        item.kind.clone(),
                     )
                 };
                 // The shared prefix can already spell out the whole selected
@@ -1098,7 +1099,7 @@ impl OverlayController {
                     self.insert_selected(false, figterm_state, cx);
                     return true;
                 }
-                let shared = shared.replace(' ', r"\ ");
+                let shared = escape_tab_prefix(&shared, &kind);
                 let (insertion, deletion) = insertion_for(&shared, &search);
                 if insertion.is_empty() && deletion == 0 {
                     return false;
@@ -1852,7 +1853,18 @@ fn large_buffer_change(previous: &str, current: &str) -> bool {
     (previous_len - current_len).abs() >= 2
 }
 
-/// Does the escaped common prefix already spell out the row's own insertion?
+/// Escape spaces in a Tab common prefix the way a shell path needs them.
+/// History rows like `checkout main` / `checkout master` share `checkout `;
+/// treating that token-boundary space as `\\ ` yields `git checkout\`.
+fn escape_tab_prefix(shared: &str, kind: &str) -> String {
+    if matches!(kind, "file" | "folder" | "dir") {
+        shared.replace(' ', r"\ ")
+    } else {
+        shared.to_string()
+    }
+}
+
+/// Does the common prefix already spell out the row's own insertion?
 /// Fig compared the two before deciding whether Tab was a partial completion
 /// or a full acceptance, using the bare insertion — without the trailing space
 /// or newline an acceptance would append.
@@ -1860,7 +1872,7 @@ fn prefix_completes_row(shared: &str, item: &SuggestionItem) -> bool {
     if item.kind == "auto-execute" {
         return false;
     }
-    shared.replace(' ', r"\ ")
+    escape_tab_prefix(shared, &item.kind)
         == full_insertion_for_item(
             &item.name,
             item.insert_value.as_deref(),
@@ -2500,6 +2512,37 @@ mod tests {
     fn escape_spaces_in_file_names() {
         assert_eq!(escape_insertion("my file.txt", false), r"my\ file.txt");
         assert_eq!(escape_insertion("My Folder/", true), r"My\ Folder/");
+    }
+
+    #[test]
+    fn tab_prefix_does_not_escape_history_token_spaces() {
+        // `git ch` + Tab with checkout history selected shares `checkout `,
+        // which must stay a real space — not `checkout\`.
+        assert_eq!(escape_tab_prefix("checkout ", "history"), "checkout ");
+        assert_eq!(insertion_for("checkout ", "ch"), ("eckout ".into(), 0));
+        assert_eq!(escape_tab_prefix("my file.", "file"), r"my\ file.");
+        assert_eq!(escape_tab_prefix("my file.", "folder"), r"my\ file.");
+        assert_eq!(escape_tab_prefix("checkout ", "subcommand"), "checkout ");
+    }
+
+    #[test]
+    fn prefix_completes_row_uses_kind_aware_space_escaping() {
+        let history = SuggestionItem {
+            name: "checkout main".into(),
+            kind: "history".into(),
+            insert_value: Some("checkout main".into()),
+            ..SuggestionItem::default()
+        };
+        assert!(!prefix_completes_row("checkout ", &history));
+        assert!(prefix_completes_row("checkout main", &history));
+
+        let file = SuggestionItem {
+            name: "my file.txt".into(),
+            kind: "file".into(),
+            ..SuggestionItem::default()
+        };
+        assert!(prefix_completes_row("my file.txt", &file));
+        assert!(!prefix_completes_row("my file.", &file));
     }
 
     #[test]
