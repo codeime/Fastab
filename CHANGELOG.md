@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.0.0-beta.8
+
+- fix: Tab on `git ch` no longer inserts a trailing backslash from history prefixes (`git checkout\`)
+
 ## v3.0.0-beta.7
 
 - change: Finish Setup keeps the Input Method row and labels it optional
