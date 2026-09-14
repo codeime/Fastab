@@ -237,17 +237,22 @@ impl OverlayState {
         self.suppress_unchanged_completion = Some((buffer, cursor));
     }
 
-    /// Consume a post-insertion suppression marker. An unchanged-input marker
-    /// is deliberately discarded without suppressing when the buffer differs,
-    /// which prevents a no-op acceptance from swallowing a later keypress.
-    pub fn take_suppress_completion_for(&mut self, buffer: &str, cursor: u32) -> bool {
+    /// Consume a post-insertion suppression marker.
+    ///
+    /// Match the acknowledged **buffer**, not the caret. WebView used
+    /// `HIDDEN_UNTIL_KEYPRESS` after a full insert with no new argument and
+    /// never compared cursors; figterm/IME often report a different caret on
+    /// the same text, which would otherwise re-run complete and show the row
+    /// that was just accepted. A different buffer still discards the marker
+    /// without suppressing, so a dropped ack cannot hide the next keystroke.
+    pub fn take_suppress_completion_for(&mut self, buffer: &str, _cursor: u32) -> bool {
         if self.take_suppress_next_completion() {
             self.suppress_unchanged_completion = None;
             return true;
         }
         self.suppress_unchanged_completion
             .take()
-            .is_some_and(|(expected_buffer, expected_cursor)| expected_buffer == buffer && expected_cursor == cursor)
+            .is_some_and(|(expected_buffer, _expected_cursor)| expected_buffer == buffer)
     }
 
     pub fn clear_suggestions(&mut self) {
@@ -602,6 +607,14 @@ mod tests {
         overlay.mark_suppress_unchanged_completion("git add .".into(), 9);
         assert!(!overlay.take_suppress_completion_for("git add ./", 10));
         assert!(!overlay.take_suppress_completion_for("git add .", 9));
+    }
+
+    #[test]
+    fn unchanged_insertion_suppression_ignores_caret_drift_on_the_same_buffer() {
+        let mut overlay = OverlayState::new();
+        overlay.mark_suppress_unchanged_completion("git checkout".into(), 12);
+        assert!(overlay.take_suppress_completion_for("git checkout", 8));
+        assert!(!overlay.take_suppress_completion_for("git checkout", 12));
     }
 
     #[test]
