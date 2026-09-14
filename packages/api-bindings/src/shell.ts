@@ -5,7 +5,7 @@ import {
   TextUpdate,
   HistoryUpdatedNotification,
   TextUpdateSchema,
-} from "@easy-complete/proto/fig";
+} from "@fastab/proto/fig";
 import { sendInsertTextRequest } from "./requests.js";
 import { _subscribe, NotificationResponse } from "./notifications.js";
 import { create } from "@bufbuild/protobuf";

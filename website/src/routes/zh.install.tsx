@@ -17,7 +17,7 @@ import { SeoJsonLd, guideSchema, pageHead } from "../seo.tsx";
 
 const TITLE = "在 macOS 上安装 Fastab — 终端自动补全";
 const DESCRIPTION =
-  "在 Apple Silicon Mac 上下载 ARM64 DMG 安装 Fastab,授予辅助功能权限,重载 Shell,并用 ec doctor 验证安装。";
+  "在 Apple Silicon Mac 上下载 ARM64 DMG 安装 Fastab,授予辅助功能权限,重载 Shell,并用 ftab doctor 验证安装。";
 
 const ALTERNATES = [
   { locale: "en" as const, path: "/install" },
@@ -85,7 +85,7 @@ function ZhInstallPage() {
             首次启动会安装随附的命令行工具和 Shell 集成。输入法是可选项，可稍后在「设置
             → 行为」里安装，或运行{" "}
             <code className="font-mono text-[#cdd6e0]">
-              ec integrations install input-method
+              ftab integrations install input-method
             </code>
             ，供 Ghostty、Kitty、WezTerm、Zed、Alacritty 和 Otty 使用。
           </li>
@@ -103,7 +103,7 @@ function ZhInstallPage() {
           {`${AX_SETTINGS_PANE_ZH}\n${AX_SETTINGS_PANE_ZH_LEGACY}`}
         </pre>
         <p className={GUIDE_PARAGRAPH}>如果没有弹出授权提示,可以从终端再次触发:</p>
-        <pre className={GUIDE_CODE}>ec debug prompt-accessibility</pre>
+        <pre className={GUIDE_CODE}>ftab debug prompt-accessibility</pre>
 
         <h2 className={GUIDE_HEADING}>4. 重载 Shell</h2>
         <p className={GUIDE_PARAGRAPH}>
@@ -118,7 +118,7 @@ function ZhInstallPage() {
           <code className="font-mono text-[#cdd6e0]">npm</code>
           ,建议应该会出现在光标旁边。
         </p>
-        <pre className={GUIDE_CODE}>ec doctor</pre>
+        <pre className={GUIDE_CODE}>ftab doctor</pre>
 
         <h2 className={GUIDE_HEADING}>从源码构建</h2>
         <p className={GUIDE_PARAGRAPH}>

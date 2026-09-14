@@ -6,7 +6,7 @@ pub enum Error {
     Failed,
 }
 
-/// Build the platform opener. This crate is linked into `ecterm`, which
+/// Build the platform opener. This crate is linked into `fastabterm`, which
 /// multiplies per tab, so the macOS path must stay a `/usr/bin/open` spawn.
 /// An in-process workspace call pulled AppKit + Metal into every PTY.
 fn open_command(url: impl AsRef<str>) -> std::process::Command {
@@ -75,7 +75,7 @@ mod tests {
             !manifest.contains("objc2-app-kit")
                 && !manifest.contains("macos-utils")
                 && !manifest.contains("appkit-nsworkspace"),
-            "AppKit on fastab_util is linked into every ecterm tab"
+            "AppKit on fastab_util is linked into every fastabterm tab"
         );
     }
 

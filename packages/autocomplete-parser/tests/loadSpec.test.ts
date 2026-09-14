@@ -1,6 +1,6 @@
 import logger from "loglevel";
-import { SETTINGS, updateSettings } from "@easy-complete/api-bindings-wrappers";
-import { SpecLocationSource } from "@easy-complete/shared/utils";
+import { SETTINGS, updateSettings } from "@fastab/api-bindings-wrappers";
+import { SpecLocationSource } from "@fastab/shared/utils";
 import {
   getSpecPath,
   loadFigSubcommand,
@@ -28,8 +28,8 @@ vi.mock("../src/loadHelpers", () => ({
   isDiffVersionedSpec: vi.fn(),
 }));
 
-vi.mock("@easy-complete/api-bindings-wrappers", async () => ({
-  ...(await vi.importActual("@easy-complete/api-bindings-wrappers")),
+vi.mock("@fastab/api-bindings-wrappers", async () => ({
+  ...(await vi.importActual("@fastab/api-bindings-wrappers")),
   executeCommand: vi.fn(),
 }));
 

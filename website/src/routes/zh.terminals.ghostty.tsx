@@ -64,7 +64,7 @@ function ZhGhosttyPage() {
           Ghostty 绕过了标准 PTY 光标跟踪路径的一部分，因此需要输入法集成。可在「设置
           → 行为」里安装，或运行{" "}
           <code className="font-mono text-[#cdd6e0]">
-            ec integrations install input-method
+            ftab integrations install input-method
           </code>
           。
         </GuideCallout>
@@ -82,17 +82,17 @@ function ZhGhosttyPage() {
           </li>
           <li>退出并重新打开 Ghostty，或重载当前 Shell。</li>
           <li>
-            运行 <code className="font-mono text-[#cdd6e0]">ec doctor</code>
+            运行 <code className="font-mono text-[#cdd6e0]">ftab doctor</code>
             ，确认 Shell 和输入法集成都正常工作。
           </li>
         </GuideList>
-        <pre className={GUIDE_CODE}>{"exec $SHELL\nec doctor"}</pre>
+        <pre className={GUIDE_CODE}>{"exec $SHELL\nftab doctor"}</pre>
 
         <h2 className={GUIDE_HEADING}>建议错位或不显示时</h2>
         <p className={GUIDE_PARAGRAPH}>
           重新注册随附输入法，然后重启 Ghostty，让 macOS 加载更新后的集成。
         </p>
-        <pre className={GUIDE_CODE}>ec integrations install input-method</pre>
+        <pre className={GUIDE_CODE}>ftab integrations install input-method</pre>
         <p className={GUIDE_PARAGRAPH}>
           还要确认「{AX_SETTINGS_PANE_ZH}」中仍然启用了 Fastab（
           {AX_SETTINGS_PANE_ZH_LEGACY}）。

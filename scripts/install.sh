@@ -89,7 +89,7 @@ probe_accessibility() {
 info "Installing to /Applications/..."
 
 DESKTOP_BIN="Contents/MacOS/${APP_NAME}"
-IME_BIN="Contents/Helpers/EasyCompleteInputMethod.app/Contents/MacOS/fastab_input_method"
+IME_BIN="Contents/Helpers/FastabInputMethod.app/Contents/MacOS/fastab_input_method"
 
 for required in "${DESKTOP_BIN}" "${IME_BIN}"; do
   if [ ! -f "${STAGING_BUNDLE}/${required}" ]; then

@@ -1,5 +1,5 @@
 {
-  "name": "@easy-complete/api-bindings-wrappers",
+  "name": "@fastab/api-bindings-wrappers",
   "version": "0.2.0",
   "license": "MIT",
   "author": "Fastab Contributors",
@@ -23,14 +23,14 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@easy-complete/api-bindings": "workspace:~",
+    "@fastab/api-bindings": "workspace:~",
     "loglevel": "^1.9.2"
   },
   "devDependencies": {
-    "@easy-complete/eslint-config": "workspace:^",
-    "@easy-complete/tsconfig": "workspace:^",
-    "@easy-complete/types": "workspace:^",
-    "@easy-complete/shared": "workspace:^",
+    "@fastab/eslint-config": "workspace:^",
+    "@fastab/tsconfig": "workspace:^",
+    "@fastab/types": "workspace:^",
+    "@fastab/shared": "workspace:^",
     "@withfig/autocomplete-types": "^1.31.0",
     "eslint": "^10.8.1",
     "prettier": "^3.9.6",

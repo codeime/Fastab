@@ -92,7 +92,7 @@ const faqsZh: Faq[] = [
   {
     question: "Fastab 会收集哪些数据?",
     answer:
-      "只有匿名使用统计:应用启动、安装/更新事件,以及每日补全计数,关联到一个随机设备 ID。命令内容、补全文本和文件路径从不收集。随时用 telemetry is off 关闭——完整清单见隐私政策页面",
+      "只有匿名使用统计:应用启动、安装/更新事件,以及每日补全计数,关联到一个随机设备 ID。命令内容、补全文本和文件路径从不收集。随时用 `ftab telemetry disable` 关闭——完整清单见隐私政策页面",
   },
   {
     question: "Fastab 支持哪些终端?",
@@ -153,7 +153,7 @@ const docSectionsZh: DocSection[] = [
         href: "/zh/install",
         label: "在 macOS 上安装",
         description:
-          "DMG、辅助功能权限、重载 Shell,以及用 ec doctor 验证",
+          "DMG、辅助功能权限、重载 Shell,以及用 ftab doctor 验证",
       },
       {
         href: "/zh/troubleshooting",

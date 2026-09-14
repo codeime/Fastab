@@ -1,4 +1,4 @@
-import { file_fig as file } from "@easy-complete/proto/fig";
+import { file_fig as file } from "@fastab/proto/fig";
 import { CodeBlockWriter, IndentationText, Project } from "ts-morph";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -165,7 +165,7 @@ const sourceFile = project.createSourceFile(
       .sort()
       .map(capitalizeFirstLetter);
     writer.writeLine(
-      `import { \n${imports.join(",\n")}\n } from "@easy-complete/proto/fig";`,
+      `import { \n${imports.join(",\n")}\n } from "@fastab/proto/fig";`,
     );
     writer
       .writeLine(

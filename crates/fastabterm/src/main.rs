@@ -69,7 +69,7 @@ static EXPECTED_BUFFER: Mutex<String> = Mutex::new(String::new());
 
 static SHELL_ENVIRONMENT_VARIABLES: Mutex<Vec<EnvironmentVariable>> = Mutex::new(Vec::new());
 static SHELL_ALIAS: Mutex<Option<String>> = Mutex::new(None);
-/// Bumped by `UpdateShellContext` (`ec _ pre-cmd` at prompt). Edit-buffer
+/// Bumped by `UpdateShellContext` (`ftab _ pre-cmd` at prompt). Edit-buffer
 /// frames send env/alias only when this changes, so the desktop session
 /// learns about a just-finished `export` without cloning env on every key.
 static SHELL_CONTEXT_EPOCH: AtomicU64 = AtomicU64::new(0);
@@ -551,7 +551,7 @@ fn fastabterm_main(command: Option<&[String]>) -> Result<()> {
 
     // Two workers is enough for this process: the main loop is one `block_on`,
     // and the rest is I/O (stdin, the fastabterm listener, remote IPC, history).
-    // The default pool is one thread per core, and `ecterm` multiplies by tab,
+    // The default pool is one thread per core, and `fastabterm` multiplies by tab,
     // so that was paying for stacks the grid never used.
     let runtime = runtime::Builder::new_multi_thread()
         .worker_threads(2)

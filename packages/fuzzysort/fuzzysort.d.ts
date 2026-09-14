@@ -1,4 +1,4 @@
-declare module "@easy-complete/fuzzysort" {
+declare module "@fastab/fuzzysort" {
   export interface Result {
     /**
      * Higher is better

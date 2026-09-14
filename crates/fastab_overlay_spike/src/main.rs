@@ -25,7 +25,7 @@ fn main() {
             KeyBinding::new("down", MoveDown, None),
         ]);
         cx.set_menus(vec![Menu {
-            name: "Easy Complete Overlay".into(),
+            name: "Fastab Overlay".into(),
             items: vec![MenuItem::action("Quit", Quit)],
         }]);
 
@@ -73,7 +73,7 @@ fn main() {
             WindowOptions {
                 window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
                 titlebar: Some(gpui::TitlebarOptions {
-                    title: Some("Easy Complete Overlay Spike".into()),
+                    title: Some("Fastab Overlay Spike".into()),
                     appears_transparent: true,
                     ..Default::default()
                 }),

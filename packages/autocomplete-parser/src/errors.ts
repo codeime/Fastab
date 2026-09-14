@@ -1,4 +1,4 @@
-import { createErrorInstance } from "@easy-complete/shared/errors";
+import { createErrorInstance } from "@fastab/shared/errors";
 
 // LoadSpecErrors
 export const MissingSpecError = createErrorInstance("MissingSpecError");

@@ -51,10 +51,10 @@ function ZhTroubleshootingPage() {
         hrefs={{ en: "/troubleshooting", "zh-CN": "/zh/troubleshooting" }}
       >
         <GuideCallout>
-          先运行 <code className="font-mono">ec doctor</code>
+          先运行 <code className="font-mono">ftab doctor</code>
           。它会在你手动修改任何设置之前，检查常见的安装和集成问题。
         </GuideCallout>
-        <pre className={GUIDE_CODE}>ec doctor</pre>
+        <pre className={GUIDE_CODE}>ftab doctor</pre>
 
         <h2 className={GUIDE_HEADING}>完全没有建议</h2>
         <GuideList>
@@ -73,7 +73,7 @@ function ZhTroubleshootingPage() {
           </li>
         </GuideList>
         <pre className={GUIDE_CODE}>
-          {"ec debug prompt-accessibility\nexec $SHELL"}
+          {"ftab debug prompt-accessibility\nexec $SHELL"}
         </pre>
 
         <h2 className={GUIDE_HEADING}>
@@ -83,22 +83,22 @@ function ZhTroubleshootingPage() {
           Ghostty、Otty、Kitty、WezTerm、Zed 和 Alacritty
           使用随附输入法进行像素级精确的光标跟踪。请重新注册输入法，然后完全退出并重启终端。
         </p>
-        <pre className={GUIDE_CODE}>ec integrations install input-method</pre>
+        <pre className={GUIDE_CODE}>ftab integrations install input-method</pre>
 
-        <h2 className={GUIDE_HEADING}>找不到 ec 命令</h2>
+        <h2 className={GUIDE_HEADING}>找不到 ftab 命令</h2>
         <p className={GUIDE_PARAGRAPH}>
           安装程序会把 Fastab 命令行工具放在{" "}
           <code className="font-mono text-[#cdd6e0]">~/.local/bin</code>
           。确认该目录已加入 PATH，然后启动新的 Shell 会话。
         </p>
-        <pre className={GUIDE_CODE}>{"echo $PATH\ncommand -v ec"}</pre>
+        <pre className={GUIDE_CODE}>{"echo $PATH\ncommand -v ftab"}</pre>
 
         <h2 className={GUIDE_HEADING}>收集诊断信息</h2>
         <p className={GUIDE_PARAGRAPH}>
           如果内置检查仍未解决问题，请在提交 GitHub Issue
           前输出集成和环境状态。分享之前先检查输出，并删除不希望公开的信息。
         </p>
-        <pre className={GUIDE_CODE}>ec diagnostic</pre>
+        <pre className={GUIDE_CODE}>ftab diagnostic</pre>
 
         <RelatedGuides
           locale="zh-CN"

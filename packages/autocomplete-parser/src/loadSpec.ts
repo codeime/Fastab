@@ -1,19 +1,19 @@
 import logger, { Logger } from "loglevel";
-import { Settings } from "@easy-complete/api-bindings";
+import { Settings } from "@fastab/api-bindings";
 import { convertSubcommand, initializeDefault } from "@fig/autocomplete-shared";
 import {
   withTimeout,
   SpecLocationSource,
   splitPath,
   ensureTrailingSlash,
-} from "@easy-complete/shared/utils";
-import { Subcommand, SpecLocation } from "@easy-complete/shared/internal";
+} from "@fastab/shared/utils";
+import { Subcommand, SpecLocation } from "@fastab/shared/internal";
 import {
   SETTINGS,
   getSetting,
   executeCommand,
   isInDevMode,
-} from "@easy-complete/api-bindings-wrappers";
+} from "@fastab/api-bindings-wrappers";
 import {
   importFromPublicCDN,
   publicSpecExists,

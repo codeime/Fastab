@@ -1,6 +1,6 @@
 import { getVersionFromVersionedSpec } from "@fig/autocomplete-helpers";
-import { splitPath } from "@easy-complete/shared/utils";
-import { SpecLocation } from "@easy-complete/shared/internal";
+import { splitPath } from "@fastab/shared/utils";
+import { SpecLocation } from "@fastab/shared/internal";
 import { SpecFileImport, getVersionFromFullFile } from "./loadHelpers.js";
 import { WrongDiffVersionedSpecError } from "./errors.js";
 import { importSpecFromLocation } from "./loadSpec.js";

@@ -210,7 +210,7 @@ export const faqs: Faq[] = [
   {
     question: "What data does Fastab collect?",
     answer:
-      "Only anonymous usage statistics: app opens, install/update events, and daily completion counts, tied to a random device ID. Command content, completion text, and file paths are never collected. Disable it any time with telemetry is off — see the Privacy Policy page for the full list.",
+      "Only anonymous usage statistics: app opens, install/update events, and daily completion counts, tied to a random device ID. Command content, completion text, and file paths are never collected. Disable it any time with `ftab telemetry disable` — see the Privacy Policy page for the full list.",
   },
   {
     question: "Which terminals does Fastab support?",
@@ -249,7 +249,7 @@ export const docSections: DocSection[] = [
         href: "/install",
         label: "Install on macOS",
         description:
-          "DMG, Accessibility permission, shell reload, and verification with ec doctor.",
+          "DMG, Accessibility permission, shell reload, and verification with ftab doctor.",
       },
       {
         href: "/troubleshooting",

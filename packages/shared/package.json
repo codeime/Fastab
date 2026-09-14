@@ -1,5 +1,5 @@
 {
-  "name": "@easy-complete/shared",
+  "name": "@fastab/shared",
   "version": "0.1.0",
   "license": "MIT",
   "author": "Fastab Contributors",
@@ -25,10 +25,10 @@
     "@fig/autocomplete-shared": "^1.1.2"
   },
   "devDependencies": {
-    "@easy-complete/eslint-config": "workspace:^",
-    "@easy-complete/tsconfig": "workspace:^",
-    "@easy-complete/types": "workspace:^",
-    "@easy-complete/fuzzysort": "workspace:^",
+    "@fastab/eslint-config": "workspace:^",
+    "@fastab/tsconfig": "workspace:^",
+    "@fastab/types": "workspace:^",
+    "@fastab/fuzzysort": "workspace:^",
     "@withfig/autocomplete-types": "^1.31.0",
     "eslint": "^10.8.1",
     "typescript": "6.0.3",

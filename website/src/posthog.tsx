@@ -17,7 +17,7 @@ function loadPostHog() {
       defaults: "2026-05-30",
       loaded: (posthog) => {
         posthog.register({
-          product: "easy-complete-website",
+          product: "fastab-website",
           environment: import.meta.env.MODE,
         });
       },

@@ -1,4 +1,4 @@
-import { State as DefaultState } from "@easy-complete/api-bindings";
+import { State as DefaultState } from "@fastab/api-bindings";
 
 export enum States {
   DEVELOPER_API_HOST = "developer.apiHost",

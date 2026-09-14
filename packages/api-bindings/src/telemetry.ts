@@ -1,4 +1,4 @@
-// Telemetry bindings stubbed out — not used in easy-complete
+// Telemetry bindings stubbed out — not used in Fastab
 
 type Property = string | boolean | number | null;
 

@@ -27,7 +27,7 @@ const EXAMPLE_EVENT = `{
   "distinct_id": "fa7ebf5b-....-....",   // random UUID, no identity
   "timestamp": "2026-07-08T06:53:08Z",
   "properties": {
-    "app_name": "Easy Complete",
+    "app_name": "Fastab",
     "app_version": "2.0.41",
     "os_version": "macOS 26.5.1",
     "shell": "zsh",
@@ -192,7 +192,7 @@ function PrivacyPage() {
         </p>
         <pre className="mb-4 overflow-x-auto rounded-[14px] border border-[#1c232d] bg-[#0d1219] p-5 font-mono text-[13px] leading-[1.6] text-[#cdd6e0]">
           {
-            "ec telemetry disable   # turn off\nec telemetry status    # check current state"
+            "ftab telemetry disable   # turn off\nftab telemetry status    # check current state"
           }
         </pre>
 

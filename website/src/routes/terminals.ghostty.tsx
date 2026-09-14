@@ -67,7 +67,7 @@ function GhosttyPage() {
           of the standard PTY path used for cursor tracking. Install it from
           Settings → Behavior, or with{" "}
           <code className="font-mono text-[#cdd6e0]">
-            ec integrations install input-method
+            ftab integrations install input-method
           </code>
           .
         </GuideCallout>
@@ -85,12 +85,12 @@ function GhosttyPage() {
           </li>
           <li>Quit and reopen Ghostty, or reload the current shell.</li>
           <li>
-            Run <code className="font-mono text-[#cdd6e0]">ec doctor</code> to
+            Run <code className="font-mono text-[#cdd6e0]">ftab doctor</code> to
             confirm the shell and input-method integrations.
           </li>
         </GuideList>
         <pre className={GUIDE_CODE}>{`exec $SHELL
-ec doctor`}</pre>
+ftab doctor`}</pre>
 
         <h2 className={GUIDE_HEADING}>
           If suggestions are misaligned or missing
@@ -99,7 +99,7 @@ ec doctor`}</pre>
           Re-register the bundled input method, then restart Ghostty so macOS
           loads the updated integration.
         </p>
-        <pre className={GUIDE_CODE}>ec integrations install input-method</pre>
+        <pre className={GUIDE_CODE}>ftab integrations install input-method</pre>
         <p className={GUIDE_PARAGRAPH}>
           Also confirm that Fastab remains enabled under{" "}
           {AX_SETTINGS_PANE_EN} ({AX_SETTINGS_PANE_EN_LEGACY}).

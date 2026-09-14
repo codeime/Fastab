@@ -99,7 +99,7 @@ import {
   WindowFocusRequestSchema,
   WriteFileRequest,
   WriteFileRequestSchema,
-} from "@easy-complete/proto/fig";
+} from "@fastab/proto/fig";
 import { sendMessage } from "./core.js";
 import { create } from "@bufbuild/protobuf";
 

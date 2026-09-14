@@ -37,7 +37,7 @@ const INPUT_METHOD_SETUP: TerminalGuideSection = {
     "Quit the terminal completely after that — macOS loads input methods when a process starts, so a reopened window is not enough.",
     "`ftab doctor` reports the shell hook and the input method separately, so it tells you which half is missing.",
   ],
-  code: "ec integrations install input-method\nexec $SHELL\nec doctor",
+  code: "ftab integrations install input-method\nexec $SHELL\nftab doctor",
 };
 
 export const terminalGuides: TerminalGuide[] = [
@@ -77,7 +77,7 @@ export const terminalGuides: TerminalGuide[] = [
         body: [
           "Re-register the bundled input method and restart Otty so macOS reloads it.",
         ],
-        code: "ec integrations install input-method",
+        code: "ftab integrations install input-method",
       },
     ],
   },
@@ -104,7 +104,7 @@ export const terminalGuides: TerminalGuide[] = [
           "Because Kitty keeps a single `kitty` process alive behind all its OS windows, re-registering the input method has no effect until that process actually exits.",
           "If suggestions are misaligned after an update, quit Kitty with ⌘Q — not just the window — and reopen it.",
         ],
-        code: "ec integrations install input-method",
+        code: "ftab integrations install input-method",
       },
       {
         heading: "Kitty tabs, splits, and shell state",
@@ -145,7 +145,7 @@ export const terminalGuides: TerminalGuide[] = [
         body: [
           "Reloading `wezterm.lua` does not restart the GUI process, so the input method stays as it was. Re-register it and restart WezTerm if the popup drifts.",
         ],
-        code: "ec integrations install input-method",
+        code: "ftab integrations install input-method",
       },
     ],
   },
@@ -179,7 +179,7 @@ export const terminalGuides: TerminalGuide[] = [
         body: [
           "Alacritty positions the caret itself, so cursor tracking depends entirely on the input method. Re-register it, then quit and reopen Alacritty.",
         ],
-        code: "ec integrations install input-method",
+        code: "ftab integrations install input-method",
       },
     ],
   },
@@ -213,7 +213,7 @@ export const terminalGuides: TerminalGuide[] = [
         body: [
           "Cursor tracking is per-window. Re-register the input method and restart Zed so it picks up the caret from the terminal panel again.",
         ],
-        code: "ec integrations install input-method",
+        code: "ftab integrations install input-method",
       },
     ],
   },
@@ -239,7 +239,7 @@ export const terminalGuides: TerminalGuide[] = [
           "Install Fastab, approve it under System Settings → Privacy & Security → Device Control and Data Access (Accessibility on macOS 26 and earlier), then reload your shell. iTerm2 needs no further integration.",
           "If the permission prompt never appeared, trigger it again from the CLI.",
         ],
-        code: "ec debug prompt-accessibility\nexec $SHELL",
+        code: "ftab debug prompt-accessibility\nexec $SHELL",
       },
       {
         heading: "It coexists with iTerm2 Shell Integration",
@@ -247,7 +247,7 @@ export const terminalGuides: TerminalGuide[] = [
           "iTerm2's own Shell Integration writes its own prompt markers and status bar hooks. Fastab's hooks are separate and additive — you can keep both installed.",
           "If you have customised `PROMPT_COMMAND` or `precmd` heavily, run `ftab doctor` to confirm both hooks still load.",
         ],
-        code: "ec doctor",
+        code: "ftab doctor",
       },
       {
         heading: "tmux integration mode",

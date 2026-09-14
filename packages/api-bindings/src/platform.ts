@@ -1,11 +1,11 @@
-import { GetPlatformInfoResponse } from "@easy-complete/proto/fig";
+import { GetPlatformInfoResponse } from "@fastab/proto/fig";
 import { sendGetPlatformInfoRequest } from "./requests.js";
 import {
   AppBundleType,
   DesktopEnvironment,
   DisplayServerProtocol,
   Os,
-} from "@easy-complete/proto/fig";
+} from "@fastab/proto/fig";
 
 export { AppBundleType, DesktopEnvironment, DisplayServerProtocol, Os };
 

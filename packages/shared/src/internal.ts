@@ -1,5 +1,5 @@
 import { Internal, Metadata } from "@fig/autocomplete-shared";
-import type { Result } from "@easy-complete/fuzzysort";
+import type { Result } from "@fastab/fuzzysort";
 
 export type SpecLocation = Fig.SpecLocation & {
   diffVersionedFile?: string;

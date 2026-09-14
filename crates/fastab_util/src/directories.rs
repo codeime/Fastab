@@ -665,73 +665,73 @@ mod tests {
 
     #[test]
     fn snapshot_fastab_data_dir() {
-        linux!(fastab_data_dir(), @"$HOME/.local/share/easy-complete");
-        macos!(fastab_data_dir(), @"$HOME/Library/Application Support/easy-complete");
-        windows!(fastab_data_dir(), @r"C:\Users\$USER\AppData\Local\AmazonQ");
+        linux!(fastab_data_dir(), @"$HOME/.local/share/fastab");
+        macos!(fastab_data_dir(), @"$HOME/Library/Application Support/fastab");
+        windows!(fastab_data_dir(), @r"C:\Users\$USER\AppData\Local\fastab");
     }
 
     #[test]
     fn snapshot_sockets_dir() {
         linux!(sockets_dir(), @"$XDG_RUNTIME_DIR/fastabrun");
         macos!(sockets_dir(), @"$TMPDIR/fastabrun");
-        windows!(sockets_dir(), @r"C:\Users\$USER\AppData\Local\Temp\AmazonQ\sockets");
+        windows!(sockets_dir(), @r"C:\Users\$USER\AppData\Local\Temp\fastab\sockets");
     }
 
     #[test]
     fn snapshot_themes_dir() {
         linux!(themes_dir(&Context::new()), @"/usr/share/fig/themes");
         macos!(themes_dir(&Context::new()), @"/Applications/Fastab.app/Contents/Resources/themes");
-        windows!(themes_dir(&Context::new()), @r"C:\Users\$USER\AppData\Local\AmazonQ\resources\themes");
+        windows!(themes_dir(&Context::new()), @r"C:\Users\$USER\AppData\Local\fastab\resources\themes");
     }
 
     #[test]
     fn snapshot_backups_dir() {
-        linux!(backups_dir(), @"$HOME/.easy-complete.dotfiles.bak");
-        macos!(backups_dir(), @"$HOME/.easy-complete.dotfiles.bak");
-        windows!(backups_dir(), @r"C:\Users\$USER\.easy-complete.dotfiles.bak");
+        linux!(backups_dir(), @"$HOME/.fastab.dotfiles.bak");
+        macos!(backups_dir(), @"$HOME/.fastab.dotfiles.bak");
+        windows!(backups_dir(), @r"C:\Users\$USER\.fastab.dotfiles.bak");
     }
 
     #[test]
     fn snapshot_fig_socket_path() {
         linux!(desktop_socket_path(), @"$XDG_RUNTIME_DIR/fastabrun/desktop.sock");
         macos!(desktop_socket_path(), @"$TMPDIR/fastabrun/desktop.sock");
-        windows!(desktop_socket_path(), @r"C:\Users\$USER\AppData\Local\Temp\AmazonQ\sockets\desktop.sock");
+        windows!(desktop_socket_path(), @r"C:\Users\$USER\AppData\Local\Temp\fastab\sockets\desktop.sock");
     }
 
     #[test]
     fn snapshot_remote_socket_path() {
         linux!(remote_socket_path(), @"$XDG_RUNTIME_DIR/fastabrun/remote.sock");
         macos!(remote_socket_path(), @"$TMPDIR/fastabrun/remote.sock");
-        windows!(remote_socket_path(), @r"C:\Users\$USER\AppData\Local\Temp\AmazonQ\sockets\remote.sock");
+        windows!(remote_socket_path(), @r"C:\Users\$USER\AppData\Local\Temp\fastab\sockets\remote.sock");
     }
 
     #[test]
     fn snapshot_local_remote_socket_path() {
         linux!(local_remote_socket_path(), @"$XDG_RUNTIME_DIR/fastabrun/remote.sock");
         macos!(local_remote_socket_path(), @"$TMPDIR/fastabrun/remote.sock");
-        windows!(local_remote_socket_path(), @r"C:\Users\$USER\AppData\Local\Temp\AmazonQ\sockets\remote.sock");
+        windows!(local_remote_socket_path(), @r"C:\Users\$USER\AppData\Local\Temp\fastab\sockets\remote.sock");
     }
 
     #[test]
     fn snapshot_fastabterm_socket_path() {
         linux!(fastabterm_socket_path("$SESSION_ID"), @"$XDG_RUNTIME_DIR/fastabrun/t/$SESSION_ID.sock");
         macos!(fastabterm_socket_path("$SESSION_ID"), @"$TMPDIR/fastabrun/t/$SESSION_ID.sock");
-        windows!(fastabterm_socket_path("$SESSION_ID"), @r"C:\Users\$USER\AppData\Local\Temp\AmazonQ\sockets\t\$SESSION_ID.sock");
+        windows!(fastabterm_socket_path("$SESSION_ID"), @r"C:\Users\$USER\AppData\Local\Temp\fastab\sockets\t\$SESSION_ID.sock");
     }
 
     #[test]
     fn snapshot_settings_path() {
-        linux!(settings_path(), @"$HOME/.local/share/easy-complete/settings.json");
-        macos!(settings_path(), @"$HOME/Library/Application Support/easy-complete/settings.json");
-        windows!(settings_path(), @r"C:\Users\$USER\AppData\Local\AmazonQ\settings.json");
+        linux!(settings_path(), @"$HOME/.local/share/fastab/settings.json");
+        macos!(settings_path(), @"$HOME/Library/Application Support/fastab/settings.json");
+        windows!(settings_path(), @r"C:\Users\$USER\AppData\Local\fastab\settings.json");
     }
 
     #[test]
     fn snapshot_update_lock_path() {
         let ctx = Context::new();
-        linux!(update_lock_path(&ctx), @"$HOME/.local/share/easy-complete/update.lock");
-        macos!(update_lock_path(&ctx), @"$HOME/Library/Application Support/easy-complete/update.lock");
-        windows!(update_lock_path(&ctx), @r"C:\Users\$USER\AppData\Local\AmazonQ\update.lock");
+        linux!(update_lock_path(&ctx), @"$HOME/.local/share/fastab/update.lock");
+        macos!(update_lock_path(&ctx), @"$HOME/Library/Application Support/fastab/update.lock");
+        windows!(update_lock_path(&ctx), @r"C:\Users\$USER\AppData\Local\fastab\update.lock");
     }
 
     #[test]

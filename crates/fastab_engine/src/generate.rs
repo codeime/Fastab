@@ -2029,7 +2029,7 @@ mod tests {
         };
         run(&["init", "-q"]);
         run(&["config", "user.email", "ec@example.invalid"]);
-        run(&["config", "user.name", "Easy Complete"]);
+        run(&["config", "user.name", "Fastab"]);
         fs::write(dir.path().join("tracked.txt"), "initial").unwrap();
         run(&["add", "tracked.txt"]);
         run(&["commit", "-qm", "initial commit"]);

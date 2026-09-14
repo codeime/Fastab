@@ -45,14 +45,14 @@ https://github.com/<owner>/<repo>/releases/latest/download/appcast.xml
 
 Each release uploads two DMG names:
 
-- `Easy-Complete-arm64.dmg`: stable website/manual-download asset
-- `Easy-Complete-<version>-arm64.dmg`: versioned Sparkle full-update asset
+- `Fastab-arm64.dmg`: stable website/manual-download asset
+- `Fastab-<version>-arm64.dmg`: versioned Sparkle full-update asset
 
 The generated `appcast.xml` points its full-update enclosure at that tag's
 versioned DMG:
 
 ```text
-https://github.com/<owner>/<repo>/releases/download/<tag>/Easy-Complete-<version>-arm64.dmg
+https://github.com/<owner>/<repo>/releases/download/<tag>/Fastab-<version>-arm64.dmg
 ```
 
 When a previous `appcast.xml` and previous DMG assets exist, CI downloads the
@@ -83,23 +83,23 @@ Sign and notarize locally:
 
 ```bash
 APPLE_SIGNING_IDENTITY="Developer ID Application: Example Inc (TEAMID)" ./scripts/sign-macos-app.sh
-./scripts/make-dmg.sh dist/Easy-Complete-arm64.dmg
+./scripts/make-dmg.sh dist/Fastab-arm64.dmg
 APPLE_SIGNING_IDENTITY="Developer ID Application: Example Inc (TEAMID)" \
 APPLE_NOTARY_KEY_BASE64="..." \
 APPLE_NOTARY_KEY_ID="..." \
 APPLE_NOTARY_ISSUER_ID="..." \
-./scripts/notarize-dmg.sh dist/Easy-Complete-arm64.dmg
+./scripts/notarize-dmg.sh dist/Fastab-arm64.dmg
 ```
 
 Generate appcast locally:
 
 ```bash
-cp dist/Easy-Complete-arm64.dmg dist/Easy-Complete-2.0.6-arm64.dmg
+cp dist/Fastab-arm64.dmg dist/Fastab-2.0.6-arm64.dmg
 
 SPARKLE_PRIVATE_ED_KEY="..." \
 SPARKLE_DOWNLOAD_URL_PREFIX="https://github.com/codeime/easy-complete/releases/download/v2.0.6/" \
 SPARKLE_BUNDLE_VERSION="2.0.6" \
-./scripts/generate-sparkle-appcast.sh dist/Easy-Complete-2.0.6-arm64.dmg
+./scripts/generate-sparkle-appcast.sh dist/Fastab-2.0.6-arm64.dmg
 ```
 
 Generate local delta updates:
@@ -107,22 +107,22 @@ Generate local delta updates:
 ```bash
 mkdir -p dist/sparkle
 cp path/to/previous/appcast.xml dist/sparkle/appcast.xml
-cp path/to/Easy-Complete-2.0.5-arm64.dmg dist/sparkle/
-cp dist/Easy-Complete-arm64.dmg dist/Easy-Complete-2.0.6-arm64.dmg
+cp path/to/Fastab-2.0.5-arm64.dmg dist/sparkle/
+cp dist/Fastab-arm64.dmg dist/Fastab-2.0.6-arm64.dmg
 
 SPARKLE_PRIVATE_ED_KEY="..." \
 SPARKLE_DOWNLOAD_URL_PREFIX="https://github.com/codeime/easy-complete/releases/download/v2.0.6/" \
 SPARKLE_BUNDLE_VERSION="2.0.6" \
 SPARKLE_MAXIMUM_VERSIONS=1 \
 SPARKLE_MAXIMUM_DELTAS=8 \
-./scripts/generate-sparkle-appcast.sh dist/Easy-Complete-2.0.6-arm64.dmg
+./scripts/generate-sparkle-appcast.sh dist/Fastab-2.0.6-arm64.dmg
 ```
 
 Upload all generated Sparkle assets with the release:
 
 ```text
-dist/Easy-Complete-arm64.dmg
-dist/Easy-Complete-<version>-arm64.dmg
+dist/Fastab-arm64.dmg
+dist/Fastab-<version>-arm64.dmg
 dist/sparkle/appcast.xml
 dist/sparkle/*.delta
 ```

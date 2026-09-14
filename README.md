@@ -33,7 +33,7 @@ You get fish-shell-style suggestions for hundreds of CLIs (`git`, `npm`, `docker
 Autocomplete runs fully on-device — no account, no cloud calls, no AI requests, and
 your commands never leave your Mac. The app collects anonymous usage statistics
 (app opens, daily completion counts — never command content), which you can disable
-any time with telemetry is off. See the [Privacy page](https://fastab.app/privacy-policy)
+any time with `ftab telemetry disable`. See the [Privacy page](https://fastab.app/privacy-policy)
 for the full list of what is and isn't collected.
 
 <p align="center">
@@ -67,12 +67,12 @@ build time, and QuickJS runs only when a spec hook needs it (`postProcess`,
 
 Native builds are the Apple Silicon DMGs from this repository:
 
-[Download latest DMG](https://github.com/codeime/easy-complete/releases/latest/download/Easy-Complete-arm64.dmg) ·
+[Download latest DMG](https://github.com/codeime/easy-complete/releases/latest/download/Fastab-arm64.dmg) ·
 [All releases](https://github.com/codeime/easy-complete/releases)
 
 Then:
 
-1. Open `Easy-Complete-arm64.dmg`.
+1. Open `Fastab-arm64.dmg`.
 2. Drag **Fastab.app** into `/Applications`.
 3. Launch **Fastab** from `/Applications`.
 4. Open Fastab Settings and click **Grant Accessibility**.
@@ -88,7 +88,7 @@ Behavior, or with `ftab integrations install input-method`, for Ghostty, Kitty,
 WezTerm, Zed, Alacritty, and Otty. To verify the installation, run:
 
 ```bash
-ec doctor
+ftab doctor
 ```
 
 ### Build from source
@@ -135,7 +135,7 @@ If completions never appear, this is almost always the cause. Run the same flow
 again from Settings, or with:
 
 ```bash
-ec debug prompt-accessibility
+ftab debug prompt-accessibility
 ```
 
 ---
@@ -157,11 +157,11 @@ The native settings window is available from the **Fastab menu bar icon**
 Useful CLI commands:
 
 ```bash
-ec doctor                       # diagnose common problems
-ec diagnostic                   # print environment / integration status
-ec integrations install input-method   # (re)register the macOS input method
-ec settings list                # view settings
-ec settings <key> <value>       # change a setting
+ftab doctor                       # diagnose common problems
+ftab diagnostic                   # print environment / integration status
+ftab integrations install input-method   # (re)register the macOS input method
+ftab settings list                # view settings
+ftab settings <key> <value>       # change a setting
 ```
 
 ### Supported terminals
@@ -194,7 +194,7 @@ sockets (Protobuf messages):
 
 | Binary          | Crate         | Role                                                                                                                             |
 | --------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `easy-complete` | `fastab_desktop` | Native app host — GPUI overlay and settings (not WKWebView), completion engine worker, system tray, and window management |
+| `fastab`        | `fastab_desktop` | Native app host — GPUI overlay and settings (not WKWebView), completion engine worker, system tray, and window management |
 | `fastabterm`    | `fastabterm`     | Pseudoterminal between your shell and terminal emulator; intercepts the shell edit buffer to drive completions                   |
 | `ftab`          | `fastab_cli`      | CLI entry point — `setup`, `integrations`, `diagnostic`, `settings`, and more                                                    |
 
@@ -204,8 +204,8 @@ cursor position — back to `fastabterm` on every prompt and keystroke. On macOS
 
 **Identifiers**
 
-- App bundle ID: `dev.emmmm.easy-complete`
-- Input method bundle ID: `dev.emmmm.easy-complete.inputmethod`
+- App bundle ID: `app.fastab`
+- Input method bundle ID: `app.fastab.inputmethod`
 - App bundle: `/Applications/Fastab.app`
 
 ---
@@ -225,8 +225,8 @@ cursor position — back to `fastabterm` on every prompt and keystroke. On macOS
 cargo build --release -p fastab_desktop -p fastabterm -p fastab_cli -p fastab_input_method
 
 # Run a single crate in dev mode
-cargo run --bin ec -- <subcommand>
-cargo run --bin easy-complete
+cargo run --bin ftab -- <subcommand>
+cargo run --bin fastab
 
 cargo clippy --locked --workspace --color always -- -D warnings   # lint (CI: -D warnings)
 cargo fmt                                                         # format
@@ -242,7 +242,7 @@ pnpm lint                                   # lint
 pnpm test                                   # run Vitest
 ```
 
-Headless completion (no overlay): `cargo run --bin ec -- engine complete --buffer "git ch"`.
+Headless completion (no overlay): `cargo run --bin ftab -- engine complete --buffer "git ch"`.
 Process memory: `./scripts/memory-usage.sh` (`--watch 5`, `--peak`, `--csv mem.csv`).
 
 ### Key crates

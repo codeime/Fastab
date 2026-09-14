@@ -1,6 +1,6 @@
-# @easy-complete/api-bindings-wrappers
+# @fastab/api-bindings-wrappers
 
-Ergonomic wrappers over [`@easy-complete/api-bindings`](../api-bindings), the
+Ergonomic wrappers over [`@fastab/api-bindings`](../api-bindings), the
 generated Protobuf IPC bindings.
 
 The generated bindings mirror the wire format one to one, which makes them

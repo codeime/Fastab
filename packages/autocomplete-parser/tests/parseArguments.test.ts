@@ -5,14 +5,14 @@ import {
 } from "@fig/autocomplete-shared";
 import logger from "loglevel";
 import { folders, filepaths } from "@fig/autocomplete-generators";
-import * as Internal from "@easy-complete/shared/internal";
+import * as Internal from "@fastab/shared/internal";
 import {
   SuggestionFlag,
   SuggestionFlags,
   makeArray,
   SpecLocationSource,
-} from "@easy-complete/shared/utils";
-import { Command, getCommand } from "@easy-complete/shell-parser";
+} from "@fastab/shared/utils";
+import { Command, getCommand } from "@fastab/shell-parser";
 import {
   findOption,
   getCurrentArg,

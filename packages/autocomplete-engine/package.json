@@ -1,5 +1,5 @@
 {
-  "name": "@easy-complete/autocomplete-engine",
+  "name": "@fastab/autocomplete-engine",
   "private": true,
   "license": "MIT",
   "version": "2.2.2",
@@ -14,8 +14,8 @@
     "clean": "rm -rf dist"
   },
   "devDependencies": {
-    "@easy-complete/eslint-config": "workspace:^",
-    "@easy-complete/tsconfig": "workspace:^",
+    "@fastab/eslint-config": "workspace:^",
+    "@fastab/tsconfig": "workspace:^",
     "esbuild": "^0.25.0",
     "eslint": "^10.8.1",
     "prettier": "^3.9.6",

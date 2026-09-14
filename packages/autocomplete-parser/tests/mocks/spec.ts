@@ -1,4 +1,4 @@
-import { localProtocol } from "@easy-complete/shared/utils";
+import { localProtocol } from "@fastab/shared/utils";
 
 const generateSpec = async (
   tokenArray: string[] | undefined,

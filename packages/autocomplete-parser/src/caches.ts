@@ -1,4 +1,4 @@
-import { Subcommand } from "@easy-complete/shared/internal";
+import { Subcommand } from "@fastab/shared/internal";
 
 const allCaches: Array<Map<string, unknown>> = [];
 

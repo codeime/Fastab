@@ -12,14 +12,14 @@ set -euo pipefail
 # To regenerate them: swift scripts/make-dmg-background.swift
 #
 # Usage: scripts/make-dmg.sh [output.dmg]
-#   Default output: dist/Easy-Complete.dmg
+#   Default output: dist/Fastab-arm64.dmg
 
 APP_DISPLAY="Fastab"
 VOL_NAME="Fastab"
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP="${REPO_DIR}/build/${APP_DISPLAY}.app"
-OUT="${1:-${REPO_DIR}/dist/Easy-Complete.dmg}"
+OUT="${1:-${REPO_DIR}/dist/Fastab-arm64.dmg}"
 BG="${REPO_DIR}/bundle/dmg/background.png"
 
 GREEN='\033[0;32m'; NC='\033[0m'

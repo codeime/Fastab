@@ -1,7 +1,7 @@
 import {
   EditBufferChangedNotification,
   NotificationType,
-} from "@easy-complete/proto/fig";
+} from "@fastab/proto/fig";
 import { _subscribe, NotificationResponse } from "./notifications.js";
 
 export function subscribe(

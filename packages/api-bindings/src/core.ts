@@ -3,7 +3,7 @@ import {
   type ClientOriginatedMessage,
   ClientOriginatedMessageSchema,
   ServerOriginatedMessageSchema,
-} from "@easy-complete/proto/fig";
+} from "@fastab/proto/fig";
 
 import { b64ToBytes, bytesToBase64 } from "./utils.js";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";

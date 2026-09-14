@@ -1,4 +1,4 @@
-// CodeWhisperer API bindings stubbed out — not used in easy-complete
+// CodeWhisperer API bindings stubbed out — not used in Fastab
 
 export interface Customization {
   arn: string;

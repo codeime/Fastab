@@ -1497,7 +1497,7 @@ fn about_page(zh: bool, chrome: Chrome, entity: Entity<SettingsWindow>, copied_d
                                 .bg(rgb(chrome.sidebar))
                                 .font_family("Menlo")
                                 .cursor_pointer()
-                                .child("ec doctor")
+                                .child("ftab doctor")
                                 .on_mouse_down(MouseButton::Left, move |_e, _w, cx| {
                                     copy_doctor(&entity_cmd, cx);
                                 }),
@@ -1556,7 +1556,7 @@ fn about_page(zh: bool, chrome: Chrome, entity: Entity<SettingsWindow>, copied_d
 }
 
 fn copy_doctor(entity: &Entity<SettingsWindow>, cx: &mut App) {
-    cx.write_to_clipboard(ClipboardItem::new_string("ec doctor".into()));
+    cx.write_to_clipboard(ClipboardItem::new_string("ftab doctor".into()));
     entity.update(cx, |this, cx| {
         this.copied_doctor = true;
         cx.notify();

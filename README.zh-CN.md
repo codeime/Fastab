@@ -31,7 +31,7 @@ WKWebView。补全引擎在本地 Rust 里运行。它只专注于终端自动�
 建议：参数、子命令、文件路径、选项，边打边补。
 自动补全完全在本机运行——无需账号、无云端调用、无 AI 请求，你的命令内容永远不会离开你的
 Mac。应用会收集匿名使用统计（打开次数、每日补全次数——绝不包含命令内容），可随时通过
-telemetry is off 关闭。完整的采集清单见[隐私页面](https://fastab.app/privacy-policy)。
+`ftab telemetry disable` 关闭。完整的采集清单见[隐私页面](https://fastab.app/privacy-policy)。
 
 <p align="center">
   <img src="./.github/media/screenshot.png" alt="Fastab 自动补全效果">
@@ -63,12 +63,12 @@ telemetry is off 关闭。完整的采集清单见[隐私页面](https://fastab.
 
 Native 构建是本仓库的 Apple Silicon DMG：
 
-[下载最新版 DMG](https://github.com/codeime/easy-complete/releases/latest/download/Easy-Complete-arm64.dmg) ·
+[下载最新版 DMG](https://github.com/codeime/easy-complete/releases/latest/download/Fastab-arm64.dmg) ·
 [所有 Releases](https://github.com/codeime/easy-complete/releases)
 
 然后：
 
-1. 打开 `Easy-Complete-arm64.dmg`。
+1. 打开 `Fastab-arm64.dmg`。
 2. 把 **Fastab.app** 拖到 `/Applications`。
 3. 从 `/Applications` 启动 **Fastab**。
 4. 打开 Fastab 设置，点击**授予辅助功能权限**。
@@ -83,7 +83,7 @@ Native 构建是本仓库的 Apple Silicon DMG：
 WezTerm、Zed、Alacritty 和 Otty 使用。可以运行下面的命令确认安装状态：
 
 ```bash
-ec doctor
+ftab doctor
 ```
 
 ### 从源码构建
@@ -126,7 +126,7 @@ Fastab 需要把补全浮层定位到你当前聚焦的终端窗口，这依赖 
 **如果补全始终不出现，几乎都是这个权限没授予。** 在设置里再点一次按钮，或运行：
 
 ```bash
-ec debug prompt-accessibility
+ftab debug prompt-accessibility
 ```
 
 ---
@@ -146,11 +146,11 @@ ec debug prompt-accessibility
 常用 CLI 命令：
 
 ```bash
-ec doctor                       # 诊断常见问题
-ec diagnostic                   # 打印环境 / 集成状态
-ec integrations install input-method   # （重新）注册 macOS 输入法
-ec settings list                # 查看设置
-ec settings <key> <value>       # 修改某项设置
+ftab doctor                       # 诊断常见问题
+ftab diagnostic                   # 打印环境 / 集成状态
+ftab integrations install input-method   # （重新）注册 macOS 输入法
+ftab settings list                # 查看设置
+ftab settings <key> <value>       # 修改某项设置
 ```
 
 ### 受支持的终端
@@ -179,7 +179,7 @@ Fastab 由三个相互协作的原生进程组成，通过 Unix 域套接字（P
 
 | 二进制          | Crate         | 职责                                                                                           |
 | --------------- | ------------- | ---------------------------------------------------------------------------------------------- |
-| `easy-complete` | `fastab_desktop` | 原生应用宿主——GPUI 补全浮层与设置窗口（不是 WKWebView）、补全引擎工作线程、系统托盘、窗口管理 |
+| `fastab`        | `fastab_desktop` | 原生应用宿主——GPUI 补全浮层与设置窗口（不是 WKWebView）、补全引擎工作线程、系统托盘、窗口管理 |
 | `fastabterm`    | `fastabterm`     | 介于 shell 与终端模拟器之间的伪终端；拦截 shell 编辑缓冲区以驱动补全                           |
 | `ftab`          | `fastab_cli`      | CLI 入口——`setup`、`integrations`、`diagnostic`、`settings` 等                                 |
 
@@ -189,8 +189,8 @@ Shell 钩子（`.zshrc`、`.bashrc`、fish 配置）在每次提示符和按键�
 
 **标识符**
 
-- 应用 bundle ID：`dev.emmmm.easy-complete`
-- 输入法 bundle ID：`dev.emmmm.easy-complete.inputmethod`
+- 应用 bundle ID：`app.fastab`
+- 输入法 bundle ID：`app.fastab.inputmethod`
 - 应用包路径：`/Applications/Fastab.app`
 
 ---
@@ -210,8 +210,8 @@ Shell 钩子（`.zshrc`、`.bashrc`、fish 配置）在每次提示符和按键�
 cargo build --release -p fastab_desktop -p fastabterm -p fastab_cli -p fastab_input_method
 
 # 以 dev 模式运行单个 crate
-cargo run --bin ec -- <子命令>
-cargo run --bin easy-complete
+cargo run --bin ftab -- <子命令>
+cargo run --bin fastab
 
 cargo clippy --locked --workspace --color always -- -D warnings   # lint（CI 要求 -D warnings）
 cargo fmt                                                         # 格式化
@@ -227,7 +227,7 @@ pnpm lint                                   # lint
 pnpm test                                   # 运行 Vitest
 ```
 
-无界面补全：`cargo run --bin ec -- engine complete --buffer "git ch"`。
+无界面补全：`cargo run --bin ftab -- engine complete --buffer "git ch"`。
 进程内存：`./scripts/memory-usage.sh`（`--watch 5`、`--peak`、`--csv mem.csv`）。
 
 ### 核心 crate

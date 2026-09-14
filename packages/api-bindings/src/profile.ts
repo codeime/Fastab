@@ -1,4 +1,4 @@
-// AWS profile API bindings stubbed out — not used in easy-complete
+// AWS profile API bindings stubbed out — not used in Fastab
 
 export async function listAvailableProfiles(): Promise<{ profiles: never[] }> {
   return { profiles: [] };

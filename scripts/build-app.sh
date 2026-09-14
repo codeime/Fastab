@@ -150,7 +150,7 @@ cp LICENSE NOTICE THIRD_PARTY_NOTICES.txt "$LICENSES_DIR/"
 "${REPO_DIR}/scripts/verify-license-bundle.sh" "$STAGING_BUNDLE"
 
 # Input Method helper app
-IM_APP="${STAGING_BUNDLE}/Contents/Helpers/EasyCompleteInputMethod.app"
+IM_APP="${STAGING_BUNDLE}/Contents/Helpers/FastabInputMethod.app"
 mkdir -p "${IM_APP}/Contents/MacOS"
 mkdir -p "${IM_APP}/Contents/Resources"
 cp "${TARGET_DIR}/fastab_input_method"   "${IM_APP}/Contents/MacOS/"

@@ -165,7 +165,7 @@ export function homeSchema(locale: Locale = "en") {
         releaseNotes:
           "https://github.com/codeime/easy-complete/blob/main/CHANGELOG.md",
         downloadUrl:
-          "https://github.com/codeime/easy-complete/releases/latest/download/Easy-Complete-arm64.dmg",
+          "https://github.com/codeime/easy-complete/releases/latest/download/Fastab-arm64.dmg",
         codeRepository: "https://github.com/codeime/easy-complete",
         softwareRequirements: "macOS 12 or later; Apple Silicon (ARM64)",
         license: "https://opensource.org/license/mit",

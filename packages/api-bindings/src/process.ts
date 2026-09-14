@@ -3,7 +3,7 @@ import { sendRunProcessRequest } from "./requests.js";
 import {
   DurationSchema,
   EnvironmentVariableSchema,
-} from "@easy-complete/proto/fig_common";
+} from "@fastab/proto/fig_common";
 
 export async function run({
   executable,

@@ -1,5 +1,5 @@
 {
-  "extends": ["@easy-complete/tsconfig/base.json"],
+  "extends": ["@fastab/tsconfig/base.json"],
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist"

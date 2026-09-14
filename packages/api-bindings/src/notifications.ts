@@ -4,7 +4,7 @@ import {
   type NotificationRequest,
   NotificationRequestSchema,
   NotificationType,
-} from "@easy-complete/proto/fig";
+} from "@fastab/proto/fig";
 
 import { sendMessage } from "./core.js";
 import { create } from "@bufbuild/protobuf";

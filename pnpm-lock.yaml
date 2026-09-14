@@ -61,14 +61,14 @@ importers:
       '@bufbuild/protobuf':
         specifier: 2.13.0
         version: 2.13.0
-      '@easy-complete/proto':
+      '@fastab/proto':
         specifier: workspace:^
         version: link:../../proto
     devDependencies:
-      '@easy-complete/eslint-config':
+      '@fastab/eslint-config':
         specifier: workspace:^
         version: link:../eslint-config
-      '@easy-complete/tsconfig':
+      '@fastab/tsconfig':
         specifier: workspace:^
         version: link:../tsconfig
       '@tsconfig/recommended':
@@ -101,23 +101,23 @@ importers:
 
   packages/api-bindings-wrappers:
     dependencies:
-      '@easy-complete/api-bindings':
+      '@fastab/api-bindings':
         specifier: workspace:~
         version: link:../api-bindings
       loglevel:
         specifier: ^1.9.2
         version: 1.9.2
     devDependencies:
-      '@easy-complete/eslint-config':
+      '@fastab/eslint-config':
         specifier: workspace:^
         version: link:../eslint-config
-      '@easy-complete/shared':
+      '@fastab/shared':
         specifier: workspace:^
         version: link:../shared
-      '@easy-complete/tsconfig':
+      '@fastab/tsconfig':
         specifier: workspace:^
         version: link:../tsconfig
-      '@easy-complete/types':
+      '@fastab/types':
         specifier: workspace:^
         version: link:../types
       '@withfig/autocomplete-types':
@@ -135,10 +135,10 @@ importers:
 
   packages/autocomplete-engine:
     devDependencies:
-      '@easy-complete/eslint-config':
+      '@fastab/eslint-config':
         specifier: workspace:^
         version: link:../eslint-config
-      '@easy-complete/tsconfig':
+      '@fastab/tsconfig':
         specifier: workspace:^
         version: link:../tsconfig
       esbuild:
@@ -159,13 +159,13 @@ importers:
 
   packages/autocomplete-parser:
     dependencies:
-      '@easy-complete/api-bindings':
+      '@fastab/api-bindings':
         specifier: workspace:^
         version: link:../api-bindings
-      '@easy-complete/api-bindings-wrappers':
+      '@fastab/api-bindings-wrappers':
         specifier: workspace:^
         version: link:../api-bindings-wrappers
-      '@easy-complete/shell-parser':
+      '@fastab/shell-parser':
         specifier: workspace:^
         version: link:../shell-parser
       '@fig/autocomplete-generators':
@@ -187,16 +187,16 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
-      '@easy-complete/eslint-config':
+      '@fastab/eslint-config':
         specifier: workspace:^
         version: link:../eslint-config
-      '@easy-complete/shared':
+      '@fastab/shared':
         specifier: workspace:^
         version: link:../shared
-      '@easy-complete/tsconfig':
+      '@fastab/tsconfig':
         specifier: workspace:^
         version: link:../tsconfig
-      '@easy-complete/types':
+      '@fastab/types':
         specifier: workspace:^
         version: link:../types
       '@types/semver':
@@ -217,12 +217,12 @@ importers:
 
   packages/eslint-config:
     devDependencies:
-      '@easy-complete/tsconfig':
-        specifier: workspace:^
-        version: link:../tsconfig
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.8.1(jiti@1.21.7))
+      '@fastab/tsconfig':
+        specifier: workspace:^
+        version: link:../tsconfig
       '@typescript-eslint/utils':
         specifier: ^8.66.0
         version: 8.66.0(eslint@10.8.1(jiti@1.21.7))(typescript@6.0.3)
@@ -259,16 +259,16 @@ importers:
         specifier: ^1.1.2
         version: 1.1.2
     devDependencies:
-      '@easy-complete/eslint-config':
+      '@fastab/eslint-config':
         specifier: workspace:^
         version: link:../eslint-config
-      '@easy-complete/fuzzysort':
+      '@fastab/fuzzysort':
         specifier: workspace:^
         version: link:../fuzzysort
-      '@easy-complete/tsconfig':
+      '@fastab/tsconfig':
         specifier: workspace:^
         version: link:../tsconfig
-      '@easy-complete/types':
+      '@fastab/types':
         specifier: workspace:^
         version: link:../types
       '@withfig/autocomplete-types':
@@ -286,14 +286,14 @@ importers:
 
   packages/shell-parser:
     dependencies:
-      '@easy-complete/shared':
+      '@fastab/shared':
         specifier: workspace:^
         version: link:../shared
     devDependencies:
-      '@easy-complete/eslint-config':
+      '@fastab/eslint-config':
         specifier: workspace:^
         version: link:../eslint-config
-      '@easy-complete/tsconfig':
+      '@fastab/tsconfig':
         specifier: workspace:^
         version: link:../tsconfig
       '@vitest/coverage-v8':
@@ -332,7 +332,7 @@ importers:
       '@bufbuild/protoc-gen-es':
         specifier: 2.13.0
         version: 2.13.0(@bufbuild/protobuf@2.13.0)
-      '@easy-complete/tsconfig':
+      '@fastab/tsconfig':
         specifier: workspace:^
         version: link:../packages/tsconfig
       typescript:

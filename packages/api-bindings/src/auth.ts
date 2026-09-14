@@ -1,4 +1,4 @@
-// AWS auth bindings stubbed out — not used in easy-complete
+// AWS auth bindings stubbed out — not used in Fastab
 
 export function status(): Promise<{
   authed: boolean;

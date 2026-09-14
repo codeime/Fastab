@@ -1,8 +1,8 @@
-# @easy-complete/autocomplete-parser
+# @fastab/autocomplete-parser
 
 Turns a tokenized command line into the completion state the overlay renders.
 
-[`@easy-complete/shell-parser`](../shell-parser) splits the raw buffer into
+[`@fastab/shell-parser`](../shell-parser) splits the raw buffer into
 tokens; this package takes those tokens, resolves the matching completion spec
 and works out what the user is completing right now.
 

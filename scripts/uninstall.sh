@@ -7,19 +7,14 @@ APP_NAME="fastab"
 APP_DISPLAY="Fastab"
 BUNDLE_ID="app.fastab"
 IME_BUNDLE_ID="app.fastab.inputmethod"
-PREVIOUS_APP_DISPLAY="Easy Complete"
-PREVIOUS_BUNDLE_ID="dev.emmmm.easy-complete"
-PREVIOUS_IME_BUNDLE_ID="dev.emmmm.easy-complete.inputmethod"
 
 APP_BUNDLE="/Applications/${APP_DISPLAY}.app"
-PREVIOUS_APP_BUNDLE="/Applications/${PREVIOUS_APP_DISPLAY}.app"
 LOCAL_BIN="${HOME}/.local/bin"
 LAUNCH_AGENTS="${HOME}/Library/LaunchAgents"
 PLIST_PATH="${LAUNCH_AGENTS}/${BUNDLE_ID}.plist"
-PREVIOUS_PLIST_PATH="${LAUNCH_AGENTS}/${PREVIOUS_BUNDLE_ID}.plist"
 UPSTREAM_PLIST_PATH="${LAUNCH_AGENTS}/com.amazon.codewhisperer.launcher.plist"
 INPUT_METHODS_DIR="${HOME}/Library/Input Methods"
-IME_SYMLINK="${INPUT_METHODS_DIR}/EasyCompleteInputMethod.app"
+IME_SYMLINK="${INPUT_METHODS_DIR}/FastabInputMethod.app"
 APP_SUPPORT="${HOME}/Library/Application Support/${APP_NAME}"
 LOGS_DIR="${HOME}/.local/share/${APP_NAME}"
 
@@ -44,7 +39,7 @@ if [[ "${1:-}" != "--yes" ]]; then
   [[ "${confirm}" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
 fi
 
-# ── 0. Telemetry (best-effort, respects telemetry is off) ───────────────
+# ── 0. Telemetry (best-effort, respects telemetry.enabled) ───────────────
 if command -v ftab &>/dev/null; then
   ftab telemetry track app_uninstalled 2>/dev/null || true
 fi
@@ -73,9 +68,8 @@ sleep 0.5
 # ── 3. Remove login item and legacy LaunchAgents ─────────────────────────────
 info "Removing login startup entries..."
 launchctl bootout "gui/$(id -u)/${BUNDLE_ID}" 2>/dev/null || true
-launchctl bootout "gui/$(id -u)/${PREVIOUS_BUNDLE_ID}" 2>/dev/null || true
 launchctl bootout "gui/$(id -u)/com.amazon.codewhisperer.launcher" 2>/dev/null || true
-for launch_agent in "$PLIST_PATH" "$PREVIOUS_PLIST_PATH" "$UPSTREAM_PLIST_PATH"; do
+for launch_agent in "$PLIST_PATH" "$UPSTREAM_PLIST_PATH"; do
   if [[ -f "$launch_agent" ]]; then
     launchctl unload "$launch_agent" 2>/dev/null || true
     rm -f "$launch_agent"
@@ -93,7 +87,7 @@ fi
 # the selected input-source lists — NOT `defaults delete` on the whole array,
 # which would wipe every keyboard layout and input method the user has.
 info "Removing Input Method from HIToolbox..."
-python3 - "$IME_BUNDLE_ID" "$PREVIOUS_IME_BUNDLE_ID" <<'PY' 2>/dev/null || true
+python3 - "$IME_BUNDLE_ID" <<'PY' 2>/dev/null || true
 import subprocess, plistlib, sys
 bundle_ids = set(sys.argv[1:])
 domain = "com.apple.HIToolbox"
@@ -117,17 +111,13 @@ PY
 # ── 5. Remove app bundle ───────────────────────────────────────────────────────
 info "Removing /Applications/${APP_DISPLAY}.app..."
 rm -rf "$APP_BUNDLE"
-if [[ -d "$PREVIOUS_APP_BUNDLE" ]]; then
-  info "Removing previous app at /Applications/${PREVIOUS_APP_DISPLAY}.app..."
-  rm -rf "$PREVIOUS_APP_BUNDLE"
-fi
 
 # ── 6. Remove CLI symlinks ─────────────────────────────────────────────────────
 info "Removing CLI symlinks..."
 rm -f "${LOCAL_BIN}/ftab"
-rm -f "${LOCAL_BIN}/ftabterm"
+rm -f "${LOCAL_BIN}/fastabterm"
 
-# ── 7. Fallback shell integration cleanup (in case ec was already removed) ────
+# ── 7. Fallback shell integration cleanup ─────────────────────────────────────
 # ftab integrations uninstall shell was already called in step 1.
 # This fallback removes any remaining lines using targeted patterns only.
 info "Verifying shell integration removal..."
@@ -138,11 +128,11 @@ strip_shell_integration_fallback() {
 
   local tmp
   tmp="$(mktemp)"
-  # Only remove lines that are specifically part of the Easy Complete integration block:
+  # Only remove lines that are specifically part of the Fastab integration block:
   #   - The block comment headers
   #   - The source lines referencing our shell data directory
   grep -Ev \
-    'Easy Complete (pre|post) block|Fastab (pre|post) block|fastab/shell/(zshrc|zprofile|bashrc|bash_profile)\.(pre|post)\.(zsh|bash)' \
+    'Fastab (pre|post) block|fastab/shell/(zshrc|zprofile|bashrc|bash_profile)\.(pre|post)\.(zsh|bash)' \
     "$rc_file" > "$tmp" || true
   mv "$tmp" "$rc_file"
 }
@@ -168,13 +158,10 @@ rm -rf "/tmp/fastabrun"      2>/dev/null || true
 # Preferences
 defaults delete "$BUNDLE_ID"     2>/dev/null || true
 defaults delete "$IME_BUNDLE_ID" 2>/dev/null || true
-defaults delete "$PREVIOUS_BUNDLE_ID" 2>/dev/null || true
-defaults delete "$PREVIOUS_IME_BUNDLE_ID" 2>/dev/null || true
 
 # Accessibility grant — drop the now-dead TCC entry so it doesn't linger in
 # System Settings pointing at a removed binary.
 tccutil reset Accessibility "$BUNDLE_ID" 2>/dev/null || true
-tccutil reset Accessibility "$PREVIOUS_BUNDLE_ID" 2>/dev/null || true
 
 # Keychain entries (best-effort)
 security delete-generic-password -s "$BUNDLE_ID" 2>/dev/null || true

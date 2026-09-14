@@ -1,5 +1,5 @@
 {
-  "name": "@easy-complete/api-bindings",
+  "name": "@fastab/api-bindings",
   "version": "0.2.0",
   "license": "MIT",
   "author": "Fastab Contributors",
@@ -22,12 +22,12 @@
     "generate-requests": "tsx codegen/generate-requests.ts && prettier -w src/requests.ts"
   },
   "dependencies": {
-    "@easy-complete/proto": "workspace:^",
+    "@fastab/proto": "workspace:^",
     "@bufbuild/protobuf": "2.13.0"
   },
   "devDependencies": {
-    "@easy-complete/eslint-config": "workspace:^",
-    "@easy-complete/tsconfig": "workspace:^",
+    "@fastab/eslint-config": "workspace:^",
+    "@fastab/tsconfig": "workspace:^",
     "@tsconfig/recommended": "^1.0.13",
     "@types/node": "^26.2.0",
     "@typescript/analyze-trace": "^0.11.1",

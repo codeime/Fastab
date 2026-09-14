@@ -1,7 +1,7 @@
 import logger from "loglevel";
 import { convertSubcommand, initializeDefault } from "@fig/autocomplete-shared";
 import { filepaths, folders } from "@fig/autocomplete-generators";
-import * as Internal from "@easy-complete/shared/internal";
+import * as Internal from "@fastab/shared/internal";
 import {
   firstMatchingToken,
   makeArray,
@@ -9,15 +9,15 @@ import {
   SuggestionFlag,
   SuggestionFlags,
   withTimeout,
-} from "@easy-complete/shared/utils";
+} from "@fastab/shared/utils";
 import {
   executeCommand,
   executeLoginShell,
   getSetting,
   isInDevMode,
   SETTINGS,
-} from "@easy-complete/api-bindings-wrappers";
-import { Command, substituteAlias } from "@easy-complete/shell-parser";
+} from "@fastab/api-bindings-wrappers";
+import { Command, substituteAlias } from "@fastab/shell-parser";
 import {
   getSpecPath,
   loadSubcommandCached,

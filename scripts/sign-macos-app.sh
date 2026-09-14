@@ -35,7 +35,7 @@ sign_deep_if_exists "$APP_PATH/Contents/Frameworks/Sparkle.framework"
 sign_if_exists "$APP_PATH/Contents/MacOS/ftab"
 sign_if_exists "$APP_PATH/Contents/MacOS/fastabterm"
 sign_if_exists "$APP_PATH/Contents/MacOS/fastab"
-sign_deep_if_exists "$APP_PATH/Contents/Helpers/EasyCompleteInputMethod.app"
+sign_deep_if_exists "$APP_PATH/Contents/Helpers/FastabInputMethod.app"
 codesign "${codesign_args[@]}" "$APP_PATH"
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"

@@ -1,5 +1,5 @@
 {
-  "name": "@easy-complete/shell-parser",
+  "name": "@fastab/shell-parser",
   "version": "0.1.0",
   "license": "MIT",
   "author": "Fastab Contributors",
@@ -22,11 +22,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@easy-complete/shared": "workspace:^"
+    "@fastab/shared": "workspace:^"
   },
   "devDependencies": {
-    "@easy-complete/eslint-config": "workspace:^",
-    "@easy-complete/tsconfig": "workspace:^",
+    "@fastab/eslint-config": "workspace:^",
+    "@fastab/tsconfig": "workspace:^",
     "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^10.8.1",
     "prettier": "^3.9.6",

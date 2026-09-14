@@ -47,11 +47,11 @@ function TroubleshootingPage() {
         intro="Most autocomplete problems come from macOS permission state, a shell that has not reloaded, or a terminal input method that needs to be registered again."
       >
         <GuideCallout>
-          Start with <code className="font-mono">ec doctor</code>. It checks the
+          Start with <code className="font-mono">ftab doctor</code>. It checks the
           common installation and integration problems before you change
           anything manually.
         </GuideCallout>
-        <pre className={GUIDE_CODE}>ec doctor</pre>
+        <pre className={GUIDE_CODE}>ftab doctor</pre>
 
         <h2 className={GUIDE_HEADING}>No suggestions appear</h2>
         <GuideList>
@@ -81,7 +81,7 @@ exec $SHELL`}</pre>
           input method for pixel-accurate cursor tracking. Re-register it, then
           fully restart the terminal.
         </p>
-        <pre className={GUIDE_CODE}>ec integrations install input-method</pre>
+        <pre className={GUIDE_CODE}>ftab integrations install input-method</pre>
 
         <h2 className={GUIDE_HEADING}>The CLI command is not found</h2>
         <p className={GUIDE_PARAGRAPH}>
@@ -91,7 +91,7 @@ exec $SHELL`}</pre>
           session.
         </p>
         <pre className={GUIDE_CODE}>{`echo $PATH
-command -v ec`}</pre>
+command -v ftab`}</pre>
 
         <h2 className={GUIDE_HEADING}>Collect diagnostic information</h2>
         <p className={GUIDE_PARAGRAPH}>
@@ -99,7 +99,7 @@ command -v ec`}</pre>
           integration and environment state before opening a GitHub issue.
           Review the output and remove anything you do not want to share.
         </p>
-        <pre className={GUIDE_CODE}>ec diagnostic</pre>
+        <pre className={GUIDE_CODE}>ftab diagnostic</pre>
 
         <RelatedGuides
           links={[

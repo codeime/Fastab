@@ -7,11 +7,11 @@
       "outputs": ["dist"]
     },
     "lint": {
-      "dependsOn": ["@easy-complete/eslint-config#build"],
+      "dependsOn": ["@fastab/eslint-config#build"],
       "cache": false
     },
     "lint:fix": {
-      "dependsOn": ["@easy-complete/eslint-config#build"],
+      "dependsOn": ["@fastab/eslint-config#build"],
       "cache": false
     },
     "clean": {

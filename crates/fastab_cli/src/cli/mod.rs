@@ -69,7 +69,7 @@ pub enum Processes {
     App,
 }
 
-/// The easy-complete CLI
+/// The Fastab CLI
 #[deny(missing_docs)]
 #[derive(Debug, PartialEq, Subcommand)]
 pub enum CliRootCommands {
@@ -131,7 +131,7 @@ pub enum CliRootCommands {
 }
 
 const HELP_TEXT: &str = color_print::cstr! {"
-<magenta,em>{name}</magenta,em> (easy-complete) v{version}
+<magenta,em>{name}</magenta,em> (Fastab) v{version}
 <dim>Project:</dim> https://github.com/chen86860/easy-complete
 
 <magenta,em>Usage:</magenta,em> {usage}

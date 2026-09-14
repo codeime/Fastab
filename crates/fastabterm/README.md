@@ -17,7 +17,7 @@ First, make sure shell integrations are installed. You can use `fastab_cli` to d
 this:
 
 ```
-ec integrations install dotfiles
+ftab integrations install dotfiles
 ```
 
 Then run `./scripts/install.sh` from the repo root to build the binaries and
@@ -27,7 +27,7 @@ The shell integrations will then launch fastabterm on each terminal session.
 
 You can verify fastabterm is running by:
 
-1. Running `pstree -p $$` and checking, e.g. for an `ecterm` process with a
+1. Running `pstree -p $$` and checking, e.g. for a `fastabterm` process with a
    child `zsh` process.
 2. Running `env | grep '^Q_'` and checking that `Q_TERM` is set.
 

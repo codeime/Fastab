@@ -17,7 +17,7 @@ import { SeoJsonLd, guideSchema, pageHead } from "../seo.tsx";
 
 const TITLE = "Install Fastab on macOS — Terminal Autocomplete";
 const DESCRIPTION =
-  "Install Fastab with the ARM64 DMG on Apple Silicon macOS, grant Accessibility permission, reload your shell, and verify it with ec doctor.";
+  "Install Fastab with the ARM64 DMG on Apple Silicon macOS, grant Accessibility permission, reload your shell, and verify it with ftab doctor.";
 
 const ALTERNATES = [
   { locale: "en" as const, path: "/install" },
@@ -85,7 +85,7 @@ function InstallPage() {
             The input method is optional — install it later from Settings →
             Behavior, or with{" "}
             <code className="font-mono text-[#cdd6e0]">
-              ec integrations install input-method
+              ftab integrations install input-method
             </code>
             , for Ghostty, Kitty, WezTerm, Zed, Alacritty, and Otty.
           </li>
@@ -107,7 +107,7 @@ function InstallPage() {
         <p className={GUIDE_PARAGRAPH}>
           If the prompt did not appear, trigger it again from Terminal:
         </p>
-        <pre className={GUIDE_CODE}>ec debug prompt-accessibility</pre>
+        <pre className={GUIDE_CODE}>ftab debug prompt-accessibility</pre>
 
         <h2 className={GUIDE_HEADING}>4. Reload your shell</h2>
         <p className={GUIDE_PARAGRAPH}>
@@ -123,7 +123,7 @@ function InstallPage() {
           <code className="font-mono text-[#cdd6e0]">npm</code>. Suggestions
           should appear beside the cursor.
         </p>
-        <pre className={GUIDE_CODE}>ec doctor</pre>
+        <pre className={GUIDE_CODE}>ftab doctor</pre>
 
         <h2 className={GUIDE_HEADING}>Build from source</h2>
         <p className={GUIDE_PARAGRAPH}>

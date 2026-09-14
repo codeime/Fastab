@@ -4,12 +4,12 @@ import {
   ensureTrailingSlash,
   withTimeout,
   exponentialBackoff,
-} from "@easy-complete/shared/utils";
+} from "@fastab/shared/utils";
 import {
   executeCommand,
   fread,
   isInDevMode,
-} from "@easy-complete/api-bindings-wrappers";
+} from "@fastab/api-bindings-wrappers";
 import z from "zod";
 import { MOST_USED_SPECS } from "./constants.js";
 import { LoadLocalSpecError, SpecCDNError } from "./errors.js";

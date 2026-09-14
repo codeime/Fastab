@@ -1,4 +1,4 @@
-import { createErrorInstance } from "@easy-complete/shared/errors";
+import { createErrorInstance } from "@fastab/shared/errors";
 
 export const SubstituteAliasError = createErrorInstance("SubstituteAliasError");
 export const ConvertCommandError = createErrorInstance("ConvertCommandError");
