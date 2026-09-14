@@ -1,8 +1,9 @@
 use gpui::prelude::*;
 use gpui::{
     Animation, AnimationExt as _, AnyElement, BoxShadow, Context, Entity, FontWeight, HighlightStyle, Image,
-    InteractiveElement, IntoElement, ParentElement, Render, Rgba, ScrollStrategy, StatefulInteractiveElement, Styled,
-    StyledText, UnderlineStyle, UniformListScrollHandle, Window, div, hsla, point, px, rgb, uniform_list,
+    InteractiveElement, IntoElement, ListSizingBehavior, ParentElement, Render, Rgba, ScrollStrategy,
+    StatefulInteractiveElement, Styled, StyledText, UnderlineStyle, UniformListScrollHandle, Window, div, hsla, point,
+    px, rgb, uniform_list,
 };
 use std::ops::Range;
 use std::sync::Arc;
@@ -376,6 +377,28 @@ pub fn smart_scroll_strategy(selected: usize, first_visible: usize, last_visible
     }
 }
 
+/// Visible index span for smart-scroll, from the list's scroll offset.
+///
+/// `ScrollHandle::{top,bottom}_item` inspect Div `child_bounds`. A
+/// `uniform_list` never fills those, so the handle reports `0..=0` (unlaid-out)
+/// or a span covering every row. Keyboard Down then never calls
+/// `scroll_to_item`, and `cd ~/` looks like five history paths with nothing
+/// below. The offset plus the measured viewport is the real range.
+pub fn visible_range_for_scroll(offset_y: f32, row_height: f32, visible_rows: usize, count: usize) -> (usize, usize) {
+    if count == 0 || visible_rows == 0 {
+        return (0, 0);
+    }
+    let max_index = count.saturating_sub(1);
+    let max_span = visible_rows.saturating_sub(1);
+    let first = if row_height > 0.0 {
+        ((-offset_y) / row_height).floor().max(0.0) as usize
+    } else {
+        0
+    };
+    let first = first.min(max_index);
+    (first, first.saturating_add(max_span).min(max_index))
+}
+
 fn normalize_kind(kind: &str) -> &str {
     match kind {
         "dir" => "folder",
@@ -554,11 +577,31 @@ pub enum TabPrefix {
     Full(String),
 }
 
+/// Query used to prefix-match suggestion names for Tab.
+///
+/// WebView matches against the token's inner text (quotes/escapes stripped).
+/// `query_term` is the getQueryTerm tail and wins when it actually prefixes
+/// the selected name (`scope@foo` → `foo`). Quoted paths stamp a tail (`fo`
+/// from `'src/fo`) that does not prefix `src/foo/`, so fall back to the
+/// unquoted full token.
+fn tab_prefix_match_search(selected: &SuggestionItem, raw_search: &str) -> String {
+    let unquoted_raw = unquote_shell_token(raw_search);
+    let query = selected
+        .query_term
+        .as_deref()
+        .map_or_else(|| unquoted_raw.clone(), unquote_shell_token);
+    if query.is_empty() || match_prefix_bytes(&selected.name, &query) > 0 {
+        query
+    } else {
+        unquoted_raw
+    }
+}
+
 /// Tab completion text, matching the old overlay: same-kind rows whose names
 /// still prefix-match the query. One match inserts the row; several share a prefix.
 pub fn tab_prefix_insertion(selected: usize, items: &[SuggestionItem], search: &str) -> Option<TabPrefix> {
     let selected_item = items.get(selected)?;
-    let search = selected_item.query_term.as_deref().unwrap_or(search);
+    let search = tab_prefix_match_search(selected_item, search);
     // The legacy insertion path accepts the sole row before applying the
     // special/auto-execute common-prefix guard. This matters for generators
     // that directly return one action row; Tab accepts it exactly like a
@@ -573,7 +616,7 @@ pub fn tab_prefix_insertion(selected: usize, items: &[SuggestionItem], search: &
         .iter()
         .filter(|item| items_match_for_prefix(item, selected_item))
         .map(|item| item.name.as_str())
-        .filter(|name| search.is_empty() || match_prefix_bytes(name, search) > 0)
+        .filter(|name| search.is_empty() || match_prefix_bytes(name, &search) > 0)
         .collect();
     if prefix_matches.len() == 1 {
         return Some(TabPrefix::Full(selected_item.name.clone()));
@@ -780,13 +823,8 @@ impl Render for SuggestionList {
         let visible_rows = suggestion_visible_rows(count, row_height, max_list_height, popout, loading);
         let list_h = visible_rows as f32 * row_height;
         if count > 0 {
-            let (first_visible, last_visible) = {
-                let scroll_state = self.scroll_handle.0.borrow();
-                (
-                    scroll_state.base_handle.top_item(),
-                    scroll_state.base_handle.bottom_item(),
-                )
-            };
+            let offset_y = f32::from(self.scroll_handle.0.borrow().base_handle.offset().y);
+            let (first_visible, last_visible) = visible_range_for_scroll(offset_y, row_height, visible_rows, count);
             let snapshot = (selected, count, visible_rows, first_visible, last_visible);
             if self.scroll_snapshot != Some(snapshot) {
                 if let Some(strategy) = smart_scroll_strategy(selected, first_visible, last_visible) {
@@ -843,46 +881,59 @@ impl Render for SuggestionList {
             .shadow(legacy_card_shadow())
             .bg(rgb(theme.background));
         if count > 0 {
+            // A definite-height viewport is load-bearing: Auto-sized
+            // `uniform_list` can lay out as tall as every row, so
+            // `scroll_to_item` thinks the selection is already on screen and
+            // Down never moves. Clip to the measured window; Infer uses that
+            // height as available space so the list actually scrolls.
             column = column.child(
-                uniform_list("ec-suggestions", count, {
-                    let common_prefix = common_prefix.clone();
-                    let typed_path = typed_path.clone();
-                    let state = state.clone();
-                    let click = click.clone();
-                    let suggestion_font_family = font_family.clone();
-                    move |range, _window, cx| {
-                        let overlay = state.read(cx);
-                        range
-                            .filter_map(|ix| {
-                                let item = overlay.items.get(ix)?;
-                                let search_term = item.query_term.as_deref().unwrap_or(&overlay.match_term);
-                                let corners = row_corner_radii(ix, last_row, radius, has_footer);
-                                Some(suggestion_row(
-                                    item,
-                                    ix == overlay.selected,
-                                    search_term,
-                                    &typed_path,
-                                    &overlay.search_term,
-                                    fuzzy,
-                                    &common_prefix,
-                                    theme,
-                                    row_height,
-                                    icon_size,
-                                    font_size,
-                                    list_width,
-                                    overlay.title_overflow,
-                                    corners,
-                                    suggestion_font_family.clone(),
-                                    state.clone(),
-                                    click.clone(),
-                                    ix,
-                                ))
-                            })
-                            .collect()
-                    }
-                })
-                .track_scroll(self.scroll_handle.clone())
-                .h(px(list_h)),
+                div()
+                    .id("ec-suggestions-viewport")
+                    .h(px(list_h))
+                    .w_full()
+                    .overflow_hidden()
+                    .child(
+                        uniform_list("ec-suggestions", count, {
+                            let common_prefix = common_prefix.clone();
+                            let typed_path = typed_path.clone();
+                            let state = state.clone();
+                            let click = click.clone();
+                            let suggestion_font_family = font_family.clone();
+                            move |range, _window, cx| {
+                                let overlay = state.read(cx);
+                                range
+                                    .filter_map(|ix| {
+                                        let item = overlay.items.get(ix)?;
+                                        let search_term = item.query_term.as_deref().unwrap_or(&overlay.match_term);
+                                        let corners = row_corner_radii(ix, last_row, radius, has_footer);
+                                        Some(suggestion_row(
+                                            item,
+                                            ix == overlay.selected,
+                                            search_term,
+                                            &typed_path,
+                                            &overlay.search_term,
+                                            fuzzy,
+                                            &common_prefix,
+                                            theme,
+                                            row_height,
+                                            icon_size,
+                                            font_size,
+                                            list_width,
+                                            overlay.title_overflow,
+                                            corners,
+                                            suggestion_font_family.clone(),
+                                            state.clone(),
+                                            click.clone(),
+                                            ix,
+                                        ))
+                                    })
+                                    .collect()
+                            }
+                        })
+                        .with_sizing_behavior(ListSizingBehavior::Infer)
+                        .track_scroll(self.scroll_handle.clone())
+                        .h(px(list_h)),
+                    ),
             );
         }
         if let Some(footer) = footer {
@@ -1624,6 +1675,16 @@ mod tests {
     }
 
     #[test]
+    fn visible_range_uses_the_measured_viewport_not_the_full_list() {
+        // `cd ~/` is 56 rows in a 5-row window. Offset 0 must not look like
+        // every history/folder row is already on screen.
+        assert_eq!(visible_range_for_scroll(0.0, 20.0, 5, 56), (0, 4));
+        assert_eq!(smart_scroll_strategy(5, 0, 4), Some(ScrollStrategy::Bottom));
+        assert_eq!(visible_range_for_scroll(-20.0, 20.0, 5, 56), (1, 5));
+        assert_eq!(visible_range_for_scroll(0.0, 20.0, 5, 3), (0, 2));
+    }
+
+    #[test]
     fn loading_marker_is_static() {
         assert_eq!(LOADING_DOTS, "···");
     }
@@ -2028,6 +2089,31 @@ mod tests {
         assert_eq!(
             tab_prefix_insertion(0, &items, "ch"),
             Some(TabPrefix::Partial("checkout ".into()))
+        );
+    }
+
+    #[test]
+    fn tab_prefix_unquotes_search_to_match_path_names() {
+        let items = vec![item("src/foo/", "folder"), item("src/foo2/", "folder")];
+        assert_eq!(
+            tab_prefix_insertion(0, &items, "'src/fo"),
+            Some(TabPrefix::Partial("src/foo".into()))
+        );
+        assert_eq!(
+            tab_prefix_insertion(0, &items, r#""src/fo"#),
+            Some(TabPrefix::Partial("src/foo".into()))
+        );
+    }
+
+    #[test]
+    fn tab_prefix_falls_back_to_unquoted_search_when_query_term_is_a_path_tail() {
+        let mut foo = item("src/foo/", "folder");
+        foo.query_term = Some("fo".into());
+        let mut foo2 = item("src/foo2/", "folder");
+        foo2.query_term = Some("fo".into());
+        assert_eq!(
+            tab_prefix_insertion(0, &[foo, foo2], "'src/fo"),
+            Some(TabPrefix::Partial("src/foo".into()))
         );
     }
 }

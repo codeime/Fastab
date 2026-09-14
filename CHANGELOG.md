@@ -5,6 +5,13 @@
 - change: rebrand the product to Fastab (bundle `app.fastab`, CLI `ftab`, PTY `fastabterm`)
 - fix: Tab on `git ch` no longer inserts a trailing backslash from history prefixes (`git checkout\`)
 - fix: after Enter-accepting a completion with no new argument, do not re-show the accepted row when the shell ack has a drifted caret
+- fix: Down on `cd ~/` scrolls past the first history rows instead of sticking on a 5-row window
+- fix: quoted path Tab/Enter no longer doubles the directory (`'src/src/foo/`)
+- fix: `?` shortcut palette after `&&` or an assignment still deletes `? `
+- fix: custom generators receive the full parser token as `context.searchTerm`
+- fix: history frequency boosts spec rows via alias spellings (`co` → checkout)
+- fix: `{cursor}` execute no longer sends an extra return
+- fix: backspacing a trailing space hides until the next keystroke
 
 ## v3.0.0-beta.9
 

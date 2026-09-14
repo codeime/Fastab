@@ -334,6 +334,8 @@ pub(crate) fn generate_for_arg_with_history(
                 &previous,
                 generator_lists_paths(generator, arg),
             );
+            // getQueryTerm tail for filtering returned names. Custom hooks
+            // still receive the raw parser token as `context.searchTerm`.
             let gen_query = query_term_with_hook(
                 search_term,
                 generator
@@ -432,7 +434,15 @@ fn path_row_already_includes_directory_prefix(name: &str, kind: &str, search_ter
     // `getQueryTerm: "/"` on `src/` yields an empty tail. The directory is
     // then the whole search term; skip stamping so insertion still uses `src/`.
     let directory = &search_term[..search_term.len() - query_term.len()];
-    !directory.is_empty() && name.starts_with(directory)
+    if directory.is_empty() {
+        return false;
+    }
+    if name.starts_with(directory) {
+        return true;
+    }
+    // Raw tokens keep the opening quote (`'src/fo`). Generated names do not.
+    let unquoted = directory.trim_start_matches(['\'', '"']);
+    !unquoted.is_empty() && name.starts_with(unquoted)
 }
 
 fn generate_static_seeds(arg: &ArgSpec, query: &str, search_term: &str, fuzzy: bool) -> Vec<Suggestion> {
@@ -685,7 +695,16 @@ fn generate_from_generator(
     // — no cwd, no run — so an empty cwd yields no rows from either.
     if let Some((host, scope_cwd)) = crate::js_host::current() {
         let cwd = if cwd.is_empty() { scope_cwd } else { cwd };
-        out.extend(run_js_generators(host, &snapshot, tokens, query, cwd, fuzzy, timeout));
+        out.extend(run_js_generators(
+            host,
+            &snapshot,
+            tokens,
+            query,
+            search_term,
+            cwd,
+            fuzzy,
+            timeout,
+        ));
     } else if !snapshot.script.is_empty() && !cwd.is_empty() {
         out.extend(run_script(
             &snapshot.script,
@@ -793,11 +812,13 @@ fn dedup_suggestions(suggestions: &mut Vec<Suggestion>) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_js_generators(
     host: &crate::js_host::JsHost,
     arg: &ArgSpec,
     tokens: &[String],
     query: &str,
+    search_term: &str,
     cwd: &str,
     fuzzy: bool,
     timeout: Duration,
@@ -818,7 +839,7 @@ fn run_js_generators(
     if let Some(hook_id) = arg.js_custom.as_deref() {
         let fallback = crate::js_host::custom_cache_fallback(tokens);
         let custom = crate::js_host::cached_suggestions(host, arg, cwd, "custom", &fallback, || {
-            host.custom(hook_id, tokens, cwd, query, timeout, arg.meta.is_dangerous)
+            host.custom(hook_id, tokens, cwd, search_term, timeout, arg.meta.is_dangerous)
                 .unwrap_or_default()
         });
         out.extend(
@@ -1587,6 +1608,28 @@ mod tests {
     }
 
     #[test]
+    fn quoted_search_term_still_skips_stamping_native_path_rows() {
+        assert!(path_row_already_includes_directory_prefix(
+            "src/foo/", "folder", "'src/fo", "fo"
+        ));
+        assert!(path_row_already_includes_directory_prefix(
+            "src/foo/",
+            "folder",
+            r#""src/fo"#,
+            "fo"
+        ));
+        assert!(path_row_already_includes_directory_prefix(
+            "src/main.rs",
+            "file",
+            "src/m",
+            "m"
+        ));
+        assert!(!path_row_already_includes_directory_prefix(
+            "file.txt", "file", "dir/fi", "fi"
+        ));
+    }
+
+    #[test]
     fn filepaths_with_query_term_after_trailing_slash_keep_raw_search() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("src")).unwrap();
@@ -2147,6 +2190,38 @@ mod tests {
         };
         let rows = host.enter("/", || generate_for_arg(&arg, &["demo".into()], "", "/", false));
         assert!(rows.is_empty(), "{rows:?}");
+    }
+
+    #[test]
+    fn custom_context_search_term_is_the_full_parser_token() {
+        // WebView `getCustomSuggestions` puts parserResult.searchTerm (`src/foo`)
+        // on context.searchTerm. getQueryTerm is only for filtering names.
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("hooks");
+        fs::create_dir(&hooks).unwrap();
+        fs::write(
+            hooks.join("demo_custom_0.js"),
+            "export default function(tokens, exec, ctx) {\n  return [\n    { name: 'foo', description: ctx.searchTerm },\n    { name: 'bar' }\n  ];\n}\n",
+        )
+        .unwrap();
+        let host = crate::js_host::JsHost::new(hooks);
+        let cwd = dir.path().display().to_string();
+        let arg = ArgSpec {
+            js_custom: Some("demo#custom#0".into()),
+            meta: SuggestionMeta {
+                get_query_term: Some("/".into()),
+                ..SuggestionMeta::default()
+            },
+            ..ArgSpec::default()
+        };
+        let rows = host.enter(&cwd, || {
+            generate_for_arg_with_search_term(&arg, &["demo".into(), "src/foo".into()], "foo", "src/foo", &cwd, false)
+        });
+        assert_eq!(
+            rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
+            vec!["foo"]
+        );
+        assert_eq!(rows[0].description, "src/foo");
     }
 
     #[test]

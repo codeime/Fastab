@@ -5,6 +5,13 @@
 - 变更：产品更名为 Fastab（bundle `app.fastab`，CLI `ftab`，PTY `fastabterm`）
 - 修复：`git ch` 后按 Tab 不再因为历史前缀把空格转成反斜杠（`git checkout\`）
 - 修复：Enter 整行接受且没有新参数时，若 shell 回写的光标位置有偏差，不再把刚接受的那一行再弹出来
+- 修复：`cd ~/` 往下翻不再卡在前几条历史目录，能滚到 `$HOME` 下的文件夹
+- 修复：带引号路径 Tab/Enter 不再把目录写两遍（`'src/src/foo/`）
+- 修复：`&&` 或赋值后面的 `?` 快捷面板仍会删掉 `? `
+- 修复：custom 生成器的 `context.searchTerm` 使用完整 parser token
+- 修复：历史频次会通过别名抬高 spec 行（`co` → checkout）
+- 修复：带 `{cursor}` 的执行不再多发一次回车
+- 修复：退掉打开新参数的尾随空格后，列表隐藏到下一次按键
 
 ## v3.0.0-beta.9
 

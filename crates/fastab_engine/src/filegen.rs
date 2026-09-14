@@ -487,7 +487,11 @@ fn split_prefix(prefix: &str, cwd: &str) -> (PathBuf, String) {
 }
 
 fn join_base(base: &Path, rel: &str) -> PathBuf {
-    let path = Path::new(rel);
+    // `~/` is not absolute to Path, so `cwd.join("~/")` would look for a
+    // literal `~` directory. Expand tildes before joining so `cd ~/` lists
+    // $HOME, not `$CWD/~`.
+    let expanded = expand_tilde(rel, &[]);
+    let path = Path::new(&expanded);
     if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -520,6 +524,47 @@ mod tests {
         let cwd = dir.path().display().to_string();
         let files = complete_path("src/m", &cwd, false, false);
         assert!(files.iter().any(|s| s.name == "src/main.rs"), "{files:?}");
+    }
+
+    #[test]
+    fn tilde_slash_lists_home_directories_not_a_literal_tilde_folder() {
+        let rows = complete_path("~/", "", true, false);
+        let names: Vec<_> = rows.iter().map(|s| s.name.as_str()).collect();
+        assert!(
+            rows.iter().any(|s| s.kind == "folder" && s.name != "../"),
+            "cd ~/ should list $HOME folders, got {names:?}"
+        );
+        assert!(
+            names.iter().all(|name| *name == "../" || name.starts_with("~/")),
+            "display names should keep the ~/ prefix, got {names:?}"
+        );
+        assert!(
+            !names.iter().any(|name| name.contains("/~/")),
+            "must not look up a literal ~ directory under cwd, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn tilde_slash_from_home_cwd_still_lists_home_not_a_tilde_subdir() {
+        // The reported `cd ~/` case: cwd is already $HOME, so joining the
+        // unexpanded token would look for `$HOME/~` and yield only history.
+        let home = std::env::var("HOME").expect("HOME");
+        let joined = join_base(Path::new(&home), "~/");
+        assert!(
+            joined.starts_with(&home) && !joined.ends_with("~") && !joined.ends_with("~/"),
+            "join_base(~/) from $HOME must expand, got {}",
+            joined.display()
+        );
+        let rows = complete_path("~/", &home, true, false);
+        let names: Vec<_> = rows.iter().map(|s| s.name.as_str()).collect();
+        assert!(
+            rows.iter().any(|s| s.kind == "folder" && s.name != "../"),
+            "cd ~/ from $HOME should list home folders, got {names:?}"
+        );
+        assert!(
+            !names.iter().any(|name| name.contains("/~/")),
+            "must not look up $HOME/~, got {names:?}"
+        );
     }
 
     #[test]
