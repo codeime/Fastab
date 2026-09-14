@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.0.0
+
+- 变更：产品更名为 Fastab（bundle `app.fastab`，CLI `ftab`，PTY `fastabterm`）
+- 修复：`git ch` 后按 Tab 不再因为历史前缀把空格转成反斜杠（`git checkout\`）
+
 ## v3.0.0-beta.8
 
 - 修复：`git ch` 后按 Tab 不再因为历史前缀把空格转成反斜杠（`git checkout\`）

@@ -9,7 +9,7 @@ const HREFLANG: Record<Locale, string> = {
 
 export const SITE_NAME = "Fastab";
 /** Keep in sync with the workspace `Cargo.toml` version on each release. */
-export const APP_VERSION = "3.0.0-beta.8";
+export const APP_VERSION = "1.0.0";
 export const HOME_TITLE = "Fastab (Native) — macOS Terminal Autocomplete";
 export const HOME_DESCRIPTION =
   "Fastab (Native) adds IDE-style inline autocomplete to your macOS terminal. Native GPUI overlay — not a WebView. Fast, local, open source.";
