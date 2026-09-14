@@ -66,7 +66,7 @@ function GhosttyPage() {
           Ghostty requires the input-method integration because it bypasses part
           of the standard PTY path used for cursor tracking. Install it from
           Settings → Behavior, or with{" "}
-          <code className="font-mono text-[#cdd6e0]">
+          <code className="font-mono text-(--ink)">
             ftab integrations install input-method
           </code>
           .
@@ -85,7 +85,7 @@ function GhosttyPage() {
           </li>
           <li>Quit and reopen Ghostty, or reload the current shell.</li>
           <li>
-            Run <code className="font-mono text-[#cdd6e0]">ftab doctor</code> to
+            Run <code className="font-mono text-(--ink)">ftab doctor</code> to
             confirm the shell and input-method integrations.
           </li>
         </GuideList>
@@ -108,15 +108,15 @@ ftab doctor`}</pre>
         <h2 className={GUIDE_HEADING}>Keyboard controls</h2>
         <GuideList>
           <li>
-            <code className="font-mono text-[#cdd6e0]">↑ / ↓</code> moves
+            <code className="font-mono text-(--ink)">↑ / ↓</code> moves
             through suggestions.
           </li>
           <li>
-            <code className="font-mono text-[#cdd6e0]">Tab / →</code> accepts
+            <code className="font-mono text-(--ink)">Tab / →</code> accepts
             the highlighted suggestion.
           </li>
           <li>
-            <code className="font-mono text-[#cdd6e0]">Esc</code> dismisses the
+            <code className="font-mono text-(--ink)">Esc</code> dismisses the
             popup.
           </li>
         </GuideList>

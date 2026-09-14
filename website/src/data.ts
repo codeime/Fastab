@@ -73,18 +73,18 @@ export interface Reason {
 export const reasons: Reason[] = [
   {
     num: "01",
-    title: "Just autocomplete — nothing else",
-    desc: "No chat, no AI assistant, no cloud completions. One job, done well.",
+    title: "Just autocomplete",
+    desc: "No chat, no AI, no cloud. Subcommands, flags, paths — ranked as you type.",
   },
   {
     num: "02",
-    title: "Native, not a plugin",
-    desc: "A real macOS app with a GPUI overlay and settings window — not WKWebView, not escape codes painted into your prompt.",
+    title: "Native overlay",
+    desc: "A GPUI window at the caret — not a WebView, not escape codes painted into the prompt.",
   },
   {
     num: "03",
-    title: "Privacy by default",
-    desc: "Completions run entirely on-device — your commands never leave your Mac. Only anonymous usage counts are collected, and one command turns them off.",
+    title: "Fully local",
+    desc: "Completions never leave your Mac. This fork has all telemetry off and collects nothing.",
   },
   {
     num: "04",
@@ -210,17 +210,17 @@ export const faqs: Faq[] = [
   {
     question: "What data does Fastab collect?",
     answer:
-      "Only anonymous usage statistics: app opens, install/update events, and daily completion counts, tied to a random device ID. Command content, completion text, and file paths are never collected. Disable it any time with `ftab telemetry disable` — see the Privacy Policy page for the full list.",
+      "This fork has all telemetry off. Fastab collects nothing — no commands, no completions, no usage counts.",
   },
   {
     question: "Which terminals does Fastab support?",
     answer:
-      "Fastab supports Ghostty, Otty, Kitty, WezTerm, Alacritty, Zed, iTerm2, Apple Terminal, VS Code, ChatGPT (Codex), and JetBrains IDE terminals. Otty and ChatGPT (Codex) were added in v2.1.0.",
+      "Fastab supports Ghostty, Otty, Kitty, WezTerm, Alacritty, Zed, iTerm2, Apple Terminal, VS Code, ChatGPT (Codex), and JetBrains IDE terminals.",
   },
   {
     question: "How do I install Fastab?",
     answer:
-      "Download the Native ARM64 DMG from this repository's GitHub Releases and follow the install guide.",
+      "Download the ARM64 DMG from GitHub Releases, then follow the Install section on the homepage.",
   },
 ];
 

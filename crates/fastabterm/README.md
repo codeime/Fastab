@@ -1,6 +1,6 @@
-# Figterm
+# fastabterm
 
-Figterm is how hook into the user's system to get information about the user's
+`fastabterm` sits between the user's shell and terminal emulator to get information about the user's
 current shell session like:
 
 - What the user has typed
@@ -39,7 +39,7 @@ into a user's dotfiles (.zshrc, .bashrc, etc.) then the shell will source the
 `pre` integration to [exec](../fastab_integrations/src/shell/scripts/pre.sh)
 the fastabterm binary.
 
-Figterm launches a PTY, or pseudoterminal, (see
+fastabterm launches a PTY, or pseudoterminal, (see
 https://spin0r.wordpress.com/2012/12/28/terminally-confused-part-seven/ for an
 explanation of PTYs). In short, it forks a child process that execs a shell. The
 parent process, then, is responsible for acting as a "pseudoterminal", which is
@@ -51,7 +51,7 @@ process:
    terminal emulator)
 3. Communicates events with shell context to the macOS app.
 
-**Figterm as a Shell & Terminal Intermediary**
+**fastabterm as a Shell & Terminal Intermediary**
 
 Without fastabterm, iTerm and zsh communicate directly: `iTerm <-> zsh`. iTerm will
 forward input from the user to `zsh` and `zsh` will send ANSI escape codes to
@@ -63,7 +63,7 @@ With fastabterm, we intercept the shell/terminal emulator communication:
 forwards ANSI escape codes from `zsh` to iTerm), and looks like a terminal to
 `zsh` (it forwards input to `zsh`).
 
-**Figterm as a Headless Terminal**
+**fastabterm as a Headless Terminal**
 
 A terminal emulator like iTerm has an internal representation of what is
 displayed to the terminal screen. This is usually stored as a grid of "cells"
@@ -71,7 +71,7 @@ that each have attributes like foreground color, background color, character,
 etc. The terminal processes ANSI escape sequences from the shell to update this
 representation.
 
-Figterm replicates the processing of these sequences from the shell to create
+fastabterm replicates the processing of these sequences from the shell to create
 it's own internal screen representation. We do this with a fork of
 [Alacritty](https://github.com/alacritty/alacritty)’s
 [alacritty_terminal crate](https://docs.rs/alacritty_terminal/latest/alacritty_terminal/index.html).
@@ -86,19 +86,19 @@ these codes to `fastabterm` to:
 2. Indicate a command is about to run
 3. Update context about the shell (env variables, working directory, etc.)
 
-Figterm then uses these internally to annotate screen cells based on whether
+fastabterm then uses these internally to annotate screen cells based on whether
 they are part of a shell prompt, the "edit buffer" that the user has typed, or
 command output.
 
-**Figterm as a Shell Context Provider**
+**fastabterm as a Shell Context Provider**
 
-Figterm sends 3 types of hooks with shell context to the macOS app:
+fastabterm sends 3 types of hooks with shell context to the macOS app:
 
 - `prompt` or `precmd` events - sent right before a prompt is displayed
 - `preexec` events - sent right before a command is executed
 - `editBuffer` events - sent whenever the edit buffer is updated
 
-Figterm computes the current edit buffer from its semantically annotated screen
+fastabterm computes the current edit buffer from its semantically annotated screen
 representation on any screen updates.
 
 Each of these events also contains the most recent context of environment

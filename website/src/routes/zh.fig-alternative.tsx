@@ -50,8 +50,14 @@ function ZhFigAlternativePage() {
         hrefs={{ en: "/fig-alternative", "zh-CN": "/zh/fig-alternative" }}
       >
         <GuideCallout>
-          Fastab 是独立的开源项目。Fig 和 Amazon Q
-          是各自权利人的商标，本项目与其不存在关联或从属关系。
+          Fastab fork 自{" "}
+          <a href="https://github.com/chen86860/easy-complete">Easy Complete</a>
+          ，基于{" "}
+          <a href="https://github.com/aws/amazon-q-developer-cli">
+            Amazon Q Developer CLI
+          </a>{" "}
+          与 <a href="https://github.com/withfig/autocomplete">Fig</a>
+          。感谢 Easy Complete、Amazon 与 Fig 的贡献者。
         </GuideCallout>
 
         <h2 className={GUIDE_HEADING}>Fastab 保留了什么</h2>
@@ -65,18 +71,18 @@ function ZhFigAlternativePage() {
         <h2 className={GUIDE_HEADING}>刻意不包含什么</h2>
         <p className={GUIDE_PARAGRAPH}>
           Fastab 不是聊天产品，也不是云端编程助手。补全完全在 Mac
-          本地生成，无需账号，也不会发起 AI 请求。匿名产品统计可以随时关闭。
+          本地生成，无需账号，也不会发起 AI 请求。本 fork 关闭全部遥测。
         </p>
 
-        <div className="my-9 overflow-x-auto rounded-[14px] border border-[#1c232d]">
+        <div className="my-9 overflow-x-auto rounded-lg border border-(--border)">
           <table className="w-full min-w-155 border-collapse text-left text-sm">
-            <thead className="border-b border-[#1c232d] bg-[#0d1219] font-mono text-xs uppercase tracking-wider text-[#65707d]">
+            <thead className="border-b border-(--border) bg-(--surface) font-mono text-xs uppercase tracking-wider text-(--muted)">
               <tr>
                 <th className="px-5 py-4">能力</th>
                 <th className="px-5 py-4">Fastab</th>
               </tr>
             </thead>
-            <tbody className="text-[#9aa4b0]">
+            <tbody className="text-(--muted)">
               {[
                 ["自动补全引擎", "本地运行的原生 macOS 应用"],
                 ["浮层与设置", "原生 GPUI，不是 WKWebView"],
@@ -90,7 +96,7 @@ function ZhFigAlternativePage() {
                   key={label}
                   className="border-b border-[#141a21] last:border-b-0"
                 >
-                  <th className="px-5 py-4 font-medium text-[#cdd6e0]">
+                  <th className="px-5 py-4 font-medium text-(--ink)">
                     {label}
                   </th>
                   <td className="px-5 py-4">{value}</td>
@@ -109,9 +115,9 @@ function ZhFigAlternativePage() {
         <p>
           <a
             href={DOWNLOAD_URL}
-            className="inline-flex rounded-[10px] bg-(--accent) px-5 py-3 font-semibold text-[#06140a] transition hover:brightness-110"
+            className="inline-flex rounded-md bg-(--accent) px-5 py-3 font-semibold text-(--accent-fg) transition-opacity hover:opacity-90"
           >
-            免费试用 Fastab
+            下载 Fastab
           </a>
         </p>
 

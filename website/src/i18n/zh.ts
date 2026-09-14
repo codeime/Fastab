@@ -58,18 +58,18 @@ const featuresZh: Feature[] = featureDataZh.map((d, i) => ({
 const reasonsZh: Reason[] = [
   {
     num: "01",
-    title: "只做补全,别的都不做",
-    desc: "没有聊天、没有 AI 助手、没有云端补全。一件事,做好",
+    title: "只做补全",
+    desc: "没有聊天、没有 AI、没有云端。子命令、参数、路径，边输入边排序。",
   },
   {
     num: "02",
-    title: "原生应用,不是插件",
-    desc: "真正的 macOS 应用，GPUI 浮层和设置窗口——不是 WKWebView，也不是往提示符里塞转义字符",
+    title: "原生浮层",
+    desc: "紧贴光标的 GPUI 窗口——不是 WebView，也不是往提示符里画转义序列。",
   },
   {
     num: "03",
-    title: "默认保护隐私",
-    desc: "补全完全在本机完成——命令内容不会离开你的 Mac。仅收集匿名使用计数,一条命令即可关闭",
+    title: "完全本地",
+    desc: "补全不会离开这台 Mac。本 fork 关闭全部遥测，不收集任何信息。",
   },
   {
     num: "04",
@@ -92,17 +92,17 @@ const faqsZh: Faq[] = [
   {
     question: "Fastab 会收集哪些数据?",
     answer:
-      "只有匿名使用统计:应用启动、安装/更新事件,以及每日补全计数,关联到一个随机设备 ID。命令内容、补全文本和文件路径从不收集。随时用 `ftab telemetry disable` 关闭——完整清单见隐私政策页面",
+      "本 fork 关闭全部遥测。Fastab 不收集任何信息——没有命令内容、没有补全文本、没有使用计数。",
   },
   {
     question: "Fastab 支持哪些终端?",
     answer:
-      "Fastab 支持 Ghostty、Otty、Kitty、WezTerm、Alacritty、Zed、iTerm2、Apple Terminal、VS Code、ChatGPT(Codex)以及 JetBrains 系 IDE 终端。其中 Otty 与 ChatGPT(Codex)在 v2.1.0 加入",
+      "Fastab 支持 Ghostty、Otty、Kitty、WezTerm、Alacritty、Zed、iTerm2、Apple Terminal、VS Code、ChatGPT(Codex)以及 JetBrains 系 IDE 终端。",
   },
   {
     question: "如何安装 Fastab?",
     answer:
-      "从本仓库的 GitHub Releases 下载 Native ARM64 DMG，并按安装指南操作",
+      "从 GitHub Releases 下载 ARM64 DMG，然后按首页的安装步骤操作。",
   },
 ];
 
@@ -214,12 +214,12 @@ const docSectionsZh: DocSection[] = [
 const NEW_TERMINAL_NAMES_ZH = "Otty 与 ChatGPT(Codex)";
 
 export const homeCopyZh: HomeCopy = {
-  badge: "macOS · 100% 本地 · 开源",
-  heroHeading: "为 macOS 终端而生的自动补全",
+  badge: "macOS · 本地 · 开源",
+  heroHeading: "终端自动补全",
   heroSubheading:
-    "为数百种命令行工具提供 fish 风格的补全建议——git、npm、docker、cargo。原生 GPUI（不是 WebView）、快速，而且完全在本机运行",
-  downloadCta: "下载 DMG",
-  githubCta: "在 GitHub 查看",
+    "边输入边给出 IDE 风格建议——git、docker、npm、cargo。支持 Ghostty、iTerm2、Apple Terminal、VS Code、Cursor、Kitty、WezTerm、Alacritty、Zed、Otty、ChatGPT (Codex)、JetBrains。原生 GPUI 浮层，完全本地。本 fork 关闭全部遥测。",
+  downloadCta: "下载 macOS 版",
+  githubCta: "GitHub",
 
   marqueeLabel: "在你惯用的终端里运行",
   featuresLabel: "功能",
@@ -254,12 +254,12 @@ export const homeCopyZh: HomeCopy = {
   docsHeading: "从下载到第一次补全",
   docsSubheading:
     "安装 Fastab、确认你的终端是否受支持、为 Ghostty 配置光标跟踪,或修复 Shell 集成——都不用翻源码仓库",
-  docsCta: "浏览文档",
+  docsCta: "文档与安装 →",
 
   ctaHeading: "别再背参数了",
   ctaSubheading: "让终端替你记住",
   ctaFootnote: "需要 macOS 12+ · Apple Silicon(ARM64) · MIT",
-  ctaTagline: "一个专注的本地补全引擎,为快速的终端自动补全而生",
+  ctaTagline: "Fastab · 本地终端自动补全",
   features: featuresZh,
   reasons: reasonsZh,
   faqs: faqsZh,

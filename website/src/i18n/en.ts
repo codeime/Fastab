@@ -10,12 +10,12 @@ import {
 import type { DocsCopy, HomeCopy } from "./types.ts";
 
 export const homeCopyEn: HomeCopy = {
-  badge: "macOS · 100% local · open source",
-  heroHeading: "Autocomplete for your macOS terminal",
+  badge: "macOS · local · open source",
+  heroHeading: "Autocomplete for your terminal",
   heroSubheading:
-    "Fish-shell-style suggestions for hundreds of CLIs — git, npm, docker, cargo. Native GPUI (not a WebView), fast, and entirely on-device.",
-  downloadCta: "Download DMG",
-  githubCta: "View on GitHub",
+    "IDE-style suggestions as you type — git, docker, npm, cargo — in Ghostty, iTerm2, Apple Terminal, VS Code, Cursor, Kitty, WezTerm, Alacritty, Zed, Otty, ChatGPT (Codex), and JetBrains. Native GPUI overlay, fully on-device. This fork has all telemetry off.",
+  downloadCta: "Download for Mac",
+  githubCta: "GitHub",
 
   marqueeLabel: "Runs in the terminal you already use",
   featuresLabel: "Features",
@@ -52,13 +52,12 @@ export const homeCopyEn: HomeCopy = {
   docsHeading: "Get from download to first completion.",
   docsSubheading:
     "Install Fastab, check which terminals are supported, set up cursor tracking for Ghostty, or fix a shell integration — without digging through the repository.",
-  docsCta: "Browse the docs",
+  docsCta: "Docs and setup →",
 
   ctaHeading: "Stop memorizing flags",
   ctaSubheading: "Let your terminal remember them for you",
   ctaFootnote: "Requires macOS 12+ · Apple Silicon (ARM64) · MIT",
-  ctaTagline:
-    "A focused local completion engine built for fast terminal autocomplete.",
+  ctaTagline: "Fastab · local terminal autocomplete",
 
   features,
   reasons,

@@ -30,8 +30,7 @@ WKWebView。补全引擎在本地 Rust 里运行。它只专注于终端自动�
 你会在输入 `git`、`npm`、`docker`、`cargo` 等数百种命令行工具时，获得类似 fish shell 的
 建议：参数、子命令、文件路径、选项，边打边补。
 自动补全完全在本机运行——无需账号、无云端调用、无 AI 请求，你的命令内容永远不会离开你的
-Mac。应用会收集匿名使用统计（打开次数、每日补全次数——绝不包含命令内容），可随时通过
-`ftab telemetry disable` 关闭。完整的采集清单见[隐私页面](https://fastab.app/privacy-policy)。
+Mac。**本 fork 关闭全部遥测，不收集任何信息。** 详见[隐私页面](https://fastab.app/privacy-policy)。
 
 <p align="center">
   <img src="./.github/media/screenshot.png" alt="Fastab 自动补全效果">
@@ -70,9 +69,15 @@ Native 构建是本仓库的 Apple Silicon DMG：
 
 1. 打开 `Fastab-arm64.dmg`。
 2. 把 **Fastab.app** 拖到 `/Applications`。
-3. 从 `/Applications` 启动 **Fastab**。
-4. 打开 Fastab 设置，点击**授予辅助功能权限**。
-5. 重新加载你的 shell：
+3. **当前构建没有 Developer ID 签名。** 拷贝到应用程序后，先清一次隔离属性，否则 macOS 会拦截启动：
+
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/Fastab.app"
+   ```
+
+4. 从 `/Applications` 启动 **Fastab**。
+5. 打开 Fastab 设置，点击**授予辅助功能权限**。
+6. 重新加载你的 shell：
 
    ```bash
    exec $SHELL
@@ -255,7 +260,10 @@ pnpm test                                   # 运行 Vitest
 
 ## 📜 许可证
 
-采用 MIT 许可证。Fastab 基于上游 Amazon Q Developer CLI，并在
-[LICENSE](./LICENSE) 中保留其原始版权声明。
-第三方版权与许可证条款集中收录于
-[THIRD_PARTY_NOTICES.txt](./THIRD_PARTY_NOTICES.txt)。
+采用 MIT 许可证。
+
+**Fork 自** [Easy Complete](https://github.com/chen86860/easy-complete)，基于
+[Amazon Q Developer CLI](https://github.com/aws/amazon-q-developer-cli) 与
+[Fig](https://github.com/withfig/autocomplete)。感谢 Easy Complete、Amazon
+与 Fig 的贡献者。版权声明见 [LICENSE](./LICENSE) 和 [NOTICE](./NOTICE)。
+第三方条款见 [THIRD_PARTY_NOTICES.txt](./THIRD_PARTY_NOTICES.txt)。

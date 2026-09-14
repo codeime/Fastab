@@ -1553,6 +1553,40 @@ fn about_page(zh: bool, chrome: Chrome, entity: Entity<SettingsWindow>, copied_d
                     true,
                 )),
         ))
+        .child(card(
+            if zh { "许可与致谢" } else { "License & acknowledgments" },
+            chrome,
+            div()
+                .px(px(16.))
+                .py(px(14.))
+                .text_size(px(13.))
+                .text_color(rgb(chrome.muted))
+                .child(if zh {
+                    "MIT 许可。Fork 自 Easy Complete，基于 Amazon Q Developer CLI 与 Fig。感谢 Easy Complete、Amazon 与 Fig 的贡献者。"
+                        .to_string()
+                } else {
+                    "MIT License. Forked from Easy Complete, based on Amazon Q Developer CLI and Fig. Thanks to the Easy Complete, Amazon, and Fig contributors."
+                        .to_string()
+                })
+                .child(link_row(
+                    "Easy Complete",
+                    "https://github.com/chen86860/easy-complete",
+                    chrome,
+                    false,
+                ))
+                .child(link_row(
+                    "Amazon Q Developer CLI",
+                    "https://github.com/aws/amazon-q-developer-cli",
+                    chrome,
+                    false,
+                ))
+                .child(link_row(
+                    "Fig",
+                    "https://github.com/withfig/autocomplete",
+                    chrome,
+                    false,
+                )),
+        ))
 }
 
 fn copy_doctor(entity: &Entity<SettingsWindow>, cx: &mut App) {

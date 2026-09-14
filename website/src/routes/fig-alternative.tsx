@@ -46,8 +46,14 @@ function FigAlternativePage() {
         intro="Fastab is a focused, open-source terminal completion engine for people who liked Fig-style suggestions and want a local macOS tool dedicated to autocomplete."
       >
         <GuideCallout>
-          Fastab is an independent open-source project. Fig and Amazon Q
-          are trademarks of their respective owners; no affiliation is implied.
+          Fastab is a fork of{" "}
+          <a href="https://github.com/chen86860/easy-complete">Easy Complete</a>,
+          based on{" "}
+          <a href="https://github.com/aws/amazon-q-developer-cli">
+            Amazon Q Developer CLI
+          </a>{" "}
+          and <a href="https://github.com/withfig/autocomplete">Fig</a>. Thanks
+          to the Easy Complete, Amazon, and Fig contributors.
         </GuideCallout>
 
         <h2 className={GUIDE_HEADING}>What Fastab keeps</h2>
@@ -67,19 +73,18 @@ function FigAlternativePage() {
         <p className={GUIDE_PARAGRAPH}>
           Fastab is not a chat product or a cloud coding assistant.
           Completion generation stays on your Mac, requires no account, and
-          makes no AI requests. Anonymous product counters can be disabled at
-          any time.
+          makes no AI requests. This fork has all telemetry off.
         </p>
 
-        <div className="my-9 overflow-x-auto rounded-[14px] border border-[#1c232d]">
+        <div className="my-9 overflow-x-auto rounded-lg border border-(--border)">
           <table className="w-full min-w-155 border-collapse text-left text-sm">
-            <thead className="border-b border-[#1c232d] bg-[#0d1219] font-mono text-xs uppercase tracking-wider text-[#65707d]">
+            <thead className="border-b border-(--border) bg-(--surface) font-mono text-xs uppercase tracking-wider text-(--muted)">
               <tr>
                 <th className="px-5 py-4">Capability</th>
                 <th className="px-5 py-4">Fastab</th>
               </tr>
             </thead>
-            <tbody className="text-[#9aa4b0]">
+            <tbody className="text-(--muted)">
               {[
                 ["Autocomplete engine", "Local, native macOS app"],
                 ["Overlay & settings", "Native GPUI — not WKWebView"],
@@ -93,7 +98,7 @@ function FigAlternativePage() {
                   key={label}
                   className="border-b border-[#141a21] last:border-b-0"
                 >
-                  <th className="px-5 py-4 font-medium text-[#cdd6e0]">
+                  <th className="px-5 py-4 font-medium text-(--ink)">
                     {label}
                   </th>
                   <td className="px-5 py-4">{value}</td>
@@ -112,9 +117,9 @@ function FigAlternativePage() {
         <p>
           <a
             href={DOWNLOAD_URL}
-            className="inline-flex rounded-[10px] bg-(--accent) px-5 py-3 font-semibold text-[#06140a] transition hover:brightness-110"
+            className="inline-flex rounded-md bg-(--accent) px-5 py-3 font-semibold text-(--accent-fg) transition-opacity hover:opacity-90"
           >
-            Try Fastab for free
+            Download Fastab
           </a>
         </p>
 

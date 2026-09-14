@@ -63,7 +63,7 @@ function ZhGhosttyPage() {
         <GuideCallout>
           Ghostty 绕过了标准 PTY 光标跟踪路径的一部分，因此需要输入法集成。可在「设置
           → 行为」里安装，或运行{" "}
-          <code className="font-mono text-[#cdd6e0]">
+          <code className="font-mono text-(--ink)">
             ftab integrations install input-method
           </code>
           。
@@ -82,7 +82,7 @@ function ZhGhosttyPage() {
           </li>
           <li>退出并重新打开 Ghostty，或重载当前 Shell。</li>
           <li>
-            运行 <code className="font-mono text-[#cdd6e0]">ftab doctor</code>
+            运行 <code className="font-mono text-(--ink)">ftab doctor</code>
             ，确认 Shell 和输入法集成都正常工作。
           </li>
         </GuideList>
@@ -101,15 +101,15 @@ function ZhGhosttyPage() {
         <h2 className={GUIDE_HEADING}>键盘操作</h2>
         <GuideList>
           <li>
-            <code className="font-mono text-[#cdd6e0]">↑ / ↓</code>
+            <code className="font-mono text-(--ink)">↑ / ↓</code>
             用于切换建议。
           </li>
           <li>
-            <code className="font-mono text-[#cdd6e0]">Tab / →</code>
+            <code className="font-mono text-(--ink)">Tab / →</code>
             用于接受高亮的建议。
           </li>
           <li>
-            <code className="font-mono text-[#cdd6e0]">Esc</code>
+            <code className="font-mono text-(--ink)">Esc</code>
             用于关闭建议窗口。
           </li>
         </GuideList>

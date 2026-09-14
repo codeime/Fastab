@@ -10,9 +10,9 @@ const HREFLANG: Record<Locale, string> = {
 export const SITE_NAME = "Fastab";
 /** Keep in sync with the workspace `Cargo.toml` version on each release. */
 export const APP_VERSION = "1.0.0";
-export const HOME_TITLE = "Fastab (Native) — macOS Terminal Autocomplete";
+export const HOME_TITLE = "Fastab — macOS terminal autocomplete";
 export const HOME_DESCRIPTION =
-  "Fastab (Native) adds IDE-style inline autocomplete to your macOS terminal. Native GPUI overlay — not a WebView. Fast, local, open source.";
+  "IDE-style suggestions as you type — git, docker, npm, cargo — in Ghostty, iTerm2, VS Code, Kitty, and more. Native GPUI overlay, fully on-device. This fork has all telemetry off.";
 
 export function siteOrigin(): string {
   if (typeof window !== "undefined") {

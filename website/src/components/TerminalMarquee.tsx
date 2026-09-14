@@ -2,7 +2,7 @@ import { terminalMarks, type TerminalMark } from "../terminalMarks.ts";
 
 function MarkItem({ mark }: { mark: TerminalMark }) {
   return (
-    <li className="flex shrink-0 items-center gap-2.5 px-7 text-[#7b8694] transition-colors duration-200 hover:text-[#cdd6e0] sm:px-9">
+    <li className="flex shrink-0 items-center gap-2.5 px-7 text-[#7b8694] transition-colors duration-200 hover:text-(--ink) sm:px-9">
       {mark.path && (
         <svg
           aria-hidden="true"

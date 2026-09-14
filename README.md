@@ -31,10 +31,8 @@ focused purely on autocomplete — a lightweight, fully local alternative to Fig
 You get fish-shell-style suggestions for hundreds of CLIs (`git`, `npm`, `docker`,
 `cargo`, …): flags, subcommands, file paths, and arguments, completed as you type.
 Autocomplete runs fully on-device — no account, no cloud calls, no AI requests, and
-your commands never leave your Mac. The app collects anonymous usage statistics
-(app opens, daily completion counts — never command content), which you can disable
-any time with `ftab telemetry disable`. See the [Privacy page](https://fastab.app/privacy-policy)
-for the full list of what is and isn't collected.
+your commands never leave your Mac. **This fork has all telemetry off and collects
+nothing.** See the [Privacy page](https://fastab.app/privacy-policy).
 
 <p align="center">
   <img src="./.github/media/screenshot.png" alt="Fastab autocomplete in action">
@@ -74,9 +72,15 @@ Then:
 
 1. Open `Fastab-arm64.dmg`.
 2. Drag **Fastab.app** into `/Applications`.
-3. Launch **Fastab** from `/Applications`.
-4. Open Fastab Settings and click **Grant Accessibility**.
-5. Reload your shell:
+3. **Current builds are not Developer ID signed.** After copying the app, clear Gatekeeper quarantine once, or macOS will block launch:
+
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/Fastab.app"
+   ```
+
+4. Launch **Fastab** from `/Applications`.
+5. Open Fastab Settings and click **Grant Accessibility**.
+6. Reload your shell:
 
    ```bash
    exec $SHELL
@@ -270,6 +274,11 @@ Process memory: `./scripts/memory-usage.sh` (`--watch 5`, `--peak`, `--csv mem.c
 
 ## 📜 License
 
-Licensed under the MIT License. Fastab is based on the Amazon Q Developer
-CLI; that copyright notice stays in [LICENSE](./LICENSE). Third-party terms are
-collected in [THIRD_PARTY_NOTICES.txt](./THIRD_PARTY_NOTICES.txt).
+Licensed under the MIT License.
+
+**Forked from** [Easy Complete](https://github.com/chen86860/easy-complete),
+which is based on [Amazon Q Developer CLI](https://github.com/aws/amazon-q-developer-cli)
+and [Fig](https://github.com/withfig/autocomplete). Thanks to the Easy Complete,
+Amazon, and Fig contributors. Copyright notices stay in [LICENSE](./LICENSE)
+and [NOTICE](./NOTICE). Third-party terms are in
+[THIRD_PARTY_NOTICES.txt](./THIRD_PARTY_NOTICES.txt).

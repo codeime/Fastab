@@ -1,3 +1,8 @@
+This software is a fork of Easy Complete
+(https://github.com/chen86860/easy-complete), which is based on Amazon Q
+Developer CLI (https://github.com/aws/amazon-q-developer-cli) and Fig
+(https://github.com/withfig/autocomplete).
+
 MIT License
 
 Copyright (c) 2024 Amazon.com, Inc. or its affiliates.

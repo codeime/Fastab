@@ -3,16 +3,16 @@ import { App } from "../App.tsx";
 import { homeCopyZh } from "../i18n/zh.ts";
 import { SeoJsonLd, faqSchema, homeSchema, pageHead } from "../seo.tsx";
 
-const TITLE = "Fastab (Native) — macOS 终端自动补全";
+const TITLE = "Fastab — macOS 终端自动补全";
 const DESCRIPTION =
-  "Fastab (Native) 是开源、完全本地运行的 macOS 终端自动补全工具。原生 GPUI 浮层，不是 WebView。提供 IDE 风格行内建议，支持 Ghostty、iTerm2、Kitty 等终端及 git、npm、docker、cargo 等数百种 CLI。";
+  "边输入边给出 IDE 风格建议——git、docker、npm、cargo。支持 Ghostty、iTerm2、VS Code、Kitty 等。原生 GPUI 浮层，完全本地。本 fork 关闭全部遥测。";
 
 const ALTERNATES = [
   { locale: "en" as const, path: "/" },
   { locale: "zh-CN" as const, path: "/zh" },
 ];
 
-export const Route = createFileRoute("/zh/")({
+export const Route = createFileRoute("/zh")({
   head: () =>
     pageHead({
       title: TITLE,
