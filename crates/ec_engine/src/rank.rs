@@ -315,6 +315,24 @@ fn first_word_count(counts: &HashMap<String, usize>, value: &str) -> usize {
         .unwrap_or_default()
 }
 
+/// Spellings the WebView walked via `makeArray(suggestion.name)`. Flattening
+/// keeps the selected name, the primary spelling, and the rest of `name[]`.
+fn suggestion_name_spellings(suggestion: &Suggestion) -> impl Iterator<Item = &str> {
+    suggestion
+        .alias_names
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(suggestion.name.as_str()))
+        .chain(suggestion.primary_name.as_deref())
+}
+
+fn suggestion_first_word_count(suggestion: &Suggestion, history_counts: &HashMap<String, usize>) -> usize {
+    suggestion_name_spellings(suggestion)
+        .map(|name| first_word_count(history_counts, name))
+        .max()
+        .unwrap_or_default()
+}
+
 fn history_priority_base(count: usize) -> i64 {
     if count > 1 { 75 } else { 50 }
 }
@@ -430,7 +448,7 @@ fn effective_priority_tenths(suggestion: &Suggestion, history_counts: &HashMap<S
     // 0..100. Do not normalize zero again here: an explicit negative value
     // has already become a meaningful zero by this point.
     let ordinary = suggestion.priority.clamp(0, 100) * 10;
-    let history = history_priority_tenths(first_word_count(history_counts, &suggestion.name));
+    let history = history_priority_tenths(suggestion_first_word_count(suggestion, history_counts));
     ordinary.max(history)
 }
 
@@ -531,15 +549,8 @@ pub fn merge_history_with_prefix(
     let static_names: HashSet<String> = result
         .suggestions
         .iter()
-        .flat_map(|suggestion| {
-            suggestion
-                .alias_names
-                .iter()
-                .map(String::as_str)
-                .chain([suggestion.name.as_str()])
-                .chain(suggestion.primary_name.as_deref())
-                .map(str::to_string)
-        })
+        .flat_map(suggestion_name_spellings)
+        .map(str::to_string)
         .collect();
 
     for item in history {
@@ -1144,6 +1155,34 @@ mod tests {
             .position(|item| item.kind == "history")
             .expect("checkout history");
         assert!(checkout < checkout_history);
+    }
+
+    #[test]
+    fn history_frequency_boosts_spec_rows_via_any_alias_spelling() {
+        // `git co foo` never mentions "checkout". The WebView still promoted
+        // that spec row because `co` is another spelling in `name[]`.
+        let frecency = Frecency::from_commands([("git co foo".into(), 10), ("git co bar".into(), 20)]);
+        let mut result = CompleteResult {
+            suggestions: vec![
+                Suggestion::new("commit", "", "subcommand"),
+                Suggestion::new("checkout", "", "subcommand")
+                    .with_primary_name(Some("checkout".into()))
+                    .with_alias_names(vec!["checkout".into(), "co".into()]),
+            ],
+            search_term: "c".into(),
+            match_term: "c".into(),
+            fuzzy: false,
+            ..CompleteResult::default()
+        };
+        apply(&mut result, &["git".into(), "c".into()], &frecency);
+        assert_eq!(
+            result
+                .suggestions
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["checkout", "commit"]
+        );
     }
 
     #[test]

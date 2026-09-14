@@ -206,6 +206,8 @@ globalThis.console = {
         suggestions_from_json(&json, false)
     }
 
+    /// `search_term` is Fig `context.searchTerm`: the parser's current token
+    /// (`src/foo`), not the getQueryTerm tail used to filter returned names.
     pub fn custom(
         &self,
         hook_id: &str,
@@ -1626,6 +1628,31 @@ mod tests {
             )
             .expect("hook");
         assert_eq!(rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(), vec!["ok"]);
+    }
+
+    #[test]
+    fn custom_context_search_term_is_the_parser_token() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("demo_custom_0.js"),
+            "export default function(tokens, exec, ctx) {\n  return [{ name: ctx.searchTerm }];\n}\n",
+        )
+        .unwrap();
+        let host = JsHost::new(dir.path().to_path_buf());
+        let rows = host
+            .custom(
+                "demo#custom#0",
+                &["demo".into(), "src/foo".into()],
+                "/",
+                "src/foo",
+                Duration::from_millis(5_000),
+                false,
+            )
+            .expect("hook");
+        assert_eq!(
+            rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
+            vec!["src/foo"]
+        );
     }
 
     #[test]

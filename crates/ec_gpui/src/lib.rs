@@ -12,6 +12,7 @@ pub use list::{
     DEV_BANNER_HEIGHT, OverlayTheme, POPOUT_WIDTH, SuggestionItem, SuggestionList, TabPrefix, TitleOverflow,
     common_prefix_for, kind_label, layout_gap, layout_pad, longest_common_prefix, match_prefix_bytes,
     overlay_content_size, overlay_content_size_with_context, selection_identity, tab_prefix_insertion,
+    unquote_shell_token,
 };
 pub use macos::{
     OVERLAY_WINDOW_TITLE, harden_overlay_window, harden_overlay_window_handle, harden_overlay_window_titled,

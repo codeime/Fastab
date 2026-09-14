@@ -14,7 +14,7 @@ use ec_engine::{
 use ec_gpui::{
     ClickInsert, DEFAULT_FONT_SIZE, DEFAULT_MAX_LIST_HEIGHT, DEFAULT_WIDTH, OverlayHandle, OverlayState, OverlayTheme,
     SuggestionItem, TabPrefix, open_overlay_window, overlay_content_size_with_context, park_overlay_handle,
-    position_overlay, screens_quartz, tab_prefix_insertion, theme_from_json,
+    position_overlay, screens_quartz, tab_prefix_insertion, theme_from_json, unquote_shell_token,
 };
 use fig_proto::figterm::Action;
 use fig_proto::local::caret_position_hook::Origin;
@@ -309,6 +309,16 @@ impl OverlayController {
         });
         self.park_window(cx);
         self.sync_own_intercept(cx);
+    }
+
+    /// WebView `HIDDEN_UNTIL_KEYPRESS`: hide now, but the next real keystroke
+    /// may show again. Esc uses `hide_until_shown` instead and must stay hidden.
+    fn hide_until_keypress(&mut self, cx: &mut App) {
+        self.hide(cx);
+        self.state.update(cx, |overlay, cx| {
+            overlay.suppress_until_shown = false;
+            cx.notify();
+        });
     }
 
     pub fn dismiss(&mut self, cx: &mut App) {
@@ -627,22 +637,22 @@ impl OverlayController {
         // token away should not pop the previous token's full option list back
         // up, and a paste or a history recall is not a request for
         // suggestions. Either way the next real keystroke shows the list again.
+        // These also downgrade Esc's `HIDDEN_UNTIL_SHOWN` so a later keystroke
+        // can show; leaving `suppress_until_shown` set would latch forever.
         if let Some(previous) = previous_buffer.as_deref()
             && (backspaced_to_new_token(previous, &buffer)
                 || (!self_inserted && large_buffer_change(previous, &buffer)))
         {
-            self.hide(cx);
+            self.hide_until_keypress(cx);
             self.sync_intercept(&figterm_state, cx);
             return;
         }
 
-        if self.state.read(cx).only_show_on_tab {
-            let new_token = buffer.chars().last().is_some_and(char::is_whitespace);
-            let hidden = !self.state.read(cx).visible;
-            if hidden || new_token {
-                self.hide_until_shown(cx);
-                self.sync_intercept(&figterm_state, cx);
-            }
+        if self.state.read(cx).only_show_on_tab
+            && only_show_on_tab_hides_until_shown(previous_buffer.as_deref(), &buffer)
+        {
+            self.hide_until_shown(cx);
+            self.sync_intercept(&figterm_state, cx);
         }
 
         let generation = self.bump_generation();
@@ -1080,13 +1090,14 @@ impl OverlayController {
                 true
             },
             Some(TabPrefix::Partial(shared)) => {
-                let (search, completes_the_row, kind) = {
+                let (raw_search, query_term, completes_the_row, kind) = {
                     let overlay = self.state.read(cx);
                     let Some(item) = overlay.selected_item() else {
                         return false;
                     };
                     (
-                        item.query_term.clone().unwrap_or_else(|| overlay.search_term.clone()),
+                        overlay.search_term.clone(),
+                        item.query_term.clone(),
                         prefix_completes_row(&shared, item),
                         item.kind.clone(),
                     )
@@ -1100,6 +1111,7 @@ impl OverlayController {
                     return true;
                 }
                 let shared = escape_tab_prefix(&shared, &kind);
+                let search = prefix_insertion_search(&shared, &raw_search, query_term.as_deref());
                 let (insertion, deletion) = insertion_for(&shared, &search);
                 if insertion.is_empty() && deletion == 0 {
                     return false;
@@ -1142,7 +1154,7 @@ impl OverlayController {
         let input_before_accept = self.current_input_snapshot();
         let acceptance = accepted_suggestion_key(&item, input_before_accept.as_ref());
         let add_space = self.state.read(cx).insert_space_automatically;
-        let text = full_insertion_for_item(
+        let text = resolve_cursor_marker(full_insertion_for_item(
             &item.name,
             item.insert_value.as_deref(),
             &item.kind,
@@ -1150,16 +1162,17 @@ impl OverlayController {
             item.should_add_space,
             add_space,
             execute,
-        );
-        let search_term = insertion_search_term(&item.kind, &item.search, item.query_term.as_deref()).to_string();
+        ));
+        let search_term = insertion_search_term(&item.kind, &item.search, item.query_term.as_deref(), &text);
         let kind = item.kind;
         let opens_new_arg = opens_new_arg(add_space, item.should_add_space, item.separator_to_add.as_deref());
-        let text = resolve_cursor_marker(text);
         // Auto-execute/special rows represent an action on the existing
         // buffer, not a replacement for the current query.  The old WebView
         // therefore sent `\n` with zero deletion; blindly using insertion_for
         // here would backspace `status` before executing it.
         let (insertion, deletion) = insertion_for_kind(&text, &search_term, &kind);
+        let buffer = input_before_accept.as_ref().map_or("", |(buffer, _)| buffer.as_str());
+        let (insertion, deletion) = apply_shortcut_palette_deletion(buffer, &search_term, insertion, deletion, &text);
         let should_suppress = should_suppress_after_insert(execute, &kind, opens_new_arg, &text);
         let inserted = self.insert_text(&insertion, deletion, execute, figterm_state, cx);
         if inserted
@@ -1433,6 +1446,7 @@ fn apply_complete_result(
                 .as_ref()
                 .map(|arg| (arg.name.clone(), arg.description.clone()))
                 .unwrap_or_default();
+            let mut hide_for_new_arg = false;
             let items = result
                 .suggestions
                 .into_iter()
@@ -1462,6 +1476,12 @@ fn apply_complete_result(
             };
             state.update(cx, |overlay, cx| {
                 overlay.effective_fuzzy_search = effective_fuzzy;
+                if overlay.only_show_on_tab
+                    && current_arg_identity_changed(&overlay.current_arg_name, &current_arg_name)
+                {
+                    overlay.hide_until_shown();
+                    hide_for_new_arg = true;
+                }
                 overlay.set_current_arg(current_arg_name, current_arg_description);
                 overlay.set_suggestions_with_match_term(items, result.search_term, match_term);
                 cx.notify();
@@ -1477,7 +1497,7 @@ fn apply_complete_result(
                     false
                 }
             } else {
-                if empty {
+                if empty || hide_for_new_arg {
                     let _ = park_overlay_slot(window_slot, cx);
                 }
                 false
@@ -1725,7 +1745,10 @@ fn insertion_changes_buffer(insertion: &str, deletion: i64, execute: bool) -> bo
 }
 
 fn immediate_for_insert(execute: bool, insertion: &str) -> bool {
-    execute && !insertion.ends_with('\n')
+    // `{cursor}` is resolved by appending `\x1b[D` after the rest of the
+    // insertion, which can leave a newline that is no longer at the end.
+    // Figterm would then send an extra `\r` on top of that `\n`.
+    execute && !insertion.contains('\n')
 }
 
 fn accepted_suggestion_key(item: &ClickInsert, input: Option<&(String, u32)>) -> Option<(String, String)> {
@@ -1793,11 +1816,27 @@ fn should_suppress_after_insert(execute: bool, kind: &str, opens_new_arg: bool, 
 }
 
 fn insertion_for(name: &str, search_term: &str) -> (String, i64) {
-    let query_term = search_term.replacen(' ', r"\ ", 1);
     if let Some(suffix) = name.strip_prefix(search_term) {
         (suffix.to_string(), 0)
     } else {
-        (name.to_string(), query_term.encode_utf16().count() as i64)
+        (
+            name.to_string(),
+            deletion_term_for_search(search_term).encode_utf16().count() as i64,
+        )
+    }
+}
+
+/// Count deletion in the same units as the typed token.
+///
+/// WebView reconstructed an escaped space from innerText (`my file` → `my\ file`).
+/// Native `search_term` is already the raw token, so injecting `\ ` into a
+/// still-quoted query (`'my file`) adds a backslash the user never typed.
+/// A typed `\ ` is already two characters and must stay that way.
+fn deletion_term_for_search(search_term: &str) -> String {
+    if search_term.contains('\'') || search_term.contains('"') || search_term.contains(r"\ ") {
+        search_term.to_string()
+    } else {
+        search_term.replacen(' ', r"\ ", 1)
     }
 }
 
@@ -1809,16 +1848,85 @@ fn insertion_for_kind(name: &str, search_term: &str, kind: &str) -> (String, i64
     }
 }
 
-fn insertion_search_term<'a>(kind: &str, raw_search: &'a str, query_term: Option<&'a str>) -> &'a str {
+fn insertion_search_term(kind: &str, raw_search: &str, query_term: Option<&str>, insert_text: &str) -> String {
     // Shortcut matching strips the leading `?`, but the accepted edit must
     // replace that prefix too. The WebView added one deletion explicitly;
     // using the raw token here is the same operation and also handles Unicode
     // by letting `insertion_for` count shell characters.
     if kind == "shortcut" {
-        raw_search
+        raw_search.to_string()
     } else {
-        query_term.unwrap_or(raw_search)
+        // Same candidate order as Tab Partial: a stamped getQueryTerm tail
+        // that does not prefix the row (`fo` vs `src/foo/` from `'src/fo`)
+        // must not win, or Full/Enter/click delete two characters and
+        // insert the whole name (`'src/src/foo/`).
+        prefix_insertion_search(insert_text, raw_search, query_term)
     }
+}
+
+/// Search used to compute a Tab Partial suffix against the (possibly escaped) shared prefix.
+fn prefix_insertion_search(shared: &str, raw_search: &str, query_term: Option<&str>) -> String {
+    let unquoted_query = query_term.map(unquote_shell_token);
+    let unquoted_raw = unquote_shell_token(raw_search);
+    let candidates = [
+        unquoted_query.clone(),
+        Some(unquoted_raw.clone()),
+        query_term.map(str::to_string),
+        Some(raw_search.to_string()),
+    ];
+    for candidate in candidates.into_iter().flatten() {
+        if candidate.is_empty() {
+            continue;
+        }
+        if shared.starts_with(&candidate) || shared.to_ascii_lowercase().starts_with(&candidate.to_ascii_lowercase()) {
+            return candidate;
+        }
+    }
+    unquoted_raw
+}
+
+/// WebView `rootCommand === "?"` adds two deletions for `?` + space.
+/// Glued `?la` already deletes the `?` via the raw token and must not get extra.
+fn apply_shortcut_palette_deletion(
+    buffer: &str,
+    search_term: &str,
+    insertion: String,
+    deletion: i64,
+    full_text: &str,
+) -> (String, i64) {
+    if search_term.starts_with('?') {
+        return (insertion, deletion);
+    }
+    // WebView `rootCommand === "?"` is the current command, not the first
+    // token of the whole buffer (`echo x && ? deploy`).
+    if ranking_root_command(buffer, None) != "?" {
+        return (insertion, deletion);
+    }
+    let query = search_term.encode_utf16().count() as i64;
+    (full_text.to_string(), query + 2)
+}
+
+/// `onlyShowOnTab` hides until Tab on a new trailing-space argument, not
+/// whenever the list is already hidden (that upgraded paste/Esc-keypress
+/// hides into a latch). Extra spaces on the same token are not a new arg.
+fn only_show_on_tab_hides_until_shown(previous: Option<&str>, current: &str) -> bool {
+    let Some(previous) = previous.filter(|previous| !previous.is_empty()) else {
+        return !current.is_empty();
+    };
+    if !current.ends_with(' ') {
+        return false;
+    }
+    if previous.ends_with(' ') {
+        let (previous_tokens, _) = tokenize(previous);
+        let (current_tokens, _) = tokenize(current);
+        previous_tokens != current_tokens
+    } else {
+        true
+    }
+}
+
+fn current_arg_identity_changed(previous: &str, next: &str) -> bool {
+    !next.is_empty() && previous != next
 }
 
 #[cfg(test)]
@@ -1837,13 +1945,22 @@ fn full_insertion(name: &str, kind: &str, args_hint: &str, add_space: bool) -> S
 /// Did a backspace remove a whole trailing token? Fig compared the parsed
 /// token arrays and kept the list down in that case, so deleting `-m` from
 /// `git commit -m` does not immediately reopen every `git commit` option.
+/// Removing the trailing space that had opened a new argument (`git commit `
+/// → `git commit`) is the same hide: the WebView injected an empty token
+/// when text ended with a space, so that backspace dropped the token count.
 fn backspaced_to_new_token(previous: &str, current: &str) -> bool {
     if current.len() >= previous.len() {
         return false;
     }
     let (current_tokens, _) = tokenize(current);
     let (previous_tokens, _) = tokenize(previous);
-    if current_tokens.is_empty() || current_tokens.len() >= previous_tokens.len() {
+    if current_tokens.is_empty() {
+        return false;
+    }
+    if previous.ends_with(' ') && !current.ends_with(' ') && previous_tokens == current_tokens {
+        return true;
+    }
+    if current_tokens.len() >= previous_tokens.len() {
         return false;
     }
     previous_tokens[current_tokens.len() - 1] == current_tokens[current_tokens.len() - 1]
@@ -2077,9 +2194,6 @@ fn action_requires_visible(action: &str) -> bool {
 }
 
 fn action_is_allowed(action: &str, visible: bool, loading: bool, has_items: bool) -> bool {
-    if loading && action == "showAutocompleteFromTab" {
-        return false;
-    }
     !action_requires_visible(action) || (visible && (!loading || has_items))
 }
 
@@ -2364,10 +2478,10 @@ mod tests {
 
     #[test]
     fn shortcut_acceptance_replaces_the_raw_question_mark_query() {
-        let search = insertion_search_term("shortcut", "?la", Some("la"));
+        let search = insertion_search_term("shortcut", "?la", Some("la"), "last");
         assert_eq!(search, "?la");
-        assert_eq!(insertion_for("last", search), ("last".into(), 3));
-        assert_eq!(insertion_search_term("arg", "scope@la", Some("la")), "la");
+        assert_eq!(insertion_for("last", &search), ("last".into(), 3));
+        assert_eq!(insertion_search_term("arg", "scope@la", Some("la"), "last"), "la");
     }
 
     #[test]
@@ -2408,6 +2522,7 @@ mod tests {
         assert!(!immediate_for_insert(false, "checkout"));
         assert!(immediate_for_insert(true, "checkout"));
         assert!(!immediate_for_insert(true, "\n"));
+        assert!(!immediate_for_insert(true, "commit -m ''\n\x1b[D"));
     }
 
     #[test]
@@ -2804,10 +2919,15 @@ mod tests {
     #[test]
     fn ordinary_backspaces_within_a_token_keep_the_list_up() {
         assert!(!backspaced_to_new_token("git com", "git co"));
-        assert!(!backspaced_to_new_token("git commit ", "git commit"));
         assert!(!backspaced_to_new_token("git", "gi"));
         // Typing forward never counts, even when it adds a token.
         assert!(!backspaced_to_new_token("git ", "git c"));
+    }
+
+    #[test]
+    fn backspacing_a_trailing_space_reads_as_a_new_token() {
+        assert!(backspaced_to_new_token("git commit ", "git commit"));
+        assert!(backspaced_to_new_token("git ", "git"));
     }
 
     #[test]
@@ -2866,7 +2986,9 @@ mod tests {
         assert!(action_is_allowed("insertSelected", true, true, true));
         assert!(action_is_allowed("insertCommonPrefix", true, true, true));
         assert!(action_is_allowed("navigateDown", true, true, true));
-        assert!(!action_is_allowed("showAutocompleteFromTab", true, true, true));
+        assert!(action_is_allowed("showAutocompleteFromTab", true, true, true));
+        assert!(action_is_allowed("showAutocompleteFromTab", false, true, true));
+        assert!(action_is_allowed("showAutocompleteFromTab", false, true, false));
         assert!(action_is_allowed("hideAutocomplete", true, true, false));
     }
 
@@ -3153,5 +3275,125 @@ mod tests {
         assert_eq!(format_keybinding("command+i"), "⌘i");
         assert_eq!(format_keybinding("control+shift+k"), "⌃⇧k");
         assert_eq!(format_keybinding("option+return"), "⌥↵");
+    }
+
+    #[test]
+    fn quoted_tab_prefix_inserts_only_the_unquoted_suffix() {
+        let search = prefix_insertion_search("src/foo/", "'src/fo", None);
+        assert_eq!(search, "src/fo");
+        assert_eq!(insertion_for("src/foo/", &search), ("o/".into(), 0));
+        let search = prefix_insertion_search("src/foo/", "'src/fo", Some("fo"));
+        assert_eq!(search, "src/fo");
+        assert_eq!(insertion_for("src/foo/", &search), ("o/".into(), 0));
+    }
+
+    #[test]
+    fn quoted_path_full_accept_does_not_double_the_directory() {
+        let search = insertion_search_term("folder", "'src/fo", Some("fo"), "src/foo/");
+        assert_eq!(search, "src/fo");
+        assert_eq!(insertion_for("src/foo/", &search), ("o/".into(), 0));
+        let search = insertion_search_term("folder", r#""src/fo"#, Some("fo"), "src/foo/");
+        assert_eq!(search, "src/fo");
+        assert_eq!(insertion_for("src/foo/", &search), ("o/".into(), 0));
+    }
+
+    #[test]
+    fn tab_prefix_search_keeps_query_term_when_it_prefixes_the_shared_name() {
+        let search = prefix_insertion_search("fooba", "scope@foo", Some("foo"));
+        assert_eq!(search, "foo");
+        assert_eq!(insertion_for("fooba", &search), ("ba".into(), 0));
+    }
+
+    #[test]
+    fn tab_prefix_search_keeps_typed_escaped_spaces() {
+        let shared = escape_tab_prefix("my file.", "file");
+        let search = prefix_insertion_search(&shared, r"my\ file", None);
+        assert_eq!(search, r"my\ file");
+        assert_eq!(insertion_for(&shared, &search), (".".into(), 0));
+    }
+
+    #[test]
+    fn quoted_search_deletion_does_not_inject_escaped_spaces() {
+        assert_eq!(insertion_for("my file.txt", "'my file"), ("my file.txt".into(), 8));
+        assert_eq!(insertion_for("my file.txt", r#""my file"#), ("my file.txt".into(), 8));
+        assert_eq!(insertion_for("my file.txt", r"my\ file"), ("my file.txt".into(), 8));
+    }
+
+    #[test]
+    fn unquoted_inner_text_space_still_counts_the_escape() {
+        assert_eq!(insertion_for("checkout", "git"), ("checkout".into(), 3));
+        assert_eq!(deletion_term_for_search("my file"), r"my\ file");
+    }
+
+    #[test]
+    fn shortcut_palette_deletes_question_mark_and_space() {
+        let (insertion, deletion) =
+            apply_shortcut_palette_deletion("? deploy", "deploy", "deploy".into(), 0, "deploy ");
+        assert_eq!(insertion, "deploy ");
+        assert_eq!(deletion, 8);
+        let (insertion, deletion) =
+            apply_shortcut_palette_deletion("? deploy", "deploy", "kubectl apply".into(), 6, "kubectl apply");
+        assert_eq!(insertion, "kubectl apply");
+        assert_eq!(deletion, 8);
+        let (insertion, deletion) = apply_shortcut_palette_deletion("? ", "", "deploy ".into(), 0, "deploy ");
+        assert_eq!(insertion, "deploy ");
+        assert_eq!(deletion, 2);
+        let (insertion, deletion) =
+            apply_shortcut_palette_deletion("echo x && ? deploy", "deploy", "deploy".into(), 0, "deploy ");
+        assert_eq!(insertion, "deploy ");
+        assert_eq!(deletion, 8);
+        let (insertion, deletion) =
+            apply_shortcut_palette_deletion("FOO=1 ? deploy", "deploy", "kubectl apply".into(), 6, "kubectl apply");
+        assert_eq!(insertion, "kubectl apply");
+        assert_eq!(deletion, 8);
+    }
+
+    #[test]
+    fn glued_shortcut_query_is_not_double_deleted() {
+        let (insertion, deletion) = apply_shortcut_palette_deletion("?la", "?la", "last".into(), 3, "last");
+        assert_eq!(insertion, "last");
+        assert_eq!(deletion, 3);
+        let (insertion, deletion) =
+            apply_shortcut_palette_deletion("git checkout", "checkout", "checkout".into(), 0, "checkout ");
+        assert_eq!(insertion, "checkout");
+        assert_eq!(deletion, 0);
+    }
+
+    #[test]
+    fn esc_then_type_keeps_suppress_until_shown() {
+        let mut overlay = OverlayState::new();
+        overlay.hide_until_shown();
+        assert!(overlay.suppress_until_shown);
+        assert!(!overlay.visible);
+    }
+
+    #[test]
+    fn only_show_on_tab_hides_on_a_new_trailing_space_not_when_already_hidden() {
+        assert!(only_show_on_tab_hides_until_shown(None, "git"));
+        assert!(only_show_on_tab_hides_until_shown(Some(""), "git"));
+        assert!(only_show_on_tab_hides_until_shown(Some("git"), "git "));
+        assert!(!only_show_on_tab_hides_until_shown(Some("git "), "git  "));
+        assert!(!only_show_on_tab_hides_until_shown(Some("git"), "git c"));
+        assert!(!only_show_on_tab_hides_until_shown(Some("git commit "), "git commit"));
+    }
+
+    #[test]
+    fn current_arg_identity_changes_when_the_name_changes() {
+        assert!(current_arg_identity_changed("", "branch"));
+        assert!(current_arg_identity_changed("command", "branch"));
+        assert!(!current_arg_identity_changed("branch", "branch"));
+        assert!(!current_arg_identity_changed("branch", ""));
+    }
+
+    #[test]
+    fn cursor_marker_after_execute_newline_is_not_an_extra_immediate_return() {
+        let text = full_insertion_for_item("co", Some("commit -m '{cursor}'"), "arg", None, false, true, true);
+        assert!(text.contains("{cursor}"));
+        assert!(text.contains('\n'));
+        assert!(!immediate_for_insert(true, &text));
+        let resolved = resolve_cursor_marker(text);
+        assert!(!resolved.ends_with('\n'));
+        assert!(resolved.contains('\n'));
+        assert!(!immediate_for_insert(true, &resolved));
     }
 }
