@@ -1,5 +1,12 @@
 # Changelog
 
+## v3.0.0-beta.12
+
+- fix: file and folder generators use the parser value of quoted or backslash-escaped paths; plain-name and path Tab/Enter insertions edit inside a simple closed quote instead of after it
+- fix: native suggestion-list refreshes keep the selected row in view without turning mouse-wheel scrolling into a snap back to the first row
+- fix: missing Accessibility still opens the native settings repair path on silent or login-item launches
+- ci: release builds check that the tag, Cargo, website, and built app versions match; prereleases avoid the stable Sparkle feed and offer GitHub Releases for manual updates
+
 ## v3.0.0-beta.11
 
 - fix: mouse-wheel on the suggestion list no longer flashes and snaps back to the first row
