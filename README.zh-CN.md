@@ -63,7 +63,7 @@ Mac。应用会收集匿名使用统计（打开次数、每日补全次数—�
 
 Native 构建是本仓库的 Apple Silicon DMG：
 
-[下载最新版 DMG](https://github.com/codeime/easy-complete/releases/download/v3.0.0-beta.12/Easy-Complete-arm64.dmg) ·
+[下载最新版 DMG](https://github.com/codeime/easy-complete/releases/download/v3.0.0-beta.13/Easy-Complete-arm64.dmg) ·
 [所有 Releases](https://github.com/codeime/easy-complete/releases)
 
 然后：

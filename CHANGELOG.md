@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.0.0-beta.13
+
+- fix: long selected suggestion titles scroll more slowly at a bounded speed, ease into each turn, and pause at both ends
+
 ## v3.0.0-beta.12
 
 - fix: file and folder generators use the parser value of quoted or backslash-escaped paths; plain-name and path Tab/Enter insertions edit inside a simple closed quote instead of after it
