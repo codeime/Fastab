@@ -31,6 +31,11 @@ pub struct DesktopHost {
     pub notifications_state: Arc<WebviewNotificationsState>,
     #[allow(dead_code)]
     pub context: Arc<Context>,
+    /// The launch flow deferred its normal settings/dashboard open until the
+    /// GPUI host exists (the modern Login Item path). `--no-dashboard` and
+    /// `app.silentLaunch` clear this upstream; a missing Accessibility grant
+    /// remains an explicit exception in [`start_application`], because the
+    /// native settings gate is the in-app path that explains and repairs it.
     pub show_dashboard_after_normal_launch: bool,
     pub proxy: EventLoopProxy,
     pub window_target: EventLoopWindowTarget,
@@ -76,7 +81,7 @@ impl DesktopHost {
                 let autocomplete_enabled = autocomplete_should_run();
                 self.overlay.apply_theme(cx);
                 self.overlay.set_enabled(autocomplete_enabled, cx);
-                self.refresh_settings_permissions();
+                self.refresh_settings_permissions(cx);
             },
             Event::MenuClicked(id) => {
                 info!(%id, "Menu Event");
@@ -217,7 +222,7 @@ impl DesktopHost {
         if let Some(handle) = &self.settings {
             if crate::settings_ui::focus_settings(handle, cx) {
                 crate::settings_ui::notify_dashboard_visible(&self.proxy, true);
-                self.refresh_settings_permissions();
+                self.refresh_settings_permissions(cx);
                 return;
             }
         }
@@ -225,15 +230,15 @@ impl DesktopHost {
             Ok(handle) => {
                 self.settings = Some(handle);
                 crate::settings_ui::notify_dashboard_visible(&self.proxy, true);
-                self.refresh_settings_permissions();
+                self.refresh_settings_permissions(cx);
             },
             Err(err) => error!(%err, "Failed to open native settings"),
         }
     }
 
-    fn refresh_settings_permissions(&self) {
-        if self.settings.is_some() {
-            crate::permissions::spawn_check(&self.proxy);
+    fn refresh_settings_permissions(&self, cx: &mut App) {
+        if let Some(handle) = &self.settings {
+            crate::settings_ui::refresh_permission_check(handle, &self.proxy, cx);
         }
     }
 
@@ -290,6 +295,15 @@ pub fn ensure_gpui_ns_application() {
 /// consumed by [`start_application`] from `main`, outside `block_on`.
 pub type Setup = Box<dyn FnOnce(&mut App) -> anyhow::Result<(Entity<DesktopHost>, flume::Receiver<Event>)>>;
 
+#[cfg(target_os = "macos")]
+fn should_show_settings_after_launch(
+    deferred_normal_launch: bool,
+    launched_as_login_item: bool,
+    accessibility_missing: bool,
+) -> bool {
+    accessibility_missing || (deferred_normal_launch && !launched_as_login_item)
+}
+
 pub fn start_application(
     setup: impl FnOnce(&mut App) -> anyhow::Result<(Entity<DesktopHost>, flume::Receiver<Event>)> + 'static,
 ) -> anyhow::Result<()> {
@@ -315,9 +329,15 @@ pub fn start_application(
                 #[cfg(target_os = "macos")]
                 {
                     crate::platform::set_activation_policy(*crate::platform::ACTIVATION_POLICY.lock().unwrap());
-                    let show_settings = (host.show_dashboard_after_normal_launch
-                        && !crate::platform::launched_as_login_item())
-                        || crate::permissions::accessibility_is_missing();
+                    // `--no-dashboard` and `app.silentLaunch` suppress only the
+                    // normal dashboard request. Missing Accessibility is an
+                    // intentional exception: without opening native settings,
+                    // the user has no in-app path to repair the required grant.
+                    let show_settings = should_show_settings_after_launch(
+                        host.show_dashboard_after_normal_launch,
+                        crate::platform::launched_as_login_item(),
+                        crate::permissions::accessibility_is_missing(),
+                    );
                     if show_settings {
                         host.proxy
                             .send_event(Event::WindowEvent {
@@ -346,4 +366,22 @@ pub fn spawn_engine() -> anyhow::Result<EngineClient> {
         );
     }
     EngineClient::spawn(dir)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::should_show_settings_after_launch;
+
+    #[test]
+    fn accessibility_gate_overrides_silent_or_no_dashboard_launch() {
+        assert!(should_show_settings_after_launch(false, false, true));
+        assert!(should_show_settings_after_launch(false, true, true));
+        assert!(!should_show_settings_after_launch(false, false, false));
+    }
+
+    #[test]
+    fn deferred_dashboard_only_opens_for_a_normal_non_login_launch() {
+        assert!(should_show_settings_after_launch(true, false, false));
+        assert!(!should_show_settings_after_launch(true, true, false));
+    }
 }

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { OG_LOCALE, type Locale } from "./i18n/types.ts";
+import { APP_VERSION, DOWNLOAD_URL } from "./download.ts";
 
 /** hreflang values. `zh-Hans` targets Simplified Chinese regardless of region. */
 const HREFLANG: Record<Locale, string> = {
@@ -8,8 +9,6 @@ const HREFLANG: Record<Locale, string> = {
 };
 
 export const SITE_NAME = "Easy Complete";
-/** Keep in sync with the workspace `Cargo.toml` version on each release. */
-export const APP_VERSION = "3.0.0-beta.11";
 export const HOME_TITLE = "Easy Complete (Native) — macOS Terminal Autocomplete";
 export const HOME_DESCRIPTION =
   "Easy Complete (Native) adds IDE-style inline autocomplete to your macOS terminal. Native GPUI overlay — not a WebView. Fast, local, open source.";
@@ -165,7 +164,7 @@ export function homeSchema(locale: Locale = "en") {
         releaseNotes:
           "https://github.com/codeime/easy-complete/blob/main/CHANGELOG.md",
         downloadUrl:
-          "https://github.com/codeime/easy-complete/releases/latest/download/Easy-Complete-arm64.dmg",
+          DOWNLOAD_URL,
         codeRepository: "https://github.com/codeime/easy-complete",
         softwareRequirements: "macOS 12 or later; Apple Silicon (ARM64)",
         license: "https://opensource.org/license/mit",

@@ -295,11 +295,15 @@ pub(crate) fn generate_for_arg_with_history(
     fuzzy: bool,
     history_values: &[String],
 ) -> Vec<Suggestion> {
+    // `search_term` is deliberately raw for insertion, while every generator
+    // sees the parser token's inner text.  In particular, passing `'src/m`
+    // through to filegen would make it look for a literal `'src` directory.
+    let normalized_search_term = crate::lookup::parser_inner_text(search_term);
     let arg_query =
         if arg.meta.get_query_term.is_some() || arg.js_get_query_term.is_some() || arg.meta.js_get_query_term.is_some()
         {
             query_term_with_hook(
-                search_term,
+                &normalized_search_term,
                 arg.meta.get_query_term.as_deref(),
                 arg.js_get_query_term
                     .as_deref()
@@ -309,7 +313,7 @@ pub(crate) fn generate_for_arg_with_history(
             query.to_string()
         };
     let timeout = script_timeout_for(arg);
-    let mut out = generate_static_seeds(arg, &arg_query, search_term, fuzzy);
+    let mut out = generate_static_seeds(arg, &arg_query, &normalized_search_term, fuzzy);
     let generators = effective_generators(arg);
     let arg_id = generator_arg_id(tokens, arg, cwd, search_term);
     let debounce = arg.debounce_ms.is_some();
@@ -330,14 +334,14 @@ pub(crate) fn generate_for_arg_with_history(
                 generator.trigger.as_ref(),
                 debounce,
                 arg_changed || !session.entries[index].ran,
-                search_term,
+                &normalized_search_term,
                 &previous,
                 generator_lists_paths(generator, arg),
             );
             // getQueryTerm tail for filtering returned names. Custom hooks
-            // still receive the raw parser token as `context.searchTerm`.
+            // receive the parser token's inner text, not the raw shell token.
             let gen_query = query_term_with_hook(
-                search_term,
+                &normalized_search_term,
                 generator
                     .get_query_term
                     .as_deref()
@@ -348,8 +352,10 @@ pub(crate) fn generate_for_arg_with_history(
                     .or(arg.js_get_query_term.as_deref())
                     .or(arg.meta.js_get_query_term.as_deref()),
             );
-            let follow_up =
-                debounce && !arg_changed && session.entries[index].needs_run && session.search_term == search_term;
+            let follow_up = debounce
+                && !arg_changed
+                && session.entries[index].needs_run
+                && session.search_term == normalized_search_term;
             let has_query_rule = generator.get_query_term.is_some()
                 || generator.js_get_query_term.is_some()
                 || arg.meta.get_query_term.is_some()
@@ -376,6 +382,7 @@ pub(crate) fn generate_for_arg_with_history(
                     tokens,
                     history_values,
                     &gen_query,
+                    &normalized_search_term,
                     search_term,
                     cwd,
                     fuzzy,
@@ -389,7 +396,9 @@ pub(crate) fn generate_for_arg_with_history(
             stamp_query_term(&mut rows, &gen_query, search_term, has_query_rule);
             out.extend(rows);
         }
-        session.search_term = search_term.to_string();
+        // Trigger state follows the parser token, not its raw shell spelling;
+        // insertion still receives the raw token through the result below.
+        session.search_term = normalized_search_term.clone();
     });
     if pending {
         set_pending_generators(debounce_ms);
@@ -428,21 +437,17 @@ fn path_row_already_includes_directory_prefix(name: &str, kind: &str, search_ter
     if !matches!(kind, "file" | "folder") {
         return false;
     }
-    if !search_term.ends_with(query_term) {
+    let normalized_search_term = crate::lookup::parser_inner_text(search_term);
+    if !normalized_search_term.ends_with(query_term) {
         return false;
     }
     // `getQueryTerm: "/"` on `src/` yields an empty tail. The directory is
     // then the whole search term; skip stamping so insertion still uses `src/`.
-    let directory = &search_term[..search_term.len() - query_term.len()];
+    let directory = &normalized_search_term[..normalized_search_term.len() - query_term.len()];
     if directory.is_empty() {
         return false;
     }
-    if name.starts_with(directory) {
-        return true;
-    }
-    // Raw tokens keep the opening quote (`'src/fo`). Generated names do not.
-    let unquoted = directory.trim_start_matches(['\'', '"']);
-    !unquoted.is_empty() && name.starts_with(unquoted)
+    name.starts_with(directory)
 }
 
 fn generate_static_seeds(arg: &ArgSpec, query: &str, search_term: &str, fuzzy: bool) -> Vec<Suggestion> {
@@ -638,10 +643,27 @@ fn utf16_len(text: &str) -> usize {
 
 fn refilter_generated(rows: &[Suggestion], query: &str, fuzzy: bool) -> Vec<Suggestion> {
     rows.iter()
-        .filter(|suggestion| query.is_empty() || matches_query(&suggestion.name, query, fuzzy))
+        .filter(|suggestion| generated_row_matches_query(suggestion, query, fuzzy))
         .filter(|suggestion| hidden_generated_row_is_visible(suggestion, query))
         .cloned()
         .collect()
+}
+
+fn generated_row_matches_query(suggestion: &Suggestion, query: &str, fuzzy: bool) -> bool {
+    if query.is_empty() || matches_query(&suggestion.name, query, fuzzy) {
+        return true;
+    }
+    // Native path generators filter the basename before adding the typed
+    // directory prefix to the displayed name (`src/main.rs` for query `m`).
+    // Apply the same rule when a cached row is reused, otherwise a raw quote
+    // change can incorrectly refilter every cached path row away.
+    matches!(suggestion.kind.as_str(), "file" | "folder")
+        && suggestion
+            .name
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .is_some_and(|basename| matches_query(basename, query, fuzzy))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -651,7 +673,8 @@ fn generate_from_generator(
     tokens: &[String],
     history_values: &[String],
     query: &str,
-    search_term: &str,
+    normalized_search_term: &str,
+    raw_search_term: &str,
     cwd: &str,
     fuzzy: bool,
     timeout: Duration,
@@ -700,7 +723,7 @@ fn generate_from_generator(
             &snapshot,
             tokens,
             query,
-            search_term,
+            raw_search_term,
             cwd,
             fuzzy,
             timeout,
@@ -741,7 +764,15 @@ fn generate_from_generator(
             matches: generator.matches.as_deref(),
             matches_flags: generator.matches_flags.as_deref(),
         };
-        template_rows.extend(filegen::complete_path_filtered(search_term, cwd, fuzzy, &filter));
+        // Filegen must receive parser inner text.  The raw token remains in
+        // the completion result and is used later to delete the exact shell
+        // spelling during insertion.
+        template_rows.extend(filegen::complete_path_filtered(
+            normalized_search_term,
+            cwd,
+            fuzzy,
+            &filter,
+        ));
     }
     if templates.contains(&Template::History) {
         template_rows.extend(history_template_suggestions(history_values, query, fuzzy));
@@ -818,7 +849,7 @@ fn run_js_generators(
     arg: &ArgSpec,
     tokens: &[String],
     query: &str,
-    search_term: &str,
+    raw_search_term: &str,
     cwd: &str,
     fuzzy: bool,
     timeout: Duration,
@@ -839,7 +870,7 @@ fn run_js_generators(
     if let Some(hook_id) = arg.js_custom.as_deref() {
         let fallback = crate::js_host::custom_cache_fallback(tokens);
         let custom = crate::js_host::cached_suggestions(host, arg, cwd, "custom", &fallback, || {
-            host.custom(hook_id, tokens, cwd, search_term, timeout, arg.meta.is_dangerous)
+            host.custom(hook_id, tokens, cwd, raw_search_term, timeout, arg.meta.is_dangerous)
                 .unwrap_or_default()
         });
         out.extend(
@@ -1658,6 +1689,47 @@ mod tests {
     }
 
     #[test]
+    fn filepaths_lookup_uses_parser_inner_text_for_quoted_and_escaped_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("src").join("main.rs"), "fn").unwrap();
+        fs::create_dir(dir.path().join("my dir")).unwrap();
+        let cwd = dir.path().display().to_string();
+        let raw_tokens = [
+            ("'src/m", "src/main.rs"),
+            (r#""src/m"#, "src/main.rs"),
+            ("$'src/m", "src/main.rs"),
+            (r"my\ d", "my dir/"),
+        ];
+
+        for (raw, expected_name) in raw_tokens {
+            // Give each invocation a distinct generator identity so this
+            // table tests the filesystem path rather than a prior session
+            // result for the same normalized token.
+            let arg = ArgSpec {
+                name: raw.into(),
+                templates: vec![Template::Filepaths],
+                meta: SuggestionMeta {
+                    get_query_term: Some("/".into()),
+                    ..SuggestionMeta::default()
+                },
+                ..ArgSpec::default()
+            };
+            let normalized = crate::lookup::parser_inner_text(raw);
+            let query = query_term_with_hook(&normalized, Some("/"), None);
+            let suggestions =
+                generate_for_arg_with_search_term(&arg, &["cat".into(), normalized.clone()], &query, raw, &cwd, false);
+            let row = suggestions
+                .iter()
+                .find(|suggestion| suggestion.name == expected_name)
+                .unwrap_or_else(|| panic!("raw={raw:?}, normalized={normalized:?}, rows={suggestions:?}"));
+            if expected_name.starts_with("src/") {
+                assert_eq!(row.query_term, None, "raw={raw:?}, rows={suggestions:?}");
+            }
+        }
+    }
+
+    #[test]
     fn filepaths_relist_when_the_typed_prefix_changes() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("src")).unwrap();
@@ -2215,13 +2287,40 @@ mod tests {
             ..ArgSpec::default()
         };
         let rows = host.enter(&cwd, || {
-            generate_for_arg_with_search_term(&arg, &["demo".into(), "src/foo".into()], "foo", "src/foo", &cwd, false)
+            generate_for_arg_with_search_term(&arg, &["demo".into(), "src/foo".into()], "foo", "'src/foo", &cwd, false)
         });
         assert_eq!(
             rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
             vec!["foo"]
         );
         assert_eq!(rows[0].description, "src/foo");
+    }
+
+    #[test]
+    fn custom_generator_receives_parser_inner_text_without_second_unescape() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("hooks");
+        fs::create_dir(&hooks).unwrap();
+        fs::write(
+            hooks.join("demo_custom_0.js"),
+            "export default function(tokens, exec, ctx) {\n  return [{ name: ctx.searchTerm }];\n}\n",
+        )
+        .unwrap();
+        let host = crate::js_host::JsHost::new(hooks);
+        let cwd = dir.path().display().to_string();
+        let arg = ArgSpec {
+            js_custom: Some("demo#custom#0".into()),
+            ..ArgSpec::default()
+        };
+        let raw = r"$'foo\'bar";
+        let normalized = r"foo\'bar";
+        let rows = host.enter(&cwd, || {
+            generate_for_arg_with_search_term(&arg, &["demo".into(), normalized.into()], normalized, raw, &cwd, false)
+        });
+        assert_eq!(
+            rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
+            vec![normalized]
+        );
     }
 
     #[test]

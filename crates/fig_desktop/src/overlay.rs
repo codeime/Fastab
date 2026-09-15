@@ -1090,7 +1090,7 @@ impl OverlayController {
                 true
             },
             Some(TabPrefix::Partial(shared)) => {
-                let (raw_search, query_term, completes_the_row, kind) = {
+                let (raw_search, query_term, completes_the_row, kind, quote_aware) = {
                     let overlay = self.state.read(cx);
                     let Some(item) = overlay.selected_item() else {
                         return false;
@@ -1100,6 +1100,7 @@ impl OverlayController {
                         item.query_term.clone(),
                         prefix_completes_row(&shared, item),
                         item.kind.clone(),
+                        item.insert_value.is_none() || matches!(item.kind.as_str(), "file" | "folder" | "dir"),
                     )
                 };
                 // The shared prefix can already spell out the whole selected
@@ -1116,7 +1117,9 @@ impl OverlayController {
                 if insertion.is_empty() && deletion == 0 {
                     return false;
                 }
-                self.insert_text(&insertion, deletion, false, figterm_state, cx);
+                let (insertion, deletion, offset) =
+                    insertion_edit_for_raw_search(&raw_search, insertion, deletion, quote_aware, false, false);
+                self.insert_text_with_offset(&insertion, deletion, offset, false, figterm_state, cx);
                 true
             },
             None => false,
@@ -1173,8 +1176,19 @@ impl OverlayController {
         let (insertion, deletion) = insertion_for_kind(&text, &search_term, &kind);
         let buffer = input_before_accept.as_ref().map_or("", |(buffer, _)| buffer.as_str());
         let (insertion, deletion) = apply_shortcut_palette_deletion(buffer, &search_term, insertion, deletion, &text);
+        let outside_space = add_space && item.should_add_space && !text.ends_with('\n');
+        let outside_newline = execute && kind != "auto-execute" && text.ends_with('\n');
+        let (insertion, deletion, offset) = insertion_edit_for_kind(
+            &item.search,
+            insertion,
+            deletion,
+            &kind,
+            item.insert_value.is_none() || matches!(kind.as_str(), "file" | "folder" | "dir"),
+            outside_space,
+            outside_newline,
+        );
         let should_suppress = should_suppress_after_insert(execute, &kind, opens_new_arg, &text);
-        let inserted = self.insert_text(&insertion, deletion, execute, figterm_state, cx);
+        let inserted = self.insert_text_with_offset(&insertion, deletion, offset, execute, figterm_state, cx);
         if inserted
             && let Some((root_command, accepted_name)) = acceptance
             && let Err(err) = self.engine.record_acceptance(root_command, accepted_name)
@@ -1183,9 +1197,16 @@ impl OverlayController {
         }
         let changed_buffer = insertion_changes_buffer(&insertion, deletion, execute);
         if inserted && changed_buffer && should_suppress {
-            if let Some((expected_buffer, expected_cursor)) = input_before_accept
-                .as_ref()
-                .and_then(|(buffer, cursor)| predicted_buffer_after_insert(buffer, *cursor, &insertion, deletion))
+            if let Some((expected_buffer, expected_cursor)) =
+                input_before_accept.as_ref().and_then(|(buffer, cursor)| {
+                    predicted_buffer_after_insert_with_offset(
+                        buffer,
+                        *cursor,
+                        &insertion,
+                        deletion,
+                        offset.unwrap_or_default(),
+                    )
+                })
             {
                 self.state.update(cx, |overlay, cx| {
                     // Bind suppression to the post-accept buffer. Cursor is
@@ -1223,6 +1244,18 @@ impl OverlayController {
         figterm_state: &FigtermState,
         _cx: &mut App,
     ) -> bool {
+        self.insert_text_with_offset(insertion, deletion, None, execute, figterm_state, _cx)
+    }
+
+    fn insert_text_with_offset(
+        &self,
+        insertion: &str,
+        deletion: i64,
+        offset: Option<i64>,
+        execute: bool,
+        figterm_state: &FigtermState,
+        _cx: &mut App,
+    ) -> bool {
         let Some(session_id) = self.current_session() else {
             return false;
         };
@@ -1233,13 +1266,21 @@ impl OverlayController {
         let snapshot = self.current_input_snapshot();
         *self.self_insertion.lock().unwrap_or_else(|err| err.into_inner()) = snapshot
             .as_ref()
-            .and_then(|(buffer, cursor)| predicted_buffer_after_insert(buffer, *cursor, insertion, deletion))
+            .and_then(|(buffer, cursor)| {
+                predicted_buffer_after_insert_with_offset(
+                    buffer,
+                    *cursor,
+                    insertion,
+                    deletion,
+                    offset.unwrap_or_default(),
+                )
+            })
             .map(|(predicted, _)| predicted);
         let insertion_buffer = snapshot.map(|(buffer, _)| buffer);
         if let Err(err) = sender.send(FigtermCommand::InsertText {
             insertion: Some(insertion.to_string()),
             deletion: Some(deletion),
-            offset: None,
+            offset,
             // An auto-execute suggestion already carries its `\n` insertValue;
             // adding the immediate carriage return would execute twice.
             immediate: Some(immediate_for_insert(execute, insertion)),
@@ -1763,19 +1804,37 @@ fn accepted_suggestion_key(item: &ClickInsert, input: Option<&(String, u32)>) ->
 ///
 /// `cursor` is a byte offset into the shell buffer, while `deletion` counts
 /// shell characters (the same units used by the backspaces sent to figterm).
-/// The only control sequence currently emitted in an insertion is the left
-/// arrow used for `{cursor}`; it moves the cursor without becoming buffer text.
+/// The only control sequences emitted in an insertion are cursor arrows; they
+/// move the cursor without becoming buffer text.
+#[cfg(test)]
 fn predicted_buffer_after_insert(buffer: &str, cursor: u32, insertion: &str, deletion: i64) -> Option<(String, u32)> {
+    predicted_buffer_after_insert_with_offset(buffer, cursor, insertion, deletion, 0)
+}
+
+fn predicted_buffer_after_insert_with_offset(
+    buffer: &str,
+    cursor: u32,
+    insertion: &str,
+    deletion: i64,
+    offset: i64,
+) -> Option<(String, u32)> {
     let cursor = usize::try_from(cursor).ok()?;
     if cursor > buffer.len() || !buffer.is_char_boundary(cursor) {
         return None;
     }
+    let insertion_cursor = move_utf16_cursor(buffer, cursor, offset);
     let deletion = usize::try_from(deletion).ok()?;
-    let deletion_start = previous_utf16_boundary(buffer, cursor, deletion);
-    let mut result = String::with_capacity(buffer.len().saturating_sub(cursor - deletion_start) + insertion.len());
+    let deletion_start = previous_utf16_boundary(buffer, insertion_cursor, deletion);
+    let mut result =
+        String::with_capacity(buffer.len().saturating_sub(insertion_cursor - deletion_start) + insertion.len());
     result.push_str(&buffer[..deletion_start]);
-
     let mut predicted_cursor = result.len();
+    // Keep the untouched tail in the simulated buffer while consuming the
+    // insertion stream. This matters for a closed quote: the right-arrow
+    // crossing from the newly completed value must be able to cross the
+    // original closing quote before an automatic space/newline is appended.
+    result.push_str(&buffer[insertion_cursor..]);
+
     let mut offset = 0;
     while offset < insertion.len() {
         let remaining = insertion.get(offset..)?;
@@ -1784,13 +1843,25 @@ fn predicted_buffer_after_insert(buffer: &str, cursor: u32, insertion: &str, del
             offset += "\x1b[D".len();
             continue;
         }
+        if remaining.starts_with("\x1b[C") {
+            predicted_cursor = next_utf16_boundary(&result, predicted_cursor, 1);
+            offset += "\x1b[C".len();
+            continue;
+        }
         let character = remaining.chars().next()?;
-        result.push(character);
-        predicted_cursor = result.len();
+        result.insert(predicted_cursor, character);
+        predicted_cursor += character.len_utf8();
         offset += character.len_utf8();
     }
-    result.push_str(&buffer[cursor..]);
     Some((result, u32::try_from(predicted_cursor).ok()?))
+}
+
+fn move_utf16_cursor(buffer: &str, cursor: usize, offset: i64) -> usize {
+    if offset < 0 {
+        previous_utf16_boundary(buffer, cursor, offset.unsigned_abs() as usize)
+    } else {
+        next_utf16_boundary(buffer, cursor, offset as usize)
+    }
 }
 
 fn previous_utf16_boundary(text: &str, from: usize, units: usize) -> usize {
@@ -1805,6 +1876,20 @@ fn previous_utf16_boundary(text: &str, from: usize, units: usize) -> usize {
         remaining = remaining.saturating_sub(ch.len_utf16());
     }
     if remaining > 0 { 0 } else { boundary }
+}
+
+fn next_utf16_boundary(text: &str, from: usize, units: usize) -> usize {
+    let suffix = text.get(from..).unwrap_or("");
+    let mut remaining = units;
+    let mut boundary = from.min(text.len());
+    for (index, ch) in suffix.char_indices() {
+        if remaining == 0 {
+            break;
+        }
+        boundary = from + index + ch.len_utf8();
+        remaining = remaining.saturating_sub(ch.len_utf16());
+    }
+    boundary
 }
 
 fn opens_new_arg(add_space: bool, should_add_space: bool, separator: Option<&str>) -> bool {
@@ -1822,6 +1907,171 @@ fn insertion_for(name: &str, search_term: &str) -> (String, i64) {
         (
             name.to_string(),
             deletion_term_for_search(search_term).encode_utf16().count() as i64,
+        )
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShellQuoteKind {
+    Single,
+    Double,
+    AnsiC,
+}
+
+fn closed_shell_quote_inner(raw_search: &str) -> Option<(ShellQuoteKind, &str)> {
+    let (kind, rest) = if let Some(rest) = raw_search.strip_prefix("$'") {
+        (ShellQuoteKind::AnsiC, rest)
+    } else if let Some(rest) = raw_search.strip_prefix('\'') {
+        (ShellQuoteKind::Single, rest)
+    } else if let Some(rest) = raw_search.strip_prefix('"') {
+        (ShellQuoteKind::Double, rest)
+    } else {
+        return None;
+    };
+    let closer = match kind {
+        ShellQuoteKind::Single | ShellQuoteKind::AnsiC => '\'',
+        ShellQuoteKind::Double => '"',
+    };
+    let inner = rest.strip_suffix(closer)?;
+    let mut escaped = false;
+    for ch in inner.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if kind != ShellQuoteKind::Single && ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == closer {
+            // An unescaped closer before the final character means this is a
+            // quoted fragment followed by more text, not a token whose caret
+            // is immediately after its closing quote.
+            return None;
+        }
+    }
+    if escaped { None } else { Some((kind, inner)) }
+}
+
+fn escape_insertion_inside_quote(value: &str, kind: ShellQuoteKind) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match kind {
+            ShellQuoteKind::Single if ch == '\'' => escaped.push_str("'\"'\"'"),
+            ShellQuoteKind::Double if matches!(ch, '$' | '`' | '"' | '\\' | '\n') => {
+                escaped.push('\\');
+                escaped.push(ch);
+            },
+            ShellQuoteKind::AnsiC if matches!(ch, '\\' | '\'') => {
+                escaped.push('\\');
+                escaped.push(ch);
+            },
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+fn split_closed_quote_suffix(text: &str, trailing_space: bool, trailing_newline: bool) -> (&str, &str) {
+    let mut inside_end = text.len();
+    if trailing_newline {
+        inside_end = text
+            .get(..inside_end)
+            .and_then(|text| text.strip_suffix('\n'))
+            .map_or(inside_end, str::len);
+    }
+    if trailing_space {
+        inside_end = text
+            .get(..inside_end)
+            .and_then(|text| text.strip_suffix(' '))
+            .map_or(inside_end, str::len);
+    }
+    (&text[..inside_end], &text[inside_end..])
+}
+
+/// Move only the completion's token text inside a closed quote. Automatic
+/// spaces and execute newlines belong after that quote, so the insertion
+/// stream crosses it with one right-arrow before appending those suffixes.
+fn insertion_edit_for_raw_search(
+    raw_search: &str,
+    insertion: String,
+    deletion: i64,
+    quote_aware: bool,
+    trailing_space: bool,
+    trailing_newline: bool,
+) -> (String, i64, Option<i64>) {
+    let Some((quote_kind, _)) = closed_shell_quote_inner(raw_search) else {
+        return (insertion, deletion, None);
+    };
+    // An explicit `insertValue` is already shell text, not necessarily the
+    // plain value represented by this query. It may intentionally contain
+    // quotes, separators, or a cursor marker, so moving its edit point inside
+    // the existing quote can change the command's meaning. Keep the legacy
+    // replacement protocol for that case; only plain-name/file insertions
+    // have enough information for quote-native editing.
+    if !quote_aware {
+        return (insertion, deletion, None);
+    }
+    // A cursor marker is an explicit request to leave the caret at a position
+    // inside the inserted text. Do not move that caret back across the quote;
+    // the marker path has its own cursor semantics.
+    if insertion.contains("\x1b[D") {
+        return (insertion, deletion, None);
+    }
+    // `insertion_for` normally receives the unquoted value. For a replacement
+    // inside a closed quote, however, backspaces must count the raw shell
+    // characters (including escapes), not the decoded value, or they can eat
+    // the opening quote as well.
+    let deletion = if deletion > 0 {
+        closed_shell_quote_inner(raw_search).map_or(deletion, |(_, inner)| inner.encode_utf16().count() as i64)
+    } else {
+        deletion
+    };
+    let offset = -1;
+    // Keep automatic suffixes outside the quote before re-encoding the value:
+    // a double-quoted newline is escaped, while an execute newline must stay
+    // a literal line break after the closing quote.
+    let (raw_inside, outside) = split_closed_quote_suffix(&insertion, trailing_space, trailing_newline);
+    let inside = if quote_aware {
+        let value = unquote_shell_token(raw_inside);
+        escape_insertion_inside_quote(&value, quote_kind)
+    } else {
+        raw_inside.to_string()
+    };
+    if inside.is_empty() {
+        // An exact quoted acceptance may only have an automatic suffix. It is
+        // already at the correct position, after the closing quote.
+        return (insertion, deletion, None);
+    }
+    let mut stream = String::with_capacity(insertion.len() + "\x1b[C".len());
+    stream.push_str(&inside);
+    stream.push_str("\x1b[C");
+    stream.push_str(outside);
+    (stream, deletion, Some(offset))
+}
+
+fn insertion_edit_for_kind(
+    raw_search: &str,
+    insertion: String,
+    deletion: i64,
+    kind: &str,
+    quote_aware: bool,
+    trailing_space: bool,
+    trailing_newline: bool,
+) -> (String, i64, Option<i64>) {
+    if matches!(kind, "auto-execute" | "special") {
+        // Actions operate on the current buffer rather than replacing the
+        // typed token. They must remain at the caret even if that token
+        // happens to end in a quote.
+        (insertion, deletion, None)
+    } else {
+        insertion_edit_for_raw_search(
+            raw_search,
+            insertion,
+            deletion,
+            quote_aware,
+            trailing_space,
+            trailing_newline,
         )
     }
 }
@@ -2515,6 +2765,48 @@ mod tests {
     #[test]
     fn auto_execute_does_not_delete_the_exact_query() {
         assert_eq!(insertion_for_kind("\n", "status", "auto-execute"), ("\n".into(), 0));
+    }
+
+    #[test]
+    fn action_insertions_stay_at_the_caret_after_a_closed_quote() {
+        let (insertion, deletion) = insertion_for_kind("\n", "ch", "auto-execute");
+        let (insertion, deletion, offset) =
+            insertion_edit_for_kind("'ch'", insertion, deletion, "auto-execute", false, false, false);
+        assert_eq!(insertion, "\n");
+        assert_eq!(deletion, 0);
+        assert_eq!(offset, None);
+    }
+
+    #[test]
+    fn explicit_insert_value_keeps_legacy_closed_quote_edit_position() {
+        // `insertValue` is opaque shell text. In particular, it can be a
+        // command fragment rather than the plain value named by the row, so
+        // the closed-quote value edit must not move it before the closer.
+        let raw_search = "'ch'";
+        let insert_value =
+            full_insertion_for_item("checkout", Some("checkout --detach"), "arg", None, false, false, false);
+        let search = insertion_search_term("arg", raw_search, None, &insert_value);
+        assert_eq!(search, "ch");
+        let (insertion, deletion) = insertion_for_kind(&insert_value, &search, "arg");
+        assert_eq!((insertion.as_str(), deletion), ("eckout --detach", 0));
+
+        let (insertion, deletion, offset) =
+            insertion_edit_for_kind(raw_search, insertion, deletion, "arg", false, false, false);
+        assert_eq!(insertion, "eckout --detach");
+        assert_eq!(deletion, 0);
+        assert_eq!(offset, None);
+
+        let buffer = "git 'ch'";
+        let (predicted, cursor) = predicted_buffer_after_insert_with_offset(
+            buffer,
+            u32::try_from(buffer.len()).unwrap(),
+            &insertion,
+            deletion,
+            offset.unwrap_or_default(),
+        )
+        .expect("explicit insertValue should retain the legacy insertion calculation");
+        assert_eq!(predicted, "git 'ch'eckout --detach");
+        assert_eq!(cursor, u32::try_from(predicted.len()).unwrap());
     }
 
     #[test]
@@ -3295,6 +3587,280 @@ mod tests {
         let search = insertion_search_term("folder", r#""src/fo"#, Some("fo"), "src/foo/");
         assert_eq!(search, "src/fo");
         assert_eq!(insertion_for("src/foo/", &search), ("o/".into(), 0));
+    }
+
+    #[test]
+    fn ansi_c_quoted_acceptance_keeps_the_dollar_and_opening_quote() {
+        let search = insertion_search_term("arg", "$'fo", None, "foo");
+        assert_eq!(search, "fo");
+        let (insertion, deletion) = insertion_for("foo", &search);
+        assert_eq!((insertion, deletion), ("o".into(), 0));
+        let Some((buffer, cursor)) = predicted_buffer_after_insert("$'fo", 4, "o", 0) else {
+            panic!("expected a predictable ANSI-C insertion");
+        };
+        assert_eq!(buffer, "$'foo");
+        assert_eq!(cursor, 5);
+    }
+
+    #[test]
+    fn quoted_and_escaped_path_acceptance_preserves_typed_shell_syntax() {
+        let cases = [
+            (r"cat my\ d", r"my\ d", "my dir", r"cat my\ dir"),
+            ("cat 'src/m", "'src/m", "src/main.rs", "cat 'src/main.rs"),
+            (r#"cat "src/m"#, r#""src/m"#, "src/main.rs", r#"cat "src/main.rs"#),
+            ("cat $'src/m", "$'src/m", "src/main.rs", "cat $'src/main.rs"),
+        ];
+
+        for (buffer, raw_search, name, expected) in cases {
+            let insert_text = full_insertion_for_item(name, None, "file", None, false, false, false);
+            let search = insertion_search_term("file", raw_search, None, &insert_text);
+            let (insertion, deletion) = insertion_for_kind(&insert_text, &search, "file");
+            let Some((predicted, cursor)) =
+                predicted_buffer_after_insert(buffer, u32::try_from(buffer.len()).unwrap(), &insertion, deletion)
+            else {
+                panic!("expected a predictable insertion for {buffer:?}");
+            };
+            assert_eq!(predicted, expected, "raw search={raw_search:?}");
+            assert_eq!(
+                cursor,
+                u32::try_from(expected.len()).unwrap(),
+                "raw search={raw_search:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn closed_quote_acceptance_inserts_before_the_closer_for_enter_and_tab() {
+        let cases = [
+            ("git 'ch'", "'ch'", "git 'checkout'"),
+            (r#"git "ch""#, r#""ch""#, r#"git "checkout""#),
+            ("git $'ch'", "$'ch'", "git $'checkout'"),
+        ];
+
+        for (buffer, raw_search, expected) in cases {
+            let insert_text = full_insertion_for_item("checkout", None, "subcommand", None, false, false, false);
+            let search = insertion_search_term("subcommand", raw_search, None, &insert_text);
+            let (insertion, deletion) = insertion_for_kind(&insert_text, &search, "subcommand");
+            let (insertion, deletion, offset) =
+                insertion_edit_for_raw_search(raw_search, insertion, deletion, true, false, false);
+            assert_eq!(offset, Some(-1), "raw search={raw_search:?}");
+            let Some((predicted, cursor)) = predicted_buffer_after_insert_with_offset(
+                buffer,
+                u32::try_from(buffer.len()).unwrap(),
+                &insertion,
+                deletion,
+                offset.unwrap_or_default(),
+            ) else {
+                panic!("expected a predictable closed-quote insertion for {raw_search:?}");
+            };
+            assert_eq!(predicted, expected, "raw search={raw_search:?}");
+            assert_eq!(
+                cursor,
+                u32::try_from(expected.len()).unwrap(),
+                "raw search={raw_search:?}"
+            );
+
+            // Tab Partial uses the same raw-search edit, with only the shared
+            // prefix as its insertion. Keep this as a separate calculation so
+            // the regression covers both acceptance paths rather than only the
+            // Enter/full-row path.
+            let shared = "check";
+            let tab_search = prefix_insertion_search(shared, raw_search, None);
+            let (tab_insertion, tab_deletion) = insertion_for(shared, &tab_search);
+            let (tab_insertion, tab_deletion, tab_offset) =
+                insertion_edit_for_raw_search(raw_search, tab_insertion, tab_deletion, true, false, false);
+            assert_eq!(tab_offset, Some(-1), "raw search={raw_search:?}");
+            let Some((tab_predicted, tab_cursor)) = predicted_buffer_after_insert_with_offset(
+                buffer,
+                u32::try_from(buffer.len()).unwrap(),
+                &tab_insertion,
+                tab_deletion,
+                tab_offset.unwrap_or_default(),
+            ) else {
+                panic!("expected a predictable closed-quote Tab insertion for {raw_search:?}");
+            };
+            assert_eq!(
+                tab_predicted,
+                expected.replace("checkout", "check"),
+                "raw search={raw_search:?}"
+            );
+            assert_eq!(
+                tab_cursor,
+                u32::try_from(expected.replace("checkout", "check").len()).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn closed_quote_acceptance_keeps_automatic_suffixes_outside() {
+        for raw_search in ["'ch'", r#""ch""#, "$'ch'"] {
+            let spaced_text = full_insertion_for_item("checkout", None, "subcommand", None, true, true, false);
+            let search = insertion_search_term("subcommand", raw_search, None, &spaced_text);
+            let (insertion, deletion) = insertion_for_kind(&spaced_text, &search, "subcommand");
+            let (insertion, deletion, offset) =
+                insertion_edit_for_raw_search(raw_search, insertion, deletion, true, true, false);
+            let buffer = format!("git {raw_search}");
+            let expected = format!("git {} ", raw_search.replace("ch", "checkout"));
+            let Some((predicted, cursor)) = predicted_buffer_after_insert_with_offset(
+                &buffer,
+                u32::try_from(buffer.len()).unwrap(),
+                &insertion,
+                deletion,
+                offset.unwrap_or_default(),
+            ) else {
+                panic!("expected a predictable spaced insertion for {raw_search:?}");
+            };
+            assert_eq!(predicted, expected, "raw search={raw_search:?}");
+            assert_eq!(
+                cursor,
+                u32::try_from(expected.len()).unwrap(),
+                "raw search={raw_search:?}"
+            );
+
+            let executed_text = full_insertion_for_item("checkout", None, "subcommand", None, true, true, true);
+            let search = insertion_search_term("subcommand", raw_search, None, &executed_text);
+            let (insertion, deletion) = insertion_for_kind(&executed_text, &search, "subcommand");
+            let (insertion, deletion, offset) =
+                insertion_edit_for_raw_search(raw_search, insertion, deletion, true, false, true);
+            let Some((predicted, cursor)) = predicted_buffer_after_insert_with_offset(
+                &buffer,
+                u32::try_from(buffer.len()).unwrap(),
+                &insertion,
+                deletion,
+                offset.unwrap_or_default(),
+            ) else {
+                panic!("expected a predictable executed insertion for {raw_search:?}");
+            };
+            assert_eq!(
+                predicted,
+                format!("git {}\n", raw_search.replace("ch", "checkout")),
+                "raw search={raw_search:?}"
+            );
+            assert_eq!(
+                cursor,
+                u32::try_from(predicted.len()).unwrap(),
+                "raw search={raw_search:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn closed_quoted_file_acceptance_uses_quote_native_space_escaping() {
+        for raw_search in ["'my f'", r#""my f""#, "$'my f'"] {
+            let text = full_insertion_for_item("my file.txt", None, "file", None, false, false, false);
+            assert_eq!(text, r"my\ file.txt");
+            let search = insertion_search_term("file", raw_search, None, &text);
+            let (insertion, deletion) = insertion_for_kind(&text, &search, "file");
+            let (insertion, deletion, offset) =
+                insertion_edit_for_raw_search(raw_search, insertion, deletion, true, false, false);
+            let buffer = format!("cat {raw_search}");
+            let expected = format!("cat {}", raw_search.replace("my f", "my file.txt"));
+            let Some((predicted, cursor)) = predicted_buffer_after_insert_with_offset(
+                &buffer,
+                u32::try_from(buffer.len()).unwrap(),
+                &insertion,
+                deletion,
+                offset.unwrap_or_default(),
+            ) else {
+                panic!("expected a predictable quoted file insertion for {raw_search:?}");
+            };
+            assert_eq!(predicted, expected, "raw search={raw_search:?}");
+            assert_eq!(
+                cursor,
+                u32::try_from(expected.len()).unwrap(),
+                "raw search={raw_search:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn closed_quoted_file_tab_prefix_uses_quote_native_space_escaping() {
+        for raw_search in ["'my f'", r#""my f""#, "$'my f'"] {
+            let shared = escape_tab_prefix("my file", "file");
+            let search = prefix_insertion_search(&shared, raw_search, None);
+            let (insertion, deletion) = insertion_for(&shared, &search);
+            let (insertion, deletion, offset) =
+                insertion_edit_for_raw_search(raw_search, insertion, deletion, true, false, false);
+            let buffer = format!("cat {raw_search}");
+            let expected = format!("cat {}", raw_search.replace("my f", "my file"));
+            let Some((predicted, cursor)) = predicted_buffer_after_insert_with_offset(
+                &buffer,
+                u32::try_from(buffer.len()).unwrap(),
+                &insertion,
+                deletion,
+                offset.unwrap_or_default(),
+            ) else {
+                panic!("expected a predictable quoted Tab insertion for {raw_search:?}");
+            };
+            assert_eq!(predicted, expected, "raw search={raw_search:?}");
+            assert_eq!(
+                cursor,
+                u32::try_from(expected.len()).unwrap(),
+                "raw search={raw_search:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn closed_quoted_plain_name_acceptance_uses_quote_native_space_escaping() {
+        for raw_search in ["'my f'", r#""my f""#, "$'my f'"] {
+            let text = full_insertion_for_item("my file", None, "arg", None, false, false, false);
+            assert_eq!(text, r"my\ file");
+            let search = insertion_search_term("arg", raw_search, None, &text);
+            let (insertion, deletion) = insertion_for_kind(&text, &search, "arg");
+            let (insertion, deletion, offset) =
+                insertion_edit_for_kind(raw_search, insertion, deletion, "arg", true, false, false);
+            let buffer = format!("echo {raw_search}");
+            let expected = format!("echo {}", raw_search.replace("my f", "my file"));
+            let Some((predicted, cursor)) = predicted_buffer_after_insert_with_offset(
+                &buffer,
+                u32::try_from(buffer.len()).unwrap(),
+                &insertion,
+                deletion,
+                offset.unwrap_or_default(),
+            ) else {
+                panic!("expected a predictable quoted argument insertion for {raw_search:?}");
+            };
+            assert_eq!(predicted, expected, "raw search={raw_search:?}");
+            assert_eq!(
+                cursor,
+                u32::try_from(expected.len()).unwrap(),
+                "raw search={raw_search:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn closed_quote_replacement_counts_raw_escaped_characters() {
+        let cases = [
+            (r#"'my file'"#, "my-other", "git 'my-other'", 7),
+            (r#""a\"b""#, "aXb", r#"git "aXb""#, 4),
+            (r#"$'a\'b'"#, "aXb", r#"git $'aXb'"#, 4),
+        ];
+        for (raw_search, replacement, expected, raw_inner_units) in cases {
+            let (insertion, deletion) = insertion_for(replacement, &unquote_shell_token(raw_search));
+            assert!(deletion > 0, "the replacement should not be treated as a prefix");
+            let (insertion, deletion, offset) =
+                insertion_edit_for_raw_search(raw_search, insertion, deletion, true, false, false);
+            assert_eq!(offset, Some(-1), "raw search={raw_search:?}");
+            assert_eq!(deletion, raw_inner_units, "raw search={raw_search:?}");
+            let buffer = format!("git {raw_search}");
+            let Some((predicted, cursor)) = predicted_buffer_after_insert_with_offset(
+                &buffer,
+                u32::try_from(buffer.len()).unwrap(),
+                &insertion,
+                deletion,
+                offset.unwrap_or_default(),
+            ) else {
+                panic!("expected a predictable replacement");
+            };
+            assert_eq!(predicted, expected, "raw search={raw_search:?}");
+            assert_eq!(
+                cursor,
+                u32::try_from(predicted.len()).unwrap(),
+                "raw search={raw_search:?}"
+            );
+        }
     }
 
     #[test]

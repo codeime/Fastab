@@ -9,6 +9,7 @@ mod macos {
     use std::sync::{Mutex, OnceLock};
 
     use cocoa::base::{NO, YES, id, nil};
+    use cocoa::foundation::NSString;
     use objc::declare::ClassDecl;
     use objc::runtime::{BOOL, Class, Object, Sel};
     use objc::{msg_send, sel, sel_impl};
@@ -19,6 +20,30 @@ mod macos {
 
     fn controller_slot() -> &'static Mutex<Option<usize>> {
         SPARKLE_CONTROLLER.get_or_init(|| Mutex::new(None))
+    }
+
+    fn automatic_checks_enabled() -> bool {
+        // The bundle builder disables checks for prereleases and unsigned
+        // builds without a usable update feed. Do not override that choice
+        // with Sparkle's persisted user default when the app launches.
+        let Some(class) = Class::get("NSBundle") else {
+            return false;
+        };
+        // SAFETY: AppKit is initialized before updater startup; Info.plist's
+        // boolean value is an NSNumber and supports boolValue.
+        unsafe {
+            let bundle: id = msg_send![class, mainBundle];
+            if bundle == nil {
+                return false;
+            }
+            let key = NSString::alloc(nil).init_str("SUEnableAutomaticChecks");
+            let value: id = msg_send![bundle, objectForInfoDictionaryKey: key];
+            let _: () = msg_send![key, release];
+            value != nil && {
+                let enabled: BOOL = msg_send![value, boolValue];
+                enabled == YES
+            }
+        }
     }
 
     fn sparkle_binary_path() -> Option<PathBuf> {
@@ -178,10 +203,12 @@ mod macos {
                 // A feed persisted by an older build overrides Info.plist. Clear it
                 // before starting checks so this fork only uses its bundled feed.
                 let _: id = msg_send![updater, clearFeedURLFromUserDefaults];
-                let _: () = msg_send![updater, setAutomaticallyChecksForUpdates: YES];
+                let automatic_checks = if automatic_checks_enabled() { YES } else { NO };
+                let _: () = msg_send![updater, setAutomaticallyChecksForUpdates: automatic_checks];
                 let _: () = msg_send![updater, setAutomaticallyDownloadsUpdates: NO];
                 info!(
-                    "Sparkle updater controller ready (automatic checks enabled, auto-download disabled to force a prompt)"
+                    automatic_checks_enabled = automatic_checks == YES,
+                    "Sparkle updater controller ready (automatic download disabled)"
                 );
             } else {
                 warn!("Sparkle updater instance is unavailable; cannot enable automatic checks");
@@ -232,6 +259,10 @@ mod macos {
     }
 
     pub fn start_automatic_checks() {
+        if !automatic_checks_enabled() {
+            info!("Sparkle scheduled checks are disabled for this build");
+            return;
+        }
         // SPUStandardUpdaterController must be created on the main thread.
         // Use exec_async so we never block the caller (event loop may not be
         // running yet when this is called from the tokio async context).
@@ -246,6 +277,16 @@ mod macos {
     }
 
     pub fn check_for_update(show_webview: bool) -> bool {
+        if !automatic_checks_enabled() {
+            // Prerelease/unsigned bundles have no usable Sparkle feed. Keep
+            // the tray's manual action useful without sending users to a
+            // guaranteed-broken appcast: show the current release list.
+            if show_webview {
+                info!("No usable Sparkle feed; opening GitHub releases for manual update");
+                return fig_util::open_url(fig_util::consts::url::RELEASE_NOTES).is_ok();
+            }
+            return false;
+        }
         // Sparkle's checkForUpdates: and checkForUpdatesInBackground must be called on the
         // main thread. When invoked from a tokio worker thread (e.g. via the WebView API
         // handler), calling these selectors directly causes an ObjC exception that propagates

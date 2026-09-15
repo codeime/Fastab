@@ -132,7 +132,7 @@ pub enum CliRootCommands {
 
 const HELP_TEXT: &str = color_print::cstr! {"
 <magenta,em>{name}</magenta,em> (easy-complete) v{version}
-<dim>Project:</dim> https://github.com/chen86860/easy-complete
+<dim>Project:</dim> https://github.com/codeime/easy-complete
 
 <magenta,em>Usage:</magenta,em> {usage}
 
@@ -435,6 +435,6 @@ mod test {
     fn help_banner_includes_version_and_project_url() {
         let help = Cli::command().render_help().to_string();
         assert!(help.contains(&format!("v{}", env!("CARGO_PKG_VERSION"))));
-        assert!(help.contains("https://github.com/chen86860/easy-complete"));
+        assert!(help.contains("https://github.com/codeime/easy-complete"));
     }
 }

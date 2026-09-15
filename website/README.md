@@ -1,6 +1,6 @@
 # Easy Complete — Landing Page
 
-Marketing site for [Easy Complete](https://github.com/chen86860/easy-complete), built from the
+Marketing site for [Easy Complete](https://github.com/codeime/easy-complete), built from the
 Claude Design source (`Easy Complete.dc.html`).
 
 **Stack:** TanStack Start + React + TypeScript + Tailwind CSS v4, deployed on Cloudflare

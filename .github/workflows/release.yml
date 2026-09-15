@@ -25,6 +25,28 @@ jobs:
 
       - uses: actions/checkout@v7
 
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "Release tags must be v<major>.<minor>.<patch> or v<version>-(alpha|beta|rc)[.<suffix>]." >&2
+            echo "The website and README download links use the v-prefixed tag." >&2
+            exit 1
+          fi
+
+          tag_version="${GITHUB_REF_NAME#v}"
+          cargo_version="$(awk -F '"' '/^\[workspace\.package\]$/{in_workspace=1;next} /^\[/{in_workspace=0} in_workspace && /^version = "/{print $2;exit}' Cargo.toml)"
+          website_version="$(sed -nE 's/^export const APP_VERSION = "([^"]+)";$/\1/p' website/src/download.ts)"
+          if [ -z "$cargo_version" ] || [ -z "$website_version" ]; then
+            echo "Could not read the workspace or website app version." >&2
+            exit 1
+          fi
+          if [ "$tag_version" != "$cargo_version" ] || [ "$tag_version" != "$website_version" ]; then
+            echo "Release tag $GITHUB_REF_NAME must match Cargo ($cargo_version) and website ($website_version)." >&2
+            exit 1
+          fi
+
       - name: Verify Apple Silicon runner
         run: |
           test "$(uname -m)" = "arm64"
@@ -45,6 +67,7 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
         run: |
           set -euo pipefail
 
@@ -81,12 +104,12 @@ jobs:
             fi
           fi
 
-          if [ -n "$SPARKLE_PRIVATE_ED_KEY" ]; then
+          if [ -n "$SPARKLE_PRIVATE_ED_KEY" ] && [ -n "$SPARKLE_PUBLIC_ED_KEY" ]; then
             echo "sparkle=true" >> "$GITHUB_OUTPUT"
-            echo "Sparkle private key is present."
+            echo "Sparkle signing key pair is present."
           else
             echo "sparkle=false" >> "$GITHUB_OUTPUT"
-            echo "No SPARKLE_PRIVATE_ED_KEY; skipping appcast and delta generation."
+            echo "Sparkle signing key pair is incomplete; skipping appcast and delta generation."
           fi
 
       - name: Cache Homebrew packages
@@ -157,10 +180,31 @@ jobs:
       - name: Build app bundle
         env:
           SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
+          SPARKLE_CAPABLE: ${{ steps.caps.outputs.sparkle }}
+          RELEASE_TAG: ${{ github.ref_name }}
           SPARKLE_APPCAST_URL: https://github.com/${{ github.repository }}/releases/latest/download/appcast.xml
           POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-        run: ./scripts/build-app.sh
+        run: |
+          if [[ "$SPARKLE_CAPABLE" == "true" && "$RELEASE_TAG" != *-* ]]; then
+            export SPARKLE_AUTOMATIC_CHECKS=true
+          else
+            export SPARKLE_AUTOMATIC_CHECKS=false
+          fi
+          ./scripts/build-app.sh
+
+      - name: Verify built app version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          plist="build/Easy Complete.app/Contents/Info.plist"
+          tag_version="${GITHUB_REF_NAME#v}"
+          short_version="$(plutil -extract CFBundleShortVersionString raw -o - "$plist")"
+          bundle_version="$(plutil -extract CFBundleVersion raw -o - "$plist")"
+          if [ "$short_version" != "$tag_version" ] || [ "$bundle_version" != "$tag_version" ]; then
+            echo "Built app version ($short_version, $bundle_version) does not match release tag $GITHUB_REF_NAME." >&2
+            exit 1
+          fi
 
       - name: Sign app bundle
         if: startsWith(github.ref, 'refs/tags/') && steps.caps.outputs.signing == 'true'
@@ -350,7 +394,7 @@ jobs:
         id: release_channel
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF_NAME" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)(\.[0-9A-Za-z-]+)*$ ]]; then
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)(\.[0-9A-Za-z-]+)*$ ]]; then
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
@@ -362,6 +406,7 @@ jobs:
           SIGNING: ${{ steps.caps.outputs.signing }}
           NOTARIZE: ${{ steps.caps.outputs.notarize }}
           SPARKLE: ${{ steps.caps.outputs.sparkle }}
+          PRERELEASE: ${{ steps.release_channel.outputs.is_prerelease }}
         run: |
           set -euo pipefail
           {
@@ -370,10 +415,10 @@ jobs:
             printf '%s\n' "1. Download \`Easy-Complete-arm64.dmg\`, open it, and drag **Easy Complete** to Applications."
             if [ "$SIGNING" = "true" ]; then
               cat <<'EOF'
-          2. Launch **Easy Complete**. On first launch, the app registers the bundled input
-             method and asks for **Accessibility** permission. Autocomplete will not appear
-             until Accessibility is granted in System Settings -> Privacy & Security ->
-             Accessibility.
+          2. Launch **Easy Complete**, open Easy Complete Settings, and click **Grant
+             Accessibility**. Follow the drag guide in System Settings -> Privacy &
+             Security -> Device Control and Data Access (named Accessibility on macOS 26
+             and earlier). The input method is optional and can be installed in Settings.
           3. Reload your shell: `exec $SHELL`
           EOF
             else
@@ -385,10 +430,10 @@ jobs:
              xattr -dr com.apple.quarantine "/Applications/Easy Complete.app"
              ```
 
-          3. Launch **Easy Complete**. On first launch, the app registers the bundled input
-             method and asks for **Accessibility** permission. Autocomplete will not appear
-             until Accessibility is granted in System Settings -> Privacy & Security ->
-             Accessibility.
+          3. Launch **Easy Complete**, open Easy Complete Settings, and click **Grant
+             Accessibility**. Follow the drag guide in System Settings -> Privacy &
+             Security -> Device Control and Data Access (named Accessibility on macOS 26
+             and earlier). The input method is optional and can be installed in Settings.
           4. Reload your shell: `exec $SHELL`
           EOF
             fi
@@ -401,7 +446,11 @@ jobs:
               printf '%s' "This DMG is ad-hoc signed and is not notarized. Gatekeeper will block it until the quarantine flag is cleared."
             fi
             if [ "$SPARKLE" = "true" ]; then
-              printf '%s\n' " A Sparkle appcast is attached for future updates."
+              if [ "$PRERELEASE" = "true" ]; then
+                printf '%s\n' " A signed Sparkle appcast is attached to this tag, but beta builds do not have an automatic beta update feed; download the next beta from its release page."
+              else
+                printf '%s\n' " A Sparkle appcast is attached for future stable updates."
+              fi
             else
               printf '\n'
             fi

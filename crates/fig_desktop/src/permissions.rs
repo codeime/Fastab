@@ -1,6 +1,7 @@
 //! Native permission checks used by the settings gate (replaces the dashboard WebView gate).
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use fig_desktop_api::requests::install::install;
 use fig_os_shim::{Context, ContextArcProvider, ContextProvider};
@@ -15,6 +16,8 @@ use tracing::warn;
 
 use crate::EventLoopProxy;
 use crate::event::Event;
+
+static NEXT_PERMISSION_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PermId {
@@ -37,6 +40,10 @@ pub struct PermissionSnapshot {
     pub shell: PermReady,
     pub input_method: PermReady,
     pub error: Option<String>,
+    /// Identifies one required check and its optional input-method enrichment.
+    /// A newer generation supersedes every older snapshot, even when all
+    /// readiness values happen to be identical.
+    pub generation: u64,
     /// Set on the post-repair required snapshot so a late IME fill-in cannot
     /// clear an in-flight Grant / Fix All.
     pub completes_repair: bool,
@@ -55,6 +62,7 @@ impl PermissionSnapshot {
             shell: PermReady::Checking,
             input_method: PermReady::Checking,
             error: None,
+            generation: 0,
             completes_repair: false,
         }
     }
@@ -165,6 +173,7 @@ async fn check_required() -> PermissionSnapshot {
         shell,
         input_method: PermReady::Checking,
         error: ax_err.or(shell_err),
+        generation: 0,
         completes_repair: false,
     }
 }
@@ -235,13 +244,19 @@ pub async fn repair_all() -> Result<(), String> {
 
 pub fn spawn_check(proxy: &EventLoopProxy) {
     let proxy = proxy.clone();
+    let generation = next_permission_generation();
     tokio::spawn(async move {
-        publish_check(&proxy, false).await;
+        publish_check(&proxy, false, generation).await;
     });
 }
 
-async fn publish_check(proxy: &EventLoopProxy, completes_repair: bool) {
+fn next_permission_generation() -> u64 {
+    NEXT_PERMISSION_GENERATION.fetch_add(1, Ordering::Relaxed)
+}
+
+async fn publish_check(proxy: &EventLoopProxy, completes_repair: bool, generation: u64) {
     let mut required = check_required().await;
+    required.generation = generation;
     required.completes_repair = completes_repair;
     if proxy.send_event(Event::PermissionSnapshot(required.clone())).is_err() {
         warn!("failed to deliver permission snapshot");
@@ -254,26 +269,30 @@ async fn publish_check(proxy: &EventLoopProxy, completes_repair: bool) {
     }
 }
 
-pub fn spawn_repair(proxy: &EventLoopProxy, id: PermId) {
+pub fn spawn_repair(proxy: &EventLoopProxy, id: PermId) -> u64 {
     let proxy = proxy.clone();
+    let generation = next_permission_generation();
     tokio::spawn(async move {
         if let Err(err) = repair(id).await {
             warn!(?id, %err, "permission repair failed");
         }
-        publish_check(&proxy, true).await;
+        publish_check(&proxy, true, generation).await;
         proxy.send_event(Event::ReloadAccessibility).ok();
     });
+    generation
 }
 
-pub fn spawn_repair_all(proxy: &EventLoopProxy) {
+pub fn spawn_repair_all(proxy: &EventLoopProxy) -> u64 {
     let proxy = proxy.clone();
+    let generation = next_permission_generation();
     tokio::spawn(async move {
         if let Err(err) = repair_all().await {
             warn!(%err, "permission repair-all failed");
         }
-        publish_check(&proxy, true).await;
+        publish_check(&proxy, true, generation).await;
         proxy.send_event(Event::ReloadAccessibility).ok();
     });
+    generation
 }
 
 pub fn accessibility_is_missing() -> bool {
@@ -297,6 +316,7 @@ mod tests {
             shell,
             input_method,
             error: None,
+            generation: 1,
             completes_repair: false,
         }
     }

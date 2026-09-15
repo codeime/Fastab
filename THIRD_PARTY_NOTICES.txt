@@ -38,7 +38,7 @@ SOFTWARE.
 @easy-complete/fuzzysort 0.1.0
 License: MIT
 Authors: Easy Complete Contributors
-Source: https://github.com/chen86860/easy-complete
+Source: https://github.com/codeime/easy-complete
 
 --- LICENSE ---
 

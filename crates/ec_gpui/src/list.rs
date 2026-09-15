@@ -426,21 +426,42 @@ fn is_fileish(kind: &str) -> bool {
 
 /// Strip quotes and backslash-escaped spaces so path titles match the unquoted caret token.
 pub fn unquote_shell_token(raw: &str) -> String {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Quote {
+        Single,
+        Double,
+        AnsiC,
+    }
+
     let mut out = String::with_capacity(raw.len());
-    let mut quote = None;
+    let mut quote: Option<Quote> = None;
     let mut escaped = false;
-    for ch in raw.chars() {
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
         if escaped {
             out.push(ch);
             escaped = false;
             continue;
         }
-        if ch == '\\' && quote != Some('\'') {
+        if ch == '\\' && quote != Some(Quote::Single) {
             escaped = true;
             continue;
         }
+        // Bash's ANSI-C quote starts with `$'`, but the `$` is syntax rather
+        // than part of the token value. `tokenize` applies the same rule when
+        // it normalizes the parser token; keep UI matching and insertion on
+        // that value too, or a full acceptance can leave a stray `$` behind.
+        if quote.is_none() && ch == '$' && chars.peek() == Some(&'\'') {
+            chars.next();
+            quote = Some(Quote::AnsiC);
+            continue;
+        }
         if let Some(active) = quote {
-            if ch == active {
+            let closer = match active {
+                Quote::Single | Quote::AnsiC => '\'',
+                Quote::Double => '"',
+            };
+            if ch == closer {
                 quote = None;
             } else {
                 out.push(ch);
@@ -448,7 +469,8 @@ pub fn unquote_shell_token(raw: &str) -> String {
             continue;
         }
         match ch {
-            '\'' | '"' => quote = Some(ch),
+            '\'' => quote = Some(Quote::Single),
+            '"' => quote = Some(Quote::Double),
             _ => out.push(ch),
         }
     }
@@ -765,10 +787,11 @@ fn underline_prefix(runs: &[TextRun], index: usize, char_count: usize) -> Option
 pub struct SuggestionList {
     pub state: Entity<OverlayState>,
     scroll_handle: UniformListScrollHandle,
-    /// Last `(selected, count, visible_rows)` that ran smart-scroll.
+    /// Last `(selected, count, visible_rows, suggestions_revision)` that ran
+    /// smart-scroll.
     /// Viewport edges stay out of this tuple: mouse-wheel only changes the
     /// offset, and treating that as a selection change snaps back to row 0.
-    scroll_snapshot: Option<(usize, usize, usize)>,
+    scroll_snapshot: Option<(usize, usize, usize, u64)>,
     /// Last size handed to GPUI's native window. Repeating the same resize on
     /// every caret/frame update feeds back into AppKit's resize callbacks.
     pub(crate) last_requested_size: Option<(f32, f32)>,
@@ -827,7 +850,7 @@ impl Render for SuggestionList {
         let visible_rows = suggestion_visible_rows(count, row_height, max_list_height, popout, loading);
         let list_h = visible_rows as f32 * row_height;
         if count > 0 {
-            let snapshot = (selected, count, visible_rows);
+            let snapshot = (selected, count, visible_rows, overlay.suggestions_revision);
             if self.scroll_snapshot != Some(snapshot) {
                 let offset_y = f32::from(self.scroll_handle.0.borrow().base_handle.offset().y);
                 let (first_visible, last_visible) = visible_range_for_scroll(offset_y, row_height, visible_rows, count);
@@ -1880,6 +1903,20 @@ mod tests {
     }
 
     #[test]
+    fn unquote_shell_token_strips_ansi_c_quote_prefix() {
+        assert_eq!(unquote_shell_token("$'src/foo/"), "src/foo/");
+        assert_eq!(unquote_shell_token("echo$'foo"), "echofoo");
+        // A dollar that is not immediately followed by a single quote remains
+        // part of the token (for example, an environment-variable name).
+        assert_eq!(unquote_shell_token("$HOME"), "$HOME");
+    }
+
+    #[test]
+    fn unquote_shell_token_does_not_close_ansi_c_quote_on_an_escaped_quote() {
+        assert_eq!(unquote_shell_token(r"$'a\'b'"), "a'b");
+    }
+
+    #[test]
     fn path_rows_hide_the_already_typed_directory() {
         let main = item("src/main.rs", "file");
         let nested = item("src/foo/bar/", "folder");
@@ -2120,6 +2157,15 @@ mod tests {
         assert_eq!(
             tab_prefix_insertion(0, &[foo, foo2], "'src/fo"),
             Some(TabPrefix::Partial("src/foo".into()))
+        );
+    }
+
+    #[test]
+    fn tab_prefix_matches_an_ansi_c_quoted_token_without_the_dollar() {
+        let items = vec![item("foo", "arg"), item("foobar", "arg")];
+        assert_eq!(
+            tab_prefix_insertion(0, &items, "$'fo"),
+            Some(TabPrefix::Partial("foo".into()))
         );
     }
 }

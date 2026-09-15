@@ -691,6 +691,10 @@ fn custom_context<'js>(
     is_dangerous: bool,
 ) -> rquickjs::Result<Object<'js>> {
     let shell = current_shell();
+    // Fig's parser exposes token.innerText to custom generators.  Keep raw
+    // shell spelling in CompleteResult for insertion, but never leak quotes
+    // or backslash escapes through context.searchTerm.
+    let search_term = crate::lookup::parser_inner_text(search_term);
     let object = Object::new(ctx.clone())?;
     object.set("currentWorkingDirectory", cwd)?;
     object.set("currentProcess", shell.current_process.as_str())?;
@@ -1639,20 +1643,30 @@ mod tests {
         )
         .unwrap();
         let host = JsHost::new(dir.path().to_path_buf());
-        let rows = host
-            .custom(
-                "demo#custom#0",
-                &["demo".into(), "src/foo".into()],
-                "/",
-                "src/foo",
-                Duration::from_millis(5_000),
-                false,
-            )
-            .expect("hook");
-        assert_eq!(
-            rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
-            vec!["src/foo"]
-        );
+        for (raw, expected) in [
+            ("src/foo", "src/foo"),
+            ("'src/foo", "src/foo"),
+            (r#""src/foo"#, "src/foo"),
+            ("$'src/foo", "src/foo"),
+            (r"$'foo\'bar", r"foo\'bar"),
+            (r"my\ file", "my file"),
+        ] {
+            let rows = host
+                .custom(
+                    "demo#custom#0",
+                    &["demo".into(), expected.into()],
+                    "/",
+                    raw,
+                    Duration::from_millis(5_000),
+                    false,
+                )
+                .expect("hook");
+            assert_eq!(
+                rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
+                vec![expected],
+                "raw={raw:?}"
+            );
+        }
     }
 
     #[test]

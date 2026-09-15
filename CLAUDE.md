@@ -155,7 +155,7 @@ Relevant settings:
 | Key                | Default | Effect                                                                                                              |
 | ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------- |
 | `dashboard.language` | unset | Settings UI language: `system`, `en`, or `zh-CN`                                                                    |
-| `app.silentLaunch` | `false` | Start without opening settings, same as `--no-dashboard`. A `ec://` deep link naming a page overrides it            |
+| `app.silentLaunch` | `false` | Start without opening settings, same as `--no-dashboard`. A `ec://` deep link naming a page or a missing Accessibility grant overrides it |
 | `autocomplete.scriptTimeout` | `5000` | Per-hook script budget in ms. The overlay retires `···` after this plus 1s (floor 2s) but keeps waiting, so a late result still renders. The engine worker's wedged-thread watchdog stays at ≥30s. |
 
 The WebView overlay and dashboard sources (`packages/autocomplete-app`, `packages/dashboard-app`) were deleted after v2.2.2 — nothing loaded them once both surfaces went native. Read them out of git when you need the legacy insertion / ranking behavior as a reference. The repo carries no tags, so use the v2.2.2 bump commit `edf0936a`: `git show edf0936a:packages/autocomplete-app/src/state/insertion.ts`, or `git worktree add /tmp/ec-baseline edf0936a` for a full tree to diff against.

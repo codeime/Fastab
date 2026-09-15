@@ -1,0 +1,20 @@
+name: "Question or idea"
+description: "Ask about Easy Complete or suggest an improvement / 提问或提出改进建议"
+title: "question: "
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: "Type / 类型"
+      options:
+        - "Usage question / 使用问题"
+        - "Improvement idea / 改进建议"
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: "Details / 详情"
+      description: "Describe your question or idea, and the terminal you use if relevant. / 请描述问题或想法；相关时请写明终端。"
+    validations:
+      required: true

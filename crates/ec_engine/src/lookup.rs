@@ -85,6 +85,13 @@ enum Quote {
     AnsiC,
 }
 
+fn quote_closer(quote: Quote) -> char {
+    match quote {
+        Quote::Double => '"',
+        Quote::Single | Quote::AnsiC => '\'',
+    }
+}
+
 fn double_quote_escape(ch: char) -> bool {
     matches!(ch, '$' | '`' | '"' | '\\' | '\n')
 }
@@ -100,30 +107,46 @@ pub fn tokenize(buffer: &str) -> (Vec<String>, bool) {
 
     while let Some(ch) = chars.next() {
         if escaped {
-            if quote == Some(Quote::Double) && !double_quote_escape(ch) {
-                token.push('\\');
-            }
-            if ch != '\n' || quote != Some(Quote::Double) {
+            if quote == Some(Quote::AnsiC) {
+                // ANSI-C quoting keeps the escape spelling in innerText, but
+                // the escaped character cannot close the surrounding quote.
                 token.push(ch);
+            } else {
+                if quote == Some(Quote::Double) && !double_quote_escape(ch) {
+                    token.push('\\');
+                }
+                if ch != '\n' || quote != Some(Quote::Double) {
+                    token.push(ch);
+                }
             }
             started = true;
             escaped = false;
             trailing_space = false;
             continue;
         }
-        let in_single = matches!(quote, Some(Quote::Single | Quote::AnsiC));
-        if ch == '\\' && !in_single {
-            escaped = true;
+        if ch == '\\' {
+            match quote {
+                Some(Quote::Single) => {},
+                Some(Quote::AnsiC) => {
+                    token.push(ch);
+                    escaped = true;
+                },
+                Some(Quote::Double) | None => {
+                    escaped = true;
+                    started = true;
+                    trailing_space = false;
+                    continue;
+                },
+            }
+            if quote == Some(Quote::Single) {
+                token.push(ch);
+            }
             started = true;
             trailing_space = false;
             continue;
         }
         if let Some(active) = quote {
-            let closer = match active {
-                Quote::Double => '"',
-                Quote::Single | Quote::AnsiC => '\'',
-            };
-            if ch == closer {
+            if ch == quote_closer(active) {
                 quote = None;
             } else {
                 token.push(ch);
@@ -179,7 +202,13 @@ pub fn tokenize(buffer: &str) -> (Vec<String>, bool) {
         }
     }
     if escaped {
-        token.push('\\');
+        // The old shell-parser drops a dangling escape from a Word/String's
+        // innerText.  ANSI-C strings are the exception: their escape spelling
+        // is retained, while the state machine still treats a preceding `\\`
+        // as protecting a quote from closing the string.
+        // The backslash was already appended when ANSI-C entered the escape
+        // state; outside/inside double quotes it is omitted for a dangling
+        // escape, matching the parser's `innerText`.
         started = true;
         trailing_space = false;
     }
@@ -189,12 +218,32 @@ pub fn tokenize(buffer: &str) -> (Vec<String>, bool) {
     (tokens, trailing_space && quote.is_none())
 }
 
+/// Return the parser's inner text for a raw shell token.
+///
+/// The completion result keeps [`current_token_raw`] separately because the
+/// insertion layer must delete the bytes the shell received (quotes and
+/// backslash escapes included).  Generators and hooks, however, see Fig's
+/// parser token text: shell quoting syntax is removed before it is used for
+/// filesystem lookup, filtering, or `context.searchTerm`.
+pub fn parser_inner_text(raw: &str) -> String {
+    let (tokens, _) = tokenize(raw);
+    match tokens.as_slice() {
+        [] => String::new(),
+        [token] => token.clone(),
+        // Production callers pass the raw text of one shell token.  Keep an
+        // already-normalized value containing literal spaces intact for
+        // compatibility with direct generator callers and unit tests.
+        _ => raw.to_string(),
+    }
+}
+
 /// Return the raw shell token under the caret.  Matching uses the normalized
 /// token returned by [`tokenize`], while insertion needs the exact bytes that
 /// must be deleted (including quotes and escaped spaces).
 pub fn current_token_raw(buffer: &str) -> String {
     let mut start = None;
     let mut quote = None;
+    let mut ansi_c_open = false;
     let mut escaped = false;
     for (index, ch) in buffer.char_indices() {
         if escaped {
@@ -204,21 +253,45 @@ pub fn current_token_raw(buffer: &str) -> String {
             }
             continue;
         }
-        if ch == '\\' && quote != Some('\'') {
-            escaped = true;
-            if start.is_none() {
-                start = Some(index);
-            }
-            continue;
-        }
         if let Some(active) = quote {
-            if ch == active {
+            if ch == '\\' && active != Quote::Single {
+                escaped = true;
+                if start.is_none() {
+                    start = Some(index);
+                }
+                continue;
+            }
+            if ansi_c_open {
+                ansi_c_open = false;
+                continue;
+            }
+            if ch == quote_closer(active) {
                 quote = None;
             }
             continue;
         }
-        if ch == '\'' || ch == '"' {
-            quote = Some(ch);
+        if ch == '\\' {
+            escaped = true;
+            if start.is_none() {
+                start = Some(index);
+            }
+        } else if ch == '$'
+            && buffer
+                .get(index + ch.len_utf8()..)
+                .is_some_and(|rest| rest.starts_with('\''))
+        {
+            quote = Some(Quote::AnsiC);
+            ansi_c_open = true;
+            if start.is_none() {
+                start = Some(index);
+            }
+        } else if ch == '\'' {
+            quote = Some(Quote::Single);
+            if start.is_none() {
+                start = Some(index);
+            }
+        } else if ch == '"' {
+            quote = Some(Quote::Double);
             if start.is_none() {
                 start = Some(index);
             }
@@ -342,27 +415,27 @@ fn innermost_command_start(buffer: &str) -> usize {
             index += ch_len;
             continue;
         }
-        if ch == '\\' && quote != Some('\'') {
+        if ch == '\\' && quote != Some(Quote::Single) {
             escaped = true;
             index += ch_len;
             continue;
         }
         if let Some(active) = quote {
-            if ch == active {
+            if ch == quote_closer(active) {
                 quote = None;
             }
             index += ch_len;
             continue;
         }
         if ch == '\'' || ch == '"' {
-            quote = Some(ch);
+            quote = Some(if ch == '\'' { Quote::Single } else { Quote::Double });
             index += ch_len;
             continue;
         }
         if ch == '$' {
             let next = peek_char(buffer, index + ch_len);
             if next == Some('\'') {
-                quote = Some('\'');
+                quote = Some(Quote::AnsiC);
                 index += ch_len + 1;
                 continue;
             }
@@ -474,6 +547,7 @@ fn is_assignment_token(token: &str) -> bool {
 fn raw_first_token_end(buffer: &str) -> usize {
     let mut started = false;
     let mut quote = None;
+    let mut ansi_c_open = false;
     let mut escaped = false;
     let mut end = 0;
     for (index, ch) in buffer.char_indices() {
@@ -483,22 +557,45 @@ fn raw_first_token_end(buffer: &str) -> usize {
             end = index + ch.len_utf8();
             continue;
         }
-        if ch == '\\' && quote != Some('\'') {
+        if let Some(active) = quote {
+            if ch == '\\' && active != Quote::Single {
+                escaped = true;
+                started = true;
+                end = index + ch.len_utf8();
+                continue;
+            }
+            if ansi_c_open {
+                ansi_c_open = false;
+                started = true;
+                end = index + ch.len_utf8();
+                continue;
+            }
+            started = true;
+            end = index + ch.len_utf8();
+            if ch == quote_closer(active) {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '\\' {
             escaped = true;
             started = true;
             end = index + ch.len_utf8();
             continue;
         }
-        if let Some(active) = quote {
+        if ch == '$'
+            && buffer
+                .get(index + ch.len_utf8()..)
+                .is_some_and(|rest| rest.starts_with('\''))
+        {
+            quote = Some(Quote::AnsiC);
+            ansi_c_open = true;
             started = true;
             end = index + ch.len_utf8();
-            if ch == active {
-                quote = None;
-            }
             continue;
         }
         if ch == '\'' || ch == '"' {
-            quote = Some(ch);
+            quote = Some(if ch == '\'' { Quote::Single } else { Quote::Double });
             started = true;
             end = index + ch.len_utf8();
             continue;
@@ -532,8 +629,11 @@ fn skip_leading_assignments(slice: &str) -> &str {
         }
         let raw_token = candidate.get(..token_end).unwrap_or_default();
         // Quoted words are never assignments; the old parser matches `name=`
-        // against the raw buffer, so `'FOO=1' git` keeps `FOO=1` as argv0.
-        if raw_token.starts_with(['\'', '"']) || !(is_assignment_token(&first) || is_fd_redirection_token(&first)) {
+        // against the raw buffer, so `'FOO=1'`/`$'FOO=1'` keep the literal as
+        // argv0.
+        if (raw_token.starts_with(['\'', '"']) || raw_token.starts_with("$'"))
+            || !(is_assignment_token(&first) || is_fd_redirection_token(&first))
+        {
             return candidate;
         }
         rest = candidate.get(token_end..).unwrap_or_default();
@@ -2771,6 +2871,7 @@ mod tests {
         assert_eq!(current_command_slice("echo x && "), "");
         assert_eq!(current_command_slice("'FOO=1' git ch"), "'FOO=1' git ch");
         assert_eq!(current_command_slice(r#""FOO=1" git ch"#), r#""FOO=1" git ch"#);
+        assert_eq!(current_command_slice("$'FOO=1' git ch"), "$'FOO=1' git ch");
         assert_eq!(current_command_slice("FOO=1 (git ch"), "git ch");
         assert_eq!(current_command_slice("echo `foo)` && git ch"), "git ch");
         assert_eq!(current_command_slice("echo x\ngit ch"), "git ch");
@@ -3904,6 +4005,48 @@ mod tests {
         let (tokens, trailing) = tokenize(r#"git "c\x"#);
         assert_eq!(tokens, vec!["git", r"c\x"]);
         assert!(!trailing);
+        let (tokens, trailing) = tokenize("git $'foo\\'bar'");
+        assert_eq!(tokens, vec!["git", r"foo\'bar"]);
+        assert!(!trailing);
+        let result = context_result(&mut registry, r"git -- foo\");
+        assert_eq!(result.search_term, r"foo\");
+        assert_eq!(result.match_term, "foo");
+    }
+
+    #[test]
+    fn parser_inner_text_strips_shell_syntax_for_generators() {
+        for (raw, expected) in [
+            ("'src/fo", "src/fo"),
+            (r#""src/fo"#, "src/fo"),
+            ("$'src/fo", "src/fo"),
+            (r"my\ dir/fo", "my dir/fo"),
+            ("my file", "my file"),
+            // ANSI-C quoting follows the existing shell-parser innerText
+            // contract: its C escapes are retained verbatim.  Only the
+            // quote delimiters are removed here; decoding `\\n`/`\\xNN`
+            // would diverge from that parser and from the shell token model.
+            ("$'my\\ dir'", r"my\ dir"),
+        ] {
+            assert_eq!(parser_inner_text(raw), expected, "raw={raw:?}");
+        }
+        assert_eq!(tokenize(r"git foo\").0, vec!["git", "foo"]);
+        assert_eq!(tokenize(r"git \").0, vec!["git", ""]);
+        assert_eq!(tokenize(r#"git "foo\"#).0, vec!["git", "foo"]);
+        assert_eq!(tokenize(r"git $'foo\").0, vec!["git", r"foo\"]);
+        assert_eq!(parser_inner_text(r"foo\"), "foo");
+        assert_eq!(parser_inner_text(r#""foo\"#), "foo");
+        assert_eq!(parser_inner_text(r"$'foo\"), r"foo\");
+        assert_eq!(current_token_raw(r"git foo\"), r"foo\");
+        assert_eq!(current_token_raw("git $'foo\\''"), "$'foo\\''");
+    }
+
+    #[test]
+    fn ansi_c_escaped_quotes_stay_inside_commands_and_first_tokens() {
+        assert_eq!(current_command_slice("echo $'x\\'' && git ch"), "git ch");
+        assert_eq!(current_command_slice("$'value\\'' git ch"), "$'value\\'' git ch");
+        assert_eq!(current_token_raw("echo $'x\\'' git ch"), "ch");
+        let raw = "$'value\\'' git ch";
+        assert_eq!(raw_first_token_end(raw), "$'value\\''".len());
     }
 
     #[test]
@@ -4675,6 +4818,84 @@ mod tests {
         );
         let names: Vec<_> = result.suggestions.iter().map(|item| item.name.as_str()).collect();
         assert!(names.iter().any(|name| name.contains("src")), "{names:?}");
+    }
+
+    #[test]
+    fn quoted_path_completion_uses_inner_text_but_keeps_raw_insertion_term() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("src").join("main.rs"), "fn").unwrap();
+        fs::create_dir(dir.path().join("src").join("more")).unwrap();
+        fs::create_dir(dir.path().join("my dir")).unwrap();
+        fs::write(
+            dir.path().join("cat.json"),
+            r#"{"names":["cat"],"args":[{"name":"path","templates":["filepaths"],"getQueryTerm":"/"}]}"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        for (buffer, raw_search_term) in [
+            ("cat 'src/m", "'src/m"),
+            (r#"cat "src/m"#, r#""src/m"#),
+            ("cat $'src/m", "$'src/m"),
+        ] {
+            let result = complete(
+                &mut registry,
+                &CompleteRequest {
+                    buffer: buffer.into(),
+                    cwd: dir.path().display().to_string(),
+                    include_history: false,
+                    ..CompleteRequest::default()
+                },
+            );
+            let row = result
+                .suggestions
+                .iter()
+                .find(|suggestion| suggestion.name == "src/main.rs")
+                .unwrap_or_else(|| panic!("buffer={buffer:?}, suggestions={:?}", result.suggestions));
+            assert_eq!(result.search_term, raw_search_term, "buffer={buffer:?}");
+            assert_eq!(result.match_term, "src/m", "buffer={buffer:?}");
+            assert_eq!(row.query_term, None, "buffer={buffer:?}");
+        }
+        for (buffer, raw_search_term) in [
+            ("cat 'src/mo", "'src/mo"),
+            (r#"cat "src/mo"#, r#""src/mo"#),
+            ("cat $'src/mo", "$'src/mo"),
+        ] {
+            let result = complete(
+                &mut registry,
+                &CompleteRequest {
+                    buffer: buffer.into(),
+                    cwd: dir.path().display().to_string(),
+                    include_history: false,
+                    ..CompleteRequest::default()
+                },
+            );
+            let row = result
+                .suggestions
+                .iter()
+                .find(|suggestion| suggestion.name == "src/more/")
+                .unwrap_or_else(|| panic!("buffer={buffer:?}, suggestions={:?}", result.suggestions));
+            assert_eq!(result.search_term, raw_search_term, "buffer={buffer:?}");
+            assert_eq!(result.match_term, "src/mo", "buffer={buffer:?}");
+            assert_eq!(row.query_term, None, "buffer={buffer:?}");
+        }
+        let result = complete(
+            &mut registry,
+            &CompleteRequest {
+                buffer: "cat my\\ d".into(),
+                cwd: dir.path().display().to_string(),
+                include_history: false,
+                ..CompleteRequest::default()
+            },
+        );
+        let row = result
+            .suggestions
+            .iter()
+            .find(|suggestion| suggestion.name == "my dir/")
+            .unwrap_or_else(|| panic!("escaped path suggestions={:?}", result.suggestions));
+        assert_eq!(result.search_term, r"my\ d");
+        assert_eq!(result.match_term, "my d");
+        assert_eq!(row.query_term.as_deref(), Some("my d"));
     }
 
     #[test]

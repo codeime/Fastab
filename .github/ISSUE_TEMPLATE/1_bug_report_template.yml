@@ -20,7 +20,7 @@ body:
   attributes:
     label: "Checks"
     options:
-    - label: "I have searched [existing issues](https://github.com/chen86860/easy-complete/issues?q=) and found no duplicate / 我已搜索过现有 issue，没有重复"
+    - label: "I have searched [existing issues](https://github.com/codeime/easy-complete/issues?q=) and found no duplicate / 我已搜索过现有 issue，没有重复"
       required: true
     - label: "I have run `ec doctor` in the affected terminal / 我已在出问题的终端里运行过 `ec doctor`"
       required: true

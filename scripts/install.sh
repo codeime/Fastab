@@ -189,7 +189,7 @@ if [ "${desktop_changed}" -eq 1 ]; then
     *)
       warn "Could not reach the desktop app to check its Accessibility grant. Once it is running, run:"
       warn "  ec debug accessibility status"
-      warn "and, if that reports false, 'ec debug accessibility refresh' to reset and re-prompt."
+      warn "If it reports false, open Easy Complete Settings and click Grant Accessibility."
       ;;
   esac
 fi

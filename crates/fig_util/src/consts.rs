@@ -35,14 +35,14 @@ pub const OLD_PRODUCT_NAME: &str = "Amazon Q";
 pub const OLD_CLI_BINARY_NAMES: &[&str] = &["q"];
 pub const OLD_PTY_BINARY_NAMES: &[&str] = &["qterm"];
 
-pub const GITHUB_REPO_NAME: &str = "chen86860/easy-complete";
+pub const GITHUB_REPO_NAME: &str = "codeime/easy-complete";
 
 pub mod url {
-    pub const USER_MANUAL: &str = "https://github.com/chen86860/easy-complete";
-    pub const RELEASE_NOTES: &str = "https://github.com/chen86860/easy-complete/releases";
-    pub const ISSUE_TRACKER: &str = "https://github.com/chen86860/easy-complete/issues/new/choose";
-    pub const AUTOCOMPLETE_WIKI: &str = "https://github.com/chen86860/easy-complete";
-    pub const AUTOCOMPLETE_SSH_WIKI: &str = "https://github.com/chen86860/easy-complete";
+    pub const USER_MANUAL: &str = "https://github.com/codeime/easy-complete";
+    pub const RELEASE_NOTES: &str = "https://github.com/codeime/easy-complete/releases";
+    pub const ISSUE_TRACKER: &str = "https://github.com/codeime/easy-complete/issues/new/choose";
+    pub const AUTOCOMPLETE_WIKI: &str = "https://github.com/codeime/easy-complete";
+    pub const AUTOCOMPLETE_SSH_WIKI: &str = "https://github.com/codeime/easy-complete";
 }
 
 /// Build time env vars

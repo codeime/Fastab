@@ -65,6 +65,11 @@ pub struct OverlayState {
     pub title_overflow: crate::list::TitleOverflow,
     pub show_dev_banner: bool,
     pub suppress_until_shown: bool,
+    /// Increments when the displayed suggestion content changes. The native
+    /// list uses this alongside selection/count/viewport state so a refreshed
+    /// result can repair an old scroll offset without treating mouse-wheel
+    /// offset changes as a keyboard-navigation event.
+    pub(crate) suggestions_revision: u64,
     /// Set after accepting a completion that does not open a new argument.
     /// The shell emits one buffer update for that insertion; hide that update
     /// so the panel does not immediately pop back over the accepted text.
@@ -116,6 +121,7 @@ impl OverlayState {
             title_overflow: crate::list::TitleOverflow::Scroll,
             show_dev_banner: false,
             suppress_until_shown: false,
+            suggestions_revision: 0,
             suppress_next_completion: false,
             suppress_unchanged_completion: None,
             has_changed_index: false,
@@ -182,6 +188,21 @@ impl OverlayState {
         search_term: String,
         match_term: String,
     ) {
+        let content_changed = self.items.len() != items.len()
+            || self
+                .items
+                .iter()
+                .zip(&items)
+                .any(|(old, new)| crate::list::selection_identity(old) != crate::list::selection_identity(new));
+        // A new query can legitimately return the same rows in the same
+        // order. It is still a new completion context: an old mouse-wheel
+        // offset may leave the selected row outside the viewport. Do not
+        // advance this revision for an identical query/result refresh, or a
+        // wheel-only state change would regain the old snap-back behavior.
+        let query_changed = self.search_term != search_term || self.match_term != match_term;
+        if content_changed || query_changed {
+            self.suggestions_revision = self.suggestions_revision.wrapping_add(1);
+        }
         let will_be_visible = !self.suppress_until_shown && (!items.is_empty() || self.has_current_arg());
         let keep = if self.has_changed_index && will_be_visible {
             self.selected_item().map(crate::list::selection_identity)
@@ -256,6 +277,9 @@ impl OverlayState {
     }
 
     pub fn clear_suggestions(&mut self) {
+        if !self.items.is_empty() {
+            self.suggestions_revision = self.suggestions_revision.wrapping_add(1);
+        }
         self.items.clear();
         self.selected = 0;
         self.search_term.clear();
@@ -585,6 +609,75 @@ mod tests {
         first.display_name = Some("After".into());
         first.query_term = Some("after".into());
         assert_eq!(first_identity, crate::list::selection_identity(&first));
+    }
+
+    #[test]
+    fn replacing_same_shape_suggestions_advances_scroll_content_revision() {
+        let mut overlay = OverlayState::new();
+        overlay.set_suggestions(
+            vec![SuggestionItem {
+                name: "checkout".into(),
+                kind: "subcommand".into(),
+                ..SuggestionItem::default()
+            }],
+            "ch".into(),
+        );
+        let first_revision = overlay.suggestions_revision;
+        overlay.set_suggestions(
+            vec![SuggestionItem {
+                name: "commit".into(),
+                kind: "subcommand".into(),
+                ..SuggestionItem::default()
+            }],
+            "co".into(),
+        );
+        assert_eq!(overlay.selected, 0);
+        assert_eq!(overlay.items.len(), 1);
+        assert!(overlay.suggestions_revision > first_revision);
+    }
+
+    #[test]
+    fn unchanged_suggestions_do_not_turn_mouse_offset_into_a_new_scroll_event() {
+        let mut overlay = OverlayState::new();
+        let item = SuggestionItem {
+            name: "checkout".into(),
+            kind: "subcommand".into(),
+            ..SuggestionItem::default()
+        };
+        overlay.set_suggestions(vec![item.clone()], "ch".into());
+        let revision = overlay.suggestions_revision;
+        overlay.set_suggestions(vec![item], "ch".into());
+        assert_eq!(overlay.suggestions_revision, revision);
+    }
+
+    #[test]
+    fn changed_query_advances_revision_for_same_rows_and_selection() {
+        let mut overlay = OverlayState::new();
+        let item = SuggestionItem {
+            name: "checkout".into(),
+            kind: "subcommand".into(),
+            ..SuggestionItem::default()
+        };
+        overlay.set_suggestions_with_match_term(vec![item.clone()], "c".into(), "c".into());
+        let revision = overlay.suggestions_revision;
+        overlay.set_suggestions_with_match_term(vec![item], "ch".into(), "ch".into());
+        assert_eq!(overlay.selected, 0);
+        assert_eq!(overlay.items.len(), 1);
+        assert!(overlay.suggestions_revision > revision);
+    }
+
+    #[test]
+    fn changed_match_term_advances_revision_for_same_raw_query() {
+        let mut overlay = OverlayState::new();
+        let item = SuggestionItem {
+            name: "checkout".into(),
+            kind: "subcommand".into(),
+            ..SuggestionItem::default()
+        };
+        overlay.set_suggestions_with_match_term(vec![item.clone()], "scope@c".into(), "c".into());
+        let revision = overlay.suggestions_revision;
+        overlay.set_suggestions_with_match_term(vec![item], "scope@c".into(), "ch".into());
+        assert!(overlay.suggestions_revision > revision);
     }
 
     #[test]

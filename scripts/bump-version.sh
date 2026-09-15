@@ -23,12 +23,22 @@ sed -i '' "s/^version = \".*\"$/version = \"$VERSION\"/" "$REPO_DIR/Cargo.toml"
 # The About section reads the version from the Cargo workspace now that the
 # settings window is native, so no TypeScript package carries it.
 
-# App version published in the website's SoftwareApplication structured data.
+# App version shared by the website's SoftwareApplication data and DMG links.
 sed -i '' \
   "s/^export const APP_VERSION = \".*\";$/export const APP_VERSION = \"$VERSION\";/" \
-  "$REPO_DIR/website/src/seo.tsx"
-grep -qxF "export const APP_VERSION = \"$VERSION\";" "$REPO_DIR/website/src/seo.tsx" \
-  || { echo "Failed to update website/src/seo.tsx" >&2; exit 1; }
+  "$REPO_DIR/website/src/download.ts"
+grep -qxF "export const APP_VERSION = \"$VERSION\";" "$REPO_DIR/website/src/download.ts" \
+  || { echo "Failed to update website/src/download.ts" >&2; exit 1; }
+
+# GitHub's /releases/latest excludes prereleases. Link the current release tag
+# directly, and advance both README links with each version bump.
+for readme in "$REPO_DIR/README.md" "$REPO_DIR/README.zh-CN.md"; do
+  sed -i '' -E \
+    "s#https://github.com/codeime/easy-complete/releases/(latest/download|download/v[^/]+)/Easy-Complete-arm64\\.dmg#https://github.com/codeime/easy-complete/releases/download/v${VERSION}/Easy-Complete-arm64.dmg#g" \
+    "$readme"
+  grep -Fq "https://github.com/codeime/easy-complete/releases/download/v${VERSION}/Easy-Complete-arm64.dmg" "$readme" \
+    || { echo "Failed to update $readme download link" >&2; exit 1; }
+done
 
 # Refresh Cargo.lock so the bumped workspace versions are reflected there too.
 # Without this the release commit ships a stale lock and CI's

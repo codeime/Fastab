@@ -114,6 +114,7 @@ pub struct SettingsWindow {
     proxy: EventLoopProxy,
     gate: PermissionSnapshot,
     repairing: Option<PermId>,
+    permission_merge: PermissionMergeState,
     copied_doctor: bool,
     theme_controls: ThemeControls,
 }
@@ -1356,8 +1357,9 @@ fn optional_input_method_card(
                         this.on_mouse_down(MouseButton::Left, move |_e, _w, cx| {
                             entity.update(cx, |this, cx| {
                                 this.repairing = Some(PermId::InputMethod);
+                                this.permission_merge.active_repair_generation =
+                                    Some(permissions::spawn_repair(&this.proxy, PermId::InputMethod));
                                 cx.notify();
-                                permissions::spawn_repair(&this.proxy, PermId::InputMethod);
                             });
                         })
                     }),
@@ -1819,6 +1821,8 @@ fn permission_gate_page(
                         this.on_mouse_down(MouseButton::Left, move |_e, _w, cx| {
                             entity_row.update(cx, |this, cx| {
                                 this.repairing = Some(id);
+                                this.permission_merge.active_repair_generation =
+                                    Some(permissions::spawn_repair(&this.proxy, id));
                                 this.gate.error = None;
                                 cx.notify();
                                 #[cfg(target_os = "macos")]
@@ -1827,7 +1831,6 @@ fn permission_gate_page(
                                         macos_utils::accessibility::begin_accessibility_guide(Some(zh));
                                     });
                                 }
-                                permissions::spawn_repair(&this.proxy, id);
                             });
                         })
                     }),
@@ -1905,6 +1908,9 @@ fn permission_gate_page(
                                 .when(!busy, |this| {
                                     this.on_mouse_down(MouseButton::Left, move |_e, _w, cx| {
                                         entity_refresh.update(cx, |this, cx| {
+                                            if this.repairing.is_some() {
+                                                return;
+                                            }
                                             this.gate = PermissionSnapshot::checking();
                                             cx.notify();
                                             permissions::spawn_check(&this.proxy);
@@ -1932,8 +1938,9 @@ fn permission_gate_page(
                                     this.on_mouse_down(MouseButton::Left, move |_e, _w, cx| {
                                         entity_all.update(cx, |this, cx| {
                                             this.repairing = Some(PermId::Accessibility);
+                                            this.permission_merge.active_repair_generation =
+                                                Some(permissions::spawn_repair_all(&this.proxy));
                                             cx.notify();
-                                            permissions::spawn_repair_all(&this.proxy);
                                         });
                                     })
                                 }),
@@ -2110,6 +2117,7 @@ pub fn open_settings_window(cx: &mut App, proxy: EventLoopProxy) -> anyhow::Resu
                 proxy: proxy.clone(),
                 gate: PermissionSnapshot::checking(),
                 repairing: None,
+                permission_merge: PermissionMergeState::default(),
                 copied_doctor: false,
                 theme_controls: ThemeControls::new(cx),
             })
@@ -2134,6 +2142,12 @@ fn start_permission_poller(handle: SettingsHandle, cx: &mut App) {
                     if this.gate.all_ready() {
                         return false;
                     }
+                    if this.repairing.is_some() {
+                        // A repair owns the next permission snapshot. Starting
+                        // another check here could advance its generation and
+                        // make the repair-complete result look stale.
+                        return true;
+                    }
                     let ax_now_ready = !permissions::accessibility_is_missing();
                     let ax_marked_ready = this.gate.accessibility == PermReady::Ready;
                     if ax_now_ready != ax_marked_ready {
@@ -2154,26 +2168,144 @@ fn start_permission_poller(handle: SettingsHandle, cx: &mut App) {
     .detach();
 }
 
+#[derive(Default)]
+struct PermissionMergeState {
+    /// The repair task currently owned by this settings window. Completion
+    /// snapshots from another window must not clear that task, even when all
+    /// permission values happen to be identical.
+    active_repair_generation: Option<u64>,
+    /// The newest check generation accepted by this view.
+    latest_generation: Option<u64>,
+    /// Whether the newest accepted snapshot already includes the optional IME
+    /// result. A required snapshot arriving after its enriched companion is a
+    /// duplicate/out-of-order event and must not regress the IME state.
+    latest_is_enriched: bool,
+    /// A repair-complete required snapshot whose enriched companion is still
+    /// allowed to fill in the optional IME state.
+    pending_repair_generation: Option<u64>,
+}
+
+fn is_enriched_snapshot(snapshot: &PermissionSnapshot) -> bool {
+    snapshot.input_method != PermReady::Checking
+}
+
 fn merge_permission_snapshot(
     gate: &mut PermissionSnapshot,
     repairing: &mut Option<PermId>,
+    merge_state: &mut PermissionMergeState,
     snapshot: PermissionSnapshot,
 ) {
-    if repairing.is_some() && !snapshot.completes_repair {
+    let generation = snapshot.generation;
+    let enriched = is_enriched_snapshot(&snapshot);
+
+    if snapshot.completes_repair {
+        // A repair task is detached from the settings window, so its result
+        // can arrive after that window has been closed and a new one opened.
+        // Only the generation registered by this window may release its
+        // repair barrier. This also rejects a completion with no active repair
+        // (for example, a result left over from the previous window).
+        if merge_state.active_repair_generation != Some(generation) {
+            return;
+        }
+        *gate = snapshot;
+        *repairing = None;
+        merge_state.active_repair_generation = None;
+        merge_state.latest_generation = Some(generation);
+        merge_state.latest_is_enriched = enriched;
+        merge_state.pending_repair_generation = (!enriched).then_some(generation);
+        return;
+    }
+
+    if merge_state.latest_generation.is_some_and(|latest| generation < latest) {
+        return;
+    }
+    if merge_state.latest_generation == Some(generation) && merge_state.latest_is_enriched && !enriched {
+        return;
+    }
+
+    // `publish_check` emits required fields first and an enriched IME result
+    // second. Once the repair-complete required snapshot landed, only its own
+    // enriched companion may update the gate; a late snapshot from an older
+    // check must not put stale AX/Shell/IME values back into the UI. A newer
+    // required generation supersedes that pending companion and is accepted.
+    if let Some(pending) = merge_state.pending_repair_generation {
+        if generation == pending {
+            if enriched {
+                gate.input_method = snapshot.input_method;
+                gate.error = snapshot.error;
+                gate.completes_repair = false;
+                merge_state.latest_is_enriched = true;
+                merge_state.pending_repair_generation = None;
+            }
+            return;
+        }
+        merge_state.pending_repair_generation = None;
+    }
+
+    if repairing.is_some() {
+        // Keep the old repair result authoritative until its required snapshot
+        // arrives; an unrelated check may still finish while repair is running.
+        if merge_state
+            .active_repair_generation
+            .is_some_and(|active| generation < active)
+        {
+            return;
+        }
         gate.input_method = snapshot.input_method;
         return;
     }
+
+    if enriched {
+        match merge_state.latest_generation {
+            Some(latest) if generation == latest => {
+                gate.input_method = snapshot.input_method;
+                gate.error = snapshot.error;
+                merge_state.latest_is_enriched = true;
+            },
+            Some(latest) if generation > latest => {
+                // The required half can be delivered after its enrichment on
+                // a different producer. The generation still proves this is
+                // newer than the current gate, so apply the complete result.
+                *gate = snapshot;
+                merge_state.latest_generation = Some(generation);
+                merge_state.latest_is_enriched = true;
+            },
+            None => {
+                *gate = snapshot;
+                merge_state.latest_generation = Some(generation);
+                merge_state.latest_is_enriched = true;
+            },
+            Some(_) => {},
+        }
+        return;
+    }
+
     *gate = snapshot;
-    *repairing = None;
+    merge_state.latest_generation = Some(generation);
+    merge_state.latest_is_enriched = false;
 }
 
 pub fn apply_permission_snapshot(handle: &SettingsHandle, snapshot: PermissionSnapshot, cx: &mut App) {
     handle
         .update(cx, |view, _window, cx| {
-            merge_permission_snapshot(&mut view.gate, &mut view.repairing, snapshot);
+            merge_permission_snapshot(
+                &mut view.gate,
+                &mut view.repairing,
+                &mut view.permission_merge,
+                snapshot,
+            );
             cx.notify();
         })
         .ok();
+}
+
+pub fn refresh_permission_check(handle: &SettingsHandle, proxy: &EventLoopProxy, cx: &mut App) {
+    let idle = handle
+        .update(cx, |view, _window, _cx| view.repairing.is_none())
+        .unwrap_or(false);
+    if idle {
+        permissions::spawn_check(proxy);
+    }
 }
 
 pub fn focus_settings(handle: &SettingsHandle, cx: &mut App) -> bool {
@@ -2229,11 +2361,21 @@ mod tests {
     use crate::permissions::PermReady;
 
     fn snapshot(accessibility: PermReady, shell: PermReady, input_method: PermReady) -> PermissionSnapshot {
+        snapshot_with_generation(1, accessibility, shell, input_method)
+    }
+
+    fn snapshot_with_generation(
+        generation: u64,
+        accessibility: PermReady,
+        shell: PermReady,
+        input_method: PermReady,
+    ) -> PermissionSnapshot {
         PermissionSnapshot {
             accessibility,
             shell,
             input_method,
             error: None,
+            generation,
             completes_repair: false,
         }
     }
@@ -2250,16 +2392,201 @@ mod tests {
     fn late_ime_snapshot_does_not_clear_in_flight_repair() {
         let mut gate = snapshot(PermReady::Missing, PermReady::Ready, PermReady::Checking);
         let mut repairing = Some(PermId::Accessibility);
-        let mut ime_fill = snapshot(PermReady::Missing, PermReady::Ready, PermReady::Missing);
-        merge_permission_snapshot(&mut gate, &mut repairing, ime_fill.clone());
+        let mut merge_state = PermissionMergeState {
+            active_repair_generation: Some(2),
+            ..Default::default()
+        };
+        let mut ime_fill = snapshot_with_generation(1, PermReady::Missing, PermReady::Ready, PermReady::Missing);
+        merge_permission_snapshot(&mut gate, &mut repairing, &mut merge_state, ime_fill.clone());
         assert_eq!(repairing, Some(PermId::Accessibility));
-        assert_eq!(gate.input_method, PermReady::Missing);
+        assert_eq!(gate.input_method, PermReady::Checking);
 
+        ime_fill.generation = 2;
         ime_fill.completes_repair = true;
         ime_fill.accessibility = PermReady::Ready;
-        merge_permission_snapshot(&mut gate, &mut repairing, ime_fill);
+        merge_permission_snapshot(&mut gate, &mut repairing, &mut merge_state, ime_fill);
         assert_eq!(repairing, None);
         assert_eq!(gate.accessibility, PermReady::Ready);
+    }
+
+    #[test]
+    fn late_enriched_snapshot_cannot_overwrite_repair_complete_state() {
+        let mut gate = snapshot_with_generation(1, PermReady::Missing, PermReady::Ready, PermReady::Checking);
+        let mut repairing = Some(PermId::Accessibility);
+        let mut merge_state = PermissionMergeState {
+            active_repair_generation: Some(2),
+            ..Default::default()
+        };
+
+        // An older check may finish its enriched IME query while repair is in flight.
+        merge_permission_snapshot(
+            &mut gate,
+            &mut repairing,
+            &mut merge_state,
+            snapshot_with_generation(1, PermReady::Missing, PermReady::Ready, PermReady::Missing),
+        );
+
+        let mut repaired = snapshot_with_generation(2, PermReady::Ready, PermReady::Ready, PermReady::Checking);
+        repaired.completes_repair = true;
+        merge_permission_snapshot(&mut gate, &mut repairing, &mut merge_state, repaired);
+        assert_eq!(repairing, None);
+        assert_eq!(gate.accessibility, PermReady::Ready);
+        assert_eq!(gate.shell, PermReady::Ready);
+        assert_eq!(gate.input_method, PermReady::Checking);
+
+        // This is the old enriched result. Its AX/Shell base is stale, so it
+        // must not replace the repair-complete state (including IME).
+        merge_permission_snapshot(
+            &mut gate,
+            &mut repairing,
+            &mut merge_state,
+            snapshot_with_generation(1, PermReady::Missing, PermReady::Ready, PermReady::Missing),
+        );
+        assert_eq!(gate.accessibility, PermReady::Ready);
+        assert_eq!(gate.shell, PermReady::Ready);
+        assert_eq!(gate.input_method, PermReady::Checking);
+
+        // The companion enriched result from the repair has the same required
+        // base and is still allowed to fill in the optional IME status.
+        merge_permission_snapshot(
+            &mut gate,
+            &mut repairing,
+            &mut merge_state,
+            snapshot_with_generation(2, PermReady::Ready, PermReady::Ready, PermReady::Ready),
+        );
+        assert_eq!(gate.accessibility, PermReady::Ready);
+        assert_eq!(gate.shell, PermReady::Ready);
+        assert_eq!(gate.input_method, PermReady::Ready);
+        assert!(!gate.completes_repair);
+    }
+
+    #[test]
+    fn stale_enriched_snapshot_is_ignored_after_a_new_required_snapshot() {
+        let mut gate = snapshot_with_generation(1, PermReady::Ready, PermReady::Ready, PermReady::Checking);
+        let mut repairing = None;
+        let mut merge_state = PermissionMergeState::default();
+
+        merge_permission_snapshot(
+            &mut gate,
+            &mut repairing,
+            &mut merge_state,
+            snapshot_with_generation(2, PermReady::Ready, PermReady::Ready, PermReady::Checking),
+        );
+        merge_permission_snapshot(
+            &mut gate,
+            &mut repairing,
+            &mut merge_state,
+            snapshot_with_generation(1, PermReady::Missing, PermReady::Ready, PermReady::Missing),
+        );
+        assert_eq!(gate.accessibility, PermReady::Ready);
+        assert_eq!(gate.shell, PermReady::Ready);
+        assert_eq!(gate.input_method, PermReady::Checking);
+    }
+
+    #[test]
+    fn newer_required_generation_releases_repair_barrier_before_same_state_old_enrichment() {
+        let mut gate = snapshot_with_generation(1, PermReady::Missing, PermReady::Ready, PermReady::Checking);
+        let mut repairing = Some(PermId::Accessibility);
+        let mut merge_state = PermissionMergeState {
+            active_repair_generation: Some(2),
+            ..Default::default()
+        };
+
+        let mut repaired = snapshot_with_generation(2, PermReady::Ready, PermReady::Ready, PermReady::Checking);
+        repaired.completes_repair = true;
+        merge_permission_snapshot(&mut gate, &mut repairing, &mut merge_state, repaired);
+        assert_eq!(merge_state.pending_repair_generation, Some(2));
+
+        // A new check may have the same AX/Shell values. Its generation, not
+        // the values, is what releases the old repair barrier.
+        merge_permission_snapshot(
+            &mut gate,
+            &mut repairing,
+            &mut merge_state,
+            snapshot_with_generation(3, PermReady::Ready, PermReady::Ready, PermReady::Checking),
+        );
+        assert_eq!(merge_state.pending_repair_generation, None);
+        assert_eq!(merge_state.latest_generation, Some(3));
+
+        // The old enriched result has the same readiness values but is still
+        // rejected by generation ordering.
+        merge_permission_snapshot(
+            &mut gate,
+            &mut repairing,
+            &mut merge_state,
+            snapshot_with_generation(2, PermReady::Ready, PermReady::Ready, PermReady::Missing),
+        );
+        assert_eq!(gate.input_method, PermReady::Checking);
+
+        merge_permission_snapshot(
+            &mut gate,
+            &mut repairing,
+            &mut merge_state,
+            snapshot_with_generation(3, PermReady::Ready, PermReady::Ready, PermReady::Ready),
+        );
+        assert_eq!(gate.input_method, PermReady::Ready);
+    }
+
+    #[test]
+    fn active_repair_completion_wins_over_a_newer_check_started_while_repairing() {
+        let mut gate = snapshot_with_generation(1, PermReady::Missing, PermReady::Ready, PermReady::Checking);
+        let mut repairing = Some(PermId::Accessibility);
+        let mut merge_state = PermissionMergeState {
+            active_repair_generation: Some(2),
+            ..Default::default()
+        };
+
+        // This ordinary check is newer, but it must not poison the active
+        // repair's completion marker or its required AX/Shell values.
+        merge_permission_snapshot(
+            &mut gate,
+            &mut repairing,
+            &mut merge_state,
+            snapshot_with_generation(3, PermReady::Missing, PermReady::Missing, PermReady::Checking),
+        );
+        assert_eq!(repairing, Some(PermId::Accessibility));
+        assert_eq!(gate.accessibility, PermReady::Missing);
+        assert_eq!(gate.shell, PermReady::Ready);
+        assert_eq!(merge_state.latest_generation, None);
+
+        let mut repaired = snapshot_with_generation(2, PermReady::Ready, PermReady::Ready, PermReady::Checking);
+        repaired.completes_repair = true;
+        merge_permission_snapshot(&mut gate, &mut repairing, &mut merge_state, repaired);
+        assert_eq!(repairing, None);
+        assert_eq!(gate.accessibility, PermReady::Ready);
+        assert_eq!(gate.shell, PermReady::Ready);
+        assert_eq!(merge_state.latest_generation, Some(2));
+        assert_eq!(merge_state.pending_repair_generation, Some(2));
+    }
+
+    #[test]
+    fn previous_window_repair_completion_cannot_clear_current_window_repair() {
+        // Window A owned generation 1 and was closed while its detached repair
+        // task was still running. Window B starts generation 2 after opening.
+        let mut gate_b = snapshot_with_generation(2, PermReady::Ready, PermReady::Ready, PermReady::Checking);
+        let mut repairing_b = Some(PermId::Accessibility);
+        let mut merge_state_b = PermissionMergeState {
+            active_repair_generation: Some(2),
+            ..Default::default()
+        };
+
+        // Keep the readiness values identical to B's state: generation is the
+        // only reliable identity once the old window and its merge state are gone.
+        let mut old_completion = snapshot_with_generation(1, PermReady::Ready, PermReady::Ready, PermReady::Checking);
+        old_completion.completes_repair = true;
+        merge_permission_snapshot(&mut gate_b, &mut repairing_b, &mut merge_state_b, old_completion);
+        assert_eq!(repairing_b, Some(PermId::Accessibility));
+        assert_eq!(merge_state_b.active_repair_generation, Some(2));
+        assert_eq!(gate_b.accessibility, PermReady::Ready);
+        assert_eq!(gate_b.shell, PermReady::Ready);
+
+        // B's own completion still releases the barrier.
+        let mut current_completion =
+            snapshot_with_generation(2, PermReady::Ready, PermReady::Ready, PermReady::Checking);
+        current_completion.completes_repair = true;
+        merge_permission_snapshot(&mut gate_b, &mut repairing_b, &mut merge_state_b, current_completion);
+        assert_eq!(repairing_b, None);
+        assert_eq!(merge_state_b.active_repair_generation, None);
     }
 
     #[test]

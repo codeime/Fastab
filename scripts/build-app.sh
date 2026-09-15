@@ -19,13 +19,29 @@ DEFAULT_SPARKLE_APPCAST_URL="https://github.com/codeime/easy-complete/releases/l
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION=$(cargo metadata --no-deps --format-version 1 | python3 -c "import sys,json; print(json.load(sys.stdin)['packages'][0]['version'])" 2>/dev/null || echo "dev")
+VERSION=$(cargo metadata --no-deps --format-version 1 | python3 -c "import sys,json; print(next(pkg['version'] for pkg in json.load(sys.stdin)['packages'] if pkg['name'] == 'fig_desktop'))")
 
 STAGING_BUNDLE="${REPO_DIR}/build/${APP_DISPLAY}.app"
 MACOS_DIR="${STAGING_BUNDLE}/Contents/MacOS"
 RESOURCES_DIR="${STAGING_BUNDLE}/Contents/Resources"
 FRAMEWORKS_DIR="${STAGING_BUNDLE}/Contents/Frameworks"
 SPARKLE_APPCAST_URL="${SPARKLE_APPCAST_URL:-$DEFAULT_SPARKLE_APPCAST_URL}"
+SPARKLE_AUTOMATIC_CHECKS="${SPARKLE_AUTOMATIC_CHECKS:-}"
+if [ -z "$SPARKLE_AUTOMATIC_CHECKS" ]; then
+  # GitHub's /releases/latest excludes prereleases. A beta build must not
+  # poll the stable feed as if it were a beta update channel. Unsigned builds
+  # also cannot install a Sparkle update, so avoid polling a missing appcast.
+  if [ -n "${SPARKLE_PUBLIC_ED_KEY:-}" ] && [ -n "${SPARKLE_PRIVATE_ED_KEY:-}" ] && [[ "$VERSION" != *-* ]]; then
+    SPARKLE_AUTOMATIC_CHECKS="true"
+  else
+    SPARKLE_AUTOMATIC_CHECKS="false"
+  fi
+fi
+case "$SPARKLE_AUTOMATIC_CHECKS" in
+  true) SPARKLE_AUTOMATIC_CHECKS_ENTRY="<true/>" ;;
+  false) SPARKLE_AUTOMATIC_CHECKS_ENTRY="<false/>" ;;
+  *) echo "error: SPARKLE_AUTOMATIC_CHECKS must be true or false" >&2; exit 1 ;;
+esac
 
 GREEN='\033[0;32m'; NC='\033[0m'
 info() { echo -e "${GREEN}==>${NC} $*"; }
@@ -126,7 +142,7 @@ read -r -d '' SPARKLE_PLIST_ENTRIES <<PLIST || true
     <key>SUFeedURL</key>
     <string>${SPARKLE_APPCAST_URL}</string>
     <key>SUEnableAutomaticChecks</key>
-    <true/>
+    ${SPARKLE_AUTOMATIC_CHECKS_ENTRY}
     <key>SUScheduledCheckInterval</key>
     <integer>86400</integer>
 ${SPARKLE_PUBLIC_KEY_ENTRY}    <key>SUEnableInstallerLauncherService</key>

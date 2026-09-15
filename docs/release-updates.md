@@ -1,5 +1,10 @@
 # Release Signing and Sparkle Updates
 
+The release workflow accepts only `v<major>.<minor>.<patch>` tags and the
+`v<version>-(alpha|beta|rc)[.<suffix>]` prerelease forms. This matches the
+versioned download URLs generated for the website and README; unprefixed or
+unrecognized channels fail before packaging.
+
 Pushing a `v*` tag always publishes an ARM64 DMG to the GitHub Release. Developer
 ID signing, notarization, and Sparkle are optional: each is used only when its
 secrets are present. A first release with no previous assets publishes a
@@ -43,6 +48,19 @@ The app embeds this feed URL at build time:
 https://github.com/<owner>/<repo>/releases/latest/download/appcast.xml
 ```
 
+GitHub's `latest` endpoint excludes prereleases. A beta/alpha/rc build therefore
+does not poll this stable feed automatically, even if a signed `appcast.xml`
+is attached to its own tag. Until a separate beta feed is published, users
+download each beta from its versioned GitHub release page. The release
+workflow disables automatic checks without a complete Sparkle signing key
+pair; a workflow with only one key must not publish a feed that clients cannot
+use. Local builds also default to automatic checks off unless both keys are
+present and the version is stable; override `SPARKLE_AUTOMATIC_CHECKS=true`
+only when a working signed feed will be published. In builds without a feed,
+**Check for
+Updates** opens the GitHub release list for a manual download instead of
+querying the unavailable Sparkle feed.
+
 Each release uploads two DMG names:
 
 - `Easy-Complete-arm64.dmg`: stable website/manual-download asset
@@ -76,7 +94,7 @@ Generate a Sparkle key pair:
 Build a Sparkle-enabled app locally:
 
 ```bash
-SPARKLE_PUBLIC_ED_KEY="..." ./scripts/build-app.sh
+SPARKLE_PUBLIC_ED_KEY="..." SPARKLE_PRIVATE_ED_KEY="..." ./scripts/build-app.sh
 ```
 
 Sign and notarize locally:

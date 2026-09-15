@@ -55,7 +55,7 @@ impl Shell {
     /// All shells to run unit / integration tests with
     pub fn all_test() -> Vec<Self> {
         let mut shells = vec![Shell::Bash, Shell::Zsh];
-        if !SKIP_FISH_TESTS {
+        if !SKIP_FISH_TESTS && fish_version_succeeds() {
             shells.push(Shell::Fish);
         }
         shells
@@ -165,6 +165,9 @@ async fn shell_version(shell: &Shell, exe_path: &Path) -> Result<String, Error> 
         Shell::Fish => {
             let re = Regex::new(FISH_RE).unwrap();
             let version_output = Command::new(exe_path).arg("--version").output().await?;
+            if !version_output.status.success() {
+                return Err(err());
+            }
             let version_capture = re.captures(std::str::from_utf8(&version_output.stdout)?);
             Ok(version_capture.ok_or_else(err)?.get(1).ok_or_else(err)?.as_str().into())
         },
@@ -173,6 +176,14 @@ async fn shell_version(shell: &Shell, exe_path: &Path) -> Result<String, Error> 
             Ok(std::str::from_utf8(&version_output.stdout)?.trim().into())
         },
     }
+}
+
+fn fish_version_succeeds() -> bool {
+    command_succeeded(std::process::Command::new("fish").arg("--version").output())
+}
+
+fn command_succeeded(output: std::io::Result<std::process::Output>) -> bool {
+    output.is_ok_and(|output| output.status.success())
 }
 
 #[cfg(test)]
@@ -191,7 +202,7 @@ mod tests {
         ];
 
         for (shell, exe_path_str, skip) in tests {
-            if skip {
+            if skip || (shell == Shell::Fish && !fish_version_succeeds()) {
                 continue;
             }
 
@@ -201,6 +212,22 @@ mod tests {
                 .unwrap_or_else(|err| panic!("exe {} failed. Error: {:?}", exe_path_str, err));
             println!("{}: {version:?}\n", exe_path.display());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fish_version_probe_rejects_a_nonzero_exit_status() {
+        let output = std::process::Command::new("sh")
+            .args(["-c", "printf 'fish 3.6.1\\n'; exit 7"])
+            .output()
+            .expect("the test shell should be available");
+        assert!(!command_succeeded(Ok(output)));
+
+        let output = std::process::Command::new("sh")
+            .args(["-c", "printf 'fish 3.6.1\\n'"])
+            .output()
+            .expect("the test shell should be available");
+        assert!(command_succeeded(Ok(output)));
     }
 
     #[test]
