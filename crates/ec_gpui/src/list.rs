@@ -525,14 +525,19 @@ pub fn estimated_title_width(text: &str, font_size: f32) -> f32 {
         * font_size
 }
 
-/// Pause at each end, then slide the extra width across. `delta` is 0..=1.
+/// Pause at each end, then ping-pong. A one-way loop would jump from the
+/// tail back to the start every cycle, which reads as a flash.
 pub fn marquee_offset(delta: f32, extra: f32) -> f32 {
-    let t = if delta < 0.06 {
+    let t = if delta < 0.08 {
         0.0
-    } else if delta > 0.94 {
+    } else if delta < 0.46 {
+        (delta - 0.08) / 0.38
+    } else if delta < 0.54 {
         1.0
+    } else if delta < 0.92 {
+        1.0 - (delta - 0.54) / 0.38
     } else {
-        (delta - 0.06) / 0.88
+        0.0
     };
     extra * t
 }
@@ -760,11 +765,10 @@ fn underline_prefix(runs: &[TextRun], index: usize, char_count: usize) -> Option
 pub struct SuggestionList {
     pub state: Entity<OverlayState>,
     scroll_handle: UniformListScrollHandle,
-    /// Snapshot of the selection and viewport used for the last smart-scroll
-    /// check. The old react-window list re-ran its smart scroll after a resize
-    /// as well as after keyboard navigation; keeping the visible range here
-    /// lets the native list do the same without centering every row change.
-    scroll_snapshot: Option<(usize, usize, usize, usize, usize)>,
+    /// Last `(selected, count, visible_rows)` that ran smart-scroll.
+    /// Viewport edges stay out of this tuple: mouse-wheel only changes the
+    /// offset, and treating that as a selection change snaps back to row 0.
+    scroll_snapshot: Option<(usize, usize, usize)>,
     /// Last size handed to GPUI's native window. Repeating the same resize on
     /// every caret/frame update feeds back into AppKit's resize callbacks.
     pub(crate) last_requested_size: Option<(f32, f32)>,
@@ -823,10 +827,10 @@ impl Render for SuggestionList {
         let visible_rows = suggestion_visible_rows(count, row_height, max_list_height, popout, loading);
         let list_h = visible_rows as f32 * row_height;
         if count > 0 {
-            let offset_y = f32::from(self.scroll_handle.0.borrow().base_handle.offset().y);
-            let (first_visible, last_visible) = visible_range_for_scroll(offset_y, row_height, visible_rows, count);
-            let snapshot = (selected, count, visible_rows, first_visible, last_visible);
+            let snapshot = (selected, count, visible_rows);
             if self.scroll_snapshot != Some(snapshot) {
+                let offset_y = f32::from(self.scroll_handle.0.borrow().base_handle.offset().y);
+                let (first_visible, last_visible) = visible_range_for_scroll(offset_y, row_height, visible_rows, count);
                 if let Some(strategy) = smart_scroll_strategy(selected, first_visible, last_visible) {
                     self.scroll_handle.scroll_to_item(selected, strategy);
                 }
@@ -1967,8 +1971,10 @@ mod tests {
     fn marquee_pauses_then_slides_the_overflow() {
         assert_eq!(marquee_offset(0.0, 100.0), 0.0);
         assert_eq!(marquee_offset(0.05, 100.0), 0.0);
-        assert!((marquee_offset(0.5, 100.0) - 50.0).abs() < 1.0);
-        assert_eq!(marquee_offset(1.0, 100.0), 100.0);
+        assert!((marquee_offset(0.27, 100.0) - 50.0).abs() < 2.0);
+        assert_eq!(marquee_offset(0.5, 100.0), 100.0);
+        assert!((marquee_offset(0.73, 100.0) - 50.0).abs() < 2.0);
+        assert_eq!(marquee_offset(1.0, 100.0), 0.0);
         assert!(marquee_duration(10.0) >= Duration::from_millis(1200));
         assert!(marquee_duration(10.0) < Duration::from_secs(3));
         assert!(marquee_duration(1000.0) <= Duration::from_millis(4500));
