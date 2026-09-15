@@ -1,5 +1,10 @@
 # Changelog
 
+## v3.0.0-beta.11
+
+- fix: mouse-wheel on the suggestion list no longer flashes and snaps back to the first row
+- fix: overflowing suggestion titles ping-pong instead of jumping from the tail back to the start
+
 ## v3.0.0-beta.10
 
 - fix: Down on `cd ~/` scrolls past the first history rows instead of sticking on a 5-row window
