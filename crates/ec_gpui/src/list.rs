@@ -547,25 +547,40 @@ pub fn estimated_title_width(text: &str, font_size: f32) -> f32 {
         * font_size
 }
 
-/// Pause at each end, then ping-pong. A one-way loop would jump from the
-/// tail back to the start every cycle, which reads as a flash.
+const MARQUEE_PAUSE_SECS: f32 = 0.8;
+const MARQUEE_MIN_TRAVEL_SECS: f32 = 1.5;
+const MARQUEE_PEAK_SPEED_PX_PER_SEC: f32 = 75.0;
+
+fn marquee_travel_secs(extra: f32) -> f32 {
+    // Cosine easing peaks at pi / 2 times the average speed. Keep that peak
+    // bounded even for very long titles, instead of capping the whole cycle.
+    (extra.max(0.0) * std::f32::consts::FRAC_PI_2 / MARQUEE_PEAK_SPEED_PX_PER_SEC).max(MARQUEE_MIN_TRAVEL_SECS)
+}
+
+/// Pause at each end, then ease into and out of each direction. A one-way
+/// loop would jump from the tail back to the start every cycle.
 pub fn marquee_offset(delta: f32, extra: f32) -> f32 {
-    let t = if delta < 0.08 {
+    let travel = marquee_travel_secs(extra);
+    let cycle = 2.0 * (MARQUEE_PAUSE_SECS + travel);
+    let elapsed = delta.clamp(0.0, 1.0) * cycle;
+    let half_pause = MARQUEE_PAUSE_SECS * 0.5;
+    let ease = |progress: f32| (1.0 - (std::f32::consts::PI * progress.clamp(0.0, 1.0)).cos()) * 0.5;
+
+    if elapsed <= half_pause {
         0.0
-    } else if delta < 0.46 {
-        (delta - 0.08) / 0.38
-    } else if delta < 0.54 {
-        1.0
-    } else if delta < 0.92 {
-        1.0 - (delta - 0.54) / 0.38
+    } else if elapsed < half_pause + travel {
+        extra * ease((elapsed - half_pause) / travel)
+    } else if elapsed <= half_pause + travel + MARQUEE_PAUSE_SECS {
+        extra
+    } else if elapsed < cycle - half_pause {
+        extra * (1.0 - ease((elapsed - half_pause - travel - MARQUEE_PAUSE_SECS) / travel))
     } else {
         0.0
-    };
-    extra * t
+    }
 }
 
 pub fn marquee_duration(extra: f32) -> Duration {
-    Duration::from_secs_f32((0.9 + extra / 90.0).clamp(1.2, 4.5))
+    Duration::from_secs_f32(2.0 * (MARQUEE_PAUSE_SECS + marquee_travel_secs(extra)))
 }
 
 /// Shared prefix of same-kind rows, matching the old overlay's Tab underline.
@@ -2006,15 +2021,41 @@ mod tests {
 
     #[test]
     fn marquee_pauses_then_slides_the_overflow() {
+        let cycle = marquee_duration(100.0).as_secs_f32();
+        let pause = MARQUEE_PAUSE_SECS * 0.5 / cycle;
+        let travel = marquee_travel_secs(100.0) / cycle;
+        let midpoint = pause + travel * 0.5;
+        let forward_end = pause + travel;
+
         assert_eq!(marquee_offset(0.0, 100.0), 0.0);
-        assert_eq!(marquee_offset(0.05, 100.0), 0.0);
-        assert!((marquee_offset(0.27, 100.0) - 50.0).abs() < 2.0);
+        assert_eq!(marquee_offset(pause * 0.5, 100.0), 0.0);
+        assert!((marquee_offset(midpoint, 100.0) - 50.0).abs() < 0.01);
         assert_eq!(marquee_offset(0.5, 100.0), 100.0);
-        assert!((marquee_offset(0.73, 100.0) - 50.0).abs() < 2.0);
+        assert!((marquee_offset(1.0 - midpoint, 100.0) - 50.0).abs() < 0.01);
         assert_eq!(marquee_offset(1.0, 100.0), 0.0);
-        assert!(marquee_duration(10.0) >= Duration::from_millis(1200));
-        assert!(marquee_duration(10.0) < Duration::from_secs(3));
-        assert!(marquee_duration(1000.0) <= Duration::from_millis(4500));
+        assert!(marquee_duration(10.0) >= Duration::from_secs(4));
+        assert!(marquee_duration(100.0) > marquee_duration(10.0));
+        assert!(marquee_duration(1000.0) > Duration::from_secs(30));
+        // Endpoints have zero velocity, so reversing direction does not jerk.
+        assert!(marquee_offset(pause + 0.002, 100.0) < 0.1);
+        assert!(100.0 - marquee_offset(forward_end - 0.002, 100.0) < 0.1);
+    }
+
+    #[test]
+    fn marquee_speed_stays_bounded_for_long_titles() {
+        let extra = 1000.0;
+        let cycle = marquee_duration(extra).as_secs_f32();
+        let sample_secs = 0.01;
+        let sample_delta = sample_secs / cycle;
+        for step in 0..1000 {
+            let delta = step as f32 / 1000.0;
+            let distance = (marquee_offset(delta + sample_delta, extra) - marquee_offset(delta, extra)).abs();
+            let speed = distance / sample_secs;
+            assert!(
+                speed <= MARQUEE_PEAK_SPEED_PX_PER_SEC + 0.1,
+                "marquee reached {speed} px/s at delta {delta}"
+            );
+        }
     }
 
     #[test]
