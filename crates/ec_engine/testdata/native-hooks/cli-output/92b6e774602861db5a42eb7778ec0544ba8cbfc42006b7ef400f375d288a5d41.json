@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "/home/user/.config/goto"
+  ],
+  "status": 1,
+  "stderr": "cat: /home/user/.config/goto: No such file or directory\n",
+  "stdout": ""
+}

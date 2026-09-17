@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "nx.json"
+  ],
+  "status": 1,
+  "stderr": "cat: nx.json: No such file or directory\n",
+  "stdout": ""
+}

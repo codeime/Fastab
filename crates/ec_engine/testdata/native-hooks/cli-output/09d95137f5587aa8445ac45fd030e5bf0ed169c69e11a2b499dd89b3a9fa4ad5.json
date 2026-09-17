@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "brew",
+    "tap"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "homebrew/services\nlocalsend/localsend\nmanaflow-ai/cmux\ntw93/tap\n"
+}

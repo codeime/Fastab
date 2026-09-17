@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "  dev\n  feat/cross-platform\n* main\n",
         [
           "git",
           "push",
@@ -100,7 +100,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "  dev\n  feat/cross-platform\n* main\n",
         [
           "git",
           "push",

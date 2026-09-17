@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "if command -v gh > /dev/null; then       gh api -H \"Accept: application/vnd.github+json\" /repos/rust-lang/rust/releases;     else       curl -sfL -H \"Accept: application/vnd.github+json\" https://api.github.com/repos/rust-lang/rust/releases;     fi"
+  ],
+  "skipReason": "not-whitelisted",
+  "skipped": true,
+  "status": 127,
+  "stderr": "command not found",
+  "stdout": ""
+}

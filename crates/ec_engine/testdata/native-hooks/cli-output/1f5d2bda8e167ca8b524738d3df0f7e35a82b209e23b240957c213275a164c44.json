@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "fig",
+    "_",
+    "request",
+    "--route",
+    "/graphql",
+    "--method",
+    "--body",
+    "{\"query\":\"query Scripts {\\n    currentUser {\\n      namespace {\\n        username\\n        scripts {\\n          ...ScriptFields\\n        }\\n      }\\n      teamMemberships {\\n        team {\\n          namespace {\\n            username\\n            scripts {\\n              ...ScriptFields\\n            }\\n          }\\n        }\\n      }\\n    }\\n  }\\n\\n  fragment ScriptFields on Script {\\n  name\\n  fields {\\n    icon\\n    displayName\\n    description\\n    templateVersion\\n    tags\\n    parameters {\\n      type\\n      name\\n      displayName\\n      description\\n      text {\\n        placeholder\\n      }\\n      checkbox {\\n        trueValueSubstitution\\n        falseValueSubstitution\\n      }\\n      selector {\\n        generators {\\n          named {\\n            name\\n          }\\n          shellScript {\\n            script\\n          }\\n          type\\n        }\\n        placeholder\\n        suggestions\\n      }\\n      path {\\n        extensions\\n        fileType\\n      }\\n    }\\n    runtime\\n  }\\n  relevanceScore\\n  lastInvokedAt\\n  lastInvokedAtByUser\\n  isOwnedByCurrentUser\\n}\"}"
+  ],
+  "skipReason": "not-whitelisted",
+  "skipped": true,
+  "status": 127,
+  "stderr": "command not found",
+  "stdout": ""
+}

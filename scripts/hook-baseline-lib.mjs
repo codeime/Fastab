@@ -179,6 +179,80 @@ export function tokensFromIr(spec, path) {
   return tokens.length > 1 ? tokens : [rootName ?? "cmd", ""];
 }
 
+export function isUsableCliSample(sample) {
+  return Boolean(sample) && sample.skipped !== true && typeof sample.stdout === "string";
+}
+
+export const BUILTIN_SCRIPT_ARGV = Object.freeze({
+  "git-branches": Object.freeze(["git", "branch", "--no-color"]),
+  "git-changed-files": Object.freeze(["git", "status", "--short"]),
+  "git-remotes": Object.freeze(["git", "remote", "-v"]),
+  "git-tags": Object.freeze(["git", "tag", "--list"]),
+  "git-stashes": Object.freeze(["git", "stash", "list"]),
+  "git-commits": Object.freeze(["git", "log", "--oneline", "-n", "20"]),
+  "git-aliases": Object.freeze([
+    "git",
+    "--no-optional-locks",
+    "config",
+    "--get-regexp",
+    "^alias.",
+  ]),
+});
+
+export function walkIrValue(node, visit) {
+  if (!node || typeof node !== "object") return;
+  visit(node);
+  for (const value of Object.values(node)) {
+    if (Array.isArray(value)) {
+      for (const item of value) walkIrValue(item, visit);
+    } else if (value && typeof value === "object") {
+      walkIrValue(value, visit);
+    }
+  }
+}
+
+export function scriptArgvFromSpec(spec, hookIds) {
+  const ids = hookIds instanceof Set ? hookIds : new Set(hookIds);
+  let script = null;
+  let builtin = null;
+  walkIrValue(spec, (node) => {
+    if (!node || typeof node !== "object") return;
+    const hit =
+      ids.has(node.jsPostProcess) ||
+      ids.has(node.jsCustom) ||
+      ids.has(node.jsScript);
+    if (!hit) return;
+    if (
+      !script &&
+      Array.isArray(node.script) &&
+      node.script.length > 0 &&
+      node.script.every((part) => typeof part === "string")
+    ) {
+      script = node.script;
+    }
+    if (!builtin && typeof node.builtin === "string") builtin = node.builtin;
+  });
+  if (script) return script;
+  if (builtin && BUILTIN_SCRIPT_ARGV[builtin]) {
+    return [...BUILTIN_SCRIPT_ARGV[builtin]];
+  }
+  return null;
+}
+
+export async function scriptArgvForGroup(report, group, irRoot) {
+  const hookIds = new Set(
+    [...(group.hookIds ?? []), ...(group.sampleHookIds ?? [])].filter(Boolean),
+  );
+  for (const hookId of hookIds) {
+    const location = locationForHook(report, hookId);
+    const spec = location ? await loadIrSpec(irRoot, location.source) : null;
+    if (!spec) continue;
+    const argv = scriptArgvFromSpec(spec, hookIds);
+    if (argv) return argv;
+  }
+  return null;
+}
+
 export async function loadCliOutput(command, args) {
   const argv = [command, ...(args ?? [])];
   const file = join(cliOutputRoot, `${argvDigest(argv)}.json`);
@@ -191,6 +265,8 @@ export async function loadCliOutput(command, args) {
       stdout: typeof sample.stdout === "string" ? sample.stdout : "",
       stderr: typeof sample.stderr === "string" ? sample.stderr : "",
       status: Number.isInteger(sample.status) ? sample.status : 127,
+      skipped: sample.skipped === true,
+      truncated: sample.truncated === true,
     };
   } catch {
     return null;
@@ -381,7 +457,17 @@ export async function recordExecRules({
         continue;
       }
       const sample = await loadCliOutput(command, callArgs);
-      rules.push(sample ?? missingCommandRule(command, callArgs));
+      rules.push(
+        isUsableCliSample(sample)
+          ? {
+              command,
+              args: callArgs,
+              stdout: sample.stdout,
+              stderr: sample.stderr,
+              status: sample.status,
+            }
+          : missingCommandRule(command, callArgs),
+      );
       added = true;
     }
     if (!added) return rules;

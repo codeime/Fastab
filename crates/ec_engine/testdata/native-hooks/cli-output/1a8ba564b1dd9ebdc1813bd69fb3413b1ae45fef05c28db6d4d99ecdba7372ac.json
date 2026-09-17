@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "mdfind",
+    "kMDItemContentTypeTree=com.apple.application-bundle",
+    "-onlyin",
+    "/"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": ""
+}

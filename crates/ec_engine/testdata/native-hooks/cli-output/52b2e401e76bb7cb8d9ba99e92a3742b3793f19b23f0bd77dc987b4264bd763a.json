@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "/home/user/.ssh/config"
+  ],
+  "status": 1,
+  "stderr": "cat: /home/user/.ssh/config: No such file or directory\n",
+  "stdout": ""
+}

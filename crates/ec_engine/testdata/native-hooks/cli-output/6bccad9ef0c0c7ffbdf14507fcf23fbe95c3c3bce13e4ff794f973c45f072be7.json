@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "until [[ -f redwood.toml ]] || [[ $PWD = '/' ]]; do cd ..; done; ls -1p scripts/"
+  ],
+  "status": 1,
+  "stderr": "ls: scripts/: No such file or directory\n",
+  "stdout": ""
+}

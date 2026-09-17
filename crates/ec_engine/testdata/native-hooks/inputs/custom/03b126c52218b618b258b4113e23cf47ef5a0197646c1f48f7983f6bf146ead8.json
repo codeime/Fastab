@@ -25,9 +25,9 @@
             "make -qp | awk -F':' '/^[a-zA-Z0-9][^$#\\/\\t=]*:([^=]|$)/ {split($1,A,/ /);for(i in A)print A[i]}' | sort -u"
           ],
           "command": "bash",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "make: *** No targets specified and no makefile found.  Stop.\n",
+          "stdout": "GNUmakefile\nMakefile\nmakefile\n"
         },
         {
           "args": [
@@ -35,8 +35,8 @@
             "makefile"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: Makefile: No such file or directory\ncat: makefile: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -68,9 +68,9 @@
             "make -qp | awk -F':' '/^[a-zA-Z0-9][^$#\\/\\t=]*:([^=]|$)/ {split($1,A,/ /);for(i in A)print A[i]}' | sort -u"
           ],
           "command": "bash",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "make: *** No targets specified and no makefile found.  Stop.\n",
+          "stdout": "GNUmakefile\nMakefile\nmakefile\n"
         },
         {
           "args": [
@@ -78,8 +78,8 @@
             "makefile"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: Makefile: No such file or directory\ncat: makefile: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -111,9 +111,9 @@
             "make -qp | awk -F':' '/^[a-zA-Z0-9][^$#\\/\\t=]*:([^=]|$)/ {split($1,A,/ /);for(i in A)print A[i]}' | sort -u"
           ],
           "command": "bash",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "make: *** No targets specified and no makefile found.  Stop.\n",
+          "stdout": "GNUmakefile\nMakefile\nmakefile\n"
         },
         {
           "args": [
@@ -121,8 +121,8 @@
             "makefile"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: Makefile: No such file or directory\ncat: makefile: No such file or directory\n",
           "stdout": ""
         }
       ],

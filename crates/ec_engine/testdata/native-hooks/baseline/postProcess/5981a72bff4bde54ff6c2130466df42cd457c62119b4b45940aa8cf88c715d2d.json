@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "  dev\n  feat/cross-platform\n* main\n",
         [
           "checkov",
           ""
@@ -93,7 +93,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "  dev\n  feat/cross-platform\n* main\n",
         [
           "checkov",
           ""

@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "ls",
+    "-1",
+    "/dev/mapper"
+  ],
+  "status": 1,
+  "stderr": "ls: /dev/mapper: No such file or directory\n",
+  "stdout": ""
+}

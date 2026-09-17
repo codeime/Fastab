@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "pandoc",
+    "--list-output-formats"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "ansi\nasciidoc\nasciidoc_legacy\nasciidoctor\nbbcode\nbbcode_fluxbb\nbbcode_hubzilla\nbbcode_phpbb\nbbcode_steam\nbbcode_xenforo\nbeamer\nbiblatex\nbibtex\nchunkedhtml\ncommonmark\ncommonmark_x\ncontext\ncsljson\ndjot\ndocbook\ndocbook4\ndocbook5\ndocx\ndokuwiki\ndzslides\nepub\nepub2\nepub3\nfb2\ngfm\nhaddock\nhtml\nhtml4\nhtml5\nicml\nipynb\njats\njats_archiving\njats_articleauthoring\njats_publishing\njira\njson\nlatex\nman\nmarkdown\nmarkdown_github\nmarkdown_mmd\nmarkdown_phpextra\nmarkdown_strict\nmarkua\nmediawiki\nms\nmuse\nnative\nodt\nopendocument\nopml\norg\npdf\nplain\npptx\nrevealjs\nrst\nrtf\ns5\nslideous\nslidy\nt2t\ntei\ntexinfo\ntextile\ntypst\nvimdoc\nxml\nxwiki\nzimwiki\n"
+}

@@ -1,0 +1,8 @@
+{
+  "argv": [
+    "ifconfig"
+  ],
+  "status": 1,
+  "stderr": "ifconfig: getifaddrs: Operation not permitted\n",
+  "stdout": ""
+}

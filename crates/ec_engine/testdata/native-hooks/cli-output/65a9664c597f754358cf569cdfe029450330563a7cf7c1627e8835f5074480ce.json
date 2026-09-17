@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "cat",
+    "Makefile",
+    "makefile"
+  ],
+  "status": 1,
+  "stderr": "cat: Makefile: No such file or directory\ncat: makefile: No such file or directory\n",
+  "stdout": ""
+}

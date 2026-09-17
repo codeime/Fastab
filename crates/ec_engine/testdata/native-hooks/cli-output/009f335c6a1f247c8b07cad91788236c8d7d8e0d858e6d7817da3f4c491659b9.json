@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "git",
+    "config",
+    "--get",
+    "alias.git"
+  ],
+  "status": 1,
+  "stderr": "",
+  "stdout": ""
+}

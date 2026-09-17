@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "bat",
           ""
@@ -84,7 +84,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "bat",
           ""

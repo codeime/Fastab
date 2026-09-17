@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "mise",
           "plugins",
@@ -25,18 +25,7 @@
       "exec": [],
       "expected": {
         "kind": "suggestions",
-        "value": [
-          {
-            "description": "Plugin",
-            "icon": "fig://icon?type=package",
-            "name": "main"
-          },
-          {
-            "description": "Plugin",
-            "icon": "fig://icon?type=package",
-            "name": "feature"
-          }
-        ]
+        "value": []
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -112,7 +101,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "mise",
           "plugins",

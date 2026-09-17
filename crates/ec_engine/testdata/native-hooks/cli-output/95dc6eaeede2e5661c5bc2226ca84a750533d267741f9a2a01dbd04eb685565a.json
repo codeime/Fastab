@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "command",
+    "sh",
+    "-c",
+    "find $BUN_INSTALL/install/global/node_modules -type l -o -type d -maxdepth 2 | awk -F 'node_modules/' '{print $2}'"
+  ],
+  "status": 0,
+  "stderr": "find: /install/global/node_modules: No such file or directory\n",
+  "stdout": ""
+}

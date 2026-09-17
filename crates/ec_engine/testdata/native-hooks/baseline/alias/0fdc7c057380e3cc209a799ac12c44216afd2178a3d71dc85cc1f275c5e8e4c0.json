@@ -24,8 +24,8 @@
             "alias."
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "error: key does not contain variable name: alias.\n",
           "stdout": ""
         }
       ],
@@ -59,8 +59,8 @@
             "alias.git"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "",
           "stdout": ""
         }
       ],

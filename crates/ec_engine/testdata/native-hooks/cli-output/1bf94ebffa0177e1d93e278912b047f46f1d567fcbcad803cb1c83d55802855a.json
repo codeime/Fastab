@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "youtube-dl",
+    "--simulate",
+    "--ap-list-mso"
+  ],
+  "skipReason": "not-whitelisted",
+  "skipped": true,
+  "status": 127,
+  "stderr": "command not found",
+  "stdout": ""
+}

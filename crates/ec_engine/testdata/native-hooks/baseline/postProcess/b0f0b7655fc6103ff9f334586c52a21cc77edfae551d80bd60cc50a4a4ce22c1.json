@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "k9s",
           ""
@@ -22,8 +22,8 @@
       },
       "exec": [],
       "expected": {
-        "kind": "error",
-        "value": "suggestion is missing name"
+        "kind": "suggestions",
+        "value": []
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -89,7 +89,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "k9s",
           ""

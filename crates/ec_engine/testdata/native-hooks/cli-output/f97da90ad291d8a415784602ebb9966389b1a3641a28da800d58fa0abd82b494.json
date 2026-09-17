@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "ls",
+    "/etc/mkinitcpio.d"
+  ],
+  "status": 1,
+  "stderr": "ls: /etc/mkinitcpio.d: No such file or directory\n",
+  "stdout": ""
+}

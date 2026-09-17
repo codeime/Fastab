@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "mise",
+    "settings",
+    "ls",
+    "--all",
+    "--no-header"
+  ],
+  "status": 2,
+  "stderr": "error: unexpected argument '--no-header' found\n\nUsage: mise settings ls [FLAGS] [SETTING]\n\nFor more information, try '--help'.\n",
+  "stdout": ""
+}

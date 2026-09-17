@@ -25,9 +25,9 @@
             "until [[ -d node_modules/ ]] || [[ $PWD = '/' ]]; do cd ..; done; ls -1 node_modules/.bin/"
           ],
           "command": "bash",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "acorn\nesbuild\nhusky\njiti\nlint-staged\nprettier\nterser\ntsx\nturbo\nvite\nvitest\nyaml\n"
         }
       ],
       "id": "root",
@@ -58,9 +58,9 @@
             "until [[ -d node_modules/ ]] || [[ $PWD = '/' ]]; do cd ..; done; ls -1 node_modules/.bin/"
           ],
           "command": "bash",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "acorn\nesbuild\nhusky\njiti\nlint-staged\nprettier\nterser\ntsx\nturbo\nvite\nvitest\nyaml\n"
         }
       ],
       "id": "subcommand",

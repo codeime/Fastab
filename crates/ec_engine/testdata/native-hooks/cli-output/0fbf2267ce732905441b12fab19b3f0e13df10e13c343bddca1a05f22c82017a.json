@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "while [ ! -f \"$PWD/bin/kamal\" ] && [ \"$PWD\" != \"/\" ]; do cd ..; done; [ -f \"$PWD/bin/kamal\" ] && echo \"true\" || echo \"false\""
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "false\n"
+}

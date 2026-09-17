@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "credential.helper osxkeychain\nuser.name $USER\nuser.email $USER@100.me\ncore.excludesfile $HOME/.gitignore_global\ndifftool.sourcetree.cmd opendiff \"$LOCAL\" \"$REMOTE\"\ndifftool.sourcetree.path \nmergetool.sourcetree.cmd /Applications/Sourcetree.app/Contents/Resources/opendiff-w.sh \"$LOCAL\" \"$REMOTE\" -ancestor \"$BASE\" -merge \"$MERGED\"\nmergetool.sourcetree.trustexitcode true\ncommit.template $HOME/.stCommitMsg\nhttp.postbuffer 524288000\nhttp.version HTTP/1.1\npush.autosetupremote true\ncore.repositoryformatversion 0\ncore.filemode true\ncore.bare false\ncore.logallrefupdates true\ncore.ignorecase true\ncore.precomposeunicode true\ncore.hookspath .husky/_\nremote.origin.url https://github.com/codeime/easy-complete.git\nremote.origin.fetch +refs/heads/*:refs/remotes/origin/*\nbranch.main.remote origin\nbranch.main.merge refs/heads/main\nbranch.main.vscode-merge-base origin/main\nuser.name codeime\nuser.email bingguo93@outlook.com\nbranch.feat/cross-platform.vscode-merge-base origin/main\nbranch.feat/cross-platform.vscode-merge-base origin/main\nbranch.feat/cross-platform.remote origin\nbranch.feat/cross-platform.merge refs/heads/feat/cross-platform\nbranch.dev.remote origin\nbranch.dev.merge refs/heads/dev\nbranch.dev.vscode-merge-base origin/main\n",
         [
           "git",
           "config",
@@ -23,7 +23,6 @@
       },
       "exec": [],
       "id": "normal",
-      "synthetic": true,
       "timeoutMs": 5000
     },
     {
@@ -76,7 +75,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "credential.helper osxkeychain\nuser.name $USER\nuser.email $USER@100.me\ncore.excludesfile $HOME/.gitignore_global\ndifftool.sourcetree.cmd opendiff \"$LOCAL\" \"$REMOTE\"\ndifftool.sourcetree.path \nmergetool.sourcetree.cmd /Applications/Sourcetree.app/Contents/Resources/opendiff-w.sh \"$LOCAL\" \"$REMOTE\" -ancestor \"$BASE\" -merge \"$MERGED\"\nmergetool.sourcetree.trustexitcode true\ncommit.template $HOME/.stCommitMsg\nhttp.postbuffer 524288000\nhttp.version HTTP/1.1\npush.autosetupremote true\ncore.repositoryformatversion 0\ncore.filemode true\ncore.bare false\ncore.logallrefupdates true\ncore.ignorecase true\ncore.precomposeunicode true\ncore.hookspath .husky/_\nremote.origin.url https://github.com/codeime/easy-complete.git\nremote.origin.fetch +refs/heads/*:refs/remotes/origin/*\nbranch.main.remote origin\nbranch.main.merge refs/heads/main\nbranch.main.vscode-merge-base origin/main\nuser.name codeime\nuser.email bingguo93@outlook.com\nbranch.feat/cross-platform.vscode-merge-base origin/main\nbranch.feat/cross-platform.vscode-merge-base origin/main\nbranch.feat/cross-platform.remote origin\nbranch.feat/cross-platform.merge refs/heads/feat/cross-platform\nbranch.dev.remote origin\nbranch.dev.merge refs/heads/dev\nbranch.dev.vscode-merge-base origin/main\n",
         [
           "git",
           "config",

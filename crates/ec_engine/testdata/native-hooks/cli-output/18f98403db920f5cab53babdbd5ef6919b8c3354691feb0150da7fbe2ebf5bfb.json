@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "Properties/launchSettings.json"
+  ],
+  "status": 1,
+  "stderr": "cat: Properties/launchSettings.json: No such file or directory\n",
+  "stdout": ""
+}

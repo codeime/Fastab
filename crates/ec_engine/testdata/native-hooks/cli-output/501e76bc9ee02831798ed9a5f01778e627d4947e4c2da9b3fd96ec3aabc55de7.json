@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "./.meteor/packages"
+  ],
+  "status": 1,
+  "stderr": "cat: ./.meteor/packages: No such file or directory\n",
+  "stdout": ""
+}

@@ -26,8 +26,8 @@
             "gitflow.prefix.undefined"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "",
           "stdout": ""
         },
         {
@@ -39,14 +39,50 @@
             "--sort=-committerdate"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "* main\n  remotes/origin/HEAD -> origin/main\n  remotes/origin/main\n  dev\n  remotes/origin/dev\n  feat/cross-platform\n  remotes/origin/feat/cross-platform\n"
         }
       ],
       "expected": {
         "kind": "suggestions",
-        "value": []
+        "value": [
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "main"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "remotes/origin/HEAD -> origin/main"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "remotes/origin/main"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "dev"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "remotes/origin/dev"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "feat/cross-platform"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "remotes/origin/feat/cross-platform"
+          }
+        ]
       },
       "id": "root",
       "timeoutMs": 5000
@@ -77,8 +113,8 @@
             "gitflow.prefix.feature"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "",
           "stdout": ""
         },
         {
@@ -90,14 +126,50 @@
             "--sort=-committerdate"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "* main\n  remotes/origin/HEAD -> origin/main\n  remotes/origin/main\n  dev\n  remotes/origin/dev\n  feat/cross-platform\n  remotes/origin/feat/cross-platform\n"
         }
       ],
       "expected": {
         "kind": "suggestions",
-        "value": []
+        "value": [
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "main"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "remotes/origin/HEAD -> origin/main"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "remotes/origin/main"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "dev"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "remotes/origin/dev"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "feat/cross-platform"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "remotes/origin/feat/cross-platform"
+          }
+        ]
       },
       "id": "subcommand",
       "timeoutMs": 5000
@@ -128,8 +200,8 @@
             "gitflow.prefix.--help"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "error: invalid key: gitflow.prefix.--help\n",
           "stdout": ""
         },
         {
@@ -141,14 +213,50 @@
             "--sort=-committerdate"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "* main\n  remotes/origin/HEAD -> origin/main\n  remotes/origin/main\n  dev\n  remotes/origin/dev\n  feat/cross-platform\n  remotes/origin/feat/cross-platform\n"
         }
       ],
       "expected": {
         "kind": "suggestions",
-        "value": []
+        "value": [
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "main"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "remotes/origin/HEAD -> origin/main"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "remotes/origin/main"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "dev"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "remotes/origin/dev"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "feat/cross-platform"
+          },
+          {
+            "description": " branch",
+            "icon": "fig://icon?type=git",
+            "name": "remotes/origin/feat/cross-platform"
+          }
+        ]
       },
       "id": "flag",
       "timeoutMs": 5000

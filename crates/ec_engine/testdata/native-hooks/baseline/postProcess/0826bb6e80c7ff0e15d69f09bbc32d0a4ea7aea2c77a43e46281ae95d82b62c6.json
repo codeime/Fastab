@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "mise",
           "settings",
@@ -24,18 +24,7 @@
       "exec": [],
       "expected": {
         "kind": "suggestions",
-        "value": [
-          {
-            "description": "Setting",
-            "icon": "fig://icon?type=option",
-            "name": "main"
-          },
-          {
-            "description": "Setting",
-            "icon": "fig://icon?type=option",
-            "name": "feature"
-          }
-        ]
+        "value": []
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -109,7 +98,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "mise",
           "settings",

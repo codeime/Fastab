@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "softwareupdate",
+    "--list"
+  ],
+  "status": 1,
+  "stderr": "",
+  "stdout": ""
+}

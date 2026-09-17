@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "kubectl",
+    "get",
+    "clusterroles",
+    "-o",
+    "custom-columns=:.metadata.name"
+  ],
+  "status": 1,
+  "stderr": "E0917 14:21:22.650104   98832 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=32s\\\": dial tcp 0.0.0.0:8080: connect: connection refused\"\nE0917 14:21:22.651488   98832 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=32s\\\": dial tcp 0.0.0.0:8080: connect: connection refused\"\nE0917 14:21:22.652937   98832 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=32s\\\": dial tcp 0.0.0.0:8080: connect: connection refused\"\nE0917 14:21:22.654397   98832 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=32s\\\": dial tcp 0.0.0.0:8080: connect: connection refused\"\nE0917 14:21:22.655815   98832 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=32s\\\": dial tcp 0.0.0.0:8080: connect: connection refused\"\nThe connection to the server localhost:8080 was refused - did you specify the right host or port?\n",
+  "stdout": ""
+}

@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "brew",
+    "casks"
+  ],
+  "status": 0,
+  "stderr": "Warning: Skipping localsend/localsend because it is not trusted. Run `brew trust localsend/localsend` to trust it.\nWarning: Skipping manaflow-ai/cmux because it is not trusted. Run `brew trust manaflow-ai/cmux` to trust it.\nWarning: Skipping tw93/tap because it is not trusted. Run `brew trust tw93/tap` to trust it.\n",
+  "stdout": "\n"
+}

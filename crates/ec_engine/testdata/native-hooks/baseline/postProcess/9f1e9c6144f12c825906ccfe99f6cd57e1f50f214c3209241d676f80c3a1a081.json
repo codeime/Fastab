@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "`$HOME` is not writable.\nBundler will use `/var/folders/j9/5bqndst12xs3cs3mp44lfw1w54nfyn/T/bundler/home/root' as your home directory temporarily.\nUnknown switches '--name-only'\n",
         [
           "bundle",
           "open",
@@ -98,7 +98,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "`$HOME` is not writable.\nBundler will use `/var/folders/j9/5bqndst12xs3cs3mp44lfw1w54nfyn/T/bundler/home/root' as your home directory temporarily.\nUnknown switches '--name-only'\n",
         [
           "bundle",
           "open",

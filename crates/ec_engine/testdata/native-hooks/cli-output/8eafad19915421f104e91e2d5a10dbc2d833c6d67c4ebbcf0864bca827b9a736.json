@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "hf",
+    "cache",
+    "ls",
+    "--quiet"
+  ],
+  "skipReason": "not-whitelisted",
+  "skipped": true,
+  "status": 127,
+  "stderr": "command not found",
+  "stdout": ""
+}

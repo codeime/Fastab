@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "brew",
           "upgrade",
@@ -98,7 +98,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "brew",
           "upgrade",

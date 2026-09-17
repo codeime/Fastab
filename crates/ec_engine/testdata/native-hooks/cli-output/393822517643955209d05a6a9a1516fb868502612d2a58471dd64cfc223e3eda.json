@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "ls -1 ~/.docksal/commands/"
+  ],
+  "status": 1,
+  "stderr": "ls: $HOME/.docksal/commands/: No such file or directory\n",
+  "stdout": ""
+}

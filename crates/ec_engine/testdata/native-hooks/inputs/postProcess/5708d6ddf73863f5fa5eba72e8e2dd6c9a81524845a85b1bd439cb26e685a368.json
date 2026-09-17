@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "disk\n",
         [
           "m",
           "disk",
@@ -25,7 +25,6 @@
       },
       "exec": [],
       "id": "normal",
-      "synthetic": true,
       "timeoutMs": 5000
     },
     {
@@ -82,7 +81,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "disk\n",
         [
           "m",
           "disk",

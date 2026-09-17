@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "xcrun",
+    "simctl",
+    "list",
+    "--json",
+    "devices",
+    "available"
+  ],
+  "status": 72,
+  "stderr": "xcrun: error: unable to find utility \"simctl\", not a developer tool or in PATH\n",
+  "stdout": ""
+}

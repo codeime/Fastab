@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "/home/user/.warprc"
+  ],
+  "status": 1,
+  "stderr": "cat: /home/user/.warprc: No such file or directory\n",
+  "stdout": ""
+}

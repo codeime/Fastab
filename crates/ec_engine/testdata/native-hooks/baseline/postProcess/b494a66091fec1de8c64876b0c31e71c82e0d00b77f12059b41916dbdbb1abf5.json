@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "uv",
           "remove",
@@ -100,7 +100,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "uv",
           "remove",

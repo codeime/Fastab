@@ -24,8 +24,8 @@
             "oxlint"
           ],
           "command": "which",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "",
           "stdout": ""
         }
       ],
@@ -60,8 +60,8 @@
             "oxlint"
           ],
           "command": "which",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "",
           "stdout": ""
         }
       ],
@@ -96,8 +96,8 @@
             "oxlint"
           ],
           "command": "which",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "",
           "stdout": ""
         }
       ],

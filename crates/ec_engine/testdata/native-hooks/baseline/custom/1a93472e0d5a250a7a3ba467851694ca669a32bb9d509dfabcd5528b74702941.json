@@ -27,9 +27,9 @@
             "--sort=-committerdate"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "* main\n  dev\n  feat/cross-platform\n"
         }
       ],
       "expected": {
@@ -66,9 +66,9 @@
             "--sort=-committerdate"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "* main\n  dev\n  feat/cross-platform\n"
         }
       ],
       "expected": {
@@ -105,9 +105,9 @@
             "--sort=-committerdate"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "* main\n  dev\n  feat/cross-platform\n"
         }
       ],
       "expected": {

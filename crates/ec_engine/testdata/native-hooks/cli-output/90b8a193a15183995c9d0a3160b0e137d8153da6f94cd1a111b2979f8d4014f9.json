@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "launchctl list | awk '{ print $3 }'"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": ""
+}

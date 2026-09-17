@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "systemctl list-unit-files --no-legend --no-pager | awk '{print $1}'"
+  ],
+  "status": 0,
+  "stderr": "bash: systemctl: command not found\n",
+  "stdout": ""
+}

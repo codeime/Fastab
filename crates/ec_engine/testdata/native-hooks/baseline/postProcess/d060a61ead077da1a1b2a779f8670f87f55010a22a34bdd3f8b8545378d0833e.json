@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "origin\thttps://github.com/codeime/easy-complete.git (fetch)\norigin\thttps://github.com/codeime/easy-complete.git (push)\n",
         [
           "pre-commit",
           "run",
@@ -87,7 +87,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "origin\thttps://github.com/codeime/easy-complete.git (fetch)\norigin\thttps://github.com/codeime/easy-complete.git (push)\n",
         [
           "pre-commit",
           "run",

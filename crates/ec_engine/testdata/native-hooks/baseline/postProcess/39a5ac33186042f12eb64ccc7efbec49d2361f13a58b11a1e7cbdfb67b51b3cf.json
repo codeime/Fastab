@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "Legend: production dependency, optional only, dev only\n\neasy-complete $HOME/Desktop/easy-complete (PRIVATE)\n│\n│   devDependencies:\n├── @chen86860/autocomplete-specs@3.1.0\n├── @vitest/coverage-v8@4.1.10\n├── @vitest/ui@4.1.10\n├── acorn@8.18.0\n├── eslint-scope@9.1.2\n├── husky@9.1.7\n├── lint-staged@17.3.0\n├── micromatch@4.0.8\n├── prettier@3.9.6\n├── tsx@4.23.11\n├── turbo@2.10.9\n└── vitest@4.1.10 peer#e2db (2 variations)\n\n@easy-complete/api-bindings@0.2.0 $HOME/Desktop/easy-complete/packages/api-bindings\n│\n│   dependencies:\n├── @bufbuild/protobuf@2.13.0\n├── @easy-complete/proto@link:../../proto\n│\n│   devDependencies:\n├── @easy-complete/eslint-config@link:../eslint-config\n├── @easy-complete/tsconfig@link:../tsconfig\n├── @tsconfig/recommended@1.0.13\n├── @types/node@26.2.0\n├── @typescript/analyze-trace@0.11.1\n├── eslint@10.8.1\n├── lint-staged@17.3.0\n├── prettier@3.9.6\n├── ts-morph@28.0.0\n├── tsx@4.23.11\n└── typescript@6.0.3\n\n@easy-complete/api-bindings-wrappers@0.2.0 $HOME/Desktop/easy-complete/packages/api-bindings-wrappers\n│\n│   dependencies:\n├── @easy-complete/api-bindings@link:../api-bindings\n├── loglevel@1.9.2\n│\n│   devDependencies:\n├── @easy-complete/eslint-config@link:../eslint-config\n├── @easy-complete/shared@link:../shared\n├── @easy-complete/tsconfig@link:../tsconfig\n├── @easy-complete/types@link:../types\n├── @withfig/autocomplete-types@1.31.0\n├── eslint@10.8.1\n├── prettier@3.9.6\n└── typescript@6.0.3\n\n@easy-complete/autocomplete-engine@2.2.2 $HOME/Desktop/easy-complete/packages/autocomplete-engine (PRIVATE)\n│\n│   devDependencies:\n├── @easy-complete/eslint-config@link:../eslint-config\n├── @easy-complete/tsconfig@link:../tsconfig\n├── esbuild@0.25.12\n├── eslint@10.8.1\n├── prettier@3.9.6\n├── typescript@5.8.3\n└── vitest@4.1.10 peer#130d (2 variations)\n\n@easy-complete/autocomplete-parser@0.2.0 $HOME/Desktop/easy-complete/packages/autocomplete-parser\n│\n│   dependencies:\n├── @easy-complete/api-bindings@link:../api-bindings\n├── @easy-complete/api-bindings-wrappers@link:../api-bindings-wrappers\n├── @easy-complete/shell-parser@link:../shell-parser\n├── @fig/autocomplete-generators@2.4.0\n├── @fig/autocomplete-helpers@2.0.0\n├── @fig/autocomplete-shared@1.1.2\n├── loglevel@1.9.2\n├── semver@7.8.5\n├── zod@4.4.3\n│\n│   devDependencies:\n├── @easy-complete/eslint-config@link:../eslint-config\n├── @easy-complete/shared@link:../shared\n├── @easy-complete/tsconfig@link:../tsconfig\n├── @easy-complete/types@link:../types\n├── @types/semver@7.8.0\n├── @withfig/autocomplete-types@1.31.0\n├── eslint@10.8.1\n├── typescript@6.0.3\n└── vitest@4.1.10 peer#e2db (2 variations)\n\n@easy-complete/eslint-config@0.1.0 $HOME/Desktop/easy-complete/packages/eslint-config (PRIVATE)\n│\n│   devDependencies:\n├── @easy-complete/tsconfig@link:../tsconfig\n├── @eslint/js@10.0.1\n├── @typescript-eslint/utils@8.66.0\n├── eslint@10.8.1\n├── eslint-config-prettier@10.1.8\n├── eslint-plugin-react-hooks@7.1.1\n├── eslint-plugin-react-refresh@0.5.3\n├── eslint-plugin-unicorn@73.0.0\n├── prettier@3.9.6\n├── typescript@6.0.3\n└── typescript-eslint@8.66.0\n\n@easy-complete/shared@0.1.0 $HOME/Desktop/easy-complete/packages/shared\n│\n│   dependencies:\n├── @fig/autocomplete-shared@1.1.2\n│\n│   devDependencies:\n├── @easy-complete/eslint-config@link:../eslint-config\n├── @easy-complete/fuzzysort@link:../fuzzysort\n├── @easy-complete/tsconfig@link:../tsconfig\n├── @easy-complete/types@link:../types\n├── @withfig/autocomplete-types@1.31.0\n├── eslint@10.8.1\n├── typescript@6.0.3\n└── vitest@4.1.10 peer#e2db (2 variations)\n\n@easy-complete/shell-parser@0.1.0 $HOME/Desktop/easy-complete/packages/shell-parser\n│\n│   dependencies:\n├── @easy-complete/shared@link:../shared\n│\n│   devDependencies:\n├── @easy-complete/eslint-config@link:../eslint-config\n├── @easy-complete/tsconfig@link:../tsconfig\n├── @vitest/coverage-v8@4.1.10\n├── eslint@10.8.1\n├── prettier@3.9.6\n├── typescript@6.0.3\n└── vitest@4.1.10 peer#e2db (2 variations)\n\n@easy-complete/tsconfig@0.1.0 $HOME/Desktop/easy-complete/packages/tsconfig (PRIVATE)\n│\n│   dependencies:\n└── typescript@5.7.3\n\n@easy-complete/proto@0.2.0 $HOME/Desktop/easy-complete/proto\n│\n│   dependencies:\n├── @bufbuild/protobuf@2.13.0\n│\n│   devDependencies:\n├── @bufbuild/buf@1.72.0\n├── @bufbuild/protoc-gen-es@2.13.0\n├── @easy-complete/tsconfig@link:../packages/tsconfig\n└── typescript@6.0.3\n\n94 packages in 12 projects\n",
         [
           "pnpm",
           "patch",
@@ -24,7 +24,384 @@
       "exec": [],
       "expected": {
         "kind": "suggestions",
-        "value": []
+        "value": [
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@chen86860/autocomplete-specs@3.1.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@vitest/coverage-v8@4.1.10"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@vitest/ui@4.1.10"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@acorn@8.18.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@eslint-scope@9.1.2"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@husky@9.1.7"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@lint-staged@17.3.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@micromatch@4.0.8"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@prettier@3.9.6"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@tsx@4.23.11"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@turbo@2.10.9"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "└──@vitest@4.1.10 peer#e2db (2 variations)"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "@easy-complete/api-bindings@0.2.0@$HOME/Desktop/easy-complete/packages/api-bindings"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@bufbuild/protobuf@2.13.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@tsconfig/recommended@1.0.13"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@types/node@26.2.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@typescript/analyze-trace@0.11.1"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@eslint@10.8.1"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@lint-staged@17.3.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@prettier@3.9.6"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@ts-morph@28.0.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@tsx@4.23.11"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "└──@typescript@6.0.3"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "@easy-complete/api-bindings-wrappers@0.2.0@$HOME/Desktop/easy-complete/packages/api-bindings-wrappers"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@loglevel@1.9.2"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@withfig/autocomplete-types@1.31.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@eslint@10.8.1"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@prettier@3.9.6"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "└──@typescript@6.0.3"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "@easy-complete/autocomplete-engine@2.2.2@$HOME/Desktop/easy-complete/packages/autocomplete-engine (PRIVATE)"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@esbuild@0.25.12"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@eslint@10.8.1"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@prettier@3.9.6"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@typescript@5.8.3"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "└──@vitest@4.1.10 peer#130d (2 variations)"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "@easy-complete/autocomplete-parser@0.2.0@$HOME/Desktop/easy-complete/packages/autocomplete-parser"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@fig/autocomplete-generators@2.4.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@fig/autocomplete-helpers@2.0.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@fig/autocomplete-shared@1.1.2"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@loglevel@1.9.2"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@semver@7.8.5"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@zod@4.4.3"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@types/semver@7.8.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@withfig/autocomplete-types@1.31.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@eslint@10.8.1"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@typescript@6.0.3"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "└──@vitest@4.1.10 peer#e2db (2 variations)"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "@easy-complete/eslint-config@0.1.0@$HOME/Desktop/easy-complete/packages/eslint-config (PRIVATE)"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@eslint/js@10.0.1"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@typescript-eslint/utils@8.66.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@eslint@10.8.1"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@eslint-config-prettier@10.1.8"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@eslint-plugin-react-hooks@7.1.1"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@eslint-plugin-react-refresh@0.5.3"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@eslint-plugin-unicorn@73.0.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@prettier@3.9.6"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@typescript@6.0.3"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "└──@typescript-eslint@8.66.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "@easy-complete/shared@0.1.0@$HOME/Desktop/easy-complete/packages/shared"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@fig/autocomplete-shared@1.1.2"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@withfig/autocomplete-types@1.31.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@eslint@10.8.1"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@typescript@6.0.3"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "└──@vitest@4.1.10 peer#e2db (2 variations)"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "@easy-complete/shell-parser@0.1.0@$HOME/Desktop/easy-complete/packages/shell-parser"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@vitest/coverage-v8@4.1.10"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@eslint@10.8.1"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@prettier@3.9.6"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@typescript@6.0.3"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "└──@vitest@4.1.10 peer#e2db (2 variations)"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "@easy-complete/tsconfig@0.1.0@$HOME/Desktop/easy-complete/packages/tsconfig (PRIVATE)"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "└──@typescript@5.7.3"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "@easy-complete/proto@0.2.0@$HOME/Desktop/easy-complete/proto"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@bufbuild/protobuf@2.13.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "│"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@bufbuild/buf@1.72.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "├──@@bufbuild/protoc-gen-es@2.13.0"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "└──@typescript@6.0.3"
+          },
+          {
+            "icon": "fig://icon?type=package",
+            "name": "94@packages in 12 projects"
+          }
+        ]
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -87,7 +464,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "Legend: production dependency, optional only, dev only\n\neasy-complete $HOME/Desktop/easy-complete (PRIVATE)\n│\n│   devDependencies:\n├── @chen86860/autocomplete-specs@3.1.0\n├── @vitest/coverage-v8@4.1.10\n├── @vitest/ui@4.1.10\n├── acorn@8.18.0\n├── eslint-scope@9.1.2\n├── husky@9.1.7\n├── lint-staged@17.3.0\n├── micromatch@4.0.8\n├── prettier@3.9.6\n├── tsx@4.23.11\n├── turbo@2.10.9\n└── vitest@4.1.10 peer#e2db (2 variations)\n\n@easy-complete/api-bindings@0.2.0 $HOME/Desktop/easy-complete/packages/api-bindings\n│\n│   dependencies:\n├── @bufbuild/protobuf@2.13.0\n├── @easy-complete/proto@link:../../proto\n│\n│   devDependencies:\n├── @easy-complete/eslint-config@link:../eslint-config\n├── @easy-complete/tsconfig@link:../tsconfig\n├── @tsconfig/recommended@1.0.13\n├── @types/node@26.2.0\n├── @typescript/analyze-trace@0.11.1\n├── eslint@10.8.1\n├── lint-staged@17.3.0\n├── prettier@3.9.6\n├── ts-morph@28.0.0\n├── tsx@4.23.11\n└── typescript@6.0.3\n\n@easy-complete/api-bindings-wrappers@0.2.0 $HOME/Desktop/easy-complete/packages/api-bindings-wrappers\n│\n│   dependencies:\n├── @easy-complete/api-bindings@link:../api-bindings\n├── loglevel@1.9.2\n│\n│   devDependencies:\n├── @easy-complete/eslint-config@link:../eslint-config\n├── @easy-complete/shared@link:../shared\n├── @easy-complete/tsconfig@link:../tsconfig\n├── @easy-complete/types@link:../types\n├── @withfig/autocomplete-types@1.31.0\n├── eslint@10.8.1\n├── prettier@3.9.6\n└── typescript@6.0.3\n\n@easy-complete/autocomplete-engine@2.2.2 $HOME/Desktop/easy-complete/packages/autocomplete-engine (PRIVATE)\n│\n│   devDependencies:\n├── @easy-complete/eslint-config@link:../eslint-config\n├── @easy-complete/tsconfig@link:../tsconfig\n├── esbuild@0.25.12\n├── eslint@10.8.1\n├── prettier@3.9.6\n├── typescript@5.8.3\n└── vitest@4.1.10 peer#130d (2 variations)\n\n@easy-complete/autocomplete-parser@0.2.0 $HOME/Desktop/easy-complete/packages/autocomplete-parser\n│\n│   dependencies:\n├── @easy-complete/api-bindings@link:../api-bindings\n├── @easy-complete/api-bindings-wrappers@link:../api-bindings-wrappers\n├── @easy-complete/shell-parser@link:../shell-parser\n├── @fig/autocomplete-generators@2.4.0\n├── @fig/autocomplete-helpers@2.0.0\n├── @fig/autocomplete-shared@1.1.2\n├── loglevel@1.9.2\n├── semver@7.8.5\n├── zod@4.4.3\n│\n│   devDependencies:\n├── @easy-complete/eslint-config@link:../eslint-config\n├── @easy-complete/shared@link:../shared\n├── @easy-complete/tsconfig@link:../tsconfig\n├── @easy-complete/types@link:../types\n├── @types/semver@7.8.0\n├── @withfig/autocomplete-types@1.31.0\n├── eslint@10.8.1\n├── typescript@6.0.3\n└── vitest@4.1.10 peer#e2db (2 variations)\n\n@easy-complete/eslint-config@0.1.0 $HOME/Desktop/easy-complete/packages/eslint-config (PRIVATE)\n│\n│   devDependencies:\n├── @easy-complete/tsconfig@link:../tsconfig\n├── @eslint/js@10.0.1\n├── @typescript-eslint/utils@8.66.0\n├── eslint@10.8.1\n├── eslint-config-prettier@10.1.8\n├── eslint-plugin-react-hooks@7.1.1\n├── eslint-plugin-react-refresh@0.5.3\n├── eslint-plugin-unicorn@73.0.0\n├── prettier@3.9.6\n├── typescript@6.0.3\n└── typescript-eslint@8.66.0\n\n@easy-complete/shared@0.1.0 $HOME/Desktop/easy-complete/packages/shared\n│\n│   dependencies:\n├── @fig/autocomplete-shared@1.1.2\n│\n│   devDependencies:\n├── @easy-complete/eslint-config@link:../eslint-config\n├── @easy-complete/fuzzysort@link:../fuzzysort\n├── @easy-complete/tsconfig@link:../tsconfig\n├── @easy-complete/types@link:../types\n├── @withfig/autocomplete-types@1.31.0\n├── eslint@10.8.1\n├── typescript@6.0.3\n└── vitest@4.1.10 peer#e2db (2 variations)\n\n@easy-complete/shell-parser@0.1.0 $HOME/Desktop/easy-complete/packages/shell-parser\n│\n│   dependencies:\n├── @easy-complete/shared@link:../shared\n│\n│   devDependencies:\n├── @easy-complete/eslint-config@link:../eslint-config\n├── @easy-complete/tsconfig@link:../tsconfig\n├── @vitest/coverage-v8@4.1.10\n├── eslint@10.8.1\n├── prettier@3.9.6\n├── typescript@6.0.3\n└── vitest@4.1.10 peer#e2db (2 variations)\n\n@easy-complete/tsconfig@0.1.0 $HOME/Desktop/easy-complete/packages/tsconfig (PRIVATE)\n│\n│   dependencies:\n└── typescript@5.7.3\n\n@easy-complete/proto@0.2.0 $HOME/Desktop/easy-complete/proto\n│\n│   dependencies:\n├── @bufbuild/protobuf@2.13.0\n│\n│   devDependencies:\n├── @bufbuild/buf@1.72.0\n├── @bufbuild/protoc-gen-es@2.13.0\n├── @easy-complete/tsconfig@link:../packages/tsconfig\n└── typescript@6.0.3\n\n94 packages in 12 projects\n",
         [
           "pnpm",
           "patch",

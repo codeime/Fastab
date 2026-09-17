@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "git",
+    "config",
+    "--get",
+    "gitflow.prefix.undefined"
+  ],
+  "status": 1,
+  "stderr": "",
+  "stdout": ""
+}

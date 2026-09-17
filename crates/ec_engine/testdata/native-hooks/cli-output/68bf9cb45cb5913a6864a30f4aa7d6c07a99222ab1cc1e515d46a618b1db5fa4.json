@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "pip",
+    "list"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "Package    Version\n---------- -------\npillow     12.3.0\npip        26.1.2\nsetuptools 82.0.1\n"
+}

@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "lerna",
           "exec",
@@ -23,8 +23,8 @@
       },
       "exec": [],
       "expected": {
-        "kind": "error",
-        "value": "SyntaxError"
+        "kind": "suggestions",
+        "value": []
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -87,7 +87,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "lerna",
           "exec",

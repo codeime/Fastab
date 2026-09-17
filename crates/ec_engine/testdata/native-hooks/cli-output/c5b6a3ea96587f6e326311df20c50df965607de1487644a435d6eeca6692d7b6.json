@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "brew",
+    "list",
+    "-1",
+    "--cask"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "cmux\n"
+}

@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "homebrew/services\nlocalsend/localsend\nmanaflow-ai/cmux\ntw93/tap\n",
         [
           "brew",
           "untap",
@@ -94,7 +94,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "homebrew/services\nlocalsend/localsend\nmanaflow-ai/cmux\ntw93/tap\n",
         [
           "brew",
           "untap",

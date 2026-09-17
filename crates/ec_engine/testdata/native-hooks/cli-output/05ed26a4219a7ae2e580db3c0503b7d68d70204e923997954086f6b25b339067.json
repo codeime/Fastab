@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "until [[ -f Gemfile ]] || [[ $PWD = '/' ]]; do cd ..; done; if [ -f Gemfile ]; then cat Gemfile | \\grep \"gem ['\\\"]rails['\\\"]\"; fi"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": ""
+}

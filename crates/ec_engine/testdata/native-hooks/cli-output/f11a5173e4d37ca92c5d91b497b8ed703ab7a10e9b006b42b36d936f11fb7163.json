@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "rustup",
+    "toolchain",
+    "list"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "1.87.0-aarch64-apple-darwin (default)\n1.88.0-aarch64-apple-darwin (active)\n"
+}

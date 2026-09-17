@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "m network location list | tail -n +2"
+  ],
+  "status": 0,
+  "stderr": "bash: m: command not found\n",
+  "stdout": ""
+}

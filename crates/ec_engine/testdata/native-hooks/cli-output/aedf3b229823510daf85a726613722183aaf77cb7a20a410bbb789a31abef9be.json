@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "$HOME/Desktop/easy-complete/package.json"
+  ],
+  "status": 1,
+  "stderr": "cat: $HOME/Desktop/easy-complete/package.json: No such file or directory\n",
+  "stdout": ""
+}

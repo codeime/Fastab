@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "@chen86860\n@vitest\nacorn\neslint-scope\nhusky\nlint-staged\nmicromatch\nprettier\ntsx\nturbo\nvitest\n@xai-official\ncorepack\nnpm\n",
         [
           "eslint",
           ""
@@ -84,7 +84,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "@chen86860\n@vitest\nacorn\neslint-scope\nhusky\nlint-staged\nmicromatch\nprettier\ntsx\nturbo\nvitest\n@xai-official\ncorepack\nnpm\n",
         [
           "eslint",
           ""

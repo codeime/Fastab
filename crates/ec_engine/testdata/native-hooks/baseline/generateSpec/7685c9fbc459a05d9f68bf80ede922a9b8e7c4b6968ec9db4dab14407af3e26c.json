@@ -24,8 +24,8 @@
             "artisan"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: artisan: No such file or directory\n",
           "stdout": ""
         },
         {
@@ -33,8 +33,8 @@
             "please"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: please: No such file or directory\n",
           "stdout": ""
         },
         {
@@ -42,8 +42,8 @@
             "bin/console"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: bin/console: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -90,8 +90,8 @@
             "artisan"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: artisan: No such file or directory\n",
           "stdout": ""
         },
         {
@@ -99,8 +99,8 @@
             "please"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: please: No such file or directory\n",
           "stdout": ""
         },
         {
@@ -108,8 +108,8 @@
             "bin/console"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: bin/console: No such file or directory\n",
           "stdout": ""
         }
       ],

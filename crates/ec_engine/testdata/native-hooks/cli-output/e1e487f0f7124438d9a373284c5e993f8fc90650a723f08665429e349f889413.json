@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    ".pre-commit-config.yaml"
+  ],
+  "status": 1,
+  "stderr": "cat: .pre-commit-config.yaml: No such file or directory\n",
+  "stdout": ""
+}

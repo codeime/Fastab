@@ -34,8 +34,8 @@
             "symfony.lock"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: symfony.lock: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -83,8 +83,8 @@
             "symfony.lock"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: symfony.lock: No such file or directory\n",
           "stdout": ""
         }
       ],

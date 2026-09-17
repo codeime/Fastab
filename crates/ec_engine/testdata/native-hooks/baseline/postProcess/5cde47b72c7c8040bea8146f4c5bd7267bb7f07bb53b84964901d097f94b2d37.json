@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "1.87.0-aarch64-apple-darwin (default)\n1.88.0-aarch64-apple-darwin (active)\n",
         [
           "rustup",
           "update",
@@ -100,7 +100,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "1.87.0-aarch64-apple-darwin (default)\n1.88.0-aarch64-apple-darwin (active)\n",
         [
           "rustup",
           "update",

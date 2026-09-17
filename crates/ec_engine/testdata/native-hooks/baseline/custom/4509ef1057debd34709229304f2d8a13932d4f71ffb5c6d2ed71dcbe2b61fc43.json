@@ -25,8 +25,8 @@
             "/home/user/.bun-create"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: /home/user/.bun-create: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -62,8 +62,8 @@
             "/home/user/.bun-create"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: /home/user/.bun-create: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -99,8 +99,8 @@
             "/home/user/.bun-create"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: /home/user/.bun-create: No such file or directory\n",
           "stdout": ""
         }
       ],

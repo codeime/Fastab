@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "kubectx | grep -v $(kubectx -c)"
+  ],
+  "status": 2,
+  "stderr": "bash: kubectx: command not found\nbash: kubectx: command not found\nusage: grep [-abcdDEFGHhIiJLlMmnOopqRSsUVvwXxZz] [-A num] [-B num] [-C[num]]\n\t[-e pattern] [-f file] [--binary-files=value] [--color=when]\n\t[--context[=num]] [--directories=action] [--label] [--line-buffered]\n\t[--null] [pattern] [file ...]\n",
+  "stdout": ""
+}

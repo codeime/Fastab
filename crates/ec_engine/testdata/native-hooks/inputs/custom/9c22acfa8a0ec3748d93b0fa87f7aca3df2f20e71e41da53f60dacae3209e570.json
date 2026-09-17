@@ -26,8 +26,8 @@
             "gitflow.prefix.undefined"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "",
           "stdout": ""
         },
         {
@@ -39,9 +39,9 @@
             "--sort=-committerdate"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "* main\n  remotes/origin/HEAD -> origin/main\n  remotes/origin/main\n  dev\n  remotes/origin/dev\n  feat/cross-platform\n  remotes/origin/feat/cross-platform\n"
         }
       ],
       "id": "root",
@@ -73,8 +73,8 @@
             "gitflow.prefix.feature"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "",
           "stdout": ""
         },
         {
@@ -86,9 +86,9 @@
             "--sort=-committerdate"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "* main\n  remotes/origin/HEAD -> origin/main\n  remotes/origin/main\n  dev\n  remotes/origin/dev\n  feat/cross-platform\n  remotes/origin/feat/cross-platform\n"
         }
       ],
       "id": "subcommand",
@@ -120,8 +120,8 @@
             "gitflow.prefix.--help"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "error: invalid key: gitflow.prefix.--help\n",
           "stdout": ""
         },
         {
@@ -133,9 +133,9 @@
             "--sort=-committerdate"
           ],
           "command": "git",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "* main\n  remotes/origin/HEAD -> origin/main\n  remotes/origin/main\n  dev\n  remotes/origin/dev\n  feat/cross-platform\n  remotes/origin/feat/cross-platform\n"
         }
       ],
       "id": "flag",

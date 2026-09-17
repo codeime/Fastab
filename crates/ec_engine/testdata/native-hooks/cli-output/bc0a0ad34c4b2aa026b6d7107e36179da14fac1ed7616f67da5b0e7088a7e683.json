@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "dscl . -list /Users | grep -v '^_'"
+  ],
+  "status": 1,
+  "stderr": "Operation failed with error: eServerError\n",
+  "stdout": ""
+}

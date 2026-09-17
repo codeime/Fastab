@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "sysctl",
+    "-n",
+    "hw.ncpu"
+  ],
+  "status": 1,
+  "stderr": "sysctl: sysctl fmt -1 1024 1: Operation not permitted\n",
+  "stdout": ""
+}

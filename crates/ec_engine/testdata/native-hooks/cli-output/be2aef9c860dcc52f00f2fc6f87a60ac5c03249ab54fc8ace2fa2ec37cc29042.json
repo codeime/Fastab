@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "ls",
+    "artisan"
+  ],
+  "status": 1,
+  "stderr": "ls: artisan: No such file or directory\n",
+  "stdout": ""
+}

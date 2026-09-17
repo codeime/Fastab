@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "serverless-compose.yml"
+  ],
+  "status": 1,
+  "stderr": "cat: serverless-compose.yml: No such file or directory\n",
+  "stdout": ""
+}

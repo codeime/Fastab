@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "passwd",
           ""
@@ -22,7 +22,6 @@
       },
       "exec": [],
       "id": "normal",
-      "synthetic": true,
       "timeoutMs": 5000
     },
     {
@@ -73,7 +72,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "passwd",
           ""

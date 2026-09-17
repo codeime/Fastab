@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "AuthorizationCreate() failed: -60008\n",
         [
           "networksetup",
           "-deletelocation",
@@ -27,11 +27,7 @@
         "value": [
           {
             "description": "Network Location",
-            "name": "main"
-          },
-          {
-            "description": "Network Location",
-            "name": "feature"
+            "name": "AuthorizationCreate() failed: -60008"
           }
         ]
       },
@@ -105,7 +101,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "AuthorizationCreate() failed: -60008\n",
         [
           "networksetup",
           "-deletelocation",

@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "workspace.json"
+  ],
+  "status": 1,
+  "stderr": "cat: workspace.json: No such file or directory\n",
+  "stdout": ""
+}

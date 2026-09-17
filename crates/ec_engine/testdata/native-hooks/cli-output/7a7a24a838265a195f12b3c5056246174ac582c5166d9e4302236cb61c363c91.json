@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "cat .nextflow/history | awk '{ print $4 }'"
+  ],
+  "status": 0,
+  "stderr": "cat: .nextflow/history: No such file or directory\n",
+  "stdout": ""
+}

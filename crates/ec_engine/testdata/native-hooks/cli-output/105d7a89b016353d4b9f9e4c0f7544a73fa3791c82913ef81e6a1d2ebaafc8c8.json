@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "ls",
+    "-l1A"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": ".DS_Store\n.git\n.gitattributes\n.github\n.gitignore\n.husky\n.lintstagedrc.mjs\n.mise.toml\n.node-version\n.pnpm-store\n.prettierrc\n.rustfmt.toml\nAGENTS.md\nCHANGELOG.md\nCHANGELOG.zh-CN.md\nCLAUDE.md\nCargo.lock\nCargo.toml\nLICENSE\nNOTICE\nREADME.md\nREADME.zh-CN.md\nSECURITY.md\nTHIRD_PARTY_NOTICES.txt\nWEBVIEW-ALIGNMENT-PROGRESS.md\nassets\nbuild\nbundle\ncrates\ndocs\nnode_modules\npackage.json\npackages\npnpm-lock.yaml\npnpm-workspace.yaml\nproto\nrust-toolchain.toml\nscripts\nspecs.config.json\ntarget\ntests\nthemes\nturbo.json\nvitest.config.ts\nwebsite\n"
+}

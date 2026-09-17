@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "awk '/dependencies = \\[/ {f=1; next} /\\]/ {f=0} f && /\"/ {line = $0; gsub(/^[ \\t]*\"/, \"\", line); sub(/>=.*$/, \"\", line); gsub(/\",?$/, \"\", line); print line}' pyproject.toml"
+  ],
+  "status": 2,
+  "stderr": "awk: can't open file pyproject.toml\n source line number 1\n",
+  "stdout": ""
+}

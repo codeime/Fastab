@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "killall",
           ""
@@ -22,21 +22,8 @@
       },
       "exec": [],
       "expected": {
-        "kind": "suggestions",
-        "value": [
-          {
-            "description": "main",
-            "icon": "fig://icon?type=gear",
-            "name": "main",
-            "priority": 40
-          },
-          {
-            "description": "feature",
-            "icon": "fig://icon?type=gear",
-            "name": "feature",
-            "priority": 40
-          }
-        ]
+        "kind": "error",
+        "value": "suggestion is missing name"
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -110,7 +97,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "killall",
           ""

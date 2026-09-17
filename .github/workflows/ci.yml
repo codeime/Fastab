@@ -60,7 +60,10 @@ jobs:
         run: node scripts/classify-native-hooks.mjs --check
 
       - name: Test hook output baselines
-        run: node --test --test-concurrency=1 scripts/hook-baseline-contract.test.mjs scripts/capture-hook-baseline.test.mjs
+        run: node --test --test-concurrency=1 scripts/hook-baseline-contract.test.mjs scripts/capture-hook-baseline.test.mjs scripts/record-cli-output.test.mjs
+
+      - name: Verify CLI output samples
+        run: node scripts/record-cli-output.mjs --check
 
       - name: Verify hook output baselines
         run: node scripts/capture-hook-baseline.mjs --check

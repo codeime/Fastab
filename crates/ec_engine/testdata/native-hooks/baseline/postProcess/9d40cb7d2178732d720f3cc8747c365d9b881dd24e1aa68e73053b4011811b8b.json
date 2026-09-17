@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "{\n  \"name\": \"easy-complete\",\n  \"private\": true,\n  \"author\": \"Easy Complete Contributors\",\n  \"repository\": \"https://github.com/codeime/easy-complete\",\n  \"license\": \"MIT\",\n  \"packageManager\": \"pnpm@11.14.0\",\n  \"type\": \"module\",\n  \"engines\": {\n    \"node\": \">=22.13 <23\"\n  },\n  \"scripts\": {\n    \"build\": \"turbo build\",\n    \"b\": \"turbo build\",\n    \"format\": \"cargo fmt\",\n    \"clippy\": \"cargo clippy --locked --workspace --color always -- -D warnings\",\n    \"test\": \"vitest\",\n    \"test:ci\": \"vitest run --run --coverage\",\n    \"test:ui\": \"vitest --ui\",\n    \"coverage\": \"vitest run --coverage\",\n    \"lint\": \"turbo lint\",\n    \"lint:fix\": \"turbo lint:fix\",\n    \"licenses:generate\": \"node scripts/generate-third-party-notices.mjs\",\n    \"licenses:check\": \"node scripts/generate-third-party-notices.mjs --check THIRD_PARTY_NOTICES.txt\",\n    \"specs:typed-reference:check\": \"node scripts/capture-typed-trigger-reference.mjs --check && node scripts/capture-typed-trigger-reference.mjs --get-query-term --check\",\n    \"specs:typed-reference:update\": \"node scripts/capture-typed-trigger-reference.mjs --update && node scripts/capture-typed-trigger-reference.mjs --get-query-term --update\",\n    \"specs:inventory:check\": \"node scripts/classify-native-hooks.mjs --check\",\n    \"specs:inventory:update\": \"node scripts/classify-native-hooks.mjs --update\",\n    \"specs:baseline:check\": \"node scripts/capture-hook-baseline.mjs --check\",\n    \"specs:baseline:update\": \"node scripts/capture-hook-baseline.mjs --update\",\n    \"dev\": \"turbo dev\",\n    \"clean\": \"turbo clean\",\n    \"prepare\": \"husky\",\n    \"precommit\": \"lint-staged --config .lintstagedrc.mjs\",\n    \"setup\": \"bash scripts/setup.sh\"\n  },\n  \"devDependencies\": {\n    \"@chen86860/autocomplete-specs\": \"3.1.0\",\n    \"@vitest/coverage-v8\": \"^4.1.10\",\n    \"@vitest/ui\": \"^4.1.10\",\n    \"acorn\": \"8.18.0\",\n    \"eslint-scope\": \"9.1.2\",\n    \"husky\": \"^9.1.7\",\n    \"lint-staged\": \"^17.3.0\",\n    \"micromatch\": \"^4.0.8\",\n    \"prettier\": \"^3.9.6\",\n    \"tsx\": \"^4.23.11\",\n    \"turbo\": \"^2.10.9\",\n    \"vitest\": \"^4.1.10\"\n  }\n}\n",
         [
           "rushx",
           ""
@@ -23,7 +23,146 @@
       "exec": [],
       "expected": {
         "kind": "suggestions",
-        "value": []
+        "value": [
+          {
+            "description": "turbo build",
+            "icon": "fig://icon?type=npm",
+            "name": "build",
+            "priority": 51
+          },
+          {
+            "description": "turbo build",
+            "icon": "fig://icon?type=npm",
+            "name": "b",
+            "priority": 51
+          },
+          {
+            "description": "cargo fmt",
+            "icon": "fig://icon?type=npm",
+            "name": "format",
+            "priority": 51
+          },
+          {
+            "description": "cargo clippy --locked --workspace --color always -- -D warnings",
+            "icon": "fig://icon?type=npm",
+            "name": "clippy",
+            "priority": 51
+          },
+          {
+            "description": "vitest",
+            "icon": "fig://icon?type=npm",
+            "name": "test",
+            "priority": 51
+          },
+          {
+            "description": "vitest run --run --coverage",
+            "icon": "fig://icon?type=npm",
+            "name": "test:ci",
+            "priority": 51
+          },
+          {
+            "description": "vitest --ui",
+            "icon": "fig://icon?type=npm",
+            "name": "test:ui",
+            "priority": 51
+          },
+          {
+            "description": "vitest run --coverage",
+            "icon": "fig://icon?type=npm",
+            "name": "coverage",
+            "priority": 51
+          },
+          {
+            "description": "turbo lint",
+            "icon": "fig://icon?type=npm",
+            "name": "lint",
+            "priority": 51
+          },
+          {
+            "description": "turbo lint:fix",
+            "icon": "fig://icon?type=npm",
+            "name": "lint:fix",
+            "priority": 51
+          },
+          {
+            "description": "node scripts/generate-third-party-notices.mjs",
+            "icon": "fig://icon?type=npm",
+            "name": "licenses:generate",
+            "priority": 51
+          },
+          {
+            "description": "node scripts/generate-third-party-notices.mjs --check THIRD_PARTY_NOTICES.txt",
+            "icon": "fig://icon?type=npm",
+            "name": "licenses:check",
+            "priority": 51
+          },
+          {
+            "description": "node scripts/capture-typed-trigger-reference.mjs --check && node scripts/capture-typed-trigger-reference.mjs --get-query-term --check",
+            "icon": "fig://icon?type=npm",
+            "name": "specs:typed-reference:check",
+            "priority": 51
+          },
+          {
+            "description": "node scripts/capture-typed-trigger-reference.mjs --update && node scripts/capture-typed-trigger-reference.mjs --get-query-term --update",
+            "icon": "fig://icon?type=npm",
+            "name": "specs:typed-reference:update",
+            "priority": 51
+          },
+          {
+            "description": "node scripts/classify-native-hooks.mjs --check",
+            "icon": "fig://icon?type=npm",
+            "name": "specs:inventory:check",
+            "priority": 51
+          },
+          {
+            "description": "node scripts/classify-native-hooks.mjs --update",
+            "icon": "fig://icon?type=npm",
+            "name": "specs:inventory:update",
+            "priority": 51
+          },
+          {
+            "description": "node scripts/capture-hook-baseline.mjs --check",
+            "icon": "fig://icon?type=npm",
+            "name": "specs:baseline:check",
+            "priority": 51
+          },
+          {
+            "description": "node scripts/capture-hook-baseline.mjs --update",
+            "icon": "fig://icon?type=npm",
+            "name": "specs:baseline:update",
+            "priority": 51
+          },
+          {
+            "description": "turbo dev",
+            "icon": "fig://icon?type=npm",
+            "name": "dev",
+            "priority": 51
+          },
+          {
+            "description": "turbo clean",
+            "icon": "fig://icon?type=npm",
+            "name": "clean",
+            "priority": 51
+          },
+          {
+            "description": "husky",
+            "icon": "fig://icon?type=npm",
+            "name": "prepare",
+            "priority": 51
+          },
+          {
+            "description": "lint-staged --config .lintstagedrc.mjs",
+            "icon": "fig://icon?type=npm",
+            "name": "precommit",
+            "priority": 51
+          },
+          {
+            "description": "bash scripts/setup.sh",
+            "icon": "fig://icon?type=npm",
+            "name": "setup",
+            "priority": 51
+          }
+        ]
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -84,7 +223,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "{\n  \"name\": \"easy-complete\",\n  \"private\": true,\n  \"author\": \"Easy Complete Contributors\",\n  \"repository\": \"https://github.com/codeime/easy-complete\",\n  \"license\": \"MIT\",\n  \"packageManager\": \"pnpm@11.14.0\",\n  \"type\": \"module\",\n  \"engines\": {\n    \"node\": \">=22.13 <23\"\n  },\n  \"scripts\": {\n    \"build\": \"turbo build\",\n    \"b\": \"turbo build\",\n    \"format\": \"cargo fmt\",\n    \"clippy\": \"cargo clippy --locked --workspace --color always -- -D warnings\",\n    \"test\": \"vitest\",\n    \"test:ci\": \"vitest run --run --coverage\",\n    \"test:ui\": \"vitest --ui\",\n    \"coverage\": \"vitest run --coverage\",\n    \"lint\": \"turbo lint\",\n    \"lint:fix\": \"turbo lint:fix\",\n    \"licenses:generate\": \"node scripts/generate-third-party-notices.mjs\",\n    \"licenses:check\": \"node scripts/generate-third-party-notices.mjs --check THIRD_PARTY_NOTICES.txt\",\n    \"specs:typed-reference:check\": \"node scripts/capture-typed-trigger-reference.mjs --check && node scripts/capture-typed-trigger-reference.mjs --get-query-term --check\",\n    \"specs:typed-reference:update\": \"node scripts/capture-typed-trigger-reference.mjs --update && node scripts/capture-typed-trigger-reference.mjs --get-query-term --update\",\n    \"specs:inventory:check\": \"node scripts/classify-native-hooks.mjs --check\",\n    \"specs:inventory:update\": \"node scripts/classify-native-hooks.mjs --update\",\n    \"specs:baseline:check\": \"node scripts/capture-hook-baseline.mjs --check\",\n    \"specs:baseline:update\": \"node scripts/capture-hook-baseline.mjs --update\",\n    \"dev\": \"turbo dev\",\n    \"clean\": \"turbo clean\",\n    \"prepare\": \"husky\",\n    \"precommit\": \"lint-staged --config .lintstagedrc.mjs\",\n    \"setup\": \"bash scripts/setup.sh\"\n  },\n  \"devDependencies\": {\n    \"@chen86860/autocomplete-specs\": \"3.1.0\",\n    \"@vitest/coverage-v8\": \"^4.1.10\",\n    \"@vitest/ui\": \"^4.1.10\",\n    \"acorn\": \"8.18.0\",\n    \"eslint-scope\": \"9.1.2\",\n    \"husky\": \"^9.1.7\",\n    \"lint-staged\": \"^17.3.0\",\n    \"micromatch\": \"^4.0.8\",\n    \"prettier\": \"^3.9.6\",\n    \"tsx\": \"^4.23.11\",\n    \"turbo\": \"^2.10.9\",\n    \"vitest\": \"^4.1.10\"\n  }\n}\n",
         [
           "rushx",
           ""

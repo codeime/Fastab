@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "ls",
+    "-1",
+    "/home/user/.bun-create"
+  ],
+  "status": 1,
+  "stderr": "ls: /home/user/.bun-create: No such file or directory\n",
+  "stdout": ""
+}

@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "k3d",
           "image",
@@ -101,7 +101,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "k3d",
           "image",

@@ -25,9 +25,9 @@
             "list"
           ],
           "command": "rustup",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "1.87.0-aarch64-apple-darwin (default)\n1.88.0-aarch64-apple-darwin (active)\n"
         }
       ],
       "id": "root",
@@ -58,9 +58,9 @@
             "list"
           ],
           "command": "rustup",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "1.87.0-aarch64-apple-darwin (default)\n1.88.0-aarch64-apple-darwin (active)\n"
         }
       ],
       "id": "subcommand",

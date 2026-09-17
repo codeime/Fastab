@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "mount",
           ""
@@ -23,16 +23,7 @@
       "exec": [],
       "expected": {
         "kind": "suggestions",
-        "value": [
-          {
-            "description": "Mapped block device",
-            "name": "/dev/mapper/main"
-          },
-          {
-            "description": "Mapped block device",
-            "name": "/dev/mapper/feature"
-          }
-        ]
+        "value": []
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -102,7 +93,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "mount",
           ""

@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "kubectl",
           "config",
@@ -99,7 +99,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "kubectl",
           "config",

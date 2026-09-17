@@ -24,8 +24,8 @@
             "maskfile.md"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: maskfile.md: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -56,8 +56,8 @@
             "maskfile.md"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: maskfile.md: No such file or directory\n",
           "stdout": ""
         }
       ],

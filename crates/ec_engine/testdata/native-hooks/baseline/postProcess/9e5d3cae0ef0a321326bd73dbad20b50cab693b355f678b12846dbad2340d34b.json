@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "ollama",
           "rm",
@@ -23,15 +23,8 @@
       },
       "exec": [],
       "expected": {
-        "kind": "suggestions",
-        "value": [
-          {
-            "name": "main"
-          },
-          {
-            "name": "feature"
-          }
-        ]
+        "kind": "error",
+        "value": "suggestion is missing name"
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -101,7 +94,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "ollama",
           "rm",

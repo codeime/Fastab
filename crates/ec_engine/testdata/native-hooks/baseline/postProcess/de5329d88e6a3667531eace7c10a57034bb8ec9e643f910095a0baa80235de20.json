@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "credential.helper osxkeychain\nuser.name $USER\nuser.email $USER@100.me\ncore.excludesfile $HOME/.gitignore_global\ndifftool.sourcetree.cmd opendiff \"$LOCAL\" \"$REMOTE\"\ndifftool.sourcetree.path \nmergetool.sourcetree.cmd /Applications/Sourcetree.app/Contents/Resources/opendiff-w.sh \"$LOCAL\" \"$REMOTE\" -ancestor \"$BASE\" -merge \"$MERGED\"\nmergetool.sourcetree.trustexitcode true\ncommit.template $HOME/.stCommitMsg\nhttp.postbuffer 524288000\nhttp.version HTTP/1.1\npush.autosetupremote true\ncore.repositoryformatversion 0\ncore.filemode true\ncore.bare false\ncore.logallrefupdates true\ncore.ignorecase true\ncore.precomposeunicode true\ncore.hookspath .husky/_\nremote.origin.url https://github.com/codeime/easy-complete.git\nremote.origin.fetch +refs/heads/*:refs/remotes/origin/*\nbranch.main.remote origin\nbranch.main.merge refs/heads/main\nbranch.main.vscode-merge-base origin/main\nuser.name codeime\nuser.email bingguo93@outlook.com\nbranch.feat/cross-platform.vscode-merge-base origin/main\nbranch.feat/cross-platform.vscode-merge-base origin/main\nbranch.feat/cross-platform.remote origin\nbranch.feat/cross-platform.merge refs/heads/feat/cross-platform\nbranch.dev.remote origin\nbranch.dev.merge refs/heads/dev\nbranch.dev.vscode-merge-base origin/main\n",
         [
           "git",
           "config",
@@ -27,11 +27,119 @@
         "value": [
           {
             "icon": "⚙️",
-            "name": "mai"
+            "name": "user.name"
           },
           {
             "icon": "⚙️",
-            "name": "featur"
+            "name": "user.email"
+          },
+          {
+            "icon": "⚙️",
+            "name": "core.excludesfile"
+          },
+          {
+            "icon": "⚙️",
+            "name": "difftool.sourcetree.cmd"
+          },
+          {
+            "icon": "⚙️",
+            "name": "difftool.sourcetree.path"
+          },
+          {
+            "icon": "⚙️",
+            "name": "mergetool.sourcetree.cmd"
+          },
+          {
+            "icon": "⚙️",
+            "name": "mergetool.sourcetree.trustexitcode"
+          },
+          {
+            "icon": "⚙️",
+            "name": "http.postbuffer"
+          },
+          {
+            "icon": "⚙️",
+            "name": "push.autosetupremote"
+          },
+          {
+            "icon": "⚙️",
+            "name": "core.repositoryformatversion"
+          },
+          {
+            "icon": "⚙️",
+            "name": "core.filemode"
+          },
+          {
+            "icon": "⚙️",
+            "name": "core.logallrefupdates"
+          },
+          {
+            "icon": "⚙️",
+            "name": "core.ignorecase"
+          },
+          {
+            "icon": "⚙️",
+            "name": "core.precomposeunicode"
+          },
+          {
+            "icon": "⚙️",
+            "name": "core.hookspath"
+          },
+          {
+            "icon": "⚙️",
+            "name": "remote.origin.url"
+          },
+          {
+            "icon": "⚙️",
+            "name": "remote.origin.fetch"
+          },
+          {
+            "icon": "⚙️",
+            "name": "branch.main.remote"
+          },
+          {
+            "icon": "⚙️",
+            "name": "branch.main.merge"
+          },
+          {
+            "icon": "⚙️",
+            "name": "branch.main.vscode-merge-base"
+          },
+          {
+            "icon": "⚙️",
+            "name": "user.name"
+          },
+          {
+            "icon": "⚙️",
+            "name": "user.email"
+          },
+          {
+            "icon": "⚙️",
+            "name": "branch.feat/cross-platform.vscode-merge-base"
+          },
+          {
+            "icon": "⚙️",
+            "name": "branch.feat/cross-platform.vscode-merge-base"
+          },
+          {
+            "icon": "⚙️",
+            "name": "branch.feat/cross-platform.remote"
+          },
+          {
+            "icon": "⚙️",
+            "name": "branch.feat/cross-platform.merge"
+          },
+          {
+            "icon": "⚙️",
+            "name": "branch.dev.remote"
+          },
+          {
+            "icon": "⚙️",
+            "name": "branch.dev.merge"
+          },
+          {
+            "icon": "⚙️",
+            "name": "branch.dev.vscode-merge-base"
           }
         ]
       },
@@ -105,7 +213,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "credential.helper osxkeychain\nuser.name $USER\nuser.email $USER@100.me\ncore.excludesfile $HOME/.gitignore_global\ndifftool.sourcetree.cmd opendiff \"$LOCAL\" \"$REMOTE\"\ndifftool.sourcetree.path \nmergetool.sourcetree.cmd /Applications/Sourcetree.app/Contents/Resources/opendiff-w.sh \"$LOCAL\" \"$REMOTE\" -ancestor \"$BASE\" -merge \"$MERGED\"\nmergetool.sourcetree.trustexitcode true\ncommit.template $HOME/.stCommitMsg\nhttp.postbuffer 524288000\nhttp.version HTTP/1.1\npush.autosetupremote true\ncore.repositoryformatversion 0\ncore.filemode true\ncore.bare false\ncore.logallrefupdates true\ncore.ignorecase true\ncore.precomposeunicode true\ncore.hookspath .husky/_\nremote.origin.url https://github.com/codeime/easy-complete.git\nremote.origin.fetch +refs/heads/*:refs/remotes/origin/*\nbranch.main.remote origin\nbranch.main.merge refs/heads/main\nbranch.main.vscode-merge-base origin/main\nuser.name codeime\nuser.email bingguo93@outlook.com\nbranch.feat/cross-platform.vscode-merge-base origin/main\nbranch.feat/cross-platform.vscode-merge-base origin/main\nbranch.feat/cross-platform.remote origin\nbranch.feat/cross-platform.merge refs/heads/feat/cross-platform\nbranch.dev.remote origin\nbranch.dev.merge refs/heads/dev\nbranch.dev.vscode-merge-base origin/main\n",
         [
           "git",
           "config",

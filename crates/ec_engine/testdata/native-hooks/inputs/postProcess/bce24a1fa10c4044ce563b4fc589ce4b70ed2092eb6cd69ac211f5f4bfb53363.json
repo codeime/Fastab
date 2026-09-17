@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "* main\n  remotes/origin/HEAD -> origin/main\n  remotes/origin/main\n  dev\n  remotes/origin/dev\n  feat/cross-platform\n  remotes/origin/feat/cross-platform\n",
         [
           "vsce",
           "package",
@@ -23,7 +23,6 @@
       },
       "exec": [],
       "id": "normal",
-      "synthetic": true,
       "timeoutMs": 5000
     },
     {
@@ -76,7 +75,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "* main\n  remotes/origin/HEAD -> origin/main\n  remotes/origin/main\n  dev\n  remotes/origin/dev\n  feat/cross-platform\n  remotes/origin/feat/cross-platform\n",
         [
           "vsce",
           "package",

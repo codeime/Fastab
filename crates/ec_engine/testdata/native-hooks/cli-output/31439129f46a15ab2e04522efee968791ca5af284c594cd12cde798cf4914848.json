@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "git",
+    "stash",
+    "list"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": ""
+}

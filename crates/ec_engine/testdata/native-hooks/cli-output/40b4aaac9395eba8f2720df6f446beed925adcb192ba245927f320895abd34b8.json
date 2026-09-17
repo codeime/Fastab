@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "git",
+    "--no-optional-locks",
+    "branch",
+    "-a",
+    "--no-color",
+    "--sort=-committerdate"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "* main\n  remotes/origin/HEAD -> origin/main\n  remotes/origin/main\n  dev\n  remotes/origin/dev\n  feat/cross-platform\n  remotes/origin/feat/cross-platform\n"
+}

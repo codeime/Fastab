@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "podman",
+    "images",
+    "--format",
+    "{{.Repository}} {{.Size}} {{.Tag}} {{.ID}}"
+  ],
+  "skipReason": "not-whitelisted",
+  "skipped": true,
+  "status": 127,
+  "stderr": "command not found",
+  "stdout": ""
+}

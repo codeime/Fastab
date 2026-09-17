@@ -1,0 +1,8 @@
+{
+  "argv": [
+    "ls"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "AGENTS.md\nCHANGELOG.md\nCHANGELOG.zh-CN.md\nCLAUDE.md\nCargo.lock\nCargo.toml\nLICENSE\nNOTICE\nREADME.md\nREADME.zh-CN.md\nSECURITY.md\nTHIRD_PARTY_NOTICES.txt\nWEBVIEW-ALIGNMENT-PROGRESS.md\nassets\nbuild\nbundle\ncrates\ndocs\nnode_modules\npackage.json\npackages\npnpm-lock.yaml\npnpm-workspace.yaml\nproto\nrust-toolchain.toml\nscripts\nspecs.config.json\ntarget\ntests\nthemes\nturbo.json\nvitest.config.ts\nwebsite\n"
+}

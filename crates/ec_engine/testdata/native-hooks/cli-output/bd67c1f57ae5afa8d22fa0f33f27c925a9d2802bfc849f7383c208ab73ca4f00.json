@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "ls",
+    "-dR1a",
+    "/home/user/.password-store"
+  ],
+  "status": 1,
+  "stderr": "ls: /home/user/.password-store: No such file or directory\n",
+  "stdout": ""
+}

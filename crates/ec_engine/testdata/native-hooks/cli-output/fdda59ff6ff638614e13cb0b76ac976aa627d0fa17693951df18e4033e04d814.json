@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "make -qp | awk -F':' '/^[a-zA-Z0-9][^$#\\/\\t=]*:([^=]|$)/ {split($1,A,/ /);for(i in A)print A[i]}' | sort -u"
+  ],
+  "status": 0,
+  "stderr": "make: *** No targets specified and no makefile found.  Stop.\n",
+  "stdout": "GNUmakefile\nMakefile\nmakefile\n"
+}

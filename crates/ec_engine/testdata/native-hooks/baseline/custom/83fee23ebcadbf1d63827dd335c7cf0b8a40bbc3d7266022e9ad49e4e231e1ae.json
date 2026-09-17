@@ -25,14 +25,79 @@
             "find . -depth 3 -type f -name '*.*' -not -path '*/node_modules/*' | sed 's/.*\\.//' | sort -u"
           ],
           "command": "bash",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "cargo-lock\ncss\ndb\ngitignore\njs\njson\nmd\nplist\npng\nrs\nsample\nsh\ntoml\nts\ntsx\nxml\nyml\n"
         }
       ],
       "expected": {
         "kind": "suggestions",
-        "value": []
+        "value": [
+          {
+            "insertValue": ".cargo-lock=",
+            "name": ".cargo-lock"
+          },
+          {
+            "insertValue": ".css=",
+            "name": ".css"
+          },
+          {
+            "insertValue": ".db=",
+            "name": ".db"
+          },
+          {
+            "insertValue": ".gitignore=",
+            "name": ".gitignore"
+          },
+          {
+            "insertValue": ".js=",
+            "name": ".js"
+          },
+          {
+            "insertValue": ".json=",
+            "name": ".json"
+          },
+          {
+            "insertValue": ".md=",
+            "name": ".md"
+          },
+          {
+            "insertValue": ".plist=",
+            "name": ".plist"
+          },
+          {
+            "insertValue": ".png=",
+            "name": ".png"
+          },
+          {
+            "insertValue": ".rs=",
+            "name": ".rs"
+          },
+          {
+            "insertValue": ".sh=",
+            "name": ".sh"
+          },
+          {
+            "insertValue": ".toml=",
+            "name": ".toml"
+          },
+          {
+            "insertValue": ".ts=",
+            "name": ".ts"
+          },
+          {
+            "insertValue": ".tsx=",
+            "name": ".tsx"
+          },
+          {
+            "insertValue": ".xml=",
+            "name": ".xml"
+          },
+          {
+            "insertValue": ".yml=",
+            "name": ".yml"
+          }
+        ]
       },
       "id": "root",
       "timeoutMs": 5000
@@ -62,14 +127,79 @@
             "find . -depth 3 -type f -name '*.*' -not -path '*/node_modules/*' | sed 's/.*\\.//' | sort -u"
           ],
           "command": "bash",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "cargo-lock\ncss\ndb\ngitignore\njs\njson\nmd\nplist\npng\nrs\nsample\nsh\ntoml\nts\ntsx\nxml\nyml\n"
         }
       ],
       "expected": {
         "kind": "suggestions",
-        "value": []
+        "value": [
+          {
+            "insertValue": ".cargo-lock=",
+            "name": ".cargo-lock"
+          },
+          {
+            "insertValue": ".css=",
+            "name": ".css"
+          },
+          {
+            "insertValue": ".db=",
+            "name": ".db"
+          },
+          {
+            "insertValue": ".gitignore=",
+            "name": ".gitignore"
+          },
+          {
+            "insertValue": ".js=",
+            "name": ".js"
+          },
+          {
+            "insertValue": ".json=",
+            "name": ".json"
+          },
+          {
+            "insertValue": ".md=",
+            "name": ".md"
+          },
+          {
+            "insertValue": ".plist=",
+            "name": ".plist"
+          },
+          {
+            "insertValue": ".png=",
+            "name": ".png"
+          },
+          {
+            "insertValue": ".rs=",
+            "name": ".rs"
+          },
+          {
+            "insertValue": ".sh=",
+            "name": ".sh"
+          },
+          {
+            "insertValue": ".toml=",
+            "name": ".toml"
+          },
+          {
+            "insertValue": ".ts=",
+            "name": ".ts"
+          },
+          {
+            "insertValue": ".tsx=",
+            "name": ".tsx"
+          },
+          {
+            "insertValue": ".xml=",
+            "name": ".xml"
+          },
+          {
+            "insertValue": ".yml=",
+            "name": ".yml"
+          }
+        ]
       },
       "id": "subcommand",
       "timeoutMs": 5000
@@ -99,14 +229,79 @@
             "find . -depth 3 -type f -name '*.*' -not -path '*/node_modules/*' | sed 's/.*\\.//' | sort -u"
           ],
           "command": "bash",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "cargo-lock\ncss\ndb\ngitignore\njs\njson\nmd\nplist\npng\nrs\nsample\nsh\ntoml\nts\ntsx\nxml\nyml\n"
         }
       ],
       "expected": {
         "kind": "suggestions",
-        "value": []
+        "value": [
+          {
+            "insertValue": ".cargo-lock=",
+            "name": ".cargo-lock"
+          },
+          {
+            "insertValue": ".css=",
+            "name": ".css"
+          },
+          {
+            "insertValue": ".db=",
+            "name": ".db"
+          },
+          {
+            "insertValue": ".gitignore=",
+            "name": ".gitignore"
+          },
+          {
+            "insertValue": ".js=",
+            "name": ".js"
+          },
+          {
+            "insertValue": ".json=",
+            "name": ".json"
+          },
+          {
+            "insertValue": ".md=",
+            "name": ".md"
+          },
+          {
+            "insertValue": ".plist=",
+            "name": ".plist"
+          },
+          {
+            "insertValue": ".png=",
+            "name": ".png"
+          },
+          {
+            "insertValue": ".rs=",
+            "name": ".rs"
+          },
+          {
+            "insertValue": ".sh=",
+            "name": ".sh"
+          },
+          {
+            "insertValue": ".toml=",
+            "name": ".toml"
+          },
+          {
+            "insertValue": ".ts=",
+            "name": ".ts"
+          },
+          {
+            "insertValue": ".tsx=",
+            "name": ".tsx"
+          },
+          {
+            "insertValue": ".xml=",
+            "name": ".xml"
+          },
+          {
+            "insertValue": ".yml=",
+            "name": ".yml"
+          }
+        ]
       },
       "id": "flag",
       "timeoutMs": 5000

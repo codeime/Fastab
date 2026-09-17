@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "m user list | awk '{ print $1 }'"
+  ],
+  "status": 0,
+  "stderr": "bash: m: command not found\n",
+  "stdout": ""
+}

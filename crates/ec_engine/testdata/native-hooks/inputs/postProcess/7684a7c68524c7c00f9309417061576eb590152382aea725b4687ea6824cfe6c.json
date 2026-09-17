@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "brew",
           "cleanup",
@@ -23,7 +23,6 @@
       },
       "exec": [],
       "id": "normal",
-      "synthetic": true,
       "timeoutMs": 5000
     },
     {
@@ -76,7 +75,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "brew",
           "cleanup",

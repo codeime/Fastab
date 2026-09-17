@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "  origin/HEAD -> origin/main\n  origin/main\n  origin/dev\n  origin/feat/cross-platform\n",
         [
           "gh",
           "pr",
@@ -24,7 +24,6 @@
       },
       "exec": [],
       "id": "normal",
-      "synthetic": true,
       "timeoutMs": 5000
     },
     {
@@ -79,7 +78,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "  origin/HEAD -> origin/main\n  origin/main\n  origin/dev\n  origin/feat/cross-platform\n",
         [
           "gh",
           "pr",

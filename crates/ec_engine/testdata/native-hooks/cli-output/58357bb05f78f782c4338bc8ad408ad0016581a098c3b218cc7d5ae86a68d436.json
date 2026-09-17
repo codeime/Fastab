@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "brew services list | sed -e 's/ .*//' | tail -n +2"
+  ],
+  "status": 0,
+  "stderr": "==> Downloading Homebrew API data\n✘ JSON API packages.arm64_golden_gate.jws.json\nError: curl: (22) The requested URL returned error: 403\nHTTP status: 000Failure while executing; `/usr/bin/env /opt/homebrew/Library/Homebrew/shims/shared/curl --disable --cookie /dev/null --globoff --user-agent Homebrew/7.0.1\\ \\(Macintosh\\;\\ arm64\\ Mac\\ OS\\ X\\ 27.0\\)\\ curl/8.7.1 --header Accept-Language:\\ en --fail --progress-bar --silent --remote-time --output /var/folders/j9/5bqndst12xs3cs3mp44lfw1w54nfyn/T/cursor-sandbox-cache/28b5f98d5b6fab30286f0b25eea3d358/homebrew/api/internal/packages.arm64_golden_gate.jws.json --location --disable --cookie /dev/null --globoff --show-error --user-agent Homebrew/7.0.1\\ \\(Macintosh\\;\\ arm64\\ Mac\\ OS\\ X\\ 27.0\\)\\ curl/8.7.1 --header Accept-Language:\\ en --fail --progress-bar --silent --compressed --speed-limit 100 --speed-time 5 --write-out \\%\\{stderr\\}HTTP\\ status:\\ \\%\\{http_code\\} https://formulae.brew.sh/api/internal/packages.arm64_golden_gate.jws.json` exited with 22. Here's the output:\ncurl: (22) The requested URL returned error: 403\nHTTP status: 000\n",
+  "stdout": ""
+}

@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "shortcuts",
+    "list",
+    "--folders"
+  ],
+  "status": 1,
+  "stderr": "Error: Couldn’t communicate with a helper application.\n",
+  "stdout": ""
+}

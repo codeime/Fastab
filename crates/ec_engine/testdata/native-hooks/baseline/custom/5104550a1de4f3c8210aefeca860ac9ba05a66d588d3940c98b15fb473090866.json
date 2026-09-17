@@ -30,8 +30,8 @@
             "/home/user/.tldrc/tldr/pages/windows/"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: /home/user/.tldrc/tldr/pages/android/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/common/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/linux/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/osx/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/sunos/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/windows/: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -72,8 +72,8 @@
             "/home/user/.tldrc/tldr/pages/windows/"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: /home/user/.tldrc/tldr/pages/android/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/common/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/linux/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/osx/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/sunos/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/windows/: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -114,8 +114,8 @@
             "/home/user/.tldrc/tldr/pages/windows/"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: /home/user/.tldrc/tldr/pages/android/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/common/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/linux/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/osx/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/sunos/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/windows/: No such file or directory\n",
           "stdout": ""
         }
       ],

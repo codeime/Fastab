@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "browser-sync recipe ls | tail -n +3 | sed -e 's/^[[:space:]]*//'"
+  ],
+  "status": 0,
+  "stderr": "bash: browser-sync: command not found\n",
+  "stdout": ""
+}

@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "deno",
           "uninstall",
@@ -98,7 +98,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "deno",
           "uninstall",

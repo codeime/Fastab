@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "grok",
+    "sessions",
+    "list",
+    "-n",
+    "50"
+  ],
+  "skipReason": "not-whitelisted",
+  "skipped": true,
+  "status": 127,
+  "stderr": "command not found",
+  "stdout": ""
+}

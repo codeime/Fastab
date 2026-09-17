@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "ls",
+    "/Volumes"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "disk\n"
+}

@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "meteor",
           "update",
@@ -94,7 +94,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "meteor",
           "update",

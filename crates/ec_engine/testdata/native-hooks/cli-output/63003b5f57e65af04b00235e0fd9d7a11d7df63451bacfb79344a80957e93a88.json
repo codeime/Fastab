@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "ls",
+    "-Al",
+    "/home/user/.tldrc/tldr/pages/android/",
+    "/home/user/.tldrc/tldr/pages/common/",
+    "/home/user/.tldrc/tldr/pages/linux/",
+    "/home/user/.tldrc/tldr/pages/osx/",
+    "/home/user/.tldrc/tldr/pages/sunos/",
+    "/home/user/.tldrc/tldr/pages/windows/"
+  ],
+  "status": 1,
+  "stderr": "ls: /home/user/.tldrc/tldr/pages/android/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/common/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/linux/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/osx/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/sunos/: No such file or directory\nls: /home/user/.tldrc/tldr/pages/windows/: No such file or directory\n",
+  "stdout": ""
+}

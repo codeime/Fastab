@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "lerna list -p | while read p; do\n \\cat $p/package.json && echo END\ndone"
+  ],
+  "status": 0,
+  "stderr": "bash: lerna: command not found\n",
+  "stdout": ""
+}

@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "git",
+    "remote"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "origin\n"
+}

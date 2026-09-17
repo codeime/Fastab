@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "mdfind kMDItemContentTypeTree=com.apple.application-bundle -onlyin / | while read line; do echo $(mdls -name kMDItemCFBundleIdentifier -r \"$line\") $line; done"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": ""
+}

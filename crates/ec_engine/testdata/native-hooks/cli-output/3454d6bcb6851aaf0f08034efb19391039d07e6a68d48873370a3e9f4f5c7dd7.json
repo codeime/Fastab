@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "docker",
+    "context",
+    "list",
+    "--format",
+    "{{ json . }}"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "{\"Current\":false,\"Description\":\"Current DOCKER_HOST based configuration\",\"DockerEndpoint\":\"unix:///var/run/docker.sock\",\"Error\":\"\",\"Name\":\"default\"}\n{\"Current\":false,\"Description\":\"Docker Desktop\",\"DockerEndpoint\":\"unix://$HOME/.docker/run/docker.sock\",\"Error\":\"\",\"Name\":\"desktop-linux\"}\n{\"Current\":true,\"Description\":\"OrbStack\",\"DockerEndpoint\":\"unix://$HOME/.orbstack/run/docker.sock\",\"Error\":\"\",\"Name\":\"orbstack\"}\n"
+}

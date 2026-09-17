@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "ls",
+    "-1A",
+    "/home/user/Library/Saved Searches/"
+  ],
+  "status": 1,
+  "stderr": "ls: /home/user/Library/Saved Searches/: No such file or directory\n",
+  "stdout": ""
+}

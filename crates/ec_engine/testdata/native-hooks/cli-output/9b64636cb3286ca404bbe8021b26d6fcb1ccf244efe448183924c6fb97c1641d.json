@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "ls",
+    "-1",
+    "/home/user/.asdf/shims"
+  ],
+  "status": 1,
+  "stderr": "ls: /home/user/.asdf/shims: No such file or directory\n",
+  "stdout": ""
+}

@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "ls -d tools/generators/*/"
+  ],
+  "status": 1,
+  "stderr": "ls: tools/generators/*/: No such file or directory\n",
+  "stdout": ""
+}

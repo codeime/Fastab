@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "isAdonisJsonPresentCommand"
+  ],
+  "status": 127,
+  "stderr": "bash: isAdonisJsonPresentCommand: command not found\n",
+  "stdout": ""
+}

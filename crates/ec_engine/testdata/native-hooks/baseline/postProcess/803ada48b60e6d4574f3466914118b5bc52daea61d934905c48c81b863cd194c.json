@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "journalctl",
           ""
@@ -23,18 +23,7 @@
       "exec": [],
       "expected": {
         "kind": "suggestions",
-        "value": [
-          {
-            "description": "Systemd unit",
-            "icon": "⚙️",
-            "name": "main"
-          },
-          {
-            "description": "Systemd unit",
-            "icon": "⚙️",
-            "name": "feature"
-          }
-        ]
+        "value": []
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -106,7 +95,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "journalctl",
           ""

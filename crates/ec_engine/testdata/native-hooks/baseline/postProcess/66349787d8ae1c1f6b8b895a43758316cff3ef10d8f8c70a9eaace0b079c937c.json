@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "pre-commit",
           "run",
@@ -23,8 +23,8 @@
       },
       "exec": [],
       "expected": {
-        "kind": "suggestions",
-        "value": []
+        "kind": "error",
+        "value": "suggestions result is not an array"
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -87,7 +87,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "pre-commit",
           "run",

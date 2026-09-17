@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "ls",
+    ".yalc"
+  ],
+  "status": 1,
+  "stderr": "ls: .yalc: No such file or directory\n",
+  "stdout": ""
+}

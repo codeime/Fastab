@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "brew",
           ""
@@ -23,18 +23,7 @@
       "exec": [],
       "expected": {
         "kind": "suggestions",
-        "value": [
-          {
-            "description": "Execute alias main",
-            "icon": "fig://icon?type=command",
-            "name": "main"
-          },
-          {
-            "description": "Execute alias feature",
-            "icon": "fig://icon?type=command",
-            "name": "feature"
-          }
-        ]
+        "value": []
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -106,7 +95,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "brew",
           ""

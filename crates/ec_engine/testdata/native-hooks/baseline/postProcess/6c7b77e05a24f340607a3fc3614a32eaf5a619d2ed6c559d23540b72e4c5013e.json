@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "main\ndev\nfeat/cross-platform\n",
         [
           "glab",
           "mr",
@@ -34,7 +34,12 @@
           {
             "description": "Branch",
             "icon": "fig://icon?type=git",
-            "name": "feature"
+            "name": "dev"
+          },
+          {
+            "description": "Branch",
+            "icon": "fig://icon?type=git",
+            "name": "feat/cross-platform"
           }
         ]
       },
@@ -112,7 +117,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "main\ndev\nfeat/cross-platform\n",
         [
           "glab",
           "mr",

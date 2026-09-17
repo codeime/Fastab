@@ -28,8 +28,8 @@
             "--exclude-dir=.git"
           ],
           "command": "grep",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 2,
+          "stderr": "grep: /home/user/.password-store: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -64,8 +64,8 @@
             "--exclude-dir=.git"
           ],
           "command": "grep",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 2,
+          "stderr": "grep: /home/user/.password-store: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -100,8 +100,8 @@
             "--exclude-dir=.git"
           ],
           "command": "grep",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 2,
+          "stderr": "grep: /home/user/.password-store: No such file or directory\n",
           "stdout": ""
         }
       ],

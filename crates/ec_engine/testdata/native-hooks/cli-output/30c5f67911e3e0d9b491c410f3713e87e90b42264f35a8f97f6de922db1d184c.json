@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "gh",
+    "api",
+    "graphql",
+    "--paginate",
+    "-f",
+    "query='query($endCursor: String) { viewer { repositories(first: 100, after: $endCursor) { nodes { isPrivate, nameWithOwner, description } pageInfo { hasNextPage endCursor }}}}'",
+    "--jq",
+    ".data.viewer.repositories.nodes[]"
+  ],
+  "skipReason": "not-installed",
+  "skipped": true,
+  "status": 127,
+  "stderr": "command not found",
+  "stdout": ""
+}

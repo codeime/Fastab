@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "command find ~/.deno/bin -maxdepth 1 -perm -111 -type f"
+  ],
+  "status": 1,
+  "stderr": "find: $HOME/.deno/bin: No such file or directory\n",
+  "stdout": ""
+}

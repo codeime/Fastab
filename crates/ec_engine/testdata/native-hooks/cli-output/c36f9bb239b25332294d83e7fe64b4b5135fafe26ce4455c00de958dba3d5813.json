@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "until [[ -d node_modules/ ]] || [[ $PWD = '/' ]]; do cd ..; done; ls -1 node_modules/.bin/"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "acorn\nesbuild\nhusky\njiti\nlint-staged\nprettier\nterser\ntsx\nturbo\nvite\nvitest\nyaml\n"
+}

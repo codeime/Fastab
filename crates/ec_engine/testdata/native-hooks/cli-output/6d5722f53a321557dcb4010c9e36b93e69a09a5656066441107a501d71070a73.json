@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "grep -o '\"name\": *\"[^\"]*\"' $HOME/.nextflow/secrets/store.json | grep -o '\"[^\"]*\"$' | tr -d \\\""
+  ],
+  "status": 0,
+  "stderr": "grep: $HOME/.nextflow/secrets/store.json: No such file or directory\n",
+  "stdout": ""
+}

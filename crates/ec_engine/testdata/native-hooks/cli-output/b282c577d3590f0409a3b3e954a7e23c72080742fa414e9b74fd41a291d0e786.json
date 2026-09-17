@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "find ~/.brew-aliases/ -type f ! -name \"*.*\" -d 1 | sed \"s/.*\\///\""
+  ],
+  "status": 0,
+  "stderr": "find: $HOME/.brew-aliases/: No such file or directory\n",
+  "stdout": ""
+}

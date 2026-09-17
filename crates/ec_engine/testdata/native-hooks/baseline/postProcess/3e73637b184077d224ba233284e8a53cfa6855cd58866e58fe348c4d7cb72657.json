@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "react-native",
           "run-ios",
@@ -87,7 +87,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "react-native",
           "run-ios",

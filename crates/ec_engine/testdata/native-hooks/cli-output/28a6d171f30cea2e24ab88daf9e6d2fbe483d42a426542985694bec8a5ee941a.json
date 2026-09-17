@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "bat --paging unknow  2>&1 >/dev/null | grep possible"
+  ],
+  "status": 1,
+  "stderr": "",
+  "stdout": ""
+}

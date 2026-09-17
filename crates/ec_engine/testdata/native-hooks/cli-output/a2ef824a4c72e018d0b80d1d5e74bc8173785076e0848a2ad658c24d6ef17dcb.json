@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "hexo list post | grep -E ^Draft"
+  ],
+  "status": 1,
+  "stderr": "bash: hexo: command not found\n",
+  "stdout": ""
+}

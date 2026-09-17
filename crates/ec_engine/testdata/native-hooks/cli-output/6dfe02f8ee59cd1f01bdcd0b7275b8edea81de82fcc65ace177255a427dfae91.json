@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "xcrun",
+    "xctrace",
+    "list",
+    "devices"
+  ],
+  "status": 72,
+  "stderr": "xcrun: error: unable to find utility \"xctrace\", not a developer tool or in PATH\n",
+  "stdout": ""
+}

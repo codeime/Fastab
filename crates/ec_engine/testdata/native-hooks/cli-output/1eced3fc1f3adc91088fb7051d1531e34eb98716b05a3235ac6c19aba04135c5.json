@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "for i in $(find -E . -regex \".*.robot\" -type f); do cat -s $i ; done"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": ""
+}

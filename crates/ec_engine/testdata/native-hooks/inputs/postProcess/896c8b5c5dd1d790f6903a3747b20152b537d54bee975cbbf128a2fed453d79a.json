@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "asciidoc\nbiblatex\nbibtex\nbits\ncommonmark\ncommonmark_x\ncreole\ncsljson\ncsv\ndjot\ndocbook\ndocx\ndokuwiki\nendnotexml\nepub\nfb2\ngfm\nhaddock\nhtml\nipynb\njats\njira\njson\nlatex\nman\nmarkdown\nmarkdown_github\nmarkdown_mmd\nmarkdown_phpextra\nmarkdown_strict\nmdoc\nmediawiki\nmuse\nnative\nodt\nopml\norg\npod\npptx\nris\nrst\nrtf\nt2t\ntextile\ntikiwiki\ntsv\ntwiki\ntypst\nvimwiki\nxlsx\nxml\n",
         [
           "pandoc",
           ""
@@ -22,7 +22,6 @@
       },
       "exec": [],
       "id": "normal",
-      "synthetic": true,
       "timeoutMs": 5000
     },
     {
@@ -73,7 +72,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "asciidoc\nbiblatex\nbibtex\nbits\ncommonmark\ncommonmark_x\ncreole\ncsljson\ncsv\ndjot\ndocbook\ndocx\ndokuwiki\nendnotexml\nepub\nfb2\ngfm\nhaddock\nhtml\nipynb\njats\njira\njson\nlatex\nman\nmarkdown\nmarkdown_github\nmarkdown_mmd\nmarkdown_phpextra\nmarkdown_strict\nmdoc\nmediawiki\nmuse\nnative\nodt\nopml\norg\npod\npptx\nris\nrst\nrtf\nt2t\ntextile\ntikiwiki\ntsv\ntwiki\ntypst\nvimwiki\nxlsx\nxml\n",
         [
           "pandoc",
           ""

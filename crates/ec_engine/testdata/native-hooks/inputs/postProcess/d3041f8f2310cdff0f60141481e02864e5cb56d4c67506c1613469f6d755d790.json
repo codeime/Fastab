@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "bundle/specs/@fig/publish-spec.js\nbundle/specs/create-completion-spec.js\nbundle/specs/dotnet/dotnet-test.js\nbundle/specs/pytest.js\nbundle/specs/speedtest.js\npackages/api-bindings/tests/process.test.ts\npackages/autocomplete-parser/tests/mocks/spec.ts\npackages/autocomplete-parser/tests/loadHelpers.test.ts\npackages/autocomplete-parser/tests/loadSpec.test.ts\npackages/autocomplete-parser/tests/parseArguments.test.ts\npackages/shared/tests/utils.test.ts\npackages/shell-parser/tests/parser.test.ts\npackages/shell-parser/tests/command.test.ts\npackages/autocomplete-engine/src/index.test.ts\n",
         [
           "bun",
           "test",
@@ -23,7 +23,6 @@
       },
       "exec": [],
       "id": "normal",
-      "synthetic": true,
       "timeoutMs": 5000
     },
     {
@@ -76,7 +75,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "bundle/specs/@fig/publish-spec.js\nbundle/specs/create-completion-spec.js\nbundle/specs/dotnet/dotnet-test.js\nbundle/specs/pytest.js\nbundle/specs/speedtest.js\npackages/api-bindings/tests/process.test.ts\npackages/autocomplete-parser/tests/mocks/spec.ts\npackages/autocomplete-parser/tests/loadHelpers.test.ts\npackages/autocomplete-parser/tests/loadSpec.test.ts\npackages/autocomplete-parser/tests/parseArguments.test.ts\npackages/shared/tests/utils.test.ts\npackages/shell-parser/tests/parser.test.ts\npackages/shell-parser/tests/command.test.ts\npackages/autocomplete-engine/src/index.test.ts\n",
         [
           "bun",
           "test",

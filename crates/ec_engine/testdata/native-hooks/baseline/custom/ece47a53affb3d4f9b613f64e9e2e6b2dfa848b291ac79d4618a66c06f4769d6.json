@@ -24,8 +24,8 @@
             "/home/user/.ssh/known_hosts"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: /home/user/.ssh/known_hosts: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -60,8 +60,8 @@
             "/home/user/.ssh/known_hosts"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: /home/user/.ssh/known_hosts: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -96,8 +96,8 @@
             "/home/user/.ssh/known_hosts"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: /home/user/.ssh/known_hosts: No such file or directory\n",
           "stdout": ""
         }
       ],

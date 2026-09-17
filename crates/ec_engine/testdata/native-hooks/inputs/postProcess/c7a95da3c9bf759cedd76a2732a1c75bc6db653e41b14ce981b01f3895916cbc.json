@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "go          1.24.5\nnode        16.20.2\nnode        18.20.8\nnode        20.20.2\nnode        22.23.1  ~/Desktop/easy-complete/.mise.toml  22.23.1\nnode        24.18.0\nnode        26.5.0\npnpm        8.15.9   ~/.config/mise/config.toml          8\npnpm        10.33.0\npnpm        11.22.0\npython      3.11.15  ~/Desktop/easy-complete/.mise.toml  3.11\nshellcheck  0.11.0\n",
         [
           "mise",
           "outdated",
@@ -23,7 +23,6 @@
       },
       "exec": [],
       "id": "normal",
-      "synthetic": true,
       "timeoutMs": 5000
     },
     {
@@ -76,7 +75,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "go          1.24.5\nnode        16.20.2\nnode        18.20.8\nnode        20.20.2\nnode        22.23.1  ~/Desktop/easy-complete/.mise.toml  22.23.1\nnode        24.18.0\nnode        26.5.0\npnpm        8.15.9   ~/.config/mise/config.toml          8\npnpm        10.33.0\npnpm        11.22.0\npython      3.11.15  ~/Desktop/easy-complete/.mise.toml  3.11\nshellcheck  0.11.0\n",
         [
           "mise",
           "outdated",

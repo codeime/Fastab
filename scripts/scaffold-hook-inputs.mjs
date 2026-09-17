@@ -17,9 +17,11 @@ import {
   finalizeInputFixture,
   inputRoot,
   loadBodyGroups,
+  isUsableCliSample,
   loadCliOutput,
   recordExecRules,
   repoDir,
+  scriptArgvForGroup,
   stableStringify,
   timeoutCase,
   tokensForGroup,
@@ -54,11 +56,12 @@ function malformedStdout() {
   return "not json\n{{{";
 }
 
-async function postProcessStdout(tokens) {
-  const argv = tokens.slice(0, -1);
-  if (argv.length > 0) {
-    const sample = await loadCliOutput(argv[0], argv.slice(1));
-    if (sample?.stdout) return { stdout: sample.stdout, synthetic: false };
+async function postProcessStdout(scriptArgv) {
+  if (Array.isArray(scriptArgv) && scriptArgv.length > 0) {
+    const sample = await loadCliOutput(scriptArgv[0], scriptArgv.slice(1));
+    if (isUsableCliSample(sample)) {
+      return { stdout: sample.stdout, synthetic: false };
+    }
   }
   return { stdout: syntheticStdout(), synthetic: true };
 }
@@ -73,7 +76,8 @@ async function casesForGroup(report, group, irRoot, sourceRoot) {
   const sub = tokens.length > 2 ? tokens[1] : "status";
 
   if (field === "postProcess") {
-    const normal = await postProcessStdout(tokens);
+    const scriptArgv = await scriptArgvForGroup(report, group, irRoot);
+    const normal = await postProcessStdout(scriptArgv);
     return [
       {
         id: "normal",
@@ -264,6 +268,7 @@ export async function scaffoldHookInputs({
   sourceRoot = defaultSourceRoot,
   irRoot = defaultIrRoot,
   root = inputRoot,
+  refresh = false,
 } = {}) {
   return withReferenceAudit({ sourceRoot, irRoot }, async () => {
     const { report, groups } = await loadBodyGroups({ sourceRoot, irRoot });
@@ -273,12 +278,14 @@ export async function scaffoldHookInputs({
       const dir = join(root, group.sourceField);
       const file = join(dir, `${group.bodySha256}.json`);
       await mkdir(dir, { recursive: true });
-      try {
-        await access(file);
-        skipped += 1;
-        continue;
-      } catch {
-        // missing input is the only case we fill
+      if (!refresh) {
+        try {
+          await access(file);
+          skipped += 1;
+          continue;
+        } catch {
+          // missing input is the only case we fill
+        }
       }
       const cases = await casesForGroup(report, group, irRoot, sourceRoot);
       const fixture = finalizeInputFixture({
@@ -296,7 +303,8 @@ const isMain =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMain) {
-  const result = await scaffoldHookInputs();
+  const refresh = process.argv.includes("--refresh");
+  const result = await scaffoldHookInputs({ refresh });
   process.stdout.write(
     `Scaffolded hook input fixtures: wrote ${result.written}, kept ${result.skipped}, total ${result.total}\n`,
   );

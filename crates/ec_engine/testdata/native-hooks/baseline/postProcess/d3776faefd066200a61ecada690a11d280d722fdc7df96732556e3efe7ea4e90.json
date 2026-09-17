@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "mkinitcpio",
           ""
@@ -22,15 +22,8 @@
       },
       "exec": [],
       "expected": {
-        "kind": "suggestions",
-        "value": [
-          {
-            "name": "main"
-          },
-          {
-            "name": "feature"
-          }
-        ]
+        "kind": "error",
+        "value": "suggestion is missing name"
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -98,7 +91,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "mkinitcpio",
           ""

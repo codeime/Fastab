@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "zellij",
+    "list-sessions",
+    "-n"
+  ],
+  "skipReason": "not-whitelisted",
+  "skipped": true,
+  "status": 127,
+  "stderr": "command not found",
+  "stdout": ""
+}

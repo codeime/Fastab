@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "m",
           "nosleep",
@@ -93,7 +93,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "m",
           "nosleep",

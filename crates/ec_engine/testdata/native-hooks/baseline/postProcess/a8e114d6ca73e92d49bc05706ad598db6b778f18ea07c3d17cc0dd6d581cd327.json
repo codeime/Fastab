@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "m",
           "wifi",
@@ -24,17 +24,8 @@
       },
       "exec": [],
       "expected": {
-        "kind": "suggestions",
-        "value": [
-          {
-            "icon": "📶",
-            "name": "main"
-          },
-          {
-            "icon": "📶",
-            "name": "feature"
-          }
-        ]
+        "kind": "error",
+        "value": "suggestion is missing name"
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -108,7 +99,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "m",
           "wifi",

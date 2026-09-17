@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "yarn",
+    "--version"
+  ],
+  "status": 1,
+  "stderr": "This project is configured to use pnpm because $HOME/Desktop/easy-complete/package.json has a \"packageManager\" field\n",
+  "stdout": ""
+}

@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "git",
+    "branch",
+    "--format=%(refname:short)",
+    "--sort=-committerdate"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "main\ndev\nfeat/cross-platform\n"
+}

@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "kubectl",
+    "api-resources",
+    "-o",
+    "name"
+  ],
+  "status": 1,
+  "stderr": "E0917 14:21:22.612174   98825 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=32s\\\": dial tcp 0.0.0.0:8080: connect: connection refused\"\nThe connection to the server localhost:8080 was refused - did you specify the right host or port?\n",
+  "stdout": ""
+}

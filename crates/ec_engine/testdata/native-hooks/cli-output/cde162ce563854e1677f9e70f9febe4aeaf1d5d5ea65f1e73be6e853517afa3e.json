@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "{ ls node_modules ; ls $(npm root -g) ; ls $(yarn global dir)/node_modules/ ; } | cat"
+  ],
+  "status": 0,
+  "stderr": "This project is configured to use pnpm because $HOME/Desktop/easy-complete/package.json has a \"packageManager\" field\nls: /node_modules/: No such file or directory\n",
+  "stdout": "@chen86860\n@vitest\nacorn\neslint-scope\nhusky\nlint-staged\nmicromatch\nprettier\ntsx\nturbo\nvitest\n@xai-official\ncorepack\nnpm\n"
+}

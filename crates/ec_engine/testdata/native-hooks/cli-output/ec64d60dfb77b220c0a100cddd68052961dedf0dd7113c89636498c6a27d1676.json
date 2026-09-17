@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "command ls -l ~/.tldrc/tldr/pages/sunos/ 2>/dev/null"
+  ],
+  "status": 1,
+  "stderr": "",
+  "stdout": ""
+}

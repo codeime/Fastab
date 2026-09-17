@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "Package    Version\n---------- -------\npillow     12.3.0\npip        26.1.2\nsetuptools 82.0.1\n",
         [
           "pip",
           "freeze",
@@ -87,7 +87,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "Package    Version\n---------- -------\npillow     12.3.0\npip        26.1.2\nsetuptools 82.0.1\n",
         [
           "pip",
           "freeze",

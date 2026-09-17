@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "cmux\n",
         [
           "brew",
           "cask",
@@ -101,7 +101,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "cmux\n",
         [
           "brew",
           "cask",

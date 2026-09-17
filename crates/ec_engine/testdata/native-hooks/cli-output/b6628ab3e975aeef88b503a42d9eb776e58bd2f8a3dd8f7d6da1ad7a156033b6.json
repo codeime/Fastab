@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "networksetup",
+    "-listlocations"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "AuthorizationCreate() failed: -60008\n"
+}

@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "aws",
+    "configure",
+    "list-profiles"
+  ],
+  "skipReason": "not-whitelisted",
+  "skipped": true,
+  "status": 127,
+  "stderr": "command not found",
+  "stdout": ""
+}

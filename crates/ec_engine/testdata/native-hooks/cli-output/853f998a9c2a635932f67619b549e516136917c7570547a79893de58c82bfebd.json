@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "/package.json"
+  ],
+  "status": 1,
+  "stderr": "cat: /package.json: No such file or directory\n",
+  "stdout": ""
+}

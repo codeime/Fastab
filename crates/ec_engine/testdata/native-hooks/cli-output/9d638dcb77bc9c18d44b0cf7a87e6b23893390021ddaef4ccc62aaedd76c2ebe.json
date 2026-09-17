@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "ollama ps | awk '!/NAME/ { print $1 }'"
+  ],
+  "status": 0,
+  "stderr": "bash: ollama: command not found\n",
+  "stdout": ""
+}

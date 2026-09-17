@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "git",
+    "--no-optional-locks",
+    "config",
+    "--get-regexp",
+    "^alias."
+  ],
+  "status": 1,
+  "stderr": "",
+  "stdout": ""
+}

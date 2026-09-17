@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "git",
+    "config",
+    "--get",
+    "alias."
+  ],
+  "status": 1,
+  "stderr": "error: key does not contain variable name: alias.\n",
+  "stdout": ""
+}

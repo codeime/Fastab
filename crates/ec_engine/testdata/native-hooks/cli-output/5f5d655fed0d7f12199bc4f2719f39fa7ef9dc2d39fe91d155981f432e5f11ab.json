@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "command find ~/.yalc/packages -maxdepth 4 -iname 'package.json'"
+  ],
+  "status": 1,
+  "stderr": "find: $HOME/.yalc/packages: No such file or directory\n",
+  "stdout": ""
+}

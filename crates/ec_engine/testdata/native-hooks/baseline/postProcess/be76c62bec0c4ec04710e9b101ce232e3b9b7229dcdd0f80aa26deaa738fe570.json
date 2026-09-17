@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "yarn",
           "config",
@@ -90,7 +90,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "yarn",
           "config",

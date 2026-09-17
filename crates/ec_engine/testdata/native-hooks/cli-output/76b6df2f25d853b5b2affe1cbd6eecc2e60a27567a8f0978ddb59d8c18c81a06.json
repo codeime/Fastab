@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "uv run | grep -E '^- ' | sed 's/^- //'"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "idle3\nidle3.13\npip\npip3\npip3.13\npydoc3\npydoc3.13\npython\npython3\npython3-config\npython3.13\npython3.13-config\n"
+}

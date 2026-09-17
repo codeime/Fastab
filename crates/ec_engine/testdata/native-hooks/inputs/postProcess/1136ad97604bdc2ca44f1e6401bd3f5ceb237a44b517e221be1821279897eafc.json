@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "idle3\nidle3.13\npip\npip3\npip3.13\npydoc3\npydoc3.13\npython\npython3\npython3-config\npython3.13\npython3.13-config\n",
         [
           "uv",
           "run",
@@ -23,7 +23,6 @@
       },
       "exec": [],
       "id": "normal",
-      "synthetic": true,
       "timeoutMs": 5000
     },
     {
@@ -76,7 +75,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "idle3\nidle3.13\npip\npip3\npip3.13\npydoc3\npydoc3.13\npython\npython3\npython3-config\npython3.13\npython3.13-config\n",
         [
           "uv",
           "run",

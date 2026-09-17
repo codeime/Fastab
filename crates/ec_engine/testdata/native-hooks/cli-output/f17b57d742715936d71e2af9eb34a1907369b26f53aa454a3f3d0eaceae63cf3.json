@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "npm",
+    "prefix"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "$HOME/Desktop/easy-complete\n"
+}

@@ -24,8 +24,8 @@
             "--version"
           ],
           "command": "yarn",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "This project is configured to use pnpm because $HOME/Desktop/easy-complete/package.json has a \"packageManager\" field\n",
           "stdout": ""
         }
       ],
@@ -62,8 +62,8 @@
             "--version"
           ],
           "command": "yarn",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "This project is configured to use pnpm because $HOME/Desktop/easy-complete/package.json has a \"packageManager\" field\n",
           "stdout": ""
         }
       ],

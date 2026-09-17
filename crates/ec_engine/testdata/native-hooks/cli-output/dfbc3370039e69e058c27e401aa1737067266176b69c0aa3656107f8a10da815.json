@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "ls",
+    "symfony.lock"
+  ],
+  "status": 1,
+  "stderr": "ls: symfony.lock: No such file or directory\n",
+  "stdout": ""
+}

@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "{\n  \"$schema\": \"https://turbo.build/schema.json\",\n  \"ui\": \"tui\",\n  \"tasks\": {\n    \"build\": {\n      \"dependsOn\": [\"^build\"],\n      \"outputs\": [\"dist\"]\n    },\n    \"lint\": {\n      \"dependsOn\": [\"@easy-complete/eslint-config#build\"],\n      \"cache\": false\n    },\n    \"lint:fix\": {\n      \"dependsOn\": [\"@easy-complete/eslint-config#build\"],\n      \"cache\": false\n    },\n    \"clean\": {\n      \"cache\": false\n    },\n    \"dev\": {\n      \"cache\": false,\n      \"persistent\": true\n    }\n  }\n}\n",
         [
           "turbo",
           "run",
@@ -23,8 +23,8 @@
       },
       "exec": [],
       "expected": {
-        "kind": "suggestions",
-        "value": []
+        "kind": "error",
+        "value": "TypeError"
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -87,7 +87,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "{\n  \"$schema\": \"https://turbo.build/schema.json\",\n  \"ui\": \"tui\",\n  \"tasks\": {\n    \"build\": {\n      \"dependsOn\": [\"^build\"],\n      \"outputs\": [\"dist\"]\n    },\n    \"lint\": {\n      \"dependsOn\": [\"@easy-complete/eslint-config#build\"],\n      \"cache\": false\n    },\n    \"lint:fix\": {\n      \"dependsOn\": [\"@easy-complete/eslint-config#build\"],\n      \"cache\": false\n    },\n    \"clean\": {\n      \"cache\": false\n    },\n    \"dev\": {\n      \"cache\": false,\n      \"persistent\": true\n    }\n  }\n}\n",
         [
           "turbo",
           "run",

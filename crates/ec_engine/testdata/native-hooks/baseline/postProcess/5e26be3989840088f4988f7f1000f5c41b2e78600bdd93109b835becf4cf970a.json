@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "AuthorizationCreate() failed: -60008\n",
         [
           "networksetup",
           "-showpppoestatus",
@@ -27,11 +27,7 @@
         "value": [
           {
             "description": "PPPoE Service",
-            "name": "main"
-          },
-          {
-            "description": "PPPoE Service",
-            "name": "feature"
+            "name": "AuthorizationCreate() failed: -60008"
           }
         ]
       },
@@ -105,7 +101,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "AuthorizationCreate() failed: -60008\n",
         [
           "networksetup",
           "-showpppoestatus",

@@ -25,18 +25,18 @@
             "list"
           ],
           "command": "rustup",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "1.87.0-aarch64-apple-darwin (default)\n1.88.0-aarch64-apple-darwin (active)\n"
         },
         {
           "args": [
             "--list"
           ],
           "command": "cargo",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "Installed Commands:\n    add                  Add dependencies to a Cargo.toml manifest file\n    b                    alias: build\n    bench                Execute all benchmarks of a local package\n    build                Compile a local package and all of its dependencies\n    c                    alias: check\n    check                Check a local package and all of its dependencies for errors\n    clean                Remove artifacts that cargo has generated in the past\n    clippy               Checks a package to catch common mistakes and improve your Rust code.\n    config               Inspect configuration values\n    d                    alias: doc\n    doc                  Build a package's documentation\n    fetch                Fetch dependencies of a package from the network\n    fix                  Automatically fix lint warnings reported by rustc\n    fmt                  Formats all bin and lib files of the current crate using rustfmt.\n    generate-lockfile    Generate the lockfile for a package\n    git-checkout         REMOVED: This command has been removed\n    help                 Displays help for a cargo subcommand\n    info                 Display information about a package\n    init                 Create a new cargo package in an existing directory\n    install              Install a Rust binary\n    locate-project       Print a JSON representation of a Cargo.toml file's location\n    login                Log in to a registry.\n    logout               Remove an API token from the registry locally\n    metadata             Output the resolved dependencies of a package, the concrete used versions including overrides, in machine-readable format\n    miri\n    new                  Create a new cargo package at <path>\n    owner                Manage the owners of a crate on the registry\n    package              Assemble the local package into a distributable tarball\n    pkgid                Print a fully qualified package specification\n    publish              Upload a package to the registry\n    r                    alias: run\n    read-manifest        DEPRECATED: Print a JSON representation of a Cargo.toml manifest.\n    remove               Remove dependencies from a Cargo.toml manifest file\n    report               Generate and display various kinds of reports\n    rm                   alias: remove\n    run                  Run a binary or example of the local package\n    rustc                Compile a package, and pass extra options to the compiler\n    rustdoc              Build a package's documentation, using specified custom flags.\n    search               Search packages in the registry. Default registry is crates.io\n    t                    alias: test\n    test                 Execute all unit and integration tests and build examples of a local package\n    tree                 Display a tree visualization of a dependency graph\n    uninstall            Remove a Rust binary\n    update               Update dependencies as recorded in the local lock file\n    vendor               Vendor all dependencies for a project locally\n    verify-project       DEPRECATED: Check correctness of crate manifest.\n    version              Show version information\n    yank                 Remove a pushed crate from the index\n"
         }
       ],
       "expected": {
@@ -45,12 +45,296 @@
           "name": "cargo",
           "options": [
             {
+              "description": "1.87.0-aarch64-apple-darwin (default)",
+              "icon": "🧰",
+              "name": "+1.87.0"
+            },
+            {
+              "description": "1.88.0-aarch64-apple-darwin (active)",
+              "icon": "🧰",
+              "name": "+1.88.0"
+            },
+            {
               "description": "",
               "icon": "🧰",
               "name": "+"
             }
           ],
-          "subcommands": []
+          "subcommands": [
+            {
+              "description": "This utility formats all bin and lib files of the current crate using rustfmt",
+              "icon": "🛠",
+              "name": "fmt",
+              "options": [
+                {
+                  "description": "Run rustfmt in check mode",
+                  "name": "--check"
+                },
+                {
+                  "description": "Format all packages, and also their local path-based dependencies",
+                  "name": "--all"
+                },
+                {
+                  "description": "Print help information",
+                  "name": [
+                    "-h",
+                    "--help"
+                  ]
+                },
+                {
+                  "description": "No output printed to stdout",
+                  "name": [
+                    "-q",
+                    "--quiet"
+                  ]
+                },
+                {
+                  "description": "Use verbose output",
+                  "name": [
+                    "-v",
+                    "--verbose"
+                  ]
+                },
+                {
+                  "description": "Print rustfmt version and exit",
+                  "name": "--version"
+                },
+                {
+                  "args": {
+                    "generators": {
+                      "custom": {
+                        "bodySha256": "dbeb43d33ef273945ebda1347579ec4a8411b84d98015d52a2aa286479683846",
+                        "kind": "function"
+                      },
+                      "getQueryTerm": {
+                        "bodySha256": "78703b1410a404e9fe9b288088dec80a9b2a1c76f06771faa131537920b6bdb6",
+                        "kind": "function"
+                      },
+                      "trigger": {
+                        "bodySha256": "3226d1dfa60e2f2de8174a0c677e4961560a2c63d097c733462cc34f45ea53c9",
+                        "kind": "function"
+                      }
+                    },
+                    "name": "manifest-path"
+                  },
+                  "description": "Specify path to Cargo.toml",
+                  "name": "--manifest-path"
+                },
+                {
+                  "args": {
+                    "name": "message-format",
+                    "suggestions": [
+                      "short",
+                      "json",
+                      "human"
+                    ]
+                  },
+                  "description": "Specify message-format",
+                  "name": "--message-format"
+                },
+                {
+                  "args": {
+                    "filterStrategy": "fuzzy",
+                    "generators": {
+                      "postProcess": {
+                        "bodySha256": "f3a6acd7fd4282fa10dc4ec6dc97f8880acd17921aef64f1fbb1f4b4a076d137",
+                        "kind": "function"
+                      },
+                      "script": [
+                        "cargo",
+                        "metadata",
+                        "--format-version",
+                        "1",
+                        "--no-deps"
+                      ]
+                    },
+                    "name": "package"
+                  },
+                  "description": "Specify package to format",
+                  "name": [
+                    "-p",
+                    "--package"
+                  ]
+                }
+              ],
+              "subcommands": [
+                {
+                  "args": {
+                    "generators": {
+                      "custom": {
+                        "bodySha256": "dbeb43d33ef273945ebda1347579ec4a8411b84d98015d52a2aa286479683846",
+                        "kind": "function"
+                      },
+                      "getQueryTerm": {
+                        "bodySha256": "78703b1410a404e9fe9b288088dec80a9b2a1c76f06771faa131537920b6bdb6",
+                        "kind": "function"
+                      },
+                      "trigger": {
+                        "bodySha256": "3226d1dfa60e2f2de8174a0c677e4961560a2c63d097c733462cc34f45ea53c9",
+                        "kind": "function"
+                      }
+                    }
+                  },
+                  "description": "All other arguments are passed to rustfmt",
+                  "name": "--",
+                  "options": [
+                    {
+                      "description": "Run in 'check' mode. Exits with 0 if input is formatted correctly. Exits with 1 and prints a diff if formatting is required",
+                      "name": "--check"
+                    },
+                    {
+                      "args": {
+                        "suggestions": [
+                          "files",
+                          "stdout"
+                        ]
+                      },
+                      "description": "What data to emit and how",
+                      "name": "--emit"
+                    },
+                    {
+                      "description": "Backup any modified files",
+                      "name": "--backup"
+                    },
+                    {
+                      "args": {
+                        "generators": {
+                          "custom": {
+                            "bodySha256": "dbeb43d33ef273945ebda1347579ec4a8411b84d98015d52a2aa286479683846",
+                            "kind": "function"
+                          },
+                          "getQueryTerm": {
+                            "bodySha256": "78703b1410a404e9fe9b288088dec80a9b2a1c76f06771faa131537920b6bdb6",
+                            "kind": "function"
+                          },
+                          "trigger": {
+                            "bodySha256": "3226d1dfa60e2f2de8174a0c677e4961560a2c63d097c733462cc34f45ea53c9",
+                            "kind": "function"
+                          }
+                        }
+                      },
+                      "description": "Path for the configuration file",
+                      "name": "--config-path"
+                    },
+                    {
+                      "args": {
+                        "suggestions": [
+                          {
+                            "description": "2015 edition",
+                            "name": "2015"
+                          },
+                          {
+                            "description": "2018 edition",
+                            "name": "2018"
+                          },
+                          {
+                            "description": "2021 edition",
+                            "name": "2021"
+                          }
+                        ]
+                      },
+                      "description": "Rust edition to use",
+                      "name": "--edition"
+                    },
+                    {
+                      "args": [
+                        {
+                          "name": "verbosity",
+                          "suggestions": [
+                            "default",
+                            "minimal",
+                            "current"
+                          ]
+                        },
+                        {
+                          "name": "PATH",
+                          "template": "filepaths"
+                        }
+                      ],
+                      "description": "Dumps a default or minimal config to PATH",
+                      "name": "--print-config"
+                    },
+                    {
+                      "description": "Prints the names of mismatched files that were formatted",
+                      "name": [
+                        "-l",
+                        "--files-with-diff"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "description": "Runs the Clippy linter",
+              "icon": "📎",
+              "name": "clippy",
+              "options": [
+                {
+                  "description": "Run Clippy only on the given crate, without linting the dependencies",
+                  "name": "--no-deps"
+                },
+                {
+                  "description": "Automatically apply lint suggestions. This flag implies `--no-deps`",
+                  "name": "--fix"
+                },
+                {
+                  "dependsOn": [
+                    "--fix"
+                  ],
+                  "description": "Allow fix to apply even if the working directory is dirty",
+                  "name": "--allow-dirty"
+                },
+                {
+                  "dependsOn": [
+                    "--fix"
+                  ],
+                  "description": "Allow fix to apply even if the working directory has staged changes",
+                  "name": "--allow-staged"
+                }
+              ],
+              "subcommands": [
+                {
+                  "description": "All other arguments are passed to clippy",
+                  "name": "--",
+                  "options": [
+                    {
+                      "args": {},
+                      "description": "Set lint warnings",
+                      "name": [
+                        "-W",
+                        "--warn"
+                      ]
+                    },
+                    {
+                      "args": {},
+                      "description": "Set lint allowed",
+                      "name": [
+                        "-A",
+                        "--allow"
+                      ]
+                    },
+                    {
+                      "args": {},
+                      "description": "Set lint denied",
+                      "name": [
+                        "-D",
+                        "--deny"
+                      ]
+                    },
+                    {
+                      "args": {},
+                      "description": "Set lint forbidden",
+                      "name": [
+                        "-F",
+                        "--forbid"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       },
       "id": "root",
@@ -81,18 +365,18 @@
             "list"
           ],
           "command": "rustup",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "1.87.0-aarch64-apple-darwin (default)\n1.88.0-aarch64-apple-darwin (active)\n"
         },
         {
           "args": [
             "--list"
           ],
           "command": "cargo",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "Installed Commands:\n    add                  Add dependencies to a Cargo.toml manifest file\n    b                    alias: build\n    bench                Execute all benchmarks of a local package\n    build                Compile a local package and all of its dependencies\n    c                    alias: check\n    check                Check a local package and all of its dependencies for errors\n    clean                Remove artifacts that cargo has generated in the past\n    clippy               Checks a package to catch common mistakes and improve your Rust code.\n    config               Inspect configuration values\n    d                    alias: doc\n    doc                  Build a package's documentation\n    fetch                Fetch dependencies of a package from the network\n    fix                  Automatically fix lint warnings reported by rustc\n    fmt                  Formats all bin and lib files of the current crate using rustfmt.\n    generate-lockfile    Generate the lockfile for a package\n    git-checkout         REMOVED: This command has been removed\n    help                 Displays help for a cargo subcommand\n    info                 Display information about a package\n    init                 Create a new cargo package in an existing directory\n    install              Install a Rust binary\n    locate-project       Print a JSON representation of a Cargo.toml file's location\n    login                Log in to a registry.\n    logout               Remove an API token from the registry locally\n    metadata             Output the resolved dependencies of a package, the concrete used versions including overrides, in machine-readable format\n    miri\n    new                  Create a new cargo package at <path>\n    owner                Manage the owners of a crate on the registry\n    package              Assemble the local package into a distributable tarball\n    pkgid                Print a fully qualified package specification\n    publish              Upload a package to the registry\n    r                    alias: run\n    read-manifest        DEPRECATED: Print a JSON representation of a Cargo.toml manifest.\n    remove               Remove dependencies from a Cargo.toml manifest file\n    report               Generate and display various kinds of reports\n    rm                   alias: remove\n    run                  Run a binary or example of the local package\n    rustc                Compile a package, and pass extra options to the compiler\n    rustdoc              Build a package's documentation, using specified custom flags.\n    search               Search packages in the registry. Default registry is crates.io\n    t                    alias: test\n    test                 Execute all unit and integration tests and build examples of a local package\n    tree                 Display a tree visualization of a dependency graph\n    uninstall            Remove a Rust binary\n    update               Update dependencies as recorded in the local lock file\n    vendor               Vendor all dependencies for a project locally\n    verify-project       DEPRECATED: Check correctness of crate manifest.\n    version              Show version information\n    yank                 Remove a pushed crate from the index\n"
         }
       ],
       "expected": {
@@ -101,12 +385,296 @@
           "name": "cargo",
           "options": [
             {
+              "description": "1.87.0-aarch64-apple-darwin (default)",
+              "icon": "🧰",
+              "name": "+1.87.0"
+            },
+            {
+              "description": "1.88.0-aarch64-apple-darwin (active)",
+              "icon": "🧰",
+              "name": "+1.88.0"
+            },
+            {
               "description": "",
               "icon": "🧰",
               "name": "+"
             }
           ],
-          "subcommands": []
+          "subcommands": [
+            {
+              "description": "This utility formats all bin and lib files of the current crate using rustfmt",
+              "icon": "🛠",
+              "name": "fmt",
+              "options": [
+                {
+                  "description": "Run rustfmt in check mode",
+                  "name": "--check"
+                },
+                {
+                  "description": "Format all packages, and also their local path-based dependencies",
+                  "name": "--all"
+                },
+                {
+                  "description": "Print help information",
+                  "name": [
+                    "-h",
+                    "--help"
+                  ]
+                },
+                {
+                  "description": "No output printed to stdout",
+                  "name": [
+                    "-q",
+                    "--quiet"
+                  ]
+                },
+                {
+                  "description": "Use verbose output",
+                  "name": [
+                    "-v",
+                    "--verbose"
+                  ]
+                },
+                {
+                  "description": "Print rustfmt version and exit",
+                  "name": "--version"
+                },
+                {
+                  "args": {
+                    "generators": {
+                      "custom": {
+                        "bodySha256": "dbeb43d33ef273945ebda1347579ec4a8411b84d98015d52a2aa286479683846",
+                        "kind": "function"
+                      },
+                      "getQueryTerm": {
+                        "bodySha256": "78703b1410a404e9fe9b288088dec80a9b2a1c76f06771faa131537920b6bdb6",
+                        "kind": "function"
+                      },
+                      "trigger": {
+                        "bodySha256": "3226d1dfa60e2f2de8174a0c677e4961560a2c63d097c733462cc34f45ea53c9",
+                        "kind": "function"
+                      }
+                    },
+                    "name": "manifest-path"
+                  },
+                  "description": "Specify path to Cargo.toml",
+                  "name": "--manifest-path"
+                },
+                {
+                  "args": {
+                    "name": "message-format",
+                    "suggestions": [
+                      "short",
+                      "json",
+                      "human"
+                    ]
+                  },
+                  "description": "Specify message-format",
+                  "name": "--message-format"
+                },
+                {
+                  "args": {
+                    "filterStrategy": "fuzzy",
+                    "generators": {
+                      "postProcess": {
+                        "bodySha256": "f3a6acd7fd4282fa10dc4ec6dc97f8880acd17921aef64f1fbb1f4b4a076d137",
+                        "kind": "function"
+                      },
+                      "script": [
+                        "cargo",
+                        "metadata",
+                        "--format-version",
+                        "1",
+                        "--no-deps"
+                      ]
+                    },
+                    "name": "package"
+                  },
+                  "description": "Specify package to format",
+                  "name": [
+                    "-p",
+                    "--package"
+                  ]
+                }
+              ],
+              "subcommands": [
+                {
+                  "args": {
+                    "generators": {
+                      "custom": {
+                        "bodySha256": "dbeb43d33ef273945ebda1347579ec4a8411b84d98015d52a2aa286479683846",
+                        "kind": "function"
+                      },
+                      "getQueryTerm": {
+                        "bodySha256": "78703b1410a404e9fe9b288088dec80a9b2a1c76f06771faa131537920b6bdb6",
+                        "kind": "function"
+                      },
+                      "trigger": {
+                        "bodySha256": "3226d1dfa60e2f2de8174a0c677e4961560a2c63d097c733462cc34f45ea53c9",
+                        "kind": "function"
+                      }
+                    }
+                  },
+                  "description": "All other arguments are passed to rustfmt",
+                  "name": "--",
+                  "options": [
+                    {
+                      "description": "Run in 'check' mode. Exits with 0 if input is formatted correctly. Exits with 1 and prints a diff if formatting is required",
+                      "name": "--check"
+                    },
+                    {
+                      "args": {
+                        "suggestions": [
+                          "files",
+                          "stdout"
+                        ]
+                      },
+                      "description": "What data to emit and how",
+                      "name": "--emit"
+                    },
+                    {
+                      "description": "Backup any modified files",
+                      "name": "--backup"
+                    },
+                    {
+                      "args": {
+                        "generators": {
+                          "custom": {
+                            "bodySha256": "dbeb43d33ef273945ebda1347579ec4a8411b84d98015d52a2aa286479683846",
+                            "kind": "function"
+                          },
+                          "getQueryTerm": {
+                            "bodySha256": "78703b1410a404e9fe9b288088dec80a9b2a1c76f06771faa131537920b6bdb6",
+                            "kind": "function"
+                          },
+                          "trigger": {
+                            "bodySha256": "3226d1dfa60e2f2de8174a0c677e4961560a2c63d097c733462cc34f45ea53c9",
+                            "kind": "function"
+                          }
+                        }
+                      },
+                      "description": "Path for the configuration file",
+                      "name": "--config-path"
+                    },
+                    {
+                      "args": {
+                        "suggestions": [
+                          {
+                            "description": "2015 edition",
+                            "name": "2015"
+                          },
+                          {
+                            "description": "2018 edition",
+                            "name": "2018"
+                          },
+                          {
+                            "description": "2021 edition",
+                            "name": "2021"
+                          }
+                        ]
+                      },
+                      "description": "Rust edition to use",
+                      "name": "--edition"
+                    },
+                    {
+                      "args": [
+                        {
+                          "name": "verbosity",
+                          "suggestions": [
+                            "default",
+                            "minimal",
+                            "current"
+                          ]
+                        },
+                        {
+                          "name": "PATH",
+                          "template": "filepaths"
+                        }
+                      ],
+                      "description": "Dumps a default or minimal config to PATH",
+                      "name": "--print-config"
+                    },
+                    {
+                      "description": "Prints the names of mismatched files that were formatted",
+                      "name": [
+                        "-l",
+                        "--files-with-diff"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "description": "Runs the Clippy linter",
+              "icon": "📎",
+              "name": "clippy",
+              "options": [
+                {
+                  "description": "Run Clippy only on the given crate, without linting the dependencies",
+                  "name": "--no-deps"
+                },
+                {
+                  "description": "Automatically apply lint suggestions. This flag implies `--no-deps`",
+                  "name": "--fix"
+                },
+                {
+                  "dependsOn": [
+                    "--fix"
+                  ],
+                  "description": "Allow fix to apply even if the working directory is dirty",
+                  "name": "--allow-dirty"
+                },
+                {
+                  "dependsOn": [
+                    "--fix"
+                  ],
+                  "description": "Allow fix to apply even if the working directory has staged changes",
+                  "name": "--allow-staged"
+                }
+              ],
+              "subcommands": [
+                {
+                  "description": "All other arguments are passed to clippy",
+                  "name": "--",
+                  "options": [
+                    {
+                      "args": {},
+                      "description": "Set lint warnings",
+                      "name": [
+                        "-W",
+                        "--warn"
+                      ]
+                    },
+                    {
+                      "args": {},
+                      "description": "Set lint allowed",
+                      "name": [
+                        "-A",
+                        "--allow"
+                      ]
+                    },
+                    {
+                      "args": {},
+                      "description": "Set lint denied",
+                      "name": [
+                        "-D",
+                        "--deny"
+                      ]
+                    },
+                    {
+                      "args": {},
+                      "description": "Set lint forbidden",
+                      "name": [
+                        "-F",
+                        "--forbid"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       },
       "id": "subcommand",

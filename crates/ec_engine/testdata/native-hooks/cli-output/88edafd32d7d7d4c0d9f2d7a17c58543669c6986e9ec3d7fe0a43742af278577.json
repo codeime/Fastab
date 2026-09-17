@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "git",
+    "--no-optional-locks",
+    "remote",
+    "-v"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "origin\thttps://github.com/codeime/easy-complete.git (fetch)\norigin\thttps://github.com/codeime/easy-complete.git (push)\n"
+}

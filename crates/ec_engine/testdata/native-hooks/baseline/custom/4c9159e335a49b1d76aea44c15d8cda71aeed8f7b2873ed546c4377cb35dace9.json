@@ -24,17 +24,17 @@
             "prefix"
           ],
           "command": "npm",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "$HOME/Desktop/easy-complete\n"
         },
         {
           "args": [
-            "/package.json"
+            "$HOME/Desktop/easy-complete\n/package.json"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: $HOME/Desktop/easy-complete\n/package.json: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -69,17 +69,17 @@
             "prefix"
           ],
           "command": "npm",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "$HOME/Desktop/easy-complete\n"
         },
         {
           "args": [
-            "/package.json"
+            "$HOME/Desktop/easy-complete\n/package.json"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: $HOME/Desktop/easy-complete\n/package.json: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -114,17 +114,17 @@
             "prefix"
           ],
           "command": "npm",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "$HOME/Desktop/easy-complete\n"
         },
         {
           "args": [
-            "/package.json"
+            "$HOME/Desktop/easy-complete\n/package.json"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: $HOME/Desktop/easy-complete\n/package.json: No such file or directory\n",
           "stdout": ""
         }
       ],

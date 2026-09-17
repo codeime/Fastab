@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "m",
           "group",
@@ -24,19 +24,8 @@
       },
       "exec": [],
       "expected": {
-        "kind": "suggestions",
-        "value": [
-          {
-            "hidden": false,
-            "icon": "👥",
-            "name": "main"
-          },
-          {
-            "hidden": false,
-            "icon": "👥",
-            "name": "feature"
-          }
-        ]
+        "kind": "error",
+        "value": "suggestion is missing name"
       },
       "id": "normal",
       "timeoutMs": 5000
@@ -112,7 +101,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "m",
           "group",

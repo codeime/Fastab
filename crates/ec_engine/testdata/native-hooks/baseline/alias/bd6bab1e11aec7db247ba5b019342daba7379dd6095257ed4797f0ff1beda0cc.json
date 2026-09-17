@@ -22,14 +22,23 @@
             "prefix"
           ],
           "command": "npm",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 0,
+          "stderr": "",
+          "stdout": "$HOME/Desktop/easy-complete\n"
+        },
+        {
+          "args": [
+            "$HOME/Desktop/easy-complete/package.json"
+          ],
+          "command": "cat",
+          "status": 1,
+          "stderr": "cat: $HOME/Desktop/easy-complete/package.json: No such file or directory\n",
           "stdout": ""
         }
       ],
       "expected": {
         "kind": "error",
-        "value": "Error"
+        "value": "SyntaxError"
       },
       "id": "empty",
       "timeoutMs": 5000
@@ -55,14 +64,23 @@
             "prefix"
           ],
           "command": "npm",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 0,
+          "stderr": "",
+          "stdout": "$HOME/Desktop/easy-complete\n"
+        },
+        {
+          "args": [
+            "$HOME/Desktop/easy-complete/package.json"
+          ],
+          "command": "cat",
+          "status": 1,
+          "stderr": "cat: $HOME/Desktop/easy-complete/package.json: No such file or directory\n",
           "stdout": ""
         }
       ],
       "expected": {
         "kind": "error",
-        "value": "Error"
+        "value": "SyntaxError"
       },
       "id": "token",
       "timeoutMs": 5000

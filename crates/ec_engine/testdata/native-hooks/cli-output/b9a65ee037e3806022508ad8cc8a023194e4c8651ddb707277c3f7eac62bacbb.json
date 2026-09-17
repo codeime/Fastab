@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "maskfile.md"
+  ],
+  "status": 1,
+  "stderr": "cat: maskfile.md: No such file or directory\n",
+  "stdout": ""
+}

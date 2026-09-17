@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "disk\n",
         [
           "m",
           "disk",
@@ -28,12 +28,7 @@
         "kind": "suggestions",
         "value": [
           {
-            "name": "/Volumes/main",
-            "priority": 100,
-            "type": "file"
-          },
-          {
-            "name": "/Volumes/feature",
+            "name": "/Volumes/disk",
             "priority": 100,
             "type": "file"
           }
@@ -121,7 +116,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "disk\n",
         [
           "m",
           "disk",

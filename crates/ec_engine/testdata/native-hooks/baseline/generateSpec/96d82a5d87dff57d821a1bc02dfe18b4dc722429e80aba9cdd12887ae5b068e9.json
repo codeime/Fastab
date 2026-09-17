@@ -25,8 +25,8 @@
             "cat manage.py | grep -q django"
           ],
           "command": "bash",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: manage.py: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -62,8 +62,8 @@
             "cat manage.py | grep -q django"
           ],
           "command": "bash",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: manage.py: No such file or directory\n",
           "stdout": ""
         }
       ],

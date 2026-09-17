@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "find $(rustup docs --path | sed -e \"s|index\\.html|std|\") $(rustup docs --path | sed -e \"s|index\\.html|alloc|\") $(rustup docs --path | sed -e \"s|index\\.html|core|\") | grep \"\\.html\" | sed -E -e \"s|^(.*)/html/||\" -e \"s|\\.html||\" -e \"s|/|::|g\" -e \"s/constant\\.|trait\\.|struct\\.|macro\\.|fn\\.|keyword\\.|primitive\\.|type\\.|enum\\.|union\\.|traitalias\\.|::index$|^(.*)::all$//\" -e \"/^$/d\""
+  ],
+  "status": 0,
+  "stderr": "info: `rust-docs` not installed in toolchain `1.88.0-aarch64-apple-darwin`\nhelp: run `rustup component add --toolchain 1.88.0-aarch64-apple-darwin rust-docs` to install it\nerror: unable to view documentation which is not installed\ninfo: `rust-docs` not installed in toolchain `1.88.0-aarch64-apple-darwin`\nhelp: run `rustup component add --toolchain 1.88.0-aarch64-apple-darwin rust-docs` to install it\nerror: unable to view documentation which is not installed\ninfo: `rust-docs` not installed in toolchain `1.88.0-aarch64-apple-darwin`\nhelp: run `rustup component add --toolchain 1.88.0-aarch64-apple-darwin rust-docs` to install it\nerror: unable to view documentation which is not installed\nusage: find [-H | -L | -P] [-EXdsx] [-f path] path ... [expression]\n       find [-H | -L | -P] [-EXdsx] -f path [path ...] [expression]\n",
+  "stdout": ""
+}

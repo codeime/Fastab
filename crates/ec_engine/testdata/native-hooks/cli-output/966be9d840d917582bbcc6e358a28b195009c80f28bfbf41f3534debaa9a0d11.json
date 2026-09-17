@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "ls",
+    "./archetypes/"
+  ],
+  "status": 1,
+  "stderr": "ls: ./archetypes/: No such file or directory\n",
+  "stdout": ""
+}

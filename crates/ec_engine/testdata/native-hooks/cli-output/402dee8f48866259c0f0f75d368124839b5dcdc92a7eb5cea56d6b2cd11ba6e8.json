@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "/home/user/Library/autojump/autojump.txt"
+  ],
+  "status": 1,
+  "stderr": "cat: /home/user/Library/autojump/autojump.txt: No such file or directory\n",
+  "stdout": ""
+}

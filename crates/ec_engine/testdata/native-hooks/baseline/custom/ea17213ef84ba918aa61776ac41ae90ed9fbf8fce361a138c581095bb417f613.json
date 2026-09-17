@@ -34,8 +34,8 @@
             "/package.json"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: /package.json: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -80,8 +80,8 @@
             "/package.json"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: /package.json: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -126,8 +126,8 @@
             "/package.json"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: /package.json: No such file or directory\n",
           "stdout": ""
         }
       ],

@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "grep -A5 --include=*.ts --exclude-dir=node_modules -r 'addFormula\\|addSyncTable\\|makeFormula\\|makeSyncTable' . | grep -A3 -i formula | grep name: | grep -oE \"['\\\"]\\w*['\\\"]\""
+  ],
+  "status": 1,
+  "stderr": "",
+  "stdout": ""
+}

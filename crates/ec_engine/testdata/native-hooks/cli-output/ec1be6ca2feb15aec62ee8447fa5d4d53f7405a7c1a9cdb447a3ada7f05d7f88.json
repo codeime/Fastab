@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "git",
+    "--no-optional-locks",
+    "branch",
+    "--no-color",
+    "--sort=-committerdate"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": "* main\n  dev\n  feat/cross-platform\n"
+}

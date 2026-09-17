@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "cf services | cut -d \" \" -f1 "
+  ],
+  "status": 0,
+  "stderr": "bash: cf: command not found\n",
+  "stdout": ""
+}

@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "create-dmg\ngettext\ngit\ngmp\ngnu-tar\ngo\njson-c\nlibunistring\nlibuv\nlpeg\nluajit\nluv\nmise\nmsedit\nneovim\npandoc\npcre\npcre2\nripgrep\nrustup\nthe_silver_searcher\ntree-sitter\nunibilium\nutf8proc\nuv\nxz\ncmux\n",
         [
           "brew",
           ""
@@ -95,7 +95,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "create-dmg\ngettext\ngit\ngmp\ngnu-tar\ngo\njson-c\nlibunistring\nlibuv\nlpeg\nluajit\nluv\nmise\nmsedit\nneovim\npandoc\npcre\npcre2\nripgrep\nrustup\nthe_silver_searcher\ntree-sitter\nunibilium\nutf8proc\nuv\nxz\ncmux\n",
         [
           "brew",
           ""

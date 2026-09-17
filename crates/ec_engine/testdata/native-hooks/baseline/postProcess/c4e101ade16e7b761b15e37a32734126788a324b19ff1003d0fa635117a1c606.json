@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "aarch64-apple-darwin\naarch64-apple-ios\naarch64-apple-ios-macabi\naarch64-apple-ios-sim\naarch64-apple-tvos\naarch64-apple-tvos-sim\naarch64-apple-visionos\naarch64-apple-visionos-sim\naarch64-apple-watchos\naarch64-apple-watchos-sim\naarch64-kmc-solid_asp3\naarch64-linux-android\naarch64-nintendo-switch-freestanding\naarch64-pc-windows-gnullvm\naarch64-pc-windows-msvc\naarch64-unknown-freebsd\naarch64-unknown-fuchsia\naarch64-unknown-hermit\naarch64-unknown-illumos\naarch64-unknown-linux-gnu\naarch64-unknown-linux-gnu_ilp32\naarch64-unknown-linux-musl\naarch64-unknown-linux-ohos\naarch64-unknown-netbsd\naarch64-unknown-none\naarch64-unknown-none-softfloat\naarch64-unknown-nto-qnx700\naarch64-unknown-nto-qnx710\naarch64-unknown-nto-qnx710_iosock\naarch64-unknown-nto-qnx800\naarch64-unknown-nuttx\naarch64-unknown-openbsd\naarch64-unknown-redox\naarch64-unknown-teeos\naarch64-unknown-trusty\naarch64-unknown-uefi\naarch64-uwp-windows-msvc\naarch64-wrs-vxworks\naarch64_be-unknown-linux-gnu\naarch64_be-unknown-linux-gnu_ilp32\naarch64_be-unknown-netbsd\namdgcn-amd-amdhsa\narm-linux-androideabi\narm-unknown-linux-gnueabi\narm-unknown-linux-gnueabihf\narm-unknown-linux-musleabi\narm-unknown-linux-musleabihf\narm64_32-apple-watchos\narm64e-apple-darwin\narm64e-apple-ios\narm64e-apple-tvos\narm64ec-pc-windows-msvc\narmeb-unknown-linux-gnueabi\narmebv7r-none-eabi\narmebv7r-none-eabihf\narmv4t-none-eabi\narmv4t-unknown-linux-gnueabi\narmv5te-none-eabi\narmv5te-unknown-linux-gnueabi\narmv5te-unknown-linux-musleabi\narmv5te-unknown-linux-uclibceabi\narmv6-unknown-freebsd\narmv6-unknown-netbsd-eabihf\narmv6k-nintendo-3ds\narmv7-linux-androideabi\narmv7-rtems-eabihf\narmv7-sony-vita-newlibeabihf\narmv7-unknown-freebsd\narmv7-unknown-linux-gnueabi\narmv7-unknown-linux-gnueabihf\narmv7-unknown-linux-musleabi\narmv7-unknown-linux-musleabihf\narmv7-unknown-linux-ohos\narmv7-unknown-linux-uclibceabi\narmv7-unknown-linux-uclibceabihf\narmv7-unknown-netbsd-eabihf\narmv7-unknown-trusty\narmv7-wrs-vxworks-eabihf\narmv7a-kmc-solid_asp3-eabi\narmv7a-kmc-solid_asp3-eabihf\narmv7a-none-eabi\narmv7a-none-eabihf\narmv7a-nuttx-eabi\narmv7a-nuttx-eabihf\narmv7k-apple-watchos\narmv7r-none-eabi\narmv7r-none-eabihf\narmv7s-apple-ios\narmv8r-none-eabihf\navr-none\nbpfeb-unknown-none\nbpfel-unknown-none\ncsky-unknown-linux-gnuabiv2\ncsky-unknown-linux-gnuabiv2hf\nhexagon-unknown-linux-musl\nhexagon-unknown-none-elf\ni386-apple-ios\ni586-unknown-linux-gnu\ni586-unknown-linux-musl\ni586-unknown-netbsd\ni586-unknown-redox\ni686-apple-darwin\ni686-linux-android\ni686-pc-nto-qnx700\ni686-pc-windows-gnu\ni686-pc-windows-gnullvm\ni686-pc-windows-msvc\ni686-unknown-freebsd\ni686-unknown-haiku\ni686-unknown-hurd-gnu\ni686-unknown-linux-gnu\ni686-unknown-linux-musl\ni686-unknown-netbsd\ni686-unknown-openbsd\ni686-unknown-uefi\ni686-uwp-windows-gnu\ni686-uwp-windows-msvc\ni686-win7-windows-gnu\ni686-win7-windows-msvc\ni686-wrs-vxworks\nloongarch64-unknown-linux-gnu\nloongarch64-unknown-linux-musl\nloongarch64-unknown-linux-ohos\nloongarch64-unknown-none\nloongarch64-unknown-none-softfloat\nm68k-unknown-linux-gnu\nm68k-unknown-none-elf\nmips-mti-none-elf\nmips-unknown-linux-gnu\nmips-unknown-linux-musl\nmips-unknown-linux-uclibc\nmips64-openwrt-linux-musl\nmips64-unknown-linux-gnuabi64\nmips64-unknown-linux-muslabi64\nmips64el-unknown-linux-gnuabi64\nmips64el-unknown-linux-muslabi64\nmipsel-mti-none-elf\nmipsel-sony-psp\nmipsel-sony-psx\nmipsel-unknown-linux-gnu\nmipsel-unknown-linux-musl\nmipsel-unknown-linux-uclibc\nmipsel-unknown-netbsd\nmipsel-unknown-none\nmipsisa32r6-unknown-linux-gnu\nmipsisa32r6el-unknown-linux-gnu\nmipsisa64r6-unknown-linux-gnuabi64\nmipsisa64r6el-unknown-linux-gnuabi64\nmsp430-none-elf\nnvptx64-nvidia-cuda\npowerpc-unknown-freebsd\npowerpc-unknown-linux-gnu\npowerpc-unknown-linux-gnuspe\npowerpc-unknown-linux-musl\npowerpc-unknown-linux-muslspe\npowerpc-unknown-netbsd\npowerpc-unknown-openbsd\npowerpc-wrs-vxworks\npowerpc-wrs-vxworks-spe\npowerpc64-ibm-aix\npowerpc64-unknown-freebsd\npowerpc64-unknown-linux-gnu\npowerpc64-unknown-linux-musl\npowerpc64-unknown-openbsd\npowerpc64-wrs-vxworks\npowerpc64le-unknown-freebsd\npowerpc64le-unknown-linux-gnu\npowerpc64le-unknown-linux-musl\nriscv32-wrs-vxworks\nriscv32e-unknown-none-elf\nriscv32em-unknown-none-elf\nriscv32emc-unknown-none-elf\nriscv32gc-unknown-linux-gnu\nriscv32gc-unknown-linux-musl\nriscv32i-unknown-none-elf\nriscv32im-risc0-zkvm-elf\nriscv32im-unknown-none-elf\nriscv32ima-unknown-none-elf\nriscv32imac-esp-espidf\nriscv32imac-unknown-none-elf\nriscv32imac-unknown-nuttx-elf\nriscv32imac-unknown-xous-elf\nriscv32imafc-esp-espidf\nriscv32imafc-unknown-none-elf\nriscv32imafc-unknown-nuttx-elf\nriscv32imc-esp-espidf\nriscv32imc-unknown-none-elf\nriscv32imc-unknown-nuttx-elf\nriscv64-linux-android\nriscv64-wrs-vxworks\nriscv64gc-unknown-freebsd\nriscv64gc-unknown-fuchsia\nriscv64gc-unknown-hermit\nriscv64gc-unknown-linux-gnu\nriscv64gc-unknown-linux-musl\nriscv64gc-unknown-netbsd\nriscv64gc-unknown-none-elf\nriscv64gc-unknown-nuttx-elf\nriscv64gc-unknown-openbsd\nriscv64imac-unknown-none-elf\nriscv64imac-unknown-nuttx-elf\ns390x-unknown-linux-gnu\ns390x-unknown-linux-musl\nsparc-unknown-linux-gnu\nsparc-unknown-none-elf\nsparc64-unknown-linux-gnu\nsparc64-unknown-netbsd\nsparc64-unknown-openbsd\nsparcv9-sun-solaris\nthumbv4t-none-eabi\nthumbv5te-none-eabi\nthumbv6m-none-eabi\nthumbv6m-nuttx-eabi\nthumbv7a-nuttx-eabi\nthumbv7a-nuttx-eabihf\nthumbv7a-pc-windows-msvc\nthumbv7a-uwp-windows-msvc\nthumbv7em-none-eabi\nthumbv7em-none-eabihf\nthumbv7em-nuttx-eabi\nthumbv7em-nuttx-eabihf\nthumbv7m-none-eabi\nthumbv7m-nuttx-eabi\nthumbv7neon-linux-androideabi\nthumbv7neon-unknown-linux-gnueabihf\nthumbv7neon-unknown-linux-musleabihf\nthumbv8m.base-none-eabi\nthumbv8m.base-nuttx-eabi\nthumbv8m.main-none-eabi\nthumbv8m.main-none-eabihf\nthumbv8m.main-nuttx-eabi\nthumbv8m.main-nuttx-eabihf\nwasm32-unknown-emscripten\nwasm32-unknown-unknown\nwasm32-wali-linux-musl\nwasm32-wasip1\nwasm32-wasip1-threads\nwasm32-wasip2\nwasm32v1-none\nwasm64-unknown-unknown\nx86_64-apple-darwin\nx86_64-apple-ios\nx86_64-apple-ios-macabi\nx86_64-apple-tvos\nx86_64-apple-watchos-sim\nx86_64-fortanix-unknown-sgx\nx86_64-linux-android\nx86_64-lynx-lynxos178\nx86_64-pc-cygwin\nx86_64-pc-nto-qnx710\nx86_64-pc-nto-qnx710_iosock\nx86_64-pc-nto-qnx800\nx86_64-pc-solaris\nx86_64-pc-windows-gnu\nx86_64-pc-windows-gnullvm\nx86_64-pc-windows-msvc\nx86_64-unikraft-linux-musl\nx86_64-unknown-dragonfly\nx86_64-unknown-freebsd\nx86_64-unknown-fuchsia\nx86_64-unknown-haiku\nx86_64-unknown-hermit\nx86_64-unknown-hurd-gnu\nx86_64-unknown-illumos\nx86_64-unknown-l4re-uclibc\nx86_64-unknown-linux-gnu\nx86_64-unknown-linux-gnux32\nx86_64-unknown-linux-musl\nx86_64-unknown-linux-none\nx86_64-unknown-linux-ohos\nx86_64-unknown-netbsd\nx86_64-unknown-none\nx86_64-unknown-openbsd\nx86_64-unknown-redox\nx86_64-unknown-trusty\nx86_64-unknown-uefi\nx86_64-uwp-windows-gnu\nx86_64-uwp-windows-msvc\nx86_64-win7-windows-gnu\nx86_64-win7-windows-msvc\nx86_64-wrs-vxworks\nx86_64h-apple-darwin\nxtensa-esp32-espidf\nxtensa-esp32-none-elf\nxtensa-esp32s2-espidf\nxtensa-esp32s2-none-elf\nxtensa-esp32s3-espidf\nxtensa-esp32s3-none-elf\n",
         [
           "cargo",
           "bench",
@@ -26,10 +26,868 @@
         "kind": "suggestions",
         "value": [
           {
-            "name": "main"
+            "name": "aarch64-apple-darwin"
           },
           {
-            "name": "feature"
+            "name": "aarch64-apple-ios"
+          },
+          {
+            "name": "aarch64-apple-ios-macabi"
+          },
+          {
+            "name": "aarch64-apple-ios-sim"
+          },
+          {
+            "name": "aarch64-apple-tvos"
+          },
+          {
+            "name": "aarch64-apple-tvos-sim"
+          },
+          {
+            "name": "aarch64-apple-visionos"
+          },
+          {
+            "name": "aarch64-apple-visionos-sim"
+          },
+          {
+            "name": "aarch64-apple-watchos"
+          },
+          {
+            "name": "aarch64-apple-watchos-sim"
+          },
+          {
+            "name": "aarch64-kmc-solid_asp3"
+          },
+          {
+            "name": "aarch64-linux-android"
+          },
+          {
+            "name": "aarch64-nintendo-switch-freestanding"
+          },
+          {
+            "name": "aarch64-pc-windows-gnullvm"
+          },
+          {
+            "name": "aarch64-pc-windows-msvc"
+          },
+          {
+            "name": "aarch64-unknown-freebsd"
+          },
+          {
+            "name": "aarch64-unknown-fuchsia"
+          },
+          {
+            "name": "aarch64-unknown-hermit"
+          },
+          {
+            "name": "aarch64-unknown-illumos"
+          },
+          {
+            "name": "aarch64-unknown-linux-gnu"
+          },
+          {
+            "name": "aarch64-unknown-linux-gnu_ilp32"
+          },
+          {
+            "name": "aarch64-unknown-linux-musl"
+          },
+          {
+            "name": "aarch64-unknown-linux-ohos"
+          },
+          {
+            "name": "aarch64-unknown-netbsd"
+          },
+          {
+            "name": "aarch64-unknown-none"
+          },
+          {
+            "name": "aarch64-unknown-none-softfloat"
+          },
+          {
+            "name": "aarch64-unknown-nto-qnx700"
+          },
+          {
+            "name": "aarch64-unknown-nto-qnx710"
+          },
+          {
+            "name": "aarch64-unknown-nto-qnx710_iosock"
+          },
+          {
+            "name": "aarch64-unknown-nto-qnx800"
+          },
+          {
+            "name": "aarch64-unknown-nuttx"
+          },
+          {
+            "name": "aarch64-unknown-openbsd"
+          },
+          {
+            "name": "aarch64-unknown-redox"
+          },
+          {
+            "name": "aarch64-unknown-teeos"
+          },
+          {
+            "name": "aarch64-unknown-trusty"
+          },
+          {
+            "name": "aarch64-unknown-uefi"
+          },
+          {
+            "name": "aarch64-uwp-windows-msvc"
+          },
+          {
+            "name": "aarch64-wrs-vxworks"
+          },
+          {
+            "name": "aarch64_be-unknown-linux-gnu"
+          },
+          {
+            "name": "aarch64_be-unknown-linux-gnu_ilp32"
+          },
+          {
+            "name": "aarch64_be-unknown-netbsd"
+          },
+          {
+            "name": "amdgcn-amd-amdhsa"
+          },
+          {
+            "name": "arm-linux-androideabi"
+          },
+          {
+            "name": "arm-unknown-linux-gnueabi"
+          },
+          {
+            "name": "arm-unknown-linux-gnueabihf"
+          },
+          {
+            "name": "arm-unknown-linux-musleabi"
+          },
+          {
+            "name": "arm-unknown-linux-musleabihf"
+          },
+          {
+            "name": "arm64_32-apple-watchos"
+          },
+          {
+            "name": "arm64e-apple-darwin"
+          },
+          {
+            "name": "arm64e-apple-ios"
+          },
+          {
+            "name": "arm64e-apple-tvos"
+          },
+          {
+            "name": "arm64ec-pc-windows-msvc"
+          },
+          {
+            "name": "armeb-unknown-linux-gnueabi"
+          },
+          {
+            "name": "armebv7r-none-eabi"
+          },
+          {
+            "name": "armebv7r-none-eabihf"
+          },
+          {
+            "name": "armv4t-none-eabi"
+          },
+          {
+            "name": "armv4t-unknown-linux-gnueabi"
+          },
+          {
+            "name": "armv5te-none-eabi"
+          },
+          {
+            "name": "armv5te-unknown-linux-gnueabi"
+          },
+          {
+            "name": "armv5te-unknown-linux-musleabi"
+          },
+          {
+            "name": "armv5te-unknown-linux-uclibceabi"
+          },
+          {
+            "name": "armv6-unknown-freebsd"
+          },
+          {
+            "name": "armv6-unknown-netbsd-eabihf"
+          },
+          {
+            "name": "armv6k-nintendo-3ds"
+          },
+          {
+            "name": "armv7-linux-androideabi"
+          },
+          {
+            "name": "armv7-rtems-eabihf"
+          },
+          {
+            "name": "armv7-sony-vita-newlibeabihf"
+          },
+          {
+            "name": "armv7-unknown-freebsd"
+          },
+          {
+            "name": "armv7-unknown-linux-gnueabi"
+          },
+          {
+            "name": "armv7-unknown-linux-gnueabihf"
+          },
+          {
+            "name": "armv7-unknown-linux-musleabi"
+          },
+          {
+            "name": "armv7-unknown-linux-musleabihf"
+          },
+          {
+            "name": "armv7-unknown-linux-ohos"
+          },
+          {
+            "name": "armv7-unknown-linux-uclibceabi"
+          },
+          {
+            "name": "armv7-unknown-linux-uclibceabihf"
+          },
+          {
+            "name": "armv7-unknown-netbsd-eabihf"
+          },
+          {
+            "name": "armv7-unknown-trusty"
+          },
+          {
+            "name": "armv7-wrs-vxworks-eabihf"
+          },
+          {
+            "name": "armv7a-kmc-solid_asp3-eabi"
+          },
+          {
+            "name": "armv7a-kmc-solid_asp3-eabihf"
+          },
+          {
+            "name": "armv7a-none-eabi"
+          },
+          {
+            "name": "armv7a-none-eabihf"
+          },
+          {
+            "name": "armv7a-nuttx-eabi"
+          },
+          {
+            "name": "armv7a-nuttx-eabihf"
+          },
+          {
+            "name": "armv7k-apple-watchos"
+          },
+          {
+            "name": "armv7r-none-eabi"
+          },
+          {
+            "name": "armv7r-none-eabihf"
+          },
+          {
+            "name": "armv7s-apple-ios"
+          },
+          {
+            "name": "armv8r-none-eabihf"
+          },
+          {
+            "name": "avr-none"
+          },
+          {
+            "name": "bpfeb-unknown-none"
+          },
+          {
+            "name": "bpfel-unknown-none"
+          },
+          {
+            "name": "csky-unknown-linux-gnuabiv2"
+          },
+          {
+            "name": "csky-unknown-linux-gnuabiv2hf"
+          },
+          {
+            "name": "hexagon-unknown-linux-musl"
+          },
+          {
+            "name": "hexagon-unknown-none-elf"
+          },
+          {
+            "name": "i386-apple-ios"
+          },
+          {
+            "name": "i586-unknown-linux-gnu"
+          },
+          {
+            "name": "i586-unknown-linux-musl"
+          },
+          {
+            "name": "i586-unknown-netbsd"
+          },
+          {
+            "name": "i586-unknown-redox"
+          },
+          {
+            "name": "i686-apple-darwin"
+          },
+          {
+            "name": "i686-linux-android"
+          },
+          {
+            "name": "i686-pc-nto-qnx700"
+          },
+          {
+            "name": "i686-pc-windows-gnu"
+          },
+          {
+            "name": "i686-pc-windows-gnullvm"
+          },
+          {
+            "name": "i686-pc-windows-msvc"
+          },
+          {
+            "name": "i686-unknown-freebsd"
+          },
+          {
+            "name": "i686-unknown-haiku"
+          },
+          {
+            "name": "i686-unknown-hurd-gnu"
+          },
+          {
+            "name": "i686-unknown-linux-gnu"
+          },
+          {
+            "name": "i686-unknown-linux-musl"
+          },
+          {
+            "name": "i686-unknown-netbsd"
+          },
+          {
+            "name": "i686-unknown-openbsd"
+          },
+          {
+            "name": "i686-unknown-uefi"
+          },
+          {
+            "name": "i686-uwp-windows-gnu"
+          },
+          {
+            "name": "i686-uwp-windows-msvc"
+          },
+          {
+            "name": "i686-win7-windows-gnu"
+          },
+          {
+            "name": "i686-win7-windows-msvc"
+          },
+          {
+            "name": "i686-wrs-vxworks"
+          },
+          {
+            "name": "loongarch64-unknown-linux-gnu"
+          },
+          {
+            "name": "loongarch64-unknown-linux-musl"
+          },
+          {
+            "name": "loongarch64-unknown-linux-ohos"
+          },
+          {
+            "name": "loongarch64-unknown-none"
+          },
+          {
+            "name": "loongarch64-unknown-none-softfloat"
+          },
+          {
+            "name": "m68k-unknown-linux-gnu"
+          },
+          {
+            "name": "m68k-unknown-none-elf"
+          },
+          {
+            "name": "mips-mti-none-elf"
+          },
+          {
+            "name": "mips-unknown-linux-gnu"
+          },
+          {
+            "name": "mips-unknown-linux-musl"
+          },
+          {
+            "name": "mips-unknown-linux-uclibc"
+          },
+          {
+            "name": "mips64-openwrt-linux-musl"
+          },
+          {
+            "name": "mips64-unknown-linux-gnuabi64"
+          },
+          {
+            "name": "mips64-unknown-linux-muslabi64"
+          },
+          {
+            "name": "mips64el-unknown-linux-gnuabi64"
+          },
+          {
+            "name": "mips64el-unknown-linux-muslabi64"
+          },
+          {
+            "name": "mipsel-mti-none-elf"
+          },
+          {
+            "name": "mipsel-sony-psp"
+          },
+          {
+            "name": "mipsel-sony-psx"
+          },
+          {
+            "name": "mipsel-unknown-linux-gnu"
+          },
+          {
+            "name": "mipsel-unknown-linux-musl"
+          },
+          {
+            "name": "mipsel-unknown-linux-uclibc"
+          },
+          {
+            "name": "mipsel-unknown-netbsd"
+          },
+          {
+            "name": "mipsel-unknown-none"
+          },
+          {
+            "name": "mipsisa32r6-unknown-linux-gnu"
+          },
+          {
+            "name": "mipsisa32r6el-unknown-linux-gnu"
+          },
+          {
+            "name": "mipsisa64r6-unknown-linux-gnuabi64"
+          },
+          {
+            "name": "mipsisa64r6el-unknown-linux-gnuabi64"
+          },
+          {
+            "name": "msp430-none-elf"
+          },
+          {
+            "name": "nvptx64-nvidia-cuda"
+          },
+          {
+            "name": "powerpc-unknown-freebsd"
+          },
+          {
+            "name": "powerpc-unknown-linux-gnu"
+          },
+          {
+            "name": "powerpc-unknown-linux-gnuspe"
+          },
+          {
+            "name": "powerpc-unknown-linux-musl"
+          },
+          {
+            "name": "powerpc-unknown-linux-muslspe"
+          },
+          {
+            "name": "powerpc-unknown-netbsd"
+          },
+          {
+            "name": "powerpc-unknown-openbsd"
+          },
+          {
+            "name": "powerpc-wrs-vxworks"
+          },
+          {
+            "name": "powerpc-wrs-vxworks-spe"
+          },
+          {
+            "name": "powerpc64-ibm-aix"
+          },
+          {
+            "name": "powerpc64-unknown-freebsd"
+          },
+          {
+            "name": "powerpc64-unknown-linux-gnu"
+          },
+          {
+            "name": "powerpc64-unknown-linux-musl"
+          },
+          {
+            "name": "powerpc64-unknown-openbsd"
+          },
+          {
+            "name": "powerpc64-wrs-vxworks"
+          },
+          {
+            "name": "powerpc64le-unknown-freebsd"
+          },
+          {
+            "name": "powerpc64le-unknown-linux-gnu"
+          },
+          {
+            "name": "powerpc64le-unknown-linux-musl"
+          },
+          {
+            "name": "riscv32-wrs-vxworks"
+          },
+          {
+            "name": "riscv32e-unknown-none-elf"
+          },
+          {
+            "name": "riscv32em-unknown-none-elf"
+          },
+          {
+            "name": "riscv32emc-unknown-none-elf"
+          },
+          {
+            "name": "riscv32gc-unknown-linux-gnu"
+          },
+          {
+            "name": "riscv32gc-unknown-linux-musl"
+          },
+          {
+            "name": "riscv32i-unknown-none-elf"
+          },
+          {
+            "name": "riscv32im-risc0-zkvm-elf"
+          },
+          {
+            "name": "riscv32im-unknown-none-elf"
+          },
+          {
+            "name": "riscv32ima-unknown-none-elf"
+          },
+          {
+            "name": "riscv32imac-esp-espidf"
+          },
+          {
+            "name": "riscv32imac-unknown-none-elf"
+          },
+          {
+            "name": "riscv32imac-unknown-nuttx-elf"
+          },
+          {
+            "name": "riscv32imac-unknown-xous-elf"
+          },
+          {
+            "name": "riscv32imafc-esp-espidf"
+          },
+          {
+            "name": "riscv32imafc-unknown-none-elf"
+          },
+          {
+            "name": "riscv32imafc-unknown-nuttx-elf"
+          },
+          {
+            "name": "riscv32imc-esp-espidf"
+          },
+          {
+            "name": "riscv32imc-unknown-none-elf"
+          },
+          {
+            "name": "riscv32imc-unknown-nuttx-elf"
+          },
+          {
+            "name": "riscv64-linux-android"
+          },
+          {
+            "name": "riscv64-wrs-vxworks"
+          },
+          {
+            "name": "riscv64gc-unknown-freebsd"
+          },
+          {
+            "name": "riscv64gc-unknown-fuchsia"
+          },
+          {
+            "name": "riscv64gc-unknown-hermit"
+          },
+          {
+            "name": "riscv64gc-unknown-linux-gnu"
+          },
+          {
+            "name": "riscv64gc-unknown-linux-musl"
+          },
+          {
+            "name": "riscv64gc-unknown-netbsd"
+          },
+          {
+            "name": "riscv64gc-unknown-none-elf"
+          },
+          {
+            "name": "riscv64gc-unknown-nuttx-elf"
+          },
+          {
+            "name": "riscv64gc-unknown-openbsd"
+          },
+          {
+            "name": "riscv64imac-unknown-none-elf"
+          },
+          {
+            "name": "riscv64imac-unknown-nuttx-elf"
+          },
+          {
+            "name": "s390x-unknown-linux-gnu"
+          },
+          {
+            "name": "s390x-unknown-linux-musl"
+          },
+          {
+            "name": "sparc-unknown-linux-gnu"
+          },
+          {
+            "name": "sparc-unknown-none-elf"
+          },
+          {
+            "name": "sparc64-unknown-linux-gnu"
+          },
+          {
+            "name": "sparc64-unknown-netbsd"
+          },
+          {
+            "name": "sparc64-unknown-openbsd"
+          },
+          {
+            "name": "sparcv9-sun-solaris"
+          },
+          {
+            "name": "thumbv4t-none-eabi"
+          },
+          {
+            "name": "thumbv5te-none-eabi"
+          },
+          {
+            "name": "thumbv6m-none-eabi"
+          },
+          {
+            "name": "thumbv6m-nuttx-eabi"
+          },
+          {
+            "name": "thumbv7a-nuttx-eabi"
+          },
+          {
+            "name": "thumbv7a-nuttx-eabihf"
+          },
+          {
+            "name": "thumbv7a-pc-windows-msvc"
+          },
+          {
+            "name": "thumbv7a-uwp-windows-msvc"
+          },
+          {
+            "name": "thumbv7em-none-eabi"
+          },
+          {
+            "name": "thumbv7em-none-eabihf"
+          },
+          {
+            "name": "thumbv7em-nuttx-eabi"
+          },
+          {
+            "name": "thumbv7em-nuttx-eabihf"
+          },
+          {
+            "name": "thumbv7m-none-eabi"
+          },
+          {
+            "name": "thumbv7m-nuttx-eabi"
+          },
+          {
+            "name": "thumbv7neon-linux-androideabi"
+          },
+          {
+            "name": "thumbv7neon-unknown-linux-gnueabihf"
+          },
+          {
+            "name": "thumbv7neon-unknown-linux-musleabihf"
+          },
+          {
+            "name": "thumbv8m.base-none-eabi"
+          },
+          {
+            "name": "thumbv8m.base-nuttx-eabi"
+          },
+          {
+            "name": "thumbv8m.main-none-eabi"
+          },
+          {
+            "name": "thumbv8m.main-none-eabihf"
+          },
+          {
+            "name": "thumbv8m.main-nuttx-eabi"
+          },
+          {
+            "name": "thumbv8m.main-nuttx-eabihf"
+          },
+          {
+            "name": "wasm32-unknown-emscripten"
+          },
+          {
+            "name": "wasm32-unknown-unknown"
+          },
+          {
+            "name": "wasm32-wali-linux-musl"
+          },
+          {
+            "name": "wasm32-wasip1"
+          },
+          {
+            "name": "wasm32-wasip1-threads"
+          },
+          {
+            "name": "wasm32-wasip2"
+          },
+          {
+            "name": "wasm32v1-none"
+          },
+          {
+            "name": "wasm64-unknown-unknown"
+          },
+          {
+            "name": "x86_64-apple-darwin"
+          },
+          {
+            "name": "x86_64-apple-ios"
+          },
+          {
+            "name": "x86_64-apple-ios-macabi"
+          },
+          {
+            "name": "x86_64-apple-tvos"
+          },
+          {
+            "name": "x86_64-apple-watchos-sim"
+          },
+          {
+            "name": "x86_64-fortanix-unknown-sgx"
+          },
+          {
+            "name": "x86_64-linux-android"
+          },
+          {
+            "name": "x86_64-lynx-lynxos178"
+          },
+          {
+            "name": "x86_64-pc-cygwin"
+          },
+          {
+            "name": "x86_64-pc-nto-qnx710"
+          },
+          {
+            "name": "x86_64-pc-nto-qnx710_iosock"
+          },
+          {
+            "name": "x86_64-pc-nto-qnx800"
+          },
+          {
+            "name": "x86_64-pc-solaris"
+          },
+          {
+            "name": "x86_64-pc-windows-gnu"
+          },
+          {
+            "name": "x86_64-pc-windows-gnullvm"
+          },
+          {
+            "name": "x86_64-pc-windows-msvc"
+          },
+          {
+            "name": "x86_64-unikraft-linux-musl"
+          },
+          {
+            "name": "x86_64-unknown-dragonfly"
+          },
+          {
+            "name": "x86_64-unknown-freebsd"
+          },
+          {
+            "name": "x86_64-unknown-fuchsia"
+          },
+          {
+            "name": "x86_64-unknown-haiku"
+          },
+          {
+            "name": "x86_64-unknown-hermit"
+          },
+          {
+            "name": "x86_64-unknown-hurd-gnu"
+          },
+          {
+            "name": "x86_64-unknown-illumos"
+          },
+          {
+            "name": "x86_64-unknown-l4re-uclibc"
+          },
+          {
+            "name": "x86_64-unknown-linux-gnu"
+          },
+          {
+            "name": "x86_64-unknown-linux-gnux32"
+          },
+          {
+            "name": "x86_64-unknown-linux-musl"
+          },
+          {
+            "name": "x86_64-unknown-linux-none"
+          },
+          {
+            "name": "x86_64-unknown-linux-ohos"
+          },
+          {
+            "name": "x86_64-unknown-netbsd"
+          },
+          {
+            "name": "x86_64-unknown-none"
+          },
+          {
+            "name": "x86_64-unknown-openbsd"
+          },
+          {
+            "name": "x86_64-unknown-redox"
+          },
+          {
+            "name": "x86_64-unknown-trusty"
+          },
+          {
+            "name": "x86_64-unknown-uefi"
+          },
+          {
+            "name": "x86_64-uwp-windows-gnu"
+          },
+          {
+            "name": "x86_64-uwp-windows-msvc"
+          },
+          {
+            "name": "x86_64-win7-windows-gnu"
+          },
+          {
+            "name": "x86_64-win7-windows-msvc"
+          },
+          {
+            "name": "x86_64-wrs-vxworks"
+          },
+          {
+            "name": "x86_64h-apple-darwin"
+          },
+          {
+            "name": "xtensa-esp32-espidf"
+          },
+          {
+            "name": "xtensa-esp32-none-elf"
+          },
+          {
+            "name": "xtensa-esp32s2-espidf"
+          },
+          {
+            "name": "xtensa-esp32s2-none-elf"
+          },
+          {
+            "name": "xtensa-esp32s3-espidf"
+          },
+          {
+            "name": "xtensa-esp32s3-none-elf"
           }
         ]
       },
@@ -101,7 +959,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "aarch64-apple-darwin\naarch64-apple-ios\naarch64-apple-ios-macabi\naarch64-apple-ios-sim\naarch64-apple-tvos\naarch64-apple-tvos-sim\naarch64-apple-visionos\naarch64-apple-visionos-sim\naarch64-apple-watchos\naarch64-apple-watchos-sim\naarch64-kmc-solid_asp3\naarch64-linux-android\naarch64-nintendo-switch-freestanding\naarch64-pc-windows-gnullvm\naarch64-pc-windows-msvc\naarch64-unknown-freebsd\naarch64-unknown-fuchsia\naarch64-unknown-hermit\naarch64-unknown-illumos\naarch64-unknown-linux-gnu\naarch64-unknown-linux-gnu_ilp32\naarch64-unknown-linux-musl\naarch64-unknown-linux-ohos\naarch64-unknown-netbsd\naarch64-unknown-none\naarch64-unknown-none-softfloat\naarch64-unknown-nto-qnx700\naarch64-unknown-nto-qnx710\naarch64-unknown-nto-qnx710_iosock\naarch64-unknown-nto-qnx800\naarch64-unknown-nuttx\naarch64-unknown-openbsd\naarch64-unknown-redox\naarch64-unknown-teeos\naarch64-unknown-trusty\naarch64-unknown-uefi\naarch64-uwp-windows-msvc\naarch64-wrs-vxworks\naarch64_be-unknown-linux-gnu\naarch64_be-unknown-linux-gnu_ilp32\naarch64_be-unknown-netbsd\namdgcn-amd-amdhsa\narm-linux-androideabi\narm-unknown-linux-gnueabi\narm-unknown-linux-gnueabihf\narm-unknown-linux-musleabi\narm-unknown-linux-musleabihf\narm64_32-apple-watchos\narm64e-apple-darwin\narm64e-apple-ios\narm64e-apple-tvos\narm64ec-pc-windows-msvc\narmeb-unknown-linux-gnueabi\narmebv7r-none-eabi\narmebv7r-none-eabihf\narmv4t-none-eabi\narmv4t-unknown-linux-gnueabi\narmv5te-none-eabi\narmv5te-unknown-linux-gnueabi\narmv5te-unknown-linux-musleabi\narmv5te-unknown-linux-uclibceabi\narmv6-unknown-freebsd\narmv6-unknown-netbsd-eabihf\narmv6k-nintendo-3ds\narmv7-linux-androideabi\narmv7-rtems-eabihf\narmv7-sony-vita-newlibeabihf\narmv7-unknown-freebsd\narmv7-unknown-linux-gnueabi\narmv7-unknown-linux-gnueabihf\narmv7-unknown-linux-musleabi\narmv7-unknown-linux-musleabihf\narmv7-unknown-linux-ohos\narmv7-unknown-linux-uclibceabi\narmv7-unknown-linux-uclibceabihf\narmv7-unknown-netbsd-eabihf\narmv7-unknown-trusty\narmv7-wrs-vxworks-eabihf\narmv7a-kmc-solid_asp3-eabi\narmv7a-kmc-solid_asp3-eabihf\narmv7a-none-eabi\narmv7a-none-eabihf\narmv7a-nuttx-eabi\narmv7a-nuttx-eabihf\narmv7k-apple-watchos\narmv7r-none-eabi\narmv7r-none-eabihf\narmv7s-apple-ios\narmv8r-none-eabihf\navr-none\nbpfeb-unknown-none\nbpfel-unknown-none\ncsky-unknown-linux-gnuabiv2\ncsky-unknown-linux-gnuabiv2hf\nhexagon-unknown-linux-musl\nhexagon-unknown-none-elf\ni386-apple-ios\ni586-unknown-linux-gnu\ni586-unknown-linux-musl\ni586-unknown-netbsd\ni586-unknown-redox\ni686-apple-darwin\ni686-linux-android\ni686-pc-nto-qnx700\ni686-pc-windows-gnu\ni686-pc-windows-gnullvm\ni686-pc-windows-msvc\ni686-unknown-freebsd\ni686-unknown-haiku\ni686-unknown-hurd-gnu\ni686-unknown-linux-gnu\ni686-unknown-linux-musl\ni686-unknown-netbsd\ni686-unknown-openbsd\ni686-unknown-uefi\ni686-uwp-windows-gnu\ni686-uwp-windows-msvc\ni686-win7-windows-gnu\ni686-win7-windows-msvc\ni686-wrs-vxworks\nloongarch64-unknown-linux-gnu\nloongarch64-unknown-linux-musl\nloongarch64-unknown-linux-ohos\nloongarch64-unknown-none\nloongarch64-unknown-none-softfloat\nm68k-unknown-linux-gnu\nm68k-unknown-none-elf\nmips-mti-none-elf\nmips-unknown-linux-gnu\nmips-unknown-linux-musl\nmips-unknown-linux-uclibc\nmips64-openwrt-linux-musl\nmips64-unknown-linux-gnuabi64\nmips64-unknown-linux-muslabi64\nmips64el-unknown-linux-gnuabi64\nmips64el-unknown-linux-muslabi64\nmipsel-mti-none-elf\nmipsel-sony-psp\nmipsel-sony-psx\nmipsel-unknown-linux-gnu\nmipsel-unknown-linux-musl\nmipsel-unknown-linux-uclibc\nmipsel-unknown-netbsd\nmipsel-unknown-none\nmipsisa32r6-unknown-linux-gnu\nmipsisa32r6el-unknown-linux-gnu\nmipsisa64r6-unknown-linux-gnuabi64\nmipsisa64r6el-unknown-linux-gnuabi64\nmsp430-none-elf\nnvptx64-nvidia-cuda\npowerpc-unknown-freebsd\npowerpc-unknown-linux-gnu\npowerpc-unknown-linux-gnuspe\npowerpc-unknown-linux-musl\npowerpc-unknown-linux-muslspe\npowerpc-unknown-netbsd\npowerpc-unknown-openbsd\npowerpc-wrs-vxworks\npowerpc-wrs-vxworks-spe\npowerpc64-ibm-aix\npowerpc64-unknown-freebsd\npowerpc64-unknown-linux-gnu\npowerpc64-unknown-linux-musl\npowerpc64-unknown-openbsd\npowerpc64-wrs-vxworks\npowerpc64le-unknown-freebsd\npowerpc64le-unknown-linux-gnu\npowerpc64le-unknown-linux-musl\nriscv32-wrs-vxworks\nriscv32e-unknown-none-elf\nriscv32em-unknown-none-elf\nriscv32emc-unknown-none-elf\nriscv32gc-unknown-linux-gnu\nriscv32gc-unknown-linux-musl\nriscv32i-unknown-none-elf\nriscv32im-risc0-zkvm-elf\nriscv32im-unknown-none-elf\nriscv32ima-unknown-none-elf\nriscv32imac-esp-espidf\nriscv32imac-unknown-none-elf\nriscv32imac-unknown-nuttx-elf\nriscv32imac-unknown-xous-elf\nriscv32imafc-esp-espidf\nriscv32imafc-unknown-none-elf\nriscv32imafc-unknown-nuttx-elf\nriscv32imc-esp-espidf\nriscv32imc-unknown-none-elf\nriscv32imc-unknown-nuttx-elf\nriscv64-linux-android\nriscv64-wrs-vxworks\nriscv64gc-unknown-freebsd\nriscv64gc-unknown-fuchsia\nriscv64gc-unknown-hermit\nriscv64gc-unknown-linux-gnu\nriscv64gc-unknown-linux-musl\nriscv64gc-unknown-netbsd\nriscv64gc-unknown-none-elf\nriscv64gc-unknown-nuttx-elf\nriscv64gc-unknown-openbsd\nriscv64imac-unknown-none-elf\nriscv64imac-unknown-nuttx-elf\ns390x-unknown-linux-gnu\ns390x-unknown-linux-musl\nsparc-unknown-linux-gnu\nsparc-unknown-none-elf\nsparc64-unknown-linux-gnu\nsparc64-unknown-netbsd\nsparc64-unknown-openbsd\nsparcv9-sun-solaris\nthumbv4t-none-eabi\nthumbv5te-none-eabi\nthumbv6m-none-eabi\nthumbv6m-nuttx-eabi\nthumbv7a-nuttx-eabi\nthumbv7a-nuttx-eabihf\nthumbv7a-pc-windows-msvc\nthumbv7a-uwp-windows-msvc\nthumbv7em-none-eabi\nthumbv7em-none-eabihf\nthumbv7em-nuttx-eabi\nthumbv7em-nuttx-eabihf\nthumbv7m-none-eabi\nthumbv7m-nuttx-eabi\nthumbv7neon-linux-androideabi\nthumbv7neon-unknown-linux-gnueabihf\nthumbv7neon-unknown-linux-musleabihf\nthumbv8m.base-none-eabi\nthumbv8m.base-nuttx-eabi\nthumbv8m.main-none-eabi\nthumbv8m.main-none-eabihf\nthumbv8m.main-nuttx-eabi\nthumbv8m.main-nuttx-eabihf\nwasm32-unknown-emscripten\nwasm32-unknown-unknown\nwasm32-wali-linux-musl\nwasm32-wasip1\nwasm32-wasip1-threads\nwasm32-wasip2\nwasm32v1-none\nwasm64-unknown-unknown\nx86_64-apple-darwin\nx86_64-apple-ios\nx86_64-apple-ios-macabi\nx86_64-apple-tvos\nx86_64-apple-watchos-sim\nx86_64-fortanix-unknown-sgx\nx86_64-linux-android\nx86_64-lynx-lynxos178\nx86_64-pc-cygwin\nx86_64-pc-nto-qnx710\nx86_64-pc-nto-qnx710_iosock\nx86_64-pc-nto-qnx800\nx86_64-pc-solaris\nx86_64-pc-windows-gnu\nx86_64-pc-windows-gnullvm\nx86_64-pc-windows-msvc\nx86_64-unikraft-linux-musl\nx86_64-unknown-dragonfly\nx86_64-unknown-freebsd\nx86_64-unknown-fuchsia\nx86_64-unknown-haiku\nx86_64-unknown-hermit\nx86_64-unknown-hurd-gnu\nx86_64-unknown-illumos\nx86_64-unknown-l4re-uclibc\nx86_64-unknown-linux-gnu\nx86_64-unknown-linux-gnux32\nx86_64-unknown-linux-musl\nx86_64-unknown-linux-none\nx86_64-unknown-linux-ohos\nx86_64-unknown-netbsd\nx86_64-unknown-none\nx86_64-unknown-openbsd\nx86_64-unknown-redox\nx86_64-unknown-trusty\nx86_64-unknown-uefi\nx86_64-uwp-windows-gnu\nx86_64-uwp-windows-msvc\nx86_64-win7-windows-gnu\nx86_64-win7-windows-msvc\nx86_64-wrs-vxworks\nx86_64h-apple-darwin\nxtensa-esp32-espidf\nxtensa-esp32-none-elf\nxtensa-esp32s2-espidf\nxtensa-esp32s2-none-elf\nxtensa-esp32s3-espidf\nxtensa-esp32s3-none-elf\n",
         [
           "cargo",
           "bench",

@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "hexo",
           "publish",
@@ -98,7 +98,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "hexo",
           "publish",

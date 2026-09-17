@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "/proc/partitions"
+  ],
+  "status": 1,
+  "stderr": "cat: /proc/partitions: No such file or directory\n",
+  "stdout": ""
+}

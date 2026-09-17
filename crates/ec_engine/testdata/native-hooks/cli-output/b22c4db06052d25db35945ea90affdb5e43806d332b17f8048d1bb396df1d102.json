@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "dscl . -list /Users UniqueID | tr -s ' '| sort -r"
+  ],
+  "status": 0,
+  "stderr": "Operation failed with error: eServerError\n",
+  "stdout": ""
+}

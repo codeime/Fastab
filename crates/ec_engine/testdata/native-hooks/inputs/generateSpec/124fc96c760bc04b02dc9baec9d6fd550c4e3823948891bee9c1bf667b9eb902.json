@@ -25,9 +25,9 @@
             "while [ ! -f \"$PWD/bin/kamal\" ] && [ \"$PWD\" != \"/\" ]; do cd ..; done; [ -f \"$PWD/bin/kamal\" ] && echo \"true\" || echo \"false\""
           ],
           "command": "bash",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "false\n"
         }
       ],
       "id": "root",
@@ -58,9 +58,9 @@
             "while [ ! -f \"$PWD/bin/kamal\" ] && [ \"$PWD\" != \"/\" ]; do cd ..; done; [ -f \"$PWD/bin/kamal\" ] && echo \"true\" || echo \"false\""
           ],
           "command": "bash",
-          "status": 127,
-          "stderr": "command not found",
-          "stdout": ""
+          "status": 0,
+          "stderr": "",
+          "stdout": "false\n"
         }
       ],
       "id": "subcommand",

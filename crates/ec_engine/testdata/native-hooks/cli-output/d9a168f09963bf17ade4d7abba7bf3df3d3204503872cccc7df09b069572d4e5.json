@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "ls",
+    "please"
+  ],
+  "status": 1,
+  "stderr": "ls: please: No such file or directory\n",
+  "stdout": ""
+}

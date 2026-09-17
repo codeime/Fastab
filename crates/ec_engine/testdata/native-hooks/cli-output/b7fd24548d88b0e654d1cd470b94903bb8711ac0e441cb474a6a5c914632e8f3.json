@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "ls",
+    "bin/console"
+  ],
+  "status": 1,
+  "stderr": "ls: bin/console: No such file or directory\n",
+  "stdout": ""
+}

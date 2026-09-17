@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "command",
+    "ls",
+    "-1",
+    ".bun-create"
+  ],
+  "status": 1,
+  "stderr": "ls: .bun-create: No such file or directory\n",
+  "stdout": ""
+}

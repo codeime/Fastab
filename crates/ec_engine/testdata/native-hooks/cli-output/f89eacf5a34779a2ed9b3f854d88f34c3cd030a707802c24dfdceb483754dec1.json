@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "ykman list | sed -rn 's/.*Serial: (.*)/\\1/p'"
+  ],
+  "status": 0,
+  "stderr": "bash: ykman: command not found\n",
+  "stdout": ""
+}

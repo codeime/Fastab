@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "command ant -p | grep -i '^\\s' | tr -d ' '"
+  ],
+  "status": 0,
+  "stderr": "bash: ant: command not found\n",
+  "stdout": ""
+}

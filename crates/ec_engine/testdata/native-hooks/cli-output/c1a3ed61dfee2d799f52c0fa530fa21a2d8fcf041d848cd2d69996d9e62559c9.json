@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "find",
+    ".",
+    "-type",
+    "f",
+    "-name",
+    "*.pkg",
+    "-maxdepth",
+    "1"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": ""
+}

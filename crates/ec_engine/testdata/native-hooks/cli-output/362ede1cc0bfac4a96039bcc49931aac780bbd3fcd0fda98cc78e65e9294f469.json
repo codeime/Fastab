@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "grep",
+    "-r",
+    "-l",
+    "",
+    "/home/user/.password-store",
+    "--exclude-dir=.git"
+  ],
+  "status": 2,
+  "stderr": "grep: /home/user/.password-store: No such file or directory\n",
+  "stdout": ""
+}

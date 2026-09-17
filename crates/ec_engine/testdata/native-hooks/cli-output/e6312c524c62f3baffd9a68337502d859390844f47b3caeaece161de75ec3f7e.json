@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "networksetup -listallhardwareports | awk '/Wi-Fi/{getline; print $2}' | xargs networksetup -listpreferredwirelessnetworks | tail -n +2"
+  ],
+  "status": 0,
+  "stderr": "xargs: sysconf(_SC_ARG_MAX) failed\n",
+  "stdout": ""
+}

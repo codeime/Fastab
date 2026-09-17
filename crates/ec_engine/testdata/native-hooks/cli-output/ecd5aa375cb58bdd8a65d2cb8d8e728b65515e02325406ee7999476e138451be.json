@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "docker",
+    "ps",
+    "--filter",
+    "status=paused",
+    "--format",
+    "{{ json . }}"
+  ],
+  "status": 1,
+  "stderr": "failed to connect to the docker API at unix://$HOME/.orbstack/run/docker.sock; check if the path is correct and if the daemon is running: dial unix $HOME/.orbstack/run/docker.sock: connect: no such file or directory\n",
+  "stdout": ""
+}

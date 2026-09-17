@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "find",
+    ".",
+    "-type",
+    "f",
+    "-name",
+    "*.bom",
+    "-maxdepth",
+    "1"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": ""
+}

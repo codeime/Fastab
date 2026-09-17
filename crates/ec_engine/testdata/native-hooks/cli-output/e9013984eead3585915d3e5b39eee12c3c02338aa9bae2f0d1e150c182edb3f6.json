@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "cargo install --list | \\grep -E \"^[a-zA-Z\\-]+\\sv\" | cut -d ' ' -f 1"
+  ],
+  "status": 0,
+  "stderr": "error: failed to open: $HOME/.cargo/.crates.toml\n\nCaused by:\n  Operation not permitted (os error 1)\n",
+  "stdout": ""
+}

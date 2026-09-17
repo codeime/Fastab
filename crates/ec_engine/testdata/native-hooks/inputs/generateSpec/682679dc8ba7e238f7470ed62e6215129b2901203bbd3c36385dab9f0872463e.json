@@ -24,8 +24,8 @@
             "serverless-compose.yml"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: serverless-compose.yml: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -56,8 +56,8 @@
             "serverless-compose.yml"
           ],
           "command": "cat",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "cat: serverless-compose.yml: No such file or directory\n",
           "stdout": ""
         }
       ],

@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "/home/user/.projj/config.json"
+  ],
+  "status": 1,
+  "stderr": "cat: /home/user/.projj/config.json: No such file or directory\n",
+  "stdout": ""
+}

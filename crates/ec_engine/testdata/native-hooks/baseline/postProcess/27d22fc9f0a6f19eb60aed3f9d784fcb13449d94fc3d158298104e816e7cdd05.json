@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "hugo",
           "new",
@@ -96,7 +96,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "hugo",
           "new",

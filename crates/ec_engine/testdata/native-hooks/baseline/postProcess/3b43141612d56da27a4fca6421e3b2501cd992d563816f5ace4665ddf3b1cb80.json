@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "shortcuts",
           "run",
@@ -96,7 +96,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "shortcuts",
           "run",

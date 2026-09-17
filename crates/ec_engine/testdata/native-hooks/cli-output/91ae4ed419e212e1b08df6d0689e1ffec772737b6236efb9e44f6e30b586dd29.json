@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "podman",
+    "images",
+    "-a",
+    "--format",
+    "{{ json . }}"
+  ],
+  "skipReason": "not-whitelisted",
+  "skipped": true,
+  "status": 127,
+  "stderr": "command not found",
+  "stdout": ""
+}

@@ -3,7 +3,7 @@
   "cases": [
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "yalc",
           "add",
@@ -25,16 +25,6 @@
       "expected": {
         "kind": "suggestions",
         "value": [
-          {
-            "description": "@undefined",
-            "icon": "📦",
-            "name": "@undefined"
-          },
-          {
-            "description": "@undefined",
-            "icon": "📦",
-            "name": "@undefined"
-          },
           {
             "description": "@undefined",
             "icon": "📦",
@@ -120,7 +110,7 @@
     },
     {
       "args": [
-        "main\nfeature\n",
+        "",
         [
           "yalc",
           "add",

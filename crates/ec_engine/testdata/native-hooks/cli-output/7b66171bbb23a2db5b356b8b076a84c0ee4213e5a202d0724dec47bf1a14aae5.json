@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "asdf",
+    "plugin-list"
+  ],
+  "skipReason": "not-installed",
+  "skipped": true,
+  "status": 127,
+  "stderr": "command not found",
+  "stdout": ""
+}

@@ -25,8 +25,8 @@
             "/home/user/.asdf/shims"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: /home/user/.asdf/shims: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -58,8 +58,8 @@
             "/home/user/.asdf/shims"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: /home/user/.asdf/shims: No such file or directory\n",
           "stdout": ""
         }
       ],
@@ -91,8 +91,8 @@
             "/home/user/.asdf/shims"
           ],
           "command": "ls",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 1,
+          "stderr": "ls: /home/user/.asdf/shims: No such file or directory\n",
           "stdout": ""
         }
       ],

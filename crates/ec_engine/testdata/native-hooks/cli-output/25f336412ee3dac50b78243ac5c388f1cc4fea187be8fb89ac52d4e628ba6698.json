@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "cat manage.py | grep -q django"
+  ],
+  "status": 1,
+  "stderr": "cat: manage.py: No such file or directory\n",
+  "stdout": ""
+}

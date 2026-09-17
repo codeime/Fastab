@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "gh",
+    "release",
+    "list",
+    "--repo",
+    "psf/black"
+  ],
+  "skipReason": "not-installed",
+  "skipped": true,
+  "status": 127,
+  "stderr": "command not found",
+  "stdout": ""
+}

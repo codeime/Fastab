@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cat",
+    "import_map.json"
+  ],
+  "status": 1,
+  "stderr": "cat: import_map.json: No such file or directory\n",
+  "stdout": ""
+}

@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "ps -A -o comm | sort -u"
+  ],
+  "status": 0,
+  "stderr": "bash: /bin/ps: Operation not permitted\n",
+  "stdout": ""
+}

@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "bash",
+    "-c",
+    "until [[ -f rush.json ]] || [[ $PWD = '/' ]]; do cd ..; done; cat rush.json"
+  ],
+  "status": 1,
+  "stderr": "cat: rush.json: No such file or directory\n",
+  "stdout": ""
+}

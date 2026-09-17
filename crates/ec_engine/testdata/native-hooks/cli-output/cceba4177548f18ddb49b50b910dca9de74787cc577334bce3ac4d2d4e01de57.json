@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "git",
+    "config",
+    "--get",
+    "gitflow.prefix.--help"
+  ],
+  "status": 1,
+  "stderr": "error: invalid key: gitflow.prefix.--help\n",
+  "stdout": ""
+}

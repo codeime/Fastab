@@ -25,8 +25,8 @@
             "until [[ -f Gemfile ]] || [[ $PWD = '/' ]]; do cd ..; done; if [ -f Gemfile ]; then cat Gemfile | \\grep \"gem ['\\\"]rails['\\\"]\"; fi"
           ],
           "command": "bash",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 0,
+          "stderr": "",
           "stdout": ""
         }
       ],
@@ -58,8 +58,8 @@
             "until [[ -f Gemfile ]] || [[ $PWD = '/' ]]; do cd ..; done; if [ -f Gemfile ]; then cat Gemfile | \\grep \"gem ['\\\"]rails['\\\"]\"; fi"
           ],
           "command": "bash",
-          "status": 127,
-          "stderr": "command not found",
+          "status": 0,
+          "stderr": "",
           "stdout": ""
         }
       ],

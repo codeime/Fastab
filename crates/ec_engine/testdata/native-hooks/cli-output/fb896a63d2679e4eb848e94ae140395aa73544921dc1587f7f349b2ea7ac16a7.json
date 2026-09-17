@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "mise",
+    "tasks",
+    "ls",
+    "--name-only"
+  ],
+  "status": 0,
+  "stderr": "",
+  "stdout": ""
+}
