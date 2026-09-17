@@ -67,7 +67,7 @@ build time, and QuickJS runs only when a spec hook needs it (`postProcess`,
 
 Native builds are the Apple Silicon DMGs from this repository:
 
-[Download latest DMG](https://github.com/codeime/easy-complete/releases/download/v3.0.0-beta.13/Easy-Complete-arm64.dmg) ·
+[Download latest DMG](https://github.com/codeime/easy-complete/releases/download/v3.0.0-beta.14/Easy-Complete-arm64.dmg) ·
 [All releases](https://github.com/codeime/easy-complete/releases)
 
 Then:

@@ -73,7 +73,7 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "bitflags 2.13.1",
  "camino",
@@ -223,7 +223,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "appkit-nsworkspace-bindings"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "bindgen 0.71.1",
  "objc",
@@ -2264,7 +2264,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "ec_cli"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "anstream 1.0.0",
  "appkit-nsworkspace-bindings",
@@ -2342,7 +2342,7 @@ dependencies = [
 
 [[package]]
 name = "ec_engine"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "anyhow",
  "fancy-regex 0.16.2",
@@ -2361,7 +2361,7 @@ dependencies = [
 
 [[package]]
 name = "ec_gpui"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "anyhow",
  "cocoa 0.26.0",
@@ -2380,7 +2380,7 @@ dependencies = [
 
 [[package]]
 name = "ec_hitoolbox"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "core-foundation 0.10.0",
  "core-foundation-sys",
@@ -2388,7 +2388,7 @@ dependencies = [
 
 [[package]]
 name = "ec_overlay_spike"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "ec_gpui",
  "gpui",
@@ -2672,7 +2672,7 @@ dependencies = [
 
 [[package]]
 name = "fig_desktop"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "accessibility-sys",
  "anyhow",
@@ -2746,7 +2746,7 @@ dependencies = [
 
 [[package]]
 name = "fig_desktop_api"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "anstream 1.0.0",
  "cfg-if",
@@ -2762,7 +2762,7 @@ dependencies = [
 
 [[package]]
 name = "fig_diagnostic"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "cfg-if",
  "clap",
@@ -2781,7 +2781,7 @@ dependencies = [
 
 [[package]]
 name = "fig_input_method"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "apple-bundle",
  "core-foundation 0.10.0",
@@ -2800,7 +2800,7 @@ dependencies = [
 
 [[package]]
 name = "fig_install"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "bitflags 2.13.1",
  "bytes",
@@ -2834,7 +2834,7 @@ dependencies = [
 
 [[package]]
 name = "fig_integrations"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "accessibility-sys",
  "async-trait",
@@ -2866,7 +2866,7 @@ dependencies = [
 
 [[package]]
 name = "fig_ipc"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2889,7 +2889,7 @@ dependencies = [
 
 [[package]]
 name = "fig_log"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "fig_os_shim",
  "fig_util",
@@ -2903,7 +2903,7 @@ dependencies = [
 
 [[package]]
 name = "fig_os_shim"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "cfg-if",
  "dirs 5.0.1",
@@ -2916,7 +2916,7 @@ dependencies = [
 
 [[package]]
 name = "fig_proto"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "arbitrary",
  "bytes",
@@ -2939,7 +2939,7 @@ dependencies = [
 
 [[package]]
 name = "fig_remote_ipc"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2957,7 +2957,7 @@ dependencies = [
 
 [[package]]
 name = "fig_settings"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "fd-lock",
  "fig_util",
@@ -2977,7 +2977,7 @@ dependencies = [
 
 [[package]]
 name = "fig_telemetry"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "chrono",
  "fig_os_shim",
@@ -2993,7 +2993,7 @@ dependencies = [
 
 [[package]]
 name = "fig_test_macro"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "quote",
  "syn 2.0.108",
@@ -3001,7 +3001,7 @@ dependencies = [
 
 [[package]]
 name = "fig_test_utils"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "bytes",
  "fig_os_shim",
@@ -3019,7 +3019,7 @@ dependencies = [
 
 [[package]]
 name = "fig_util"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "bstr",
  "camino",
@@ -3051,7 +3051,7 @@ dependencies = [
 
 [[package]]
 name = "figterm"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -3095,7 +3095,7 @@ dependencies = [
 
 [[package]]
 name = "figterm2"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5124,7 +5124,7 @@ dependencies = [
 
 [[package]]
 name = "macos-utils"
-version = "3.0.0-beta.13"
+version = "3.0.0-beta.14"
 dependencies = [
  "accessibility",
  "accessibility-sys",

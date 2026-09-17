@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.0.0-beta.14
+
+- fix: generator `splitOn: ""` no longer splits script output into lines, and split pieces keep their exact text instead of being trimmed one by one
+- fix: dynamic `alias` / `loadSpec` / `generateSpec` hooks honour the live `autocomplete.scriptTimeout` setting instead of a fixed 5 s
+- fix: a missing `specs-ir` directory fails closed instead of silently serving an empty spec registry; the engine rebinds specs and hook modules together after an install so an in-flight request cannot read a mixed generation
+- build: bundled spec source and compiled IR are published as one verified pair; the `.app` is assembled from locked snapshots of that pair and swapped into place atomically
+- build: extracted JS hooks ship as closure-preserving modules with a SHA-256 manifest so hooks with identical text keep their own closures; the runtime rejects tampered or mismatched modules
+- build: native-migration groundwork — per-hook inventory (3692 hooks, 594 distinct bodies), sandboxed reference probes, and a typed `trigger` IR with a test-only Rust evaluator; the app still runs hooks through QuickJS
+
 ## v3.0.0-beta.13
 
 - fix: long selected suggestion titles scroll more slowly at a bounded speed, ease into each turn, and pause at both ends
