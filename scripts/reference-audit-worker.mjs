@@ -156,6 +156,9 @@ async function normalizeRoots({
 // firmlink exposes the same tree at this non-overlapping canonical path. Use
 // it only after realpath has proved that it is the identical directory; this
 // changes neither the caller's root nor the audit's containment checks.
+//
+// Linux has no alternate spelling, so `permissionGrants` below handles the
+// same collision generically for whatever roots remain.
 async function permissionSafeSourceRoot(sourceRoot) {
   if (process.platform !== "darwin" || !sourceRoot.startsWith("/Users/")) {
     return sourceRoot;
@@ -182,6 +185,30 @@ async function permissionSafeSourceRoot(sourceRoot) {
     // The alternate firmlink is not present on every macOS volume.
   }
   return sourceRoot;
+}
+
+/**
+ * Turn the read roots into `--allow-fs-read` grants.
+ *
+ * Reproduced on Node 22.23: when one granted directory is a textual prefix
+ * of another granted sibling (`…/bundle/specs` and `…/bundle/specs-ir`), the
+ * shorter directory itself is denied for readdir/lstat/realpath while files
+ * inside it stay readable, and a trailing separator does not help. Granting
+ * the shadowed root as `<root>*` restores it. The wildcard only adds siblings
+ * that share the same name prefix, which the canonical bundle does not have,
+ * and roots without a colliding sibling keep their exact grant.
+ */
+export function permissionGrants(roots) {
+  const list = [...new Set(roots)];
+  return list.map((root) => {
+    const shadowed = list.some(
+      (other) =>
+        other !== root &&
+        other.startsWith(root) &&
+        !other.startsWith(`${root}${sep}`),
+    );
+    return shadowed ? `${root}*` : root;
+  });
 }
 
 function rejectUnknownFields(value, allowed, label) {
@@ -351,7 +378,9 @@ async function spawnReferenceAudit(roots, timeoutMs, lockProof) {
       [
         "--experimental-permission",
         "--experimental-vm-modules",
-        ...[...fsReadRoots].map((root) => `--allow-fs-read=${root}`),
+        ...permissionGrants(fsReadRoots).map(
+          (grant) => `--allow-fs-read=${grant}`,
+        ),
         "--no-warnings",
         fileURLToPath(import.meta.url),
       ],

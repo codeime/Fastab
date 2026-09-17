@@ -125,5 +125,6 @@ gate 当前阻断项（`inventory.json` → `gate.blockers`）：`requires-nativ
 | Node 20 下 `spec-pair.mjs` 依赖的 `JSON.parse` reviver `context.source` 不存在，99 个脚本测试假失败 | 不是代码缺陷：仓库要求 Node ≥ 22.13（`.mise.toml` 已钉 22.23.1）；本地 shell 需先 `mise` 激活 |
 | CI（ubuntu）上 32 个脚本测试失败：7 个脚本把 macOS 的 `/tmp → /private/tmp`、`/var → /private/var` 当成无条件别名，Linux 下每个临时目录夹具都被判为 "escapes its approved root" | 别名表按 `process.platform === "darwin"` 门控 |
 | CI Rust job 没有 `bundle/specs-ir`（gitignored、无 Node），`typed_hook` 的两个 provenance 测试读不到 `.spec-pair.json` 而失败 | Rust job 在 `cargo test` 前安装 pnpm/Node 并 `compile-spec-ir`，与 `build-app.sh` 一致，让 provenance 校验在 CI 上真正生效 |
+| 受限审计子进程（Node permission model）同时授权 `bundle/specs` 与 `bundle/specs-ir` 时，Node 22.23 把前者当成文本前缀，`bundle/specs` 目录本身 readdir/lstat 被拒（文件可读）。之前只靠 macOS firmlink 换一个拼写绕过，Linux CI 上 `capture-typed-trigger-reference --check` 直接失败 | `permissionGrants` 对被同名前缀兄弟遮蔽的根改为 `<root>*` 授权（仅此一种情形），并加了同前缀兄弟目录的回归测试 |
 
 未改、记入计划的项：`hooks/`（14 MB）在存在 `hook-modules.json` 时运行时从不读取但仍随 `.app` 分发（阶段 4 统一删）；`JsHost::module_manifest_entry` 每次 hook 调用都重读并 SHA-256 整个 1.3 MB 清单（切到 native 后不存在此路径）。
