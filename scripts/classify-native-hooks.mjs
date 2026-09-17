@@ -46,6 +46,15 @@ const defaultInventoryPath = join(
   "native-hooks",
   "inventory.json",
 );
+const defaultBaselineRoot = join(
+  repoDir,
+  "crates",
+  "ec_engine",
+  "testdata",
+  "native-hooks",
+  "baseline",
+);
+const OUTPUT_BASELINE_BLOCKER = "output-baseline-not-established";
 
 export const INVENTORY_VERSION = 1;
 export const INVENTORY_KIND = "native-hook-inventory";
@@ -883,10 +892,36 @@ async function versionedSpecInventory(sourceRoot) {
  * Build the deterministic readiness report for all referenced extracted hooks.
  * No hook body is executed by this function.
  */
+async function readBaselineCoverage(group, baselineRoot) {
+  const file = join(baselineRoot, group.sourceField, `${group.bodySha256}.json`);
+  try {
+    const value = JSON.parse(await readFile(file, "utf8"));
+    const cases = Array.isArray(value.cases) ? value.cases.length : 0;
+    const covered =
+      value.field === group.sourceField &&
+      value.bodySha256 === group.bodySha256 &&
+      cases >= 3;
+    return { baselineCovered: covered, baselineCases: cases };
+  } catch {
+    return { baselineCovered: false, baselineCases: 0 };
+  }
+}
+
+export function outputBaselineFromCoverage(coveredUniqueBodies, totalUniqueBodies) {
+  const covered = coveredUniqueBodies;
+  const total = totalUniqueBodies;
+  return {
+    status: covered === total ? "established" : "partial",
+    coveredUniqueBodies: covered,
+    totalUniqueBodies: total,
+  };
+}
+
 export async function classifyNativeHooks({
   sourceRoot = process.env.EC_SPECS_SRC || defaultSourceRoot,
   irRoot = process.env.EC_SPECS_IR || defaultIrRoot,
   hooksRoot = process.env.EC_SPECS_HOOKS || join(irRoot, "hooks"),
+  baselineRoot = defaultBaselineRoot,
 } = {}) {
   const audit = await auditSpecsHooks({ sourceRoot, irRoot, hooksRoot });
   const locationsById = sourceLocations(audit);
@@ -1074,6 +1109,10 @@ export async function classifyNativeHooks({
     }
   }
 
+  for (const group of groups) {
+    Object.assign(group, await readBaselineCoverage(group, baselineRoot));
+  }
+
   const extractedHooks = hooks.filter((hook) => hook.id != null);
   const classifiedHooks = hooks.filter(
     (hook) => hook.status !== UNCLASSIFIED_STATUS,
@@ -1113,7 +1152,14 @@ export async function classifyNativeHooks({
   if (counts.uniqueBodies[CANDIDATE_STATUS] > 0) {
     gateBlockers.push(CANDIDATE_STATUS);
   }
-  gateBlockers.push("output-baseline-not-established");
+  const coveredUniqueBodies = groups.filter((group) => group.baselineCovered).length;
+  const outputBaseline = outputBaselineFromCoverage(
+    coveredUniqueBodies,
+    groups.length,
+  );
+  if (outputBaseline.status !== "established") {
+    gateBlockers.push(OUTPUT_BASELINE_BLOCKER);
+  }
   if (structuralErrorCount > 0) gateBlockers.push("audit-errors");
   if (versionedSpecs.status !== "none") gateBlockers.push(VERSIONED_SPEC_BLOCKER);
   const report = {
@@ -1125,7 +1171,7 @@ export async function classifyNativeHooks({
       nativeExecutableStatuses: [NATIVE_FILEPATHS_STATUS],
       failClosedStatuses: [FAILURE_STATUS, UNCLASSIFIED_STATUS],
       outputBaselineRequired: true,
-      outputBaselineStatus: "not-yet-established",
+      outputBaselineStatus: outputBaseline.status,
       riskNames: [...RISK_NAMES].sort(comparePath),
       candidatePolicy: {
         noFreeVariables: true,
@@ -1149,11 +1195,7 @@ export async function classifyNativeHooks({
     counts,
     nativeFilepathsRewrites: nativeRewrites,
     versionedSpecs,
-    outputBaseline: {
-      status: "not-yet-established",
-      coveredUniqueBodies: 0,
-      totalUniqueBodies: groups.length,
-    },
+    outputBaseline,
     hooks,
     bodyGroups: groups,
     gate: {
@@ -1167,12 +1209,13 @@ export async function classifyNativeHooks({
         counts.uniqueBodies[ADAPTER_STATUS] === 0 &&
         counts.uniqueBodies[FAILURE_STATUS] === 0 &&
         counts.uniqueBodies[CANDIDATE_STATUS] === 0 &&
-        versionedSpecs.status === "none",
+        versionedSpecs.status === "none" &&
+        outputBaseline.status === "established",
       researchOnlyStatuses: [CANDIDATE_STATUS],
       blockers: sortStrings(gateBlockers),
       allBundledHooksMustPass: true,
       outputBaselineRequired: true,
-      outputBaselineEstablished: false,
+      outputBaselineEstablished: outputBaseline.status === "established",
     },
     errors: {
       audit: auditErrors,
@@ -1261,6 +1304,8 @@ export function inventoryFromReport(report) {
       freeVariables: group.freeVariables,
       dependencies: group.dependencies,
       nodeCount: group.metrics?.nodeCount ?? null,
+      baselineCovered: group.baselineCovered === true,
+      baselineCases: Number.isInteger(group.baselineCases) ? group.baselineCases : 0,
     })),
   });
 }

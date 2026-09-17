@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -280,7 +280,14 @@ test("full pinned bundle is covered and remains gated", async () => {
   assert.equal(report.coverage.unclassifiedHooks, 0);
   assert.equal(report.gate.classificationComplete, true);
   assert.equal(report.gate.pathSwitchAllowed, false);
-  assert.ok(report.gate.blockers.includes("output-baseline-not-established"));
+  assert.equal(report.outputBaseline.status, "established");
+  assert.equal(report.outputBaseline.coveredUniqueBodies, 594);
+  assert.equal(report.outputBaseline.totalUniqueBodies, 594);
+  assert.equal(report.gate.outputBaselineEstablished, true);
+  assert.equal(
+    report.gate.blockers.includes("output-baseline-not-established"),
+    false,
+  );
   for (const status of [
     "requires-native-adapter",
     "typed-ir-research-candidate",
@@ -299,4 +306,69 @@ test("full pinned bundle is covered and remains gated", async () => {
     ),
     report.coverage.uniqueBodies,
   );
+});
+
+async function writeStubBaseline(root, field, bodySha256, cases) {
+  await mkdir(join(root, field), { recursive: true });
+  await writeFile(
+    join(root, field, `${bodySha256}.json`),
+    `${JSON.stringify({
+      field,
+      bodySha256,
+      cases: Array.from({ length: cases }, (_, index) => ({ id: `case-${index}` })),
+    })}\n`,
+  );
+}
+
+test("output baseline blocker stays until every unique body is covered", async () => {
+  const sourceRoot = await mkdtemp(join(tmpdir(), "easy-complete-native-src-"));
+  const irRoot = await mkdtemp(join(tmpdir(), "easy-complete-native-ir-"));
+  const baselineRoot = await mkdtemp(join(tmpdir(), "easy-complete-native-base-"));
+  try {
+    await writeFile(
+      join(sourceRoot, "fixture.js"),
+      `export default {
+        name: "fixture",
+        args: [
+          { name: "left", generators: { trigger: (next, prev) => next !== prev } },
+          { name: "right", generators: { trigger: (next) => next.length > 0 } },
+        ],
+      };\n`,
+    );
+    await compileSpecsIr({ srcDir: sourceRoot, outDir: irRoot });
+    const empty = await classifyNativeHooks({ sourceRoot, irRoot, baselineRoot });
+    assert.equal(empty.outputBaseline.status, "partial");
+    assert.equal(empty.outputBaseline.coveredUniqueBodies, 0);
+    assert.equal(empty.outputBaseline.totalUniqueBodies, 2);
+    assert.ok(empty.gate.blockers.includes("output-baseline-not-established"));
+    assert.equal(empty.gate.outputBaselineEstablished, false);
+    assert.equal(empty.gate.pathSwitchAllowed, false);
+
+    const first = empty.bodyGroups[0];
+    await writeStubBaseline(baselineRoot, first.sourceField, first.bodySha256, 3);
+    const partial = await classifyNativeHooks({ sourceRoot, irRoot, baselineRoot });
+    assert.equal(partial.outputBaseline.status, "partial");
+    assert.equal(partial.outputBaseline.coveredUniqueBodies, 1);
+    assert.ok(partial.gate.blockers.includes("output-baseline-not-established"));
+
+    for (const group of empty.bodyGroups) {
+      await writeStubBaseline(baselineRoot, group.sourceField, group.bodySha256, 3);
+    }
+    const full = await classifyNativeHooks({ sourceRoot, irRoot, baselineRoot });
+    assert.equal(full.outputBaseline.status, "established");
+    assert.equal(full.outputBaseline.coveredUniqueBodies, 2);
+    assert.equal(full.gate.outputBaselineEstablished, true);
+    assert.equal(
+      full.gate.blockers.includes("output-baseline-not-established"),
+      false,
+    );
+    assert.equal(full.gate.pathSwitchAllowed, false);
+    assert.ok(full.bodyGroups.every((group) => group.baselineCovered && group.baselineCases === 3));
+  } finally {
+    await Promise.all([
+      rm(sourceRoot, { recursive: true, force: true }),
+      rm(irRoot, { recursive: true, force: true }),
+      rm(baselineRoot, { recursive: true, force: true }),
+    ]);
+  }
 });
