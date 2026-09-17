@@ -32,10 +32,17 @@ const repoNodeModulesDir = join(repoDir, "node_modules");
 const defaultSourceRoot = join(repoDir, "bundle", "specs");
 const defaultIrRoot = join(repoDir, "bundle", "specs-ir");
 const pairLockPath = join(repoDir, "bundle", PAIR_LOCK_NAME);
-const KNOWN_SYSTEM_ALIASES = new Map([
-  ["/var", "/private/var"],
-  ["/tmp", "/private/tmp"],
-]);
+// macOS resolves /var and /tmp through /private; a path under either is the
+// same file as its /private twin. Linux has no such link, so treating these as
+// aliases there would make every temp-dir fixture "escape its approved root".
+const KNOWN_SYSTEM_ALIASES = new Map(
+  process.platform === "darwin"
+    ? [
+        ["/var", "/private/var"],
+        ["/tmp", "/private/tmp"],
+      ]
+    : [],
+);
 
 export const REFERENCE_AUDIT_TIMEOUT_MS = 30_000;
 export const MAX_AUDIT_INPUT_BYTES = 64 * 1024;

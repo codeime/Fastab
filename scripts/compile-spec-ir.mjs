@@ -40,10 +40,13 @@ import {
   nativeFilepathsFromHelper,
 } from "./filepaths-helper.mjs";
 import {
+  countFunctionsInValue,
+  describeVersionDiffAllowlistDrift,
   HOOK_MODULE_MANIFEST,
   HOOK_MODULES_DIR,
   hookFileName,
   KNOWN_NON_SPEC_FILES,
+  KNOWN_UNAPPLIED_VERSION_DIFFS,
   SUPPORTED_HOOK_FIELDS,
   SUPPORTED_IR_HOOK_FIELDS,
   TYPED_HOOK_CATALOG_MAX_BYTES,
@@ -55,6 +58,7 @@ import {
   TYPED_HOOK_SIDECAR,
   TYPED_HOOK_SIDECAR_KIND,
   TYPED_HOOK_SIDECAR_VERSION,
+  unappliedVersionDiffKeys,
   utf8ByteLength,
 } from "./spec-hook-contract.mjs";
 import {
@@ -1878,6 +1882,13 @@ async function compileSpecsIrUnlocked({
     let skipped = 0;
     let hooksWritten = 0;
     const failures = [];
+    // Non-empty `versions` diffs the WebView merged at load time. They are
+    // not applied here, so each one must be on the reviewed allowlist and is
+    // reported as unadapted behaviour rather than dropped silently.
+    const unappliedVersionDiffs = [];
+    const seenVersionDiffFiles = new Set();
+    const compilingCanonicalSource =
+      resolve(srcDir) === resolve(canonicalSourceDir);
     const hooksDir = join(stagedOutDir, "hooks");
     assertSafeSourceRelativePath("hooks");
     assertPathInsideRoot(stagedOutDir, hooksDir, "compiled IR hook directory");
@@ -1916,6 +1927,27 @@ async function compileSpecsIrUnlocked({
         const binder = createFilepathsBinder(source);
         const mod = await import(pathToFileURL(src).href);
         const rawSpec = mod.default ?? mod;
+        const versionDiffDrift = describeVersionDiffAllowlistDrift(
+          normalizedRel,
+          mod,
+          { enforceStale: compilingCanonicalSource },
+        );
+        if (versionDiffDrift) {
+          throw new Error(versionDiffDrift);
+        }
+        const allowlistedDiffs = (
+          KNOWN_UNAPPLIED_VERSION_DIFFS[normalizedRel] ?? []
+        ).filter((version) => unappliedVersionDiffKeys(mod).includes(version));
+        if (allowlistedDiffs.length) {
+          seenVersionDiffFiles.add(normalizedRel);
+          unappliedVersionDiffs.push({
+            file: normalizedRel,
+            versions: [...allowlistedDiffs].map((version) => ({
+              version,
+              functions: countFunctionsInValue(mod.versions[version]),
+            })),
+          });
+        }
         const sourceFunctions = [];
         assertNoUnknownFunctionFields(
           rawSpec,
@@ -1986,6 +2018,25 @@ async function compileSpecsIrUnlocked({
           `review the explicit KNOWN_NON_SPEC_FILES allowlist`,
       );
     }
+
+    // The allowlist describes the canonical bundle. A listed file that has
+    // disappeared from that bundle is stale review data and must be removed,
+    // otherwise the inventory would keep reporting a gap that no longer
+    // exists. Fixture trees compiled through the API are exempt: they never
+    // contain the bundled versioned specs.
+    if (compilingCanonicalSource) {
+      const stale = Object.keys(KNOWN_UNAPPLIED_VERSION_DIFFS)
+        .filter((file) => !seenVersionDiffFiles.has(file))
+        .sort(comparePath);
+      if (stale.length) {
+        throw new Error(
+          `KNOWN_UNAPPLIED_VERSION_DIFFS lists ${JSON.stringify(stale)} but the bundled source tree has no such spec file(s); remove the stale entries`,
+        );
+      }
+    }
+    unappliedVersionDiffs.sort((left, right) =>
+      comparePath(left.file, right.file),
+    );
 
     const hookModules = await writeClosurePreservingHookModules({
       srcDir,
@@ -2104,6 +2155,21 @@ async function compileSpecsIrUnlocked({
     process.stdout.write(
       `Wrote ${compiled} IR specs (${unique.length} names, ${hooksWritten} hooks in ${hookModules.modules} closure-preserving modules, ${hookModules.typedHooks} typed trigger hooks; ${skipped} allowlisted skipped) to ${outDir}\n`,
     );
+    if (unappliedVersionDiffs.length) {
+      const diffCount = unappliedVersionDiffs.reduce(
+        (sum, entry) => sum + entry.versions.length,
+        0,
+      );
+      const functionCount = unappliedVersionDiffs.reduce(
+        (sum, entry) =>
+          sum +
+          entry.versions.reduce((inner, item) => inner + item.functions, 0),
+        0,
+      );
+      process.stdout.write(
+        `Unadapted: ${diffCount} allowlisted version diff(s) containing ${functionCount} function(s) in ${unappliedVersionDiffs.length} file(s) are not applied (${unappliedVersionDiffs.map((entry) => entry.file).join(", ")})\n`,
+      );
+    }
     return {
       compiled,
       failed,
@@ -2113,6 +2179,7 @@ async function compileSpecsIrUnlocked({
       hooks: hooksWritten,
       hookModules: hookModules.modules,
       typedHooks: hookModules.typedHooks,
+      unappliedVersionDiffs,
     };
   } finally {
     if (!published && !(await pairJournalExists(pairLockPath))) {

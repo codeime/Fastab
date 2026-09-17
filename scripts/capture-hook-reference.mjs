@@ -26,10 +26,17 @@ const worker = join(repoDir, "scripts", "reference-hook-worker.mjs");
 const defaultSourceRoot = join(repoDir, "bundle", "specs");
 const defaultIrRoot = join(repoDir, "bundle", "specs-ir");
 const sourceIndexCache = new WeakMap();
-const KNOWN_SYSTEM_ALIASES = new Map([
-  ["/var", "/private/var"],
-  ["/tmp", "/private/tmp"],
-]);
+// macOS resolves /var and /tmp through /private; a path under either is the
+// same file as its /private twin. Linux has no such link, so treating these as
+// aliases there would make every temp-dir fixture "escape its approved root".
+const KNOWN_SYSTEM_ALIASES = new Map(
+  process.platform === "darwin"
+    ? [
+        ["/var", "/private/var"],
+        ["/tmp", "/private/tmp"],
+      ]
+    : [],
+);
 
 const IR_TO_SOURCE_FIELD = Object.freeze({
   jsLoadSpec: "loadSpec",

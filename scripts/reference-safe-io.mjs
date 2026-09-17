@@ -30,10 +30,17 @@ const O_DIRECTORY = constants.O_DIRECTORY ?? 0;
 const O_NOFOLLOW = constants.O_NOFOLLOW ?? 0;
 const O_NONBLOCK = constants.O_NONBLOCK ?? 0;
 
-const KNOWN_SYSTEM_ALIASES = new Map([
-  ["/var", "/private/var"],
-  ["/tmp", "/private/tmp"],
-]);
+// macOS resolves /var and /tmp through /private; a path under either is the
+// same file as its /private twin. Linux has no such link, so treating these as
+// aliases there would make every temp-dir fixture "escape its approved root".
+const KNOWN_SYSTEM_ALIASES = new Map(
+  process.platform === "darwin"
+    ? [
+        ["/var", "/private/var"],
+        ["/tmp", "/private/tmp"],
+      ]
+    : [],
+);
 
 function knownAliasTarget(path) {
   const absolute = resolve(path);

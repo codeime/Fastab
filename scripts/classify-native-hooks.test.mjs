@@ -7,9 +7,18 @@ import test from "node:test";
 import { auditSpecsHooks } from "./audit-spec-hooks.mjs";
 import { compileSpecsIr } from "./compile-spec-ir.mjs";
 import {
+  checkNativeHookInventory,
   classifyHookBody,
   classifyNativeHooks,
+  inventoryFromReport,
+  INVENTORY_KIND,
+  INVENTORY_VERSION,
+  updateNativeHookInventory,
 } from "./classify-native-hooks.mjs";
+import {
+  KNOWN_UNAPPLIED_VERSION_DIFFS,
+  KNOWN_VERSION_SELECTORS,
+} from "./spec-hook-contract.mjs";
 
 test("classifies pure, input, command, closure, complex, and gated syntax bodies", () => {
   const pure = classifyHookBody({ field: "jsTrigger", body: "() => !0" });
@@ -146,6 +155,59 @@ test("compiles a real helper fixture and reports deterministic native readiness"
     assert.equal(first.nativeFilepathsRewrites.byField.custom, 1);
     assert.equal(first.counts.extractedHooks["typed-ir-research-candidate"], 4);
     assert.equal(first.counts.extractedHooks["requires-native-adapter"], 1);
+
+    // The versioned-spec allowlist describes the bundled tree, so a fixture
+    // tree reports every entry as absent but still lists it: the gap is a
+    // property of the compiler, not of one source tree.
+    assert.equal(first.versionedSpecs.status, "unadapted");
+    assert.ok(first.gate.blockers.includes("versioned-spec-behaviour-unadapted"));
+    assert.deepEqual(
+      first.versionedSpecs.selectors.map((entry) => entry.file),
+      [...KNOWN_VERSION_SELECTORS].sort(),
+    );
+    assert.ok(first.versionedSpecs.selectors.every((entry) => !entry.present));
+    assert.deepEqual(
+      first.versionedSpecs.unappliedDiffs.map((entry) => entry.file),
+      Object.keys(KNOWN_UNAPPLIED_VERSION_DIFFS).sort(),
+    );
+    assert.ok(
+      first.versionedSpecs.unappliedDiffs.every(
+        (entry) =>
+          !entry.present &&
+          entry.versions.every((item) => item.functions === null),
+      ),
+    );
+
+    // The committed inventory is a compact, deterministic projection: one row
+    // per distinct body with no per-hook rows, and check/update round-trip.
+    const inventory = inventoryFromReport(first);
+    assert.equal(inventory.version, INVENTORY_VERSION);
+    assert.equal(inventory.kind, INVENTORY_KIND);
+    assert.equal(inventory.bodyGroups.length, first.coverage.uniqueBodies);
+    assert.equal("hooks" in inventory, false);
+    assert.equal("errors" in inventory, false);
+    for (const group of inventory.bodyGroups) {
+      assert.ok(group.sampleHookIds.length >= 1 && group.sampleHookIds.length <= 3);
+      assert.equal(typeof group.hookCount, "number");
+      assert.equal(typeof group.status, "string");
+    }
+    assert.deepEqual(inventoryFromReport(second), inventory);
+    const inventoryPath = join(irRoot, "inventory.json");
+    await assert.rejects(
+      checkNativeHookInventory({ report: first, inventoryPath }),
+      /native hook inventory is missing/,
+    );
+    await updateNativeHookInventory({ report: first, inventoryPath });
+    await checkNativeHookInventory({ report: second, inventoryPath });
+    assert.deepEqual(
+      JSON.parse(await readFile(inventoryPath, "utf8")),
+      inventory,
+    );
+    await writeFile(inventoryPath, `${JSON.stringify(inventory)}\n`);
+    await assert.rejects(
+      checkNativeHookInventory({ report: first, inventoryPath }),
+      /native hook inventory .* is stale/,
+    );
   } finally {
     await Promise.all([
       rm(sourceRoot, { recursive: true, force: true }),
@@ -191,6 +253,19 @@ test("an orphan extracted file is unclassified and closes the migration gate", a
 
 test("full pinned bundle is covered and remains gated", async () => {
   const report = await classifyNativeHooks();
+  // The committed inventory must describe this exact bundle; CI runs the
+  // same check so a specs update or classifier change is reviewed as a diff.
+  await checkNativeHookInventory({ report });
+  assert.equal(report.versionedSpecs.status, "unadapted");
+  assert.ok(report.versionedSpecs.selectors.every((entry) => entry.present));
+  assert.ok(
+    report.versionedSpecs.unappliedDiffs.every(
+      (entry) =>
+        entry.present &&
+        entry.versions.every((item) => Number.isInteger(item.functions)),
+    ),
+  );
+  assert.ok(report.versionedSpecs.totals.functionsInUnappliedDiffs > 0);
   const audit = await auditSpecsHooks();
   const auditedUniqueBodies = Object.values(
     audit.hooks.uniqueBodyCounts,

@@ -38,10 +38,17 @@ import { writeReferenceFile } from "./reference-safe-io.mjs";
 const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultSourceRoot = join(repoDir, "bundle", "specs");
 const defaultIrRoot = join(repoDir, "bundle", "specs-ir");
-const KNOWN_SYSTEM_ALIASES = new Map([
-  ["/var", "/private/var"],
-  ["/tmp", "/private/tmp"],
-]);
+// macOS resolves /var and /tmp through /private; a path under either is the
+// same file as its /private twin. Linux has no such link, so treating these as
+// aliases there would make every temp-dir fixture "escape its approved root".
+const KNOWN_SYSTEM_ALIASES = new Map(
+  process.platform === "darwin"
+    ? [
+        ["/var", "/private/var"],
+        ["/tmp", "/private/tmp"],
+      ]
+    : [],
+);
 const HARNESS_FILES = Object.freeze([
   "scripts/audit-spec-hooks.mjs",
   "scripts/filepaths-helper.mjs",

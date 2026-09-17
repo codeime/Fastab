@@ -10,7 +10,7 @@
  * that work.
  */
 import { createHash } from "node:crypto";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as acorn from "acorn";
@@ -24,11 +24,32 @@ import {
   SUPPORTED_HOOK_FIELDS,
   SUPPORTED_IR_HOOK_FIELDS,
 } from "./compile-spec-ir.mjs";
+import {
+  countFunctionsInValue,
+  KNOWN_UNAPPLIED_VERSION_DIFFS,
+  KNOWN_VERSION_SELECTORS,
+} from "./spec-hook-contract.mjs";
 import { comparePath } from "./spec-pair.mjs";
 
 const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultSourceRoot = join(repoDir, "bundle", "specs");
 const defaultIrRoot = join(repoDir, "bundle", "specs-ir");
+// The committed, reviewable inventory. CI recomputes it from the bundled
+// source/IR pair and fails on drift, so a specs update or compiler change
+// that moves a hook between classes shows up in review instead of silently
+// changing what the native migration still owes.
+const defaultInventoryPath = join(
+  repoDir,
+  "crates",
+  "ec_engine",
+  "testdata",
+  "native-hooks",
+  "inventory.json",
+);
+
+export const INVENTORY_VERSION = 1;
+export const INVENTORY_KIND = "native-hook-inventory";
+const VERSIONED_SPEC_BLOCKER = "versioned-spec-behaviour-unadapted";
 
 export const CLASSIFICATION_STATUSES = Object.freeze([
   "typed-ir-research-candidate",
@@ -785,6 +806,79 @@ function auditIssueCount(errors) {
   );
 }
 
+async function isRegularFile(path) {
+  try {
+    const info = await lstat(path);
+    return info.isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Inventory of diff-versioned spec behaviour the compiler does not adapt yet.
+ *
+ * Both lists come from the reviewed allowlist in spec-hook-contract.mjs; the
+ * compiler already fails closed when the bundle drifts from it. The version
+ * diffs are imported here only to count the functions they carry (hooks the
+ * WebView could run after merging a diff). No hook is invoked.
+ */
+async function versionedSpecInventory(sourceRoot) {
+  const selectors = [];
+  for (const file of [...KNOWN_VERSION_SELECTORS].sort(comparePath)) {
+    selectors.push({
+      file,
+      present: await isRegularFile(join(sourceRoot, file)),
+      resolution: "highest-version-file",
+    });
+  }
+  const unappliedDiffs = [];
+  for (const [file, versions] of Object.entries(
+    KNOWN_UNAPPLIED_VERSION_DIFFS,
+  ).sort(([left], [right]) => comparePath(left, right))) {
+    const path = join(sourceRoot, file);
+    let namespace = null;
+    if (await isRegularFile(path)) {
+      try {
+        namespace = await import(pathToFileURL(path).href);
+      } catch {
+        namespace = null;
+      }
+    }
+    unappliedDiffs.push({
+      file,
+      present: namespace !== null,
+      versions: [...versions].map((version) => ({
+        version,
+        functions:
+          namespace === null
+            ? null
+            : countFunctionsInValue(namespace.versions?.[version]),
+      })),
+    });
+  }
+  const diffCount = unappliedDiffs.reduce(
+    (sum, entry) => sum + entry.versions.length,
+    0,
+  );
+  const functionCount = unappliedDiffs.reduce(
+    (sum, entry) =>
+      sum +
+      entry.versions.reduce((inner, item) => inner + (item.functions ?? 0), 0),
+    0,
+  );
+  return {
+    status: selectors.length || diffCount ? "unadapted" : "none",
+    selectors,
+    unappliedDiffs,
+    totals: {
+      selectors: selectors.length,
+      unappliedDiffs: diffCount,
+      functionsInUnappliedDiffs: functionCount,
+    },
+  };
+}
+
 /**
  * Build the deterministic readiness report for all referenced extracted hooks.
  * No hook body is executed by this function.
@@ -1001,6 +1095,7 @@ export async function classifyNativeHooks({
     },
   };
   const nativeRewrites = nativeRewriteSummary(audit);
+  const versionedSpecs = await versionedSpecInventory(sourceRoot);
   const auditErrors = sanitizeAuditErrors(audit.errors, {
     sourceRoot,
     irRoot,
@@ -1020,6 +1115,7 @@ export async function classifyNativeHooks({
   }
   gateBlockers.push("output-baseline-not-established");
   if (structuralErrorCount > 0) gateBlockers.push("audit-errors");
+  if (versionedSpecs.status !== "none") gateBlockers.push(VERSIONED_SPEC_BLOCKER);
   const report = {
     version: 1,
     kind: "native-hook-readiness",
@@ -1052,6 +1148,7 @@ export async function classifyNativeHooks({
     },
     counts,
     nativeFilepathsRewrites: nativeRewrites,
+    versionedSpecs,
     outputBaseline: {
       status: "not-yet-established",
       coveredUniqueBodies: 0,
@@ -1069,7 +1166,8 @@ export async function classifyNativeHooks({
         counts.extractedHooks[FAILURE_STATUS] === 0 &&
         counts.uniqueBodies[ADAPTER_STATUS] === 0 &&
         counts.uniqueBodies[FAILURE_STATUS] === 0 &&
-        counts.uniqueBodies[CANDIDATE_STATUS] === 0,
+        counts.uniqueBodies[CANDIDATE_STATUS] === 0 &&
+        versionedSpecs.status === "none",
       researchOnlyStatuses: [CANDIDATE_STATUS],
       blockers: sortStrings(gateBlockers),
       allBundledHooksMustPass: true,
@@ -1109,6 +1207,10 @@ export function compactClassificationReport(report) {
       total: report.nativeFilepathsRewrites.total,
       sourceCount: report.nativeFilepathsRewrites.sourceCount,
     },
+    versionedSpecs: {
+      status: report.versionedSpecs.status,
+      totals: report.versionedSpecs.totals,
+    },
     gate: report.gate,
     errors: {
       audit: Object.fromEntries(
@@ -1126,19 +1228,117 @@ export function compactClassificationReport(report) {
   };
 }
 
+/**
+ * The committed per-class inventory: every distinct hook body with its field,
+ * classification, risks, dependencies and a few representative hook ids, plus
+ * the unadapted versioned-spec behaviour and the gate. Per-hook rows and audit
+ * error samples are left to the full `--out` report so this stays small
+ * enough to review in a diff.
+ */
+export function inventoryFromReport(report) {
+  return sortObjectKeys({
+    version: INVENTORY_VERSION,
+    kind: INVENTORY_KIND,
+    coverage: report.coverage,
+    counts: report.counts,
+    nativeFilepathsRewrites: {
+      byField: report.nativeFilepathsRewrites.byField,
+      total: report.nativeFilepathsRewrites.total,
+      sourceCount: report.nativeFilepathsRewrites.sourceCount,
+    },
+    versionedSpecs: report.versionedSpecs,
+    outputBaseline: report.outputBaseline,
+    gate: report.gate,
+    bodyGroups: report.bodyGroups.map((group) => ({
+      bodySha256: group.bodySha256,
+      field: group.field,
+      sourceField: group.sourceField,
+      hookCount: group.hookCount,
+      sampleHookIds: group.hookIds.slice(0, 3),
+      status: group.status,
+      ...(group.reasonCodes ? { reasonCodes: group.reasonCodes } : {}),
+      risks: group.risks,
+      freeVariables: group.freeVariables,
+      dependencies: group.dependencies,
+      nodeCount: group.metrics?.nodeCount ?? null,
+    })),
+  });
+}
+
+function inventoryText(report) {
+  return `${JSON.stringify(inventoryFromReport(report), null, 2)}\n`;
+}
+
+export async function checkNativeHookInventory({
+  report,
+  inventoryPath = defaultInventoryPath,
+} = {}) {
+  const current = report ?? (await classifyNativeHooks());
+  let committed;
+  try {
+    committed = await readFile(inventoryPath, "utf8");
+  } catch (error) {
+    throw new Error(
+      `native hook inventory is missing at ${inventoryPath}; run \`node scripts/classify-native-hooks.mjs --update\``,
+      { cause: error },
+    );
+  }
+  if (committed !== inventoryText(current)) {
+    throw new Error(
+      `native hook inventory at ${inventoryPath} is stale; run \`node scripts/classify-native-hooks.mjs --update\` and review the diff`,
+    );
+  }
+  return { report: current, inventoryPath };
+}
+
+export async function updateNativeHookInventory({
+  report,
+  inventoryPath = defaultInventoryPath,
+} = {}) {
+  const current = report ?? (await classifyNativeHooks());
+  await writeFile(inventoryPath, inventoryText(current));
+  return { report: current, inventoryPath };
+}
+
 const isMain =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMain) {
-  const report = await classifyNativeHooks();
-  const outputPath = outputPathFromArgs();
-  // Full hook/body entries are deliberately written only when --out (or the
-  // equivalent environment variable) is supplied. This keeps a normal CLI
-  // invocation reviewable while the exported API retains the full manifest.
-  if (outputPath) {
-    await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`);
+  const check = process.argv.includes("--check");
+  const update = process.argv.includes("--update");
+  if (check && update) {
+    process.stderr.write("error: choose at most one of --check or --update\n");
+    process.exitCode = 2;
+  } else {
+    const report = await classifyNativeHooks();
+    const outputPath = outputPathFromArgs();
+    // Full hook/body entries are deliberately written only when --out (or the
+    // equivalent environment variable) is supplied. This keeps a normal CLI
+    // invocation reviewable while the exported API retains the full manifest.
+    if (outputPath) {
+      await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`);
+    }
+    if (update) {
+      const { inventoryPath } = await updateNativeHookInventory({ report });
+      process.stdout.write(
+        `Updated native hook inventory: ${report.coverage.uniqueBodies} bodies / ${report.coverage.extractedHooks} hooks -> ${inventoryPath}\n`,
+      );
+    } else if (check) {
+      try {
+        await checkNativeHookInventory({ report });
+        process.stdout.write(
+          `Verified native hook inventory: ${report.coverage.uniqueBodies} bodies / ${report.coverage.extractedHooks} hooks\n`,
+        );
+      } catch (error) {
+        process.stderr.write(
+          `native hook inventory check failed: ${error instanceof Error ? error.message : error}\n`,
+        );
+        process.exitCode = 1;
+      }
+    } else {
+      const output = compactClassificationReport(report);
+      process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+    }
+    if (!report.gate.classificationComplete) process.exitCode = 1;
   }
-  const output = compactClassificationReport(report);
-  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
-  if (!report.gate.classificationComplete) process.exitCode = 1;
 }

@@ -69,10 +69,17 @@ const sourceDir = process.env.EC_SPECS_SRC || join(repoDir, "bundle", "specs");
 const irDir = process.env.EC_SPECS_IR || join(repoDir, "bundle", "specs-ir");
 const hooksDir = join(irDir, "hooks");
 const pairLockPath = join(repoDir, "bundle", PAIR_LOCK_NAME);
-const KNOWN_SYSTEM_ALIASES = new Map([
-  ["/var", "/private/var"],
-  ["/tmp", "/private/tmp"],
-]);
+// macOS resolves /var and /tmp through /private; a path under either is the
+// same file as its /private twin. Linux has no such link, so treating these as
+// aliases there would make every temp-dir fixture "escape its approved root".
+const KNOWN_SYSTEM_ALIASES = new Map(
+  process.platform === "darwin"
+    ? [
+        ["/var", "/private/var"],
+        ["/tmp", "/private/tmp"],
+      ]
+    : [],
+);
 
 // filepaths()/folders() are intentionally folded into native IR. Their
 // custom, trigger, and getQueryTerm functions are therefore expected to be

@@ -1933,6 +1933,67 @@ test("audit rejects a hook file whose body cannot run as a standalone expression
   }
 });
 
+test("compiler fails closed on unlisted version diffs and ignores empty ones", async () => {
+  const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-specs-versions-"));
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-versions-"));
+  try {
+    // A non-empty `versions` diff the WebView would have merged at load time
+    // is unadapted behaviour. It is only allowed when the reviewed allowlist
+    // names the file and the exact key, so this fixture must be rejected.
+    await mkdir(join(srcDir, "tool"), { recursive: true });
+    await writeFile(
+      join(srcDir, "tool", "1.0.0.js"),
+      `const spec = { name: "tool", subcommands: [{ name: "base" }] };
+const versions = { "1.2.0": { subcommands: [{ name: "added", args: { generators: { postProcess: (out) => [{ name: out }] } } }] } };
+export { spec as default, versions };\n`,
+    );
+    await writeFile(
+      join(srcDir, "index.json"),
+      JSON.stringify({
+        completions: ["tool", "tool/1.0.0"],
+        diffVersionedCompletions: ["tool"],
+      }),
+    );
+    await assert.rejects(
+      compileSpecsIr({ srcDir, outDir }),
+      /tool\/1\.0\.0\.js exports non-empty `versions` diff\(s\) \["1\.2\.0"\] that are not applied by the compiler and are not listed in KNOWN_UNAPPLIED_VERSION_DIFFS/,
+    );
+
+    // An empty diff is a no-op in `getVersionFromVersionedSpec`, so it is not
+    // a loss and does not need review. (A new file name: Node caches ESM
+    // namespaces by URL, so rewriting 1.0.0.js would re-import the old text.)
+    await rm(join(srcDir, "tool", "1.0.0.js"));
+    await writeFile(
+      join(srcDir, "tool", "2.0.0.js"),
+      `const spec = { name: "tool", subcommands: [{ name: "base" }] };
+const versions = { "2.2.0": {} };
+export { spec as default, versions };\n`,
+    );
+    await writeFile(
+      join(srcDir, "index.json"),
+      JSON.stringify({
+        completions: ["tool", "tool/2.0.0"],
+        diffVersionedCompletions: ["tool"],
+      }),
+    );
+    const result = await compileSpecsIr({ srcDir, outDir });
+    assert.equal(result.compiled, 1);
+    assert.deepEqual(result.unappliedVersionDiffs, []);
+    const ir = JSON.parse(
+      await readFile(join(outDir, "tool", "2.0.0.json"), "utf8"),
+    );
+    assert.deepEqual(
+      ir.subcommands.map((subcommand) => subcommand.names),
+      [["base"]],
+    );
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
 test("compiler blocks Node-only regexp syntax until a native adapter exists", async () => {
   const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-specs-regexp-v-"));
   const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-regexp-v-"));
