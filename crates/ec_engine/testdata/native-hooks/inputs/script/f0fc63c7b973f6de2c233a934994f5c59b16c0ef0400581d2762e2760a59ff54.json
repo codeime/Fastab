@@ -1,0 +1,100 @@
+{
+  "bodySha256": "f0fc63c7b973f6de2c233a934994f5c59b16c0ef0400581d2762e2760a59ff54",
+  "cases": [
+    {
+      "args": [
+        [
+          "kubectl"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "kubectl",
+          "config"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "kubectl",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "kubectl"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "script",
+  "hookCount": 10,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "kubecolor#script#24",
+  "version": 1
+}

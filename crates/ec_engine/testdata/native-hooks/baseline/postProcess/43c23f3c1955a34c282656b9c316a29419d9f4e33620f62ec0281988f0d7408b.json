@@ -1,0 +1,134 @@
+{
+  "bodySha256": "43c23f3c1955a34c282656b9c316a29419d9f4e33620f62ec0281988f0d7408b",
+  "cases": [
+    {
+      "args": [
+        "main\nfeature\n",
+        [
+          "brew",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "error",
+        "value": "suggestion is missing name"
+      },
+      "id": "normal",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "",
+        [
+          "brew",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "error",
+        "value": "suggestion is missing name"
+      },
+      "id": "empty",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "not json\n{{{",
+        [
+          "brew",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "Formula",
+            "icon": "🍺",
+            "name": "not json",
+            "priority": 51
+          },
+          {
+            "description": "Formula",
+            "icon": "🍺",
+            "name": "{{{",
+            "priority": 51
+          }
+        ]
+      },
+      "id": "malformed",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "main\nfeature\n",
+        [
+          "brew",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "postProcess",
+  "hookCount": 5,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "brew#postProcess#23",
+  "version": 1
+}

@@ -1,0 +1,111 @@
+{
+  "bodySha256": "c7a95da3c9bf759cedd76a2732a1c75bc6db653e41b14ce981b01f3895916cbc",
+  "cases": [
+    {
+      "args": [
+        "main\nfeature\n",
+        [
+          "mise",
+          "outdated",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "normal",
+      "synthetic": true,
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "",
+        [
+          "mise",
+          "outdated",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "empty",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "not json\n{{{",
+        [
+          "mise",
+          "outdated",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "malformed",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "main\nfeature\n",
+        [
+          "mise",
+          "outdated",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "postProcess",
+  "hookCount": 7,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "mise#postProcess#1",
+  "version": 1
+}

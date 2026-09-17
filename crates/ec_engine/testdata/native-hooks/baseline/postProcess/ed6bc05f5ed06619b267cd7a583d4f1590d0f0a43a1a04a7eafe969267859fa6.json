@@ -1,0 +1,125 @@
+{
+  "bodySha256": "ed6bc05f5ed06619b267cd7a583d4f1590d0f0a43a1a04a7eafe969267859fa6",
+  "cases": [
+    {
+      "args": [
+        "main\nfeature\n",
+        [
+          "podman",
+          "build",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": []
+      },
+      "id": "normal",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "",
+        [
+          "podman",
+          "build",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": []
+      },
+      "id": "empty",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "not json\n{{{",
+        [
+          "podman",
+          "build",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": []
+      },
+      "id": "malformed",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "main\nfeature\n",
+        [
+          "podman",
+          "build",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "postProcess",
+  "hookCount": 2,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "podman#postProcess#1",
+  "version": 1
+}

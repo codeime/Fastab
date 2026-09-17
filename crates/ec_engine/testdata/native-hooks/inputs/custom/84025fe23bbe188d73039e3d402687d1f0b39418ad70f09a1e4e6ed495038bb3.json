@@ -1,0 +1,100 @@
+{
+  "bodySha256": "84025fe23bbe188d73039e3d402687d1f0b39418ad70f09a1e4e6ed495038bb3",
+  "cases": [
+    {
+      "args": [
+        [
+          "deno"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "deno",
+          "lint"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "deno",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "deno"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 3,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "deno#custom#10",
+  "version": 1
+}

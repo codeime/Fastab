@@ -1,0 +1,145 @@
+{
+  "bodySha256": "e2d43cdcd4f2dbed389c8e1b35050e126c8be50d598377c78b526478f54582e5",
+  "cases": [
+    {
+      "args": [
+        [
+          "projj"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "/home/user/.projj/config.json"
+          ],
+          "command": "cat",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "expected": {
+        "kind": "error",
+        "value": "SyntaxError"
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "projj",
+          "run"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "/home/user/.projj/config.json"
+          ],
+          "command": "cat",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "expected": {
+        "kind": "error",
+        "value": "SyntaxError"
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "projj",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "/home/user/.projj/config.json"
+          ],
+          "command": "cat",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "expected": {
+        "kind": "error",
+        "value": "SyntaxError"
+      },
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "projj"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 2,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "projj#custom#2",
+  "version": 1
+}

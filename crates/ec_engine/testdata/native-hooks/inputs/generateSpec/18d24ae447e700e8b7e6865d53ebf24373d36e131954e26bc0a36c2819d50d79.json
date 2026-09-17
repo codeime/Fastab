@@ -1,0 +1,100 @@
+{
+  "bodySha256": "18d24ae447e700e8b7e6865d53ebf24373d36e131954e26bc0a36c2819d50d79",
+  "cases": [
+    {
+      "args": [
+        [
+          "sake"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "list",
+            "--json"
+          ],
+          "command": "sake",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "sake",
+          "status"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "list",
+            "--json"
+          ],
+          "command": "sake",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "sake"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "generateSpec",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "sake#generateSpec#0",
+  "version": 1
+}

@@ -1,0 +1,172 @@
+{
+  "bodySha256": "0dc81ae15fcef8a756069b75fc8bbad374dd62d796e26a6b3e6e4580aa8fb1b9",
+  "cases": [
+    {
+      "args": [
+        [
+          "npm"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "prefix"
+          ],
+          "command": "npm",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "/package.json"
+          ],
+          "command": "cat",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "expected": {
+        "kind": "suggestions",
+        "value": []
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "npm",
+          "install"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "prefix"
+          ],
+          "command": "npm",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "/package.json"
+          ],
+          "command": "cat",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "expected": {
+        "kind": "suggestions",
+        "value": []
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "npm",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "prefix"
+          ],
+          "command": "npm",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "/package.json"
+          ],
+          "command": "cat",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "expected": {
+        "kind": "suggestions",
+        "value": []
+      },
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "npm"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 30,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "npm#custom#0",
+  "version": 1
+}

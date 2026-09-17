@@ -1,0 +1,154 @@
+{
+  "bodySha256": "25852d4d812c3ad64d9f2e0ada62f997fbd1db5100789f92399701b27bdaa0b0",
+  "cases": [
+    {
+      "args": [
+        [
+          "fig"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "name": "figterm"
+          },
+          {
+            "name": "fig_cli"
+          },
+          {
+            "name": "fig_desktop"
+          },
+          {
+            "name": "daemon"
+          }
+        ]
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "fig",
+          "debug"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "name": "figterm"
+          },
+          {
+            "name": "fig_cli"
+          },
+          {
+            "name": "fig_desktop"
+          },
+          {
+            "name": "daemon"
+          }
+        ]
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "fig",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "name": "figterm"
+          },
+          {
+            "name": "fig_cli"
+          },
+          {
+            "name": "fig_desktop"
+          },
+          {
+            "name": "daemon"
+          }
+        ]
+      },
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "fig"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "fig/2.0.0#custom#0",
+  "version": 1
+}

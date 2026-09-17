@@ -1,0 +1,117 @@
+{
+  "bodySha256": "96b519a806eb1ed94fb095e7d77ed086e2278a9872f910649d6f160b8ec0a25f",
+  "cases": [
+    {
+      "args": [
+        [
+          "git"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "help",
+            "-a"
+          ],
+          "command": "git",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "expected": {
+        "kind": "spec",
+        "value": {
+          "name": "git",
+          "subcommands": []
+        }
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "git",
+          "status"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "help",
+            "-a"
+          ],
+          "command": "git",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "expected": {
+        "kind": "spec",
+        "value": {
+          "name": "git",
+          "subcommands": []
+        }
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "git"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "generateSpec",
+  "hookCount": 2,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "git#generateSpec#0",
+  "version": 1
+}

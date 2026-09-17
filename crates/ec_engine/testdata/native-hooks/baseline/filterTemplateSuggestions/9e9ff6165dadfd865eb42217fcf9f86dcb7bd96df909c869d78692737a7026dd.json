@@ -1,0 +1,153 @@
+{
+  "bodySha256": "9e9ff6165dadfd865eb42217fcf9f86dcb7bd96df909c869d78692737a7026dd",
+  "cases": [
+    {
+      "args": [
+        [
+          {
+            "name": "README.md",
+            "type": "file"
+          },
+          {
+            "name": "src/",
+            "type": "folder"
+          },
+          {
+            "name": "package.json",
+            "type": "file"
+          },
+          {
+            "name": "dist/",
+            "type": "folder"
+          },
+          {
+            "name": ".env",
+            "type": "file"
+          },
+          {
+            "name": "bin/",
+            "type": "folder"
+          },
+          {
+            "name": "LICENSE",
+            "type": "file"
+          },
+          {
+            "name": "node_modules/",
+            "type": "folder"
+          }
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "name": "package.json",
+            "type": "file"
+          }
+        ]
+      },
+      "id": "mixed",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        []
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": []
+      },
+      "id": "empty",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          {
+            "name": "README.md",
+            "type": "file"
+          },
+          {
+            "name": "src/",
+            "type": "folder"
+          },
+          {
+            "name": "package.json",
+            "type": "file"
+          },
+          {
+            "name": "dist/",
+            "type": "folder"
+          },
+          {
+            "name": ".env",
+            "type": "file"
+          },
+          {
+            "name": "bin/",
+            "type": "folder"
+          },
+          {
+            "name": "LICENSE",
+            "type": "file"
+          },
+          {
+            "name": "node_modules/",
+            "type": "folder"
+          }
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "filterTemplateSuggestions",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "oxlint#filterTemplateSuggestions#1",
+  "version": 1
+}

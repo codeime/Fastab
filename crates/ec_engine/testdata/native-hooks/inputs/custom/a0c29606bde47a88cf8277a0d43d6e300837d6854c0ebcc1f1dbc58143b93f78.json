@@ -1,0 +1,133 @@
+{
+  "bodySha256": "a0c29606bde47a88cf8277a0d43d6e300837d6854c0ebcc1f1dbc58143b93f78",
+  "cases": [
+    {
+      "args": [
+        [
+          "chown"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "-c",
+            "dscl . -list /Users UniqueID | tr -s ' '| sort -r"
+          ],
+          "command": "bash",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "chown",
+          "status"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "-c",
+            "dscl . -list /Users UniqueID | tr -s ' '| sort -r"
+          ],
+          "command": "bash",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "chown",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "-c",
+            "dscl . -list /Users UniqueID | tr -s ' '| sort -r"
+          ],
+          "command": "bash",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "chown"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "chown#custom#0",
+  "version": 1
+}

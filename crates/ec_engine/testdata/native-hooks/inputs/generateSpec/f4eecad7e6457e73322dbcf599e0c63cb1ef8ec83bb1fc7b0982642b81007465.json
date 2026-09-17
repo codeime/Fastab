@@ -1,0 +1,110 @@
+{
+  "bodySha256": "f4eecad7e6457e73322dbcf599e0c63cb1ef8ec83bb1fc7b0982642b81007465",
+  "cases": [
+    {
+      "args": [
+        [
+          "fig"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "_",
+            "request",
+            "--route",
+            "/graphql",
+            "--method",
+            "--body",
+            "{\"query\":\"query Scripts {\\n    currentUser {\\n      namespace {\\n        username\\n        scripts {\\n          ...ScriptFields\\n        }\\n      }\\n      teamMemberships {\\n        team {\\n          namespace {\\n            username\\n            scripts {\\n              ...ScriptFields\\n            }\\n          }\\n        }\\n      }\\n    }\\n  }\\n\\n  fragment ScriptFields on Script {\\n  name\\n  fields {\\n    icon\\n    displayName\\n    description\\n    templateVersion\\n    tags\\n    parameters {\\n      type\\n      name\\n      displayName\\n      description\\n      text {\\n        placeholder\\n      }\\n      checkbox {\\n        trueValueSubstitution\\n        falseValueSubstitution\\n      }\\n      selector {\\n        generators {\\n          named {\\n            name\\n          }\\n          shellScript {\\n            script\\n          }\\n          type\\n        }\\n        placeholder\\n        suggestions\\n      }\\n      path {\\n        extensions\\n        fileType\\n      }\\n    }\\n    runtime\\n  }\\n  relevanceScore\\n  lastInvokedAt\\n  lastInvokedAtByUser\\n  isOwnedByCurrentUser\\n}\"}"
+          ],
+          "command": "fig",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "fig",
+          "run"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "_",
+            "request",
+            "--route",
+            "/graphql",
+            "--method",
+            "--body",
+            "{\"query\":\"query Scripts {\\n    currentUser {\\n      namespace {\\n        username\\n        scripts {\\n          ...ScriptFields\\n        }\\n      }\\n      teamMemberships {\\n        team {\\n          namespace {\\n            username\\n            scripts {\\n              ...ScriptFields\\n            }\\n          }\\n        }\\n      }\\n    }\\n  }\\n\\n  fragment ScriptFields on Script {\\n  name\\n  fields {\\n    icon\\n    displayName\\n    description\\n    templateVersion\\n    tags\\n    parameters {\\n      type\\n      name\\n      displayName\\n      description\\n      text {\\n        placeholder\\n      }\\n      checkbox {\\n        trueValueSubstitution\\n        falseValueSubstitution\\n      }\\n      selector {\\n        generators {\\n          named {\\n            name\\n          }\\n          shellScript {\\n            script\\n          }\\n          type\\n        }\\n        placeholder\\n        suggestions\\n      }\\n      path {\\n        extensions\\n        fileType\\n      }\\n    }\\n    runtime\\n  }\\n  relevanceScore\\n  lastInvokedAt\\n  lastInvokedAtByUser\\n  isOwnedByCurrentUser\\n}\"}"
+          ],
+          "command": "fig",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "fig"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "generateSpec",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "fig/2.0.0#generateSpec#16",
+  "version": 1
+}

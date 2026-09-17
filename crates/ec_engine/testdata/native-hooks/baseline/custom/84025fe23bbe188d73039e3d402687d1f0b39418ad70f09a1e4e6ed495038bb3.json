@@ -1,0 +1,1414 @@
+{
+  "bodySha256": "84025fe23bbe188d73039e3d402687d1f0b39418ad70f09a1e4e6ed495038bb3",
+  "cases": [
+    {
+      "args": [
+        [
+          "deno"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "Requires overload signatures to be adjacent to each other",
+            "icon": "fig://icon?type=string",
+            "insertValue": "adjacent-overload-signatures,",
+            "name": "adjacent-overload-signatures"
+          },
+          {
+            "description": "Disallows the use of Typescript directives without a comment",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-ts-comment,",
+            "name": "ban-ts-comment"
+          },
+          {
+            "description": "Bans the use of primitive wrapper objects (e.g. `String` the object is a wrapper\nof `string` the primitive) in addition to the non-explicit `Function` type and\nthe misunderstood `Object` type",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-types,",
+            "name": "ban-types"
+          },
+          {
+            "description": "Warns the usage of unknown rule codes in ignore directives",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-unknown-rule-code,",
+            "name": "ban-unknown-rule-code"
+          },
+          {
+            "description": "Requires `deno-lint-ignore` to be annotated with one or more rule names",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-untagged-ignore,",
+            "name": "ban-untagged-ignore"
+          },
+          {
+            "description": "Warns unused ignore directives",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-unused-ignore,",
+            "name": "ban-unused-ignore"
+          },
+          {
+            "description": "Verifies the correct usage of constructors and calls to `super()`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "constructor-super,",
+            "name": "constructor-super"
+          },
+          {
+            "description": "Requires `for` loop control variables to increment in the correct direction",
+            "icon": "fig://icon?type=string",
+            "insertValue": "for-direction,",
+            "name": "for-direction"
+          },
+          {
+            "description": "Requires all property getter functions to return a value",
+            "icon": "fig://icon?type=string",
+            "insertValue": "getter-return,",
+            "name": "getter-return"
+          },
+          {
+            "description": "Enforce conventional usage of array construction",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-array-constructor,",
+            "name": "no-array-constructor"
+          },
+          {
+            "description": "Requires that async promise executor functions are not used",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-async-promise-executor,",
+            "name": "no-async-promise-executor"
+          },
+          {
+            "description": "Requires lexical declarations (`let`, `const`, `function` and `class`) in switch\n`case` or `default` clauses to be scoped with brackets",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-case-declarations,",
+            "name": "no-case-declarations"
+          },
+          {
+            "description": "Disallows modifying variables of class declarations",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-class-assign,",
+            "name": "no-class-assign"
+          },
+          {
+            "description": "Disallows comparing against negative zero (`-0`)",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-compare-neg-zero,",
+            "name": "no-compare-neg-zero"
+          },
+          {
+            "description": "Disallows the use of the assignment operator, `=`, in conditional statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-cond-assign,",
+            "name": "no-cond-assign"
+          },
+          {
+            "description": "Disallows the use of a constant expression in conditional test",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-constant-condition,",
+            "name": "no-constant-condition"
+          },
+          {
+            "description": "Disallows the use ascii control characters in regular expressions",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-control-regex,",
+            "name": "no-control-regex"
+          },
+          {
+            "description": "Disallows the use of the `debugger` statement",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-debugger,",
+            "name": "no-debugger"
+          },
+          {
+            "description": "Disallows the deletion of variables",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-delete-var,",
+            "name": "no-delete-var"
+          },
+          {
+            "description": "Warns the usage of the deprecated Deno APIs",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-deprecated-deno-api,",
+            "name": "no-deprecated-deno-api"
+          },
+          {
+            "description": "Disallows using an argument name more than once in a function signature",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-dupe-args,",
+            "name": "no-dupe-args"
+          },
+          {
+            "description": "Disallows using a class member function name more than once",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-dupe-class-members,",
+            "name": "no-dupe-class-members"
+          },
+          {
+            "description": "Disallows using the same condition twice in an `if`/`else if` statement",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-dupe-else-if,",
+            "name": "no-dupe-else-if"
+          },
+          {
+            "description": "Disallows duplicate keys in object literals",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-dupe-keys,",
+            "name": "no-dupe-keys"
+          },
+          {
+            "description": "Disallows using the same case clause in a switch statement more than once",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-duplicate-case,",
+            "name": "no-duplicate-case"
+          },
+          {
+            "description": "Disallows the use of empty block statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty,",
+            "name": "no-empty"
+          },
+          {
+            "description": "Disallows using the empty character class in a regular expression",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty-character-class,",
+            "name": "no-empty-character-class"
+          },
+          {
+            "description": "Disallows the declaration of an empty enum",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty-enum,",
+            "name": "no-empty-enum"
+          },
+          {
+            "description": "Disallows the declaration of an empty interface",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty-interface,",
+            "name": "no-empty-interface"
+          },
+          {
+            "description": "Disallows the use of empty patterns in destructuring",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty-pattern,",
+            "name": "no-empty-pattern"
+          },
+          {
+            "description": "Disallows the reassignment of exception parameters",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-ex-assign,",
+            "name": "no-ex-assign"
+          },
+          {
+            "description": "Disallows use of the `any` type",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-explicit-any,",
+            "name": "no-explicit-any"
+          },
+          {
+            "description": "Disallows unnecessary boolean casts",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-extra-boolean-cast,",
+            "name": "no-extra-boolean-cast"
+          },
+          {
+            "description": "Disallows unnecessary non-null assertions",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-extra-non-null-assertion,",
+            "name": "no-extra-non-null-assertion"
+          },
+          {
+            "description": "<!-- deno-fmt-ignore-file -->",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-extra-semi,",
+            "name": "no-extra-semi"
+          },
+          {
+            "description": "Disallows the implicit fallthrough of case statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-fallthrough,",
+            "name": "no-fallthrough"
+          },
+          {
+            "description": "Disallows the overwriting/reassignment of an existing function",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-func-assign,",
+            "name": "no-func-assign"
+          },
+          {
+            "description": "Disallows assignment to native Javascript objects",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-global-assign,",
+            "name": "no-global-assign"
+          },
+          {
+            "description": "Disallows reassignment of imported module bindings",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-import-assign,",
+            "name": "no-import-assign"
+          },
+          {
+            "description": "Disallows easily inferrable types",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-inferrable-types,",
+            "name": "no-inferrable-types"
+          },
+          {
+            "description": "Disallows variable or function definitions in nested blocks",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-inner-declarations,",
+            "name": "no-inner-declarations"
+          },
+          {
+            "description": "Disallows specifying invalid regular expressions in RegExp constructors",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-invalid-regexp,",
+            "name": "no-invalid-regexp"
+          },
+          {
+            "description": "Warns the wrong usage of triple-slash reference directives",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-invalid-triple-slash-reference,",
+            "name": "no-invalid-triple-slash-reference"
+          },
+          {
+            "description": "Disallows the use of non-space or non-tab whitespace characters",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-irregular-whitespace,",
+            "name": "no-irregular-whitespace"
+          },
+          {
+            "description": "Disallows defining `constructor`s for interfaces or `new` for classes",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-misused-new,",
+            "name": "no-misused-new"
+          },
+          {
+            "description": "Disallows the use of `namespace` and `module` keywords in TypeScript code",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-namespace,",
+            "name": "no-namespace"
+          },
+          {
+            "description": "Disallows the use of `new` operators with built-in `Symbol`s",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-new-symbol,",
+            "name": "no-new-symbol"
+          },
+          {
+            "description": "Disallows calling built-in global objects like functions",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-obj-calls,",
+            "name": "no-obj-calls"
+          },
+          {
+            "description": "Disallows expressing octal numbers via numeric literals beginning with `0`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-octal,",
+            "name": "no-octal"
+          },
+          {
+            "description": "Disallows the use of `Object.prototype` builtins directly",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-prototype-builtins,",
+            "name": "no-prototype-builtins"
+          },
+          {
+            "description": "Disallows redeclaration of variables, functions, parameters with the same name",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-redeclare,",
+            "name": "no-redeclare"
+          },
+          {
+            "description": "Disallows multiple spaces in regular expression literals",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-regex-spaces,",
+            "name": "no-regex-spaces"
+          },
+          {
+            "description": "Disallows self assignments",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-self-assign,",
+            "name": "no-self-assign"
+          },
+          {
+            "description": "Disallows returning values from setters",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-setter-return,",
+            "name": "no-setter-return"
+          },
+          {
+            "description": "Disallows shadowing of restricted names",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-shadow-restricted-names,",
+            "name": "no-shadow-restricted-names"
+          },
+          {
+            "description": "Disallows assigning variables to `this`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-this-alias,",
+            "name": "no-this-alias"
+          },
+          {
+            "description": "Disallows use of `this` or `super` before calling `super()` in constructors",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-this-before-super,",
+            "name": "no-this-before-super"
+          },
+          {
+            "description": "Disallows the unreachable code after the control flow statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unreachable,",
+            "name": "no-unreachable"
+          },
+          {
+            "description": "Disallows the use of control flow statements within `finally` blocks",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unsafe-finally,",
+            "name": "no-unsafe-finally"
+          },
+          {
+            "description": "Disallows the usage of negation operator `!` as the left operand of relational\noperators",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unsafe-negation,",
+            "name": "no-unsafe-negation"
+          },
+          {
+            "description": "Disallows unused labels",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unused-labels,",
+            "name": "no-unused-labels"
+          },
+          {
+            "description": "Enforces all variables used at least once",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unused-vars,",
+            "name": "no-unused-vars"
+          },
+          {
+            "description": "Enforces the use of block scoped variables over more error prone function scoped\nvariables. Block scoped variables are defined using `const` and `let` keywords",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-var,",
+            "name": "no-var"
+          },
+          {
+            "description": "Disallows the use of Web APIs via the `window` object",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-window-prefix,",
+            "name": "no-window-prefix"
+          },
+          {
+            "description": "Disallows the usage of `with` statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-with,",
+            "name": "no-with"
+          },
+          {
+            "description": "Recommends using const assertion (`as const`) over explicitly specifying literal\ntypes or using type assertion",
+            "icon": "fig://icon?type=string",
+            "insertValue": "prefer-as-const,",
+            "name": "prefer-as-const"
+          },
+          {
+            "description": "Recommends declaring variables with [`const`] over [`let`]",
+            "icon": "fig://icon?type=string",
+            "insertValue": "prefer-const,",
+            "name": "prefer-const"
+          },
+          {
+            "description": "Recommends the use of `namespace` keyword over `module` keyword when declaring\nTypeScript module",
+            "icon": "fig://icon?type=string",
+            "insertValue": "prefer-namespace-keyword,",
+            "name": "prefer-namespace-keyword"
+          },
+          {
+            "description": "Disallows async functions that have no await expression",
+            "icon": "fig://icon?type=string",
+            "insertValue": "require-await,",
+            "name": "require-await"
+          },
+          {
+            "description": "Disallows generator functions that have no `yield`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "require-yield,",
+            "name": "require-yield"
+          },
+          {
+            "description": "Disallows comparisons to `NaN`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "use-isnan,",
+            "name": "use-isnan"
+          },
+          {
+            "description": "Restricts the use of the `typeof` operator to a specific set of string literals",
+            "icon": "fig://icon?type=string",
+            "insertValue": "valid-typeof,",
+            "name": "valid-typeof"
+          }
+        ]
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "deno",
+          "lint"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "Requires overload signatures to be adjacent to each other",
+            "icon": "fig://icon?type=string",
+            "insertValue": "adjacent-overload-signatures,",
+            "name": "adjacent-overload-signatures"
+          },
+          {
+            "description": "Disallows the use of Typescript directives without a comment",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-ts-comment,",
+            "name": "ban-ts-comment"
+          },
+          {
+            "description": "Bans the use of primitive wrapper objects (e.g. `String` the object is a wrapper\nof `string` the primitive) in addition to the non-explicit `Function` type and\nthe misunderstood `Object` type",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-types,",
+            "name": "ban-types"
+          },
+          {
+            "description": "Warns the usage of unknown rule codes in ignore directives",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-unknown-rule-code,",
+            "name": "ban-unknown-rule-code"
+          },
+          {
+            "description": "Requires `deno-lint-ignore` to be annotated with one or more rule names",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-untagged-ignore,",
+            "name": "ban-untagged-ignore"
+          },
+          {
+            "description": "Warns unused ignore directives",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-unused-ignore,",
+            "name": "ban-unused-ignore"
+          },
+          {
+            "description": "Verifies the correct usage of constructors and calls to `super()`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "constructor-super,",
+            "name": "constructor-super"
+          },
+          {
+            "description": "Requires `for` loop control variables to increment in the correct direction",
+            "icon": "fig://icon?type=string",
+            "insertValue": "for-direction,",
+            "name": "for-direction"
+          },
+          {
+            "description": "Requires all property getter functions to return a value",
+            "icon": "fig://icon?type=string",
+            "insertValue": "getter-return,",
+            "name": "getter-return"
+          },
+          {
+            "description": "Enforce conventional usage of array construction",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-array-constructor,",
+            "name": "no-array-constructor"
+          },
+          {
+            "description": "Requires that async promise executor functions are not used",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-async-promise-executor,",
+            "name": "no-async-promise-executor"
+          },
+          {
+            "description": "Requires lexical declarations (`let`, `const`, `function` and `class`) in switch\n`case` or `default` clauses to be scoped with brackets",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-case-declarations,",
+            "name": "no-case-declarations"
+          },
+          {
+            "description": "Disallows modifying variables of class declarations",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-class-assign,",
+            "name": "no-class-assign"
+          },
+          {
+            "description": "Disallows comparing against negative zero (`-0`)",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-compare-neg-zero,",
+            "name": "no-compare-neg-zero"
+          },
+          {
+            "description": "Disallows the use of the assignment operator, `=`, in conditional statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-cond-assign,",
+            "name": "no-cond-assign"
+          },
+          {
+            "description": "Disallows the use of a constant expression in conditional test",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-constant-condition,",
+            "name": "no-constant-condition"
+          },
+          {
+            "description": "Disallows the use ascii control characters in regular expressions",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-control-regex,",
+            "name": "no-control-regex"
+          },
+          {
+            "description": "Disallows the use of the `debugger` statement",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-debugger,",
+            "name": "no-debugger"
+          },
+          {
+            "description": "Disallows the deletion of variables",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-delete-var,",
+            "name": "no-delete-var"
+          },
+          {
+            "description": "Warns the usage of the deprecated Deno APIs",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-deprecated-deno-api,",
+            "name": "no-deprecated-deno-api"
+          },
+          {
+            "description": "Disallows using an argument name more than once in a function signature",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-dupe-args,",
+            "name": "no-dupe-args"
+          },
+          {
+            "description": "Disallows using a class member function name more than once",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-dupe-class-members,",
+            "name": "no-dupe-class-members"
+          },
+          {
+            "description": "Disallows using the same condition twice in an `if`/`else if` statement",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-dupe-else-if,",
+            "name": "no-dupe-else-if"
+          },
+          {
+            "description": "Disallows duplicate keys in object literals",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-dupe-keys,",
+            "name": "no-dupe-keys"
+          },
+          {
+            "description": "Disallows using the same case clause in a switch statement more than once",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-duplicate-case,",
+            "name": "no-duplicate-case"
+          },
+          {
+            "description": "Disallows the use of empty block statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty,",
+            "name": "no-empty"
+          },
+          {
+            "description": "Disallows using the empty character class in a regular expression",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty-character-class,",
+            "name": "no-empty-character-class"
+          },
+          {
+            "description": "Disallows the declaration of an empty enum",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty-enum,",
+            "name": "no-empty-enum"
+          },
+          {
+            "description": "Disallows the declaration of an empty interface",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty-interface,",
+            "name": "no-empty-interface"
+          },
+          {
+            "description": "Disallows the use of empty patterns in destructuring",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty-pattern,",
+            "name": "no-empty-pattern"
+          },
+          {
+            "description": "Disallows the reassignment of exception parameters",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-ex-assign,",
+            "name": "no-ex-assign"
+          },
+          {
+            "description": "Disallows use of the `any` type",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-explicit-any,",
+            "name": "no-explicit-any"
+          },
+          {
+            "description": "Disallows unnecessary boolean casts",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-extra-boolean-cast,",
+            "name": "no-extra-boolean-cast"
+          },
+          {
+            "description": "Disallows unnecessary non-null assertions",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-extra-non-null-assertion,",
+            "name": "no-extra-non-null-assertion"
+          },
+          {
+            "description": "<!-- deno-fmt-ignore-file -->",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-extra-semi,",
+            "name": "no-extra-semi"
+          },
+          {
+            "description": "Disallows the implicit fallthrough of case statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-fallthrough,",
+            "name": "no-fallthrough"
+          },
+          {
+            "description": "Disallows the overwriting/reassignment of an existing function",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-func-assign,",
+            "name": "no-func-assign"
+          },
+          {
+            "description": "Disallows assignment to native Javascript objects",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-global-assign,",
+            "name": "no-global-assign"
+          },
+          {
+            "description": "Disallows reassignment of imported module bindings",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-import-assign,",
+            "name": "no-import-assign"
+          },
+          {
+            "description": "Disallows easily inferrable types",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-inferrable-types,",
+            "name": "no-inferrable-types"
+          },
+          {
+            "description": "Disallows variable or function definitions in nested blocks",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-inner-declarations,",
+            "name": "no-inner-declarations"
+          },
+          {
+            "description": "Disallows specifying invalid regular expressions in RegExp constructors",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-invalid-regexp,",
+            "name": "no-invalid-regexp"
+          },
+          {
+            "description": "Warns the wrong usage of triple-slash reference directives",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-invalid-triple-slash-reference,",
+            "name": "no-invalid-triple-slash-reference"
+          },
+          {
+            "description": "Disallows the use of non-space or non-tab whitespace characters",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-irregular-whitespace,",
+            "name": "no-irregular-whitespace"
+          },
+          {
+            "description": "Disallows defining `constructor`s for interfaces or `new` for classes",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-misused-new,",
+            "name": "no-misused-new"
+          },
+          {
+            "description": "Disallows the use of `namespace` and `module` keywords in TypeScript code",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-namespace,",
+            "name": "no-namespace"
+          },
+          {
+            "description": "Disallows the use of `new` operators with built-in `Symbol`s",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-new-symbol,",
+            "name": "no-new-symbol"
+          },
+          {
+            "description": "Disallows calling built-in global objects like functions",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-obj-calls,",
+            "name": "no-obj-calls"
+          },
+          {
+            "description": "Disallows expressing octal numbers via numeric literals beginning with `0`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-octal,",
+            "name": "no-octal"
+          },
+          {
+            "description": "Disallows the use of `Object.prototype` builtins directly",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-prototype-builtins,",
+            "name": "no-prototype-builtins"
+          },
+          {
+            "description": "Disallows redeclaration of variables, functions, parameters with the same name",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-redeclare,",
+            "name": "no-redeclare"
+          },
+          {
+            "description": "Disallows multiple spaces in regular expression literals",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-regex-spaces,",
+            "name": "no-regex-spaces"
+          },
+          {
+            "description": "Disallows self assignments",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-self-assign,",
+            "name": "no-self-assign"
+          },
+          {
+            "description": "Disallows returning values from setters",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-setter-return,",
+            "name": "no-setter-return"
+          },
+          {
+            "description": "Disallows shadowing of restricted names",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-shadow-restricted-names,",
+            "name": "no-shadow-restricted-names"
+          },
+          {
+            "description": "Disallows assigning variables to `this`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-this-alias,",
+            "name": "no-this-alias"
+          },
+          {
+            "description": "Disallows use of `this` or `super` before calling `super()` in constructors",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-this-before-super,",
+            "name": "no-this-before-super"
+          },
+          {
+            "description": "Disallows the unreachable code after the control flow statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unreachable,",
+            "name": "no-unreachable"
+          },
+          {
+            "description": "Disallows the use of control flow statements within `finally` blocks",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unsafe-finally,",
+            "name": "no-unsafe-finally"
+          },
+          {
+            "description": "Disallows the usage of negation operator `!` as the left operand of relational\noperators",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unsafe-negation,",
+            "name": "no-unsafe-negation"
+          },
+          {
+            "description": "Disallows unused labels",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unused-labels,",
+            "name": "no-unused-labels"
+          },
+          {
+            "description": "Enforces all variables used at least once",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unused-vars,",
+            "name": "no-unused-vars"
+          },
+          {
+            "description": "Enforces the use of block scoped variables over more error prone function scoped\nvariables. Block scoped variables are defined using `const` and `let` keywords",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-var,",
+            "name": "no-var"
+          },
+          {
+            "description": "Disallows the use of Web APIs via the `window` object",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-window-prefix,",
+            "name": "no-window-prefix"
+          },
+          {
+            "description": "Disallows the usage of `with` statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-with,",
+            "name": "no-with"
+          },
+          {
+            "description": "Recommends using const assertion (`as const`) over explicitly specifying literal\ntypes or using type assertion",
+            "icon": "fig://icon?type=string",
+            "insertValue": "prefer-as-const,",
+            "name": "prefer-as-const"
+          },
+          {
+            "description": "Recommends declaring variables with [`const`] over [`let`]",
+            "icon": "fig://icon?type=string",
+            "insertValue": "prefer-const,",
+            "name": "prefer-const"
+          },
+          {
+            "description": "Recommends the use of `namespace` keyword over `module` keyword when declaring\nTypeScript module",
+            "icon": "fig://icon?type=string",
+            "insertValue": "prefer-namespace-keyword,",
+            "name": "prefer-namespace-keyword"
+          },
+          {
+            "description": "Disallows async functions that have no await expression",
+            "icon": "fig://icon?type=string",
+            "insertValue": "require-await,",
+            "name": "require-await"
+          },
+          {
+            "description": "Disallows generator functions that have no `yield`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "require-yield,",
+            "name": "require-yield"
+          },
+          {
+            "description": "Disallows comparisons to `NaN`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "use-isnan,",
+            "name": "use-isnan"
+          },
+          {
+            "description": "Restricts the use of the `typeof` operator to a specific set of string literals",
+            "icon": "fig://icon?type=string",
+            "insertValue": "valid-typeof,",
+            "name": "valid-typeof"
+          }
+        ]
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "deno",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "Requires overload signatures to be adjacent to each other",
+            "icon": "fig://icon?type=string",
+            "insertValue": "adjacent-overload-signatures,",
+            "name": "adjacent-overload-signatures"
+          },
+          {
+            "description": "Disallows the use of Typescript directives without a comment",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-ts-comment,",
+            "name": "ban-ts-comment"
+          },
+          {
+            "description": "Bans the use of primitive wrapper objects (e.g. `String` the object is a wrapper\nof `string` the primitive) in addition to the non-explicit `Function` type and\nthe misunderstood `Object` type",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-types,",
+            "name": "ban-types"
+          },
+          {
+            "description": "Warns the usage of unknown rule codes in ignore directives",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-unknown-rule-code,",
+            "name": "ban-unknown-rule-code"
+          },
+          {
+            "description": "Requires `deno-lint-ignore` to be annotated with one or more rule names",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-untagged-ignore,",
+            "name": "ban-untagged-ignore"
+          },
+          {
+            "description": "Warns unused ignore directives",
+            "icon": "fig://icon?type=string",
+            "insertValue": "ban-unused-ignore,",
+            "name": "ban-unused-ignore"
+          },
+          {
+            "description": "Verifies the correct usage of constructors and calls to `super()`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "constructor-super,",
+            "name": "constructor-super"
+          },
+          {
+            "description": "Requires `for` loop control variables to increment in the correct direction",
+            "icon": "fig://icon?type=string",
+            "insertValue": "for-direction,",
+            "name": "for-direction"
+          },
+          {
+            "description": "Requires all property getter functions to return a value",
+            "icon": "fig://icon?type=string",
+            "insertValue": "getter-return,",
+            "name": "getter-return"
+          },
+          {
+            "description": "Enforce conventional usage of array construction",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-array-constructor,",
+            "name": "no-array-constructor"
+          },
+          {
+            "description": "Requires that async promise executor functions are not used",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-async-promise-executor,",
+            "name": "no-async-promise-executor"
+          },
+          {
+            "description": "Requires lexical declarations (`let`, `const`, `function` and `class`) in switch\n`case` or `default` clauses to be scoped with brackets",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-case-declarations,",
+            "name": "no-case-declarations"
+          },
+          {
+            "description": "Disallows modifying variables of class declarations",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-class-assign,",
+            "name": "no-class-assign"
+          },
+          {
+            "description": "Disallows comparing against negative zero (`-0`)",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-compare-neg-zero,",
+            "name": "no-compare-neg-zero"
+          },
+          {
+            "description": "Disallows the use of the assignment operator, `=`, in conditional statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-cond-assign,",
+            "name": "no-cond-assign"
+          },
+          {
+            "description": "Disallows the use of a constant expression in conditional test",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-constant-condition,",
+            "name": "no-constant-condition"
+          },
+          {
+            "description": "Disallows the use ascii control characters in regular expressions",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-control-regex,",
+            "name": "no-control-regex"
+          },
+          {
+            "description": "Disallows the use of the `debugger` statement",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-debugger,",
+            "name": "no-debugger"
+          },
+          {
+            "description": "Disallows the deletion of variables",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-delete-var,",
+            "name": "no-delete-var"
+          },
+          {
+            "description": "Warns the usage of the deprecated Deno APIs",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-deprecated-deno-api,",
+            "name": "no-deprecated-deno-api"
+          },
+          {
+            "description": "Disallows using an argument name more than once in a function signature",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-dupe-args,",
+            "name": "no-dupe-args"
+          },
+          {
+            "description": "Disallows using a class member function name more than once",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-dupe-class-members,",
+            "name": "no-dupe-class-members"
+          },
+          {
+            "description": "Disallows using the same condition twice in an `if`/`else if` statement",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-dupe-else-if,",
+            "name": "no-dupe-else-if"
+          },
+          {
+            "description": "Disallows duplicate keys in object literals",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-dupe-keys,",
+            "name": "no-dupe-keys"
+          },
+          {
+            "description": "Disallows using the same case clause in a switch statement more than once",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-duplicate-case,",
+            "name": "no-duplicate-case"
+          },
+          {
+            "description": "Disallows the use of empty block statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty,",
+            "name": "no-empty"
+          },
+          {
+            "description": "Disallows using the empty character class in a regular expression",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty-character-class,",
+            "name": "no-empty-character-class"
+          },
+          {
+            "description": "Disallows the declaration of an empty enum",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty-enum,",
+            "name": "no-empty-enum"
+          },
+          {
+            "description": "Disallows the declaration of an empty interface",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty-interface,",
+            "name": "no-empty-interface"
+          },
+          {
+            "description": "Disallows the use of empty patterns in destructuring",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-empty-pattern,",
+            "name": "no-empty-pattern"
+          },
+          {
+            "description": "Disallows the reassignment of exception parameters",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-ex-assign,",
+            "name": "no-ex-assign"
+          },
+          {
+            "description": "Disallows use of the `any` type",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-explicit-any,",
+            "name": "no-explicit-any"
+          },
+          {
+            "description": "Disallows unnecessary boolean casts",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-extra-boolean-cast,",
+            "name": "no-extra-boolean-cast"
+          },
+          {
+            "description": "Disallows unnecessary non-null assertions",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-extra-non-null-assertion,",
+            "name": "no-extra-non-null-assertion"
+          },
+          {
+            "description": "<!-- deno-fmt-ignore-file -->",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-extra-semi,",
+            "name": "no-extra-semi"
+          },
+          {
+            "description": "Disallows the implicit fallthrough of case statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-fallthrough,",
+            "name": "no-fallthrough"
+          },
+          {
+            "description": "Disallows the overwriting/reassignment of an existing function",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-func-assign,",
+            "name": "no-func-assign"
+          },
+          {
+            "description": "Disallows assignment to native Javascript objects",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-global-assign,",
+            "name": "no-global-assign"
+          },
+          {
+            "description": "Disallows reassignment of imported module bindings",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-import-assign,",
+            "name": "no-import-assign"
+          },
+          {
+            "description": "Disallows easily inferrable types",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-inferrable-types,",
+            "name": "no-inferrable-types"
+          },
+          {
+            "description": "Disallows variable or function definitions in nested blocks",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-inner-declarations,",
+            "name": "no-inner-declarations"
+          },
+          {
+            "description": "Disallows specifying invalid regular expressions in RegExp constructors",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-invalid-regexp,",
+            "name": "no-invalid-regexp"
+          },
+          {
+            "description": "Warns the wrong usage of triple-slash reference directives",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-invalid-triple-slash-reference,",
+            "name": "no-invalid-triple-slash-reference"
+          },
+          {
+            "description": "Disallows the use of non-space or non-tab whitespace characters",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-irregular-whitespace,",
+            "name": "no-irregular-whitespace"
+          },
+          {
+            "description": "Disallows defining `constructor`s for interfaces or `new` for classes",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-misused-new,",
+            "name": "no-misused-new"
+          },
+          {
+            "description": "Disallows the use of `namespace` and `module` keywords in TypeScript code",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-namespace,",
+            "name": "no-namespace"
+          },
+          {
+            "description": "Disallows the use of `new` operators with built-in `Symbol`s",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-new-symbol,",
+            "name": "no-new-symbol"
+          },
+          {
+            "description": "Disallows calling built-in global objects like functions",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-obj-calls,",
+            "name": "no-obj-calls"
+          },
+          {
+            "description": "Disallows expressing octal numbers via numeric literals beginning with `0`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-octal,",
+            "name": "no-octal"
+          },
+          {
+            "description": "Disallows the use of `Object.prototype` builtins directly",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-prototype-builtins,",
+            "name": "no-prototype-builtins"
+          },
+          {
+            "description": "Disallows redeclaration of variables, functions, parameters with the same name",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-redeclare,",
+            "name": "no-redeclare"
+          },
+          {
+            "description": "Disallows multiple spaces in regular expression literals",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-regex-spaces,",
+            "name": "no-regex-spaces"
+          },
+          {
+            "description": "Disallows self assignments",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-self-assign,",
+            "name": "no-self-assign"
+          },
+          {
+            "description": "Disallows returning values from setters",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-setter-return,",
+            "name": "no-setter-return"
+          },
+          {
+            "description": "Disallows shadowing of restricted names",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-shadow-restricted-names,",
+            "name": "no-shadow-restricted-names"
+          },
+          {
+            "description": "Disallows assigning variables to `this`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-this-alias,",
+            "name": "no-this-alias"
+          },
+          {
+            "description": "Disallows use of `this` or `super` before calling `super()` in constructors",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-this-before-super,",
+            "name": "no-this-before-super"
+          },
+          {
+            "description": "Disallows the unreachable code after the control flow statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unreachable,",
+            "name": "no-unreachable"
+          },
+          {
+            "description": "Disallows the use of control flow statements within `finally` blocks",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unsafe-finally,",
+            "name": "no-unsafe-finally"
+          },
+          {
+            "description": "Disallows the usage of negation operator `!` as the left operand of relational\noperators",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unsafe-negation,",
+            "name": "no-unsafe-negation"
+          },
+          {
+            "description": "Disallows unused labels",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unused-labels,",
+            "name": "no-unused-labels"
+          },
+          {
+            "description": "Enforces all variables used at least once",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-unused-vars,",
+            "name": "no-unused-vars"
+          },
+          {
+            "description": "Enforces the use of block scoped variables over more error prone function scoped\nvariables. Block scoped variables are defined using `const` and `let` keywords",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-var,",
+            "name": "no-var"
+          },
+          {
+            "description": "Disallows the use of Web APIs via the `window` object",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-window-prefix,",
+            "name": "no-window-prefix"
+          },
+          {
+            "description": "Disallows the usage of `with` statements",
+            "icon": "fig://icon?type=string",
+            "insertValue": "no-with,",
+            "name": "no-with"
+          },
+          {
+            "description": "Recommends using const assertion (`as const`) over explicitly specifying literal\ntypes or using type assertion",
+            "icon": "fig://icon?type=string",
+            "insertValue": "prefer-as-const,",
+            "name": "prefer-as-const"
+          },
+          {
+            "description": "Recommends declaring variables with [`const`] over [`let`]",
+            "icon": "fig://icon?type=string",
+            "insertValue": "prefer-const,",
+            "name": "prefer-const"
+          },
+          {
+            "description": "Recommends the use of `namespace` keyword over `module` keyword when declaring\nTypeScript module",
+            "icon": "fig://icon?type=string",
+            "insertValue": "prefer-namespace-keyword,",
+            "name": "prefer-namespace-keyword"
+          },
+          {
+            "description": "Disallows async functions that have no await expression",
+            "icon": "fig://icon?type=string",
+            "insertValue": "require-await,",
+            "name": "require-await"
+          },
+          {
+            "description": "Disallows generator functions that have no `yield`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "require-yield,",
+            "name": "require-yield"
+          },
+          {
+            "description": "Disallows comparisons to `NaN`",
+            "icon": "fig://icon?type=string",
+            "insertValue": "use-isnan,",
+            "name": "use-isnan"
+          },
+          {
+            "description": "Restricts the use of the `typeof` operator to a specific set of string literals",
+            "icon": "fig://icon?type=string",
+            "insertValue": "valid-typeof,",
+            "name": "valid-typeof"
+          }
+        ]
+      },
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "deno"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 3,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "deno#custom#10",
+  "version": 1
+}

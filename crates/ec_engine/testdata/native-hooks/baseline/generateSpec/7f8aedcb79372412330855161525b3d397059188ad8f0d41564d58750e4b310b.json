@@ -1,0 +1,199 @@
+{
+  "bodySha256": "7f8aedcb79372412330855161525b3d397059188ad8f0d41564d58750e4b310b",
+  "cases": [
+    {
+      "args": [
+        [
+          "xc"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [],
+          "command": "xc",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "expected": {
+        "kind": "spec",
+        "value": {
+          "name": "xc",
+          "subcommands": [
+            {
+              "description": {
+                "kind": "undefined"
+              },
+              "name": {
+                "kind": "undefined"
+              },
+              "options": [
+                {
+                  "args": {
+                    "name": "path",
+                    "template": "filepaths"
+                  },
+                  "description": "Specify a markdown file that contains tasks (default: \"README.md\")",
+                  "name": [
+                    "-f",
+                    "-file"
+                  ]
+                },
+                {
+                  "description": "Print the markdown code of a task rather than running it",
+                  "name": [
+                    "-d",
+                    "-display"
+                  ]
+                },
+                {
+                  "args": {
+                    "name": "heading",
+                    "suggestions": [
+                      "Tasks",
+                      "Usage",
+                      "Examples"
+                    ]
+                  },
+                  "description": "Specify the heading for xc tasks (default: \"Tasks\")",
+                  "name": [
+                    "-H",
+                    "-heading"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "xc",
+          "status"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [],
+          "command": "xc",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "expected": {
+        "kind": "spec",
+        "value": {
+          "name": "xc",
+          "subcommands": [
+            {
+              "description": {
+                "kind": "undefined"
+              },
+              "name": {
+                "kind": "undefined"
+              },
+              "options": [
+                {
+                  "args": {
+                    "name": "path",
+                    "template": "filepaths"
+                  },
+                  "description": "Specify a markdown file that contains tasks (default: \"README.md\")",
+                  "name": [
+                    "-f",
+                    "-file"
+                  ]
+                },
+                {
+                  "description": "Print the markdown code of a task rather than running it",
+                  "name": [
+                    "-d",
+                    "-display"
+                  ]
+                },
+                {
+                  "args": {
+                    "name": "heading",
+                    "suggestions": [
+                      "Tasks",
+                      "Usage",
+                      "Examples"
+                    ]
+                  },
+                  "description": "Specify the heading for xc tasks (default: \"Tasks\")",
+                  "name": [
+                    "-H",
+                    "-heading"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "xc"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "generateSpec",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "xc#generateSpec#0",
+  "version": 1
+}

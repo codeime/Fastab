@@ -59,6 +59,12 @@ jobs:
       - name: Verify native hook inventory
         run: node scripts/classify-native-hooks.mjs --check
 
+      - name: Test hook output baselines
+        run: node --test --test-concurrency=1 scripts/hook-baseline-contract.test.mjs scripts/capture-hook-baseline.test.mjs
+
+      - name: Verify hook output baselines
+        run: node scripts/capture-hook-baseline.mjs --check
+
       - name: Test native inventory and test-only source reference
         run: node --test --test-concurrency=1 scripts/classify-native-hooks.test.mjs scripts/reference-audit-worker.test.mjs scripts/capture-hook-reference.test.mjs scripts/capture-hook-reference-batch.test.mjs scripts/capture-typed-trigger-reference.test.mjs
 

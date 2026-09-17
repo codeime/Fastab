@@ -1,0 +1,215 @@
+{
+  "bodySha256": "d56f9ed1b9eb112da968b87d8ecbd2a2c24d31c4b4ee6a1512aaf1f103546dc3",
+  "cases": [
+    {
+      "args": [
+        [
+          "pnpm"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "spec",
+        "value": {
+          "name": "install",
+          "options": [
+            {
+              "description": "If true, pnpm will use only packages already available in the store. If a package won't be found locally, the installation will fail",
+              "name": "--offline"
+            },
+            {
+              "description": "If true, staleness checks for cached data will be bypassed, but missing data will be requested from the server. To force full offline mode, use --offline",
+              "name": "--prefer-offline"
+            },
+            {
+              "description": "Do not execute any scripts defined in the project package.json and its dependencies",
+              "name": "--ignore-scripts"
+            },
+            {
+              "args": {
+                "name": "Reporter Type",
+                "suggestions": [
+                  "silent",
+                  "default",
+                  "append-only",
+                  "ndjson"
+                ]
+              },
+              "description": "Allows you to choose the reporter that will log debug info to the terminal about the installation progress",
+              "name": "--reporter"
+            },
+            {
+              "description": "Pnpm will not install any package listed in devDependencies if the NODE_ENV environment variable is set to production.\nUse this flag to instruct pnpm to ignore NODE_ENV and take its production status from this flag instead",
+              "name": [
+                "-P",
+                "--save-prod"
+              ]
+            },
+            {
+              "description": "Only devDependencies are installed regardless of the NODE_ENV",
+              "name": [
+                "-D",
+                "--save-dev"
+              ]
+            },
+            {
+              "description": "OptionalDependencies are not installed",
+              "name": "--no-optional"
+            },
+            {
+              "description": "When used, only updates pnpm-lock.yaml and package.json instead of checking node_modules and downloading dependencies",
+              "name": "--lockfile-only"
+            },
+            {
+              "description": "If true, pnpm doesn't generate a lockfile and fails to install if the lockfile is out of sync with the manifest / an update is needed or no lockfile is present",
+              "name": "--frozen-lockfile"
+            },
+            {
+              "description": "Starts a store server in the background. The store server will keep running after installation is done. To stop the store server, run pnpm server stop",
+              "name": "--use-store-server"
+            },
+            {
+              "description": "Creates a flat node_modules structure, similar to that of npm or yarn. WARNING: This is highly discouraged",
+              "name": "--shamefully-hoist"
+            }
+          ]
+        }
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "pnpm",
+          "install"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "spec",
+        "value": {
+          "name": "install",
+          "options": [
+            {
+              "description": "If true, pnpm will use only packages already available in the store. If a package won't be found locally, the installation will fail",
+              "name": "--offline"
+            },
+            {
+              "description": "If true, staleness checks for cached data will be bypassed, but missing data will be requested from the server. To force full offline mode, use --offline",
+              "name": "--prefer-offline"
+            },
+            {
+              "description": "Do not execute any scripts defined in the project package.json and its dependencies",
+              "name": "--ignore-scripts"
+            },
+            {
+              "args": {
+                "name": "Reporter Type",
+                "suggestions": [
+                  "silent",
+                  "default",
+                  "append-only",
+                  "ndjson"
+                ]
+              },
+              "description": "Allows you to choose the reporter that will log debug info to the terminal about the installation progress",
+              "name": "--reporter"
+            },
+            {
+              "description": "Pnpm will not install any package listed in devDependencies if the NODE_ENV environment variable is set to production.\nUse this flag to instruct pnpm to ignore NODE_ENV and take its production status from this flag instead",
+              "name": [
+                "-P",
+                "--save-prod"
+              ]
+            },
+            {
+              "description": "Only devDependencies are installed regardless of the NODE_ENV",
+              "name": [
+                "-D",
+                "--save-dev"
+              ]
+            },
+            {
+              "description": "OptionalDependencies are not installed",
+              "name": "--no-optional"
+            },
+            {
+              "description": "When used, only updates pnpm-lock.yaml and package.json instead of checking node_modules and downloading dependencies",
+              "name": "--lockfile-only"
+            },
+            {
+              "description": "If true, pnpm doesn't generate a lockfile and fails to install if the lockfile is out of sync with the manifest / an update is needed or no lockfile is present",
+              "name": "--frozen-lockfile"
+            },
+            {
+              "description": "Starts a store server in the background. The store server will keep running after installation is done. To stop the store server, run pnpm server stop",
+              "name": "--use-store-server"
+            },
+            {
+              "description": "Creates a flat node_modules structure, similar to that of npm or yarn. WARNING: This is highly discouraged",
+              "name": "--shamefully-hoist"
+            }
+          ]
+        }
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "pnpm"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "generateSpec",
+  "hookCount": 2,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "pnpm#generateSpec#19",
+  "version": 1
+}

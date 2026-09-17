@@ -1,0 +1,147 @@
+{
+  "bodySha256": "44bce6a45f5a605f88ad45018b2ccead60cf2b04355eb377de9001cad5f000d0",
+  "cases": [
+    {
+      "args": [
+        ""
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "term-1",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "a"
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "a",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "term-2",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "src/main.rs"
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "src/main.rs",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "term-3",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "a:b:c"
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "a:b:c",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "term-4",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "--flag=value"
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "--flag=value",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "term-5",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "user@host:path"
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "user@host:path",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "term-6",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "src/main.rs"
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "src/main.rs",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "getQueryTerm",
+  "hookCount": 2,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "spring#getQueryTerm#2",
+  "version": 1
+}

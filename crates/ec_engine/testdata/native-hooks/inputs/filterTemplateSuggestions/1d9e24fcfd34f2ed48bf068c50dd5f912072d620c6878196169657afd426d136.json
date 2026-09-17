@@ -1,0 +1,137 @@
+{
+  "bodySha256": "1d9e24fcfd34f2ed48bf068c50dd5f912072d620c6878196169657afd426d136",
+  "cases": [
+    {
+      "args": [
+        [
+          {
+            "name": "README.md",
+            "type": "file"
+          },
+          {
+            "name": "src/",
+            "type": "folder"
+          },
+          {
+            "name": "package.json",
+            "type": "file"
+          },
+          {
+            "name": "dist/",
+            "type": "folder"
+          },
+          {
+            "name": ".env",
+            "type": "file"
+          },
+          {
+            "name": "bin/",
+            "type": "folder"
+          },
+          {
+            "name": "LICENSE",
+            "type": "file"
+          },
+          {
+            "name": "node_modules/",
+            "type": "folder"
+          }
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "mixed",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        []
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "id": "empty",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          {
+            "name": "README.md",
+            "type": "file"
+          },
+          {
+            "name": "src/",
+            "type": "folder"
+          },
+          {
+            "name": "package.json",
+            "type": "file"
+          },
+          {
+            "name": "dist/",
+            "type": "folder"
+          },
+          {
+            "name": ".env",
+            "type": "file"
+          },
+          {
+            "name": "bin/",
+            "type": "folder"
+          },
+          {
+            "name": "LICENSE",
+            "type": "file"
+          },
+          {
+            "name": "node_modules/",
+            "type": "folder"
+          }
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "filterTemplateSuggestions",
+  "hookCount": 6,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "xcodeproj#filterTemplateSuggestions#0",
+  "version": 1
+}

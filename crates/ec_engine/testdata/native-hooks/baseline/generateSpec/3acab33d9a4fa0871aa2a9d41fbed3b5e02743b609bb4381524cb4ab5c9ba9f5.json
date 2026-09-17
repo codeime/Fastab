@@ -1,0 +1,531 @@
+{
+  "bodySha256": "3acab33d9a4fa0871aa2a9d41fbed3b5e02743b609bb4381524cb4ab5c9ba9f5",
+  "cases": [
+    {
+      "args": [
+        [
+          "rails"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "-c",
+            "until [[ -f Gemfile ]] || [[ $PWD = '/' ]]; do cd ..; done; if [ -f Gemfile ]; then cat Gemfile | \\grep \"gem ['\\\"]rails['\\\"]\"; fi"
+          ],
+          "command": "bash",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "expected": {
+        "kind": "spec",
+        "value": {
+          "name": "rails",
+          "subcommands": [
+            {
+              "args": {
+                "description": "Path to directory to be created containing the new application",
+                "name": "path"
+              },
+              "description": "Create a new rails application",
+              "name": "new",
+              "options": [
+                {
+                  "args": {},
+                  "description": "Skip namespace (affects only isolated applications)",
+                  "name": "-skip-namespace"
+                },
+                {
+                  "args": {},
+                  "description": "Path to the Ruby binary of your choice",
+                  "name": [
+                    "-r",
+                    "--ruby"
+                  ]
+                },
+                {
+                  "description": "Path to some application template (can be a filesystem path or URL)",
+                  "name": "-m"
+                },
+                {
+                  "args": {
+                    "name": "database",
+                    "suggestions": [
+                      "mysql",
+                      "postgresql",
+                      "sqlite3",
+                      "oracle",
+                      "frontbase",
+                      "ibm_db",
+                      "sqlserver",
+                      "jdbcmysql",
+                      "jdbcsqlite3",
+                      "jdbcpostgresql",
+                      "jdbc"
+                    ]
+                  },
+                  "description": "Preconfigure for selected database - defaults to sqlite3",
+                  "name": "-d"
+                },
+                {
+                  "description": "Don't create a Gemfile",
+                  "name": "--skip-gemfile"
+                },
+                {
+                  "description": "Skip .gitignore file",
+                  "name": "-G"
+                },
+                {
+                  "description": "Skip source control .keep files",
+                  "name": "--skip-keeps"
+                },
+                {
+                  "description": "Skip Action Mailer files",
+                  "name": "-M"
+                },
+                {
+                  "description": "Skip Action Mailbox gem",
+                  "name": "--skip-action-mailbox"
+                },
+                {
+                  "description": "Skip Action Text gem",
+                  "name": "--skip-action-text"
+                },
+                {
+                  "description": "Skip Active Record files",
+                  "name": "-O"
+                },
+                {
+                  "description": "Skip Active Storage files",
+                  "name": "--skip-active-storage"
+                },
+                {
+                  "description": "Skip Puma related files",
+                  "name": "-P"
+                },
+                {
+                  "description": "Skip Action Cable files",
+                  "name": "-C"
+                },
+                {
+                  "description": "Skip Sprockets files",
+                  "name": "-S"
+                },
+                {
+                  "description": "Don't install Spring application preloader",
+                  "name": "--skip-spring"
+                },
+                {
+                  "description": "Don't generate configuration that depends on the listen gem",
+                  "name": "--skip-listen"
+                },
+                {
+                  "description": "Skip JavaScript files",
+                  "name": "-J"
+                },
+                {
+                  "description": "Skip turbolinks gem",
+                  "name": "--skip-turbolinks"
+                },
+                {
+                  "description": "Skip test files",
+                  "name": "-T"
+                },
+                {
+                  "description": "Skip system test files",
+                  "name": "--skip-system-test"
+                },
+                {
+                  "description": "Skip bootsnap gem",
+                  "name": "--skip-bootsnap"
+                },
+                {
+                  "description": "Setup the application with Gemfile pointing to your Rails checkout",
+                  "name": "--dev"
+                },
+                {
+                  "description": "Setup the application with Gemfile pointing to Rails repository",
+                  "name": "--edge"
+                },
+                {
+                  "args": {
+                    "name": "path"
+                  },
+                  "description": "Path to file containing extra configuration options for rails command",
+                  "name": "--rc"
+                },
+                {
+                  "description": "Skip loading of extra configuration options from .railsrc file",
+                  "name": "--no-rc"
+                },
+                {
+                  "description": "Preconfigure smaller stack for API only apps",
+                  "name": "--api"
+                },
+                {
+                  "description": "Don't run bundle install",
+                  "name": "-B"
+                },
+                {
+                  "args": {
+                    "name": "framework",
+                    "suggestions": [
+                      "react",
+                      "vue",
+                      "angular",
+                      "elm",
+                      "stimulus"
+                    ]
+                  },
+                  "description": "Preconfigure Webpack with a particular framework",
+                  "name": "--webpacker"
+                },
+                {
+                  "description": "Don't run Webpack install",
+                  "name": "--skip-webpack-install]"
+                },
+                {
+                  "description": "Overwrite files that already exist",
+                  "name": [
+                    "--f",
+                    "--force"
+                  ]
+                },
+                {
+                  "description": "Run but do not make any changes",
+                  "name": [
+                    "--p",
+                    "--pretend"
+                  ]
+                },
+                {
+                  "description": "Suppress status output",
+                  "name": [
+                    "--q",
+                    "--quiet"
+                  ]
+                },
+                {
+                  "description": "Skip files that already exist",
+                  "name": [
+                    "--s",
+                    "--skip"
+                  ]
+                },
+                {
+                  "description": "Show this help message and quit",
+                  "name": [
+                    "--h",
+                    "--help"
+                  ]
+                },
+                {
+                  "description": "Show Rails version number and quit",
+                  "name": [
+                    "--v",
+                    "--version"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "rails",
+          "status"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "-c",
+            "until [[ -f Gemfile ]] || [[ $PWD = '/' ]]; do cd ..; done; if [ -f Gemfile ]; then cat Gemfile | \\grep \"gem ['\\\"]rails['\\\"]\"; fi"
+          ],
+          "command": "bash",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "expected": {
+        "kind": "spec",
+        "value": {
+          "name": "rails",
+          "subcommands": [
+            {
+              "args": {
+                "description": "Path to directory to be created containing the new application",
+                "name": "path"
+              },
+              "description": "Create a new rails application",
+              "name": "new",
+              "options": [
+                {
+                  "args": {},
+                  "description": "Skip namespace (affects only isolated applications)",
+                  "name": "-skip-namespace"
+                },
+                {
+                  "args": {},
+                  "description": "Path to the Ruby binary of your choice",
+                  "name": [
+                    "-r",
+                    "--ruby"
+                  ]
+                },
+                {
+                  "description": "Path to some application template (can be a filesystem path or URL)",
+                  "name": "-m"
+                },
+                {
+                  "args": {
+                    "name": "database",
+                    "suggestions": [
+                      "mysql",
+                      "postgresql",
+                      "sqlite3",
+                      "oracle",
+                      "frontbase",
+                      "ibm_db",
+                      "sqlserver",
+                      "jdbcmysql",
+                      "jdbcsqlite3",
+                      "jdbcpostgresql",
+                      "jdbc"
+                    ]
+                  },
+                  "description": "Preconfigure for selected database - defaults to sqlite3",
+                  "name": "-d"
+                },
+                {
+                  "description": "Don't create a Gemfile",
+                  "name": "--skip-gemfile"
+                },
+                {
+                  "description": "Skip .gitignore file",
+                  "name": "-G"
+                },
+                {
+                  "description": "Skip source control .keep files",
+                  "name": "--skip-keeps"
+                },
+                {
+                  "description": "Skip Action Mailer files",
+                  "name": "-M"
+                },
+                {
+                  "description": "Skip Action Mailbox gem",
+                  "name": "--skip-action-mailbox"
+                },
+                {
+                  "description": "Skip Action Text gem",
+                  "name": "--skip-action-text"
+                },
+                {
+                  "description": "Skip Active Record files",
+                  "name": "-O"
+                },
+                {
+                  "description": "Skip Active Storage files",
+                  "name": "--skip-active-storage"
+                },
+                {
+                  "description": "Skip Puma related files",
+                  "name": "-P"
+                },
+                {
+                  "description": "Skip Action Cable files",
+                  "name": "-C"
+                },
+                {
+                  "description": "Skip Sprockets files",
+                  "name": "-S"
+                },
+                {
+                  "description": "Don't install Spring application preloader",
+                  "name": "--skip-spring"
+                },
+                {
+                  "description": "Don't generate configuration that depends on the listen gem",
+                  "name": "--skip-listen"
+                },
+                {
+                  "description": "Skip JavaScript files",
+                  "name": "-J"
+                },
+                {
+                  "description": "Skip turbolinks gem",
+                  "name": "--skip-turbolinks"
+                },
+                {
+                  "description": "Skip test files",
+                  "name": "-T"
+                },
+                {
+                  "description": "Skip system test files",
+                  "name": "--skip-system-test"
+                },
+                {
+                  "description": "Skip bootsnap gem",
+                  "name": "--skip-bootsnap"
+                },
+                {
+                  "description": "Setup the application with Gemfile pointing to your Rails checkout",
+                  "name": "--dev"
+                },
+                {
+                  "description": "Setup the application with Gemfile pointing to Rails repository",
+                  "name": "--edge"
+                },
+                {
+                  "args": {
+                    "name": "path"
+                  },
+                  "description": "Path to file containing extra configuration options for rails command",
+                  "name": "--rc"
+                },
+                {
+                  "description": "Skip loading of extra configuration options from .railsrc file",
+                  "name": "--no-rc"
+                },
+                {
+                  "description": "Preconfigure smaller stack for API only apps",
+                  "name": "--api"
+                },
+                {
+                  "description": "Don't run bundle install",
+                  "name": "-B"
+                },
+                {
+                  "args": {
+                    "name": "framework",
+                    "suggestions": [
+                      "react",
+                      "vue",
+                      "angular",
+                      "elm",
+                      "stimulus"
+                    ]
+                  },
+                  "description": "Preconfigure Webpack with a particular framework",
+                  "name": "--webpacker"
+                },
+                {
+                  "description": "Don't run Webpack install",
+                  "name": "--skip-webpack-install]"
+                },
+                {
+                  "description": "Overwrite files that already exist",
+                  "name": [
+                    "--f",
+                    "--force"
+                  ]
+                },
+                {
+                  "description": "Run but do not make any changes",
+                  "name": [
+                    "--p",
+                    "--pretend"
+                  ]
+                },
+                {
+                  "description": "Suppress status output",
+                  "name": [
+                    "--q",
+                    "--quiet"
+                  ]
+                },
+                {
+                  "description": "Skip files that already exist",
+                  "name": [
+                    "--s",
+                    "--skip"
+                  ]
+                },
+                {
+                  "description": "Show this help message and quit",
+                  "name": [
+                    "--h",
+                    "--help"
+                  ]
+                },
+                {
+                  "description": "Show Rails version number and quit",
+                  "name": [
+                    "--v",
+                    "--version"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "rails"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "generateSpec",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "rails#generateSpec#0",
+  "version": 1
+}

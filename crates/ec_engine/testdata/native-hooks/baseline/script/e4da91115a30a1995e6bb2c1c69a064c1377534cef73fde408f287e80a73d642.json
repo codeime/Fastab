@@ -1,0 +1,133 @@
+{
+  "bodySha256": "e4da91115a30a1995e6bb2c1c69a064c1377534cef73fde408f287e80a73d642",
+  "cases": [
+    {
+      "args": [
+        [
+          "new"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "argv",
+        "value": [
+          "curl",
+          "-sfL",
+          "-H",
+          "Accept: application/json",
+          "https://azuresearch-usnc.nuget.org/query?packageType=Template&q=new"
+        ]
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "new",
+          "-i"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "argv",
+        "value": [
+          "curl",
+          "-sfL",
+          "-H",
+          "Accept: application/json",
+          "https://azuresearch-usnc.nuget.org/query?packageType=Template&q=-i"
+        ]
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "new",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "argv",
+        "value": [
+          "curl",
+          "-sfL",
+          "-H",
+          "Accept: application/json",
+          "https://azuresearch-usnc.nuget.org/query?packageType=Template&q=--help"
+        ]
+      },
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "new"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "script",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "dotnet/dotnet-new#script#0",
+  "version": 1
+}

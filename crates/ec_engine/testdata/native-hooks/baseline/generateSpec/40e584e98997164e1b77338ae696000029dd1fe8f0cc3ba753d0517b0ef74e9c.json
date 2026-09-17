@@ -1,0 +1,177 @@
+{
+  "bodySha256": "40e584e98997164e1b77338ae696000029dd1fe8f0cc3ba753d0517b0ef74e9c",
+  "cases": [
+    {
+      "args": [
+        [
+          "z"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "spec",
+        "value": {
+          "args": {
+            "generators": {
+              "custom": {
+                "bodySha256": "1e54b2491260ab1f0989125abe04bba670a19ac0853a580b0a8ac6f4566f44d2",
+                "kind": "function"
+              }
+            },
+            "isOptional": true,
+            "isVariadic": true,
+            "name": "directory"
+          },
+          "description": "CLI tool to jump around directories",
+          "name": "z",
+          "options": [
+            {
+              "description": "Restrict matches to subdirectories of the current directory",
+              "name": "-c"
+            },
+            {
+              "description": "Echo the best match, don't cd",
+              "name": "-e"
+            },
+            {
+              "description": "Show a brief help message",
+              "name": "-h"
+            },
+            {
+              "description": "List only",
+              "name": "-l"
+            },
+            {
+              "description": "Match by rank only",
+              "name": "-r"
+            },
+            {
+              "description": "Match by recent access only",
+              "name": "-t"
+            },
+            {
+              "description": "Remove the current directory from the datafile",
+              "name": "-x"
+            }
+          ]
+        }
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "z",
+          "status"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "spec",
+        "value": {
+          "args": {
+            "generators": {
+              "custom": {
+                "bodySha256": "1e54b2491260ab1f0989125abe04bba670a19ac0853a580b0a8ac6f4566f44d2",
+                "kind": "function"
+              }
+            },
+            "isOptional": true,
+            "isVariadic": true,
+            "name": "directory"
+          },
+          "description": "CLI tool to jump around directories",
+          "name": "z",
+          "options": [
+            {
+              "description": "Restrict matches to subdirectories of the current directory",
+              "name": "-c"
+            },
+            {
+              "description": "Echo the best match, don't cd",
+              "name": "-e"
+            },
+            {
+              "description": "Show a brief help message",
+              "name": "-h"
+            },
+            {
+              "description": "List only",
+              "name": "-l"
+            },
+            {
+              "description": "Match by rank only",
+              "name": "-r"
+            },
+            {
+              "description": "Match by recent access only",
+              "name": "-t"
+            },
+            {
+              "description": "Remove the current directory from the datafile",
+              "name": "-x"
+            }
+          ]
+        }
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "z"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "generateSpec",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "z#generateSpec#0",
+  "version": 1
+}

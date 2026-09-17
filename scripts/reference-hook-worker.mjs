@@ -282,7 +282,13 @@ async function run(payload) {
        const arrayPush = Array.prototype.push;
        const PromiseType = Promise;
        const ErrorType = Error;
+       const DateType = Date;
        const defineProperty = Object.defineProperty;
+       const waitDelay = ms => {
+         if (typeof ms !== "number" || !(ms > 0)) return;
+         const start = DateType.now();
+         while (DateType.now() - start < ms) {}
+       };
        return (fn, receiver, argsJson, rulesJson) => {
          const calls = [];
          const rules = parse(rulesJson);
@@ -293,6 +299,11 @@ async function run(payload) {
            env: item?.env ?? null,
            timeout: item?.timeout ?? null,
          });
+         const preDelay = apply(arrayFind, rules, [
+           item => item && typeof item.delayMs === "number" && item.delayMs > 0 &&
+             (item.command == null || item.command === ""),
+         ]);
+         if (preDelay) waitDelay(preDelay.delayMs);
          const mockExec = async request => {
            const normalized = typeof request === "string"
              ? { command: request, args: [] } : request;
@@ -306,6 +317,9 @@ async function run(payload) {
              const error = new ErrorType("unmocked command");
              defineProperty(error, "name", { value: "UnmockedCommand" });
              throw error;
+           }
+           if (typeof rule.delayMs === "number" && rule.delayMs > 0) {
+             waitDelay(rule.delayMs);
            }
            if (rule.kind === "pending" || rule.kind === "timeout") {
              return await new PromiseType(() => {});

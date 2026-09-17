@@ -1,0 +1,157 @@
+{
+  "bodySha256": "0d20fd74c4a5a50aa14dc18a0d5418b280291c817d9cfc146ee852308a31b35e",
+  "cases": [
+    {
+      "args": [
+        "a",
+        "ab"
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "bool",
+        "value": false
+      },
+      "id": "pair-1",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "src/",
+        "src"
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "bool",
+        "value": false
+      },
+      "id": "pair-2",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "",
+        "x"
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "bool",
+        "value": true
+      },
+      "id": "pair-3",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "a/b",
+        "a/b/"
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "bool",
+        "value": false
+      },
+      "id": "pair-4",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "foo:bar",
+        "foo:"
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "bool",
+        "value": false
+      },
+      "id": "pair-5",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "a",
+        "ab"
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "trigger",
+  "hookCount": 8,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "apt#trigger#11",
+  "version": 1
+}

@@ -1,0 +1,454 @@
+{
+  "bodySha256": "5c415cacc2e9cfe61ff86d5ec428d6b0089216ab3e13fd1acb53ed513b9e2606",
+  "cases": [
+    {
+      "args": [
+        [
+          "chezmoi"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "after",
+              "a"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "before",
+              "b"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "empty",
+              "e"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": "encrypted"
+          },
+          {
+            "description": "Attribute modifier",
+            "name": "exact"
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "executable",
+              "x"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "once",
+              "o"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "private",
+              "p"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "readonly",
+              "r"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": "remove"
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "template",
+              "t"
+            ]
+          },
+          {
+            "description": "Type modifier",
+            "name": "create"
+          },
+          {
+            "description": "Type modifier",
+            "name": "modify"
+          },
+          {
+            "description": "Type modifier",
+            "name": "script"
+          },
+          {
+            "description": "Type modifier",
+            "name": "symlink"
+          }
+        ]
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "chezmoi",
+          "chattr"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "after",
+              "a"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "before",
+              "b"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "empty",
+              "e"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": "encrypted"
+          },
+          {
+            "description": "Attribute modifier",
+            "name": "exact"
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "executable",
+              "x"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "once",
+              "o"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "private",
+              "p"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "readonly",
+              "r"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": "remove"
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "template",
+              "t"
+            ]
+          },
+          {
+            "description": "Type modifier",
+            "name": "create"
+          },
+          {
+            "description": "Type modifier",
+            "name": "modify"
+          },
+          {
+            "description": "Type modifier",
+            "name": "script"
+          },
+          {
+            "description": "Type modifier",
+            "name": "symlink"
+          }
+        ]
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "chezmoi",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "+after",
+              "+a"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "+before",
+              "+b"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "+empty",
+              "+e"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": "+encrypted"
+          },
+          {
+            "description": "Attribute modifier",
+            "name": "+exact"
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "+executable",
+              "+x"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "+once",
+              "+o"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "+private",
+              "+p"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "+readonly",
+              "+r"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": "+remove"
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "+template",
+              "+t"
+            ]
+          },
+          {
+            "description": "Type modifier",
+            "name": "+create"
+          },
+          {
+            "description": "Type modifier",
+            "name": "+modify"
+          },
+          {
+            "description": "Type modifier",
+            "name": "+script"
+          },
+          {
+            "description": "Type modifier",
+            "name": "+symlink"
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "-after",
+              "-a"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "-before",
+              "-b"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "-empty",
+              "-e"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": "-encrypted"
+          },
+          {
+            "description": "Attribute modifier",
+            "name": "-exact"
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "-executable",
+              "-x"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "-once",
+              "-o"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "-private",
+              "-p"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "-readonly",
+              "-r"
+            ]
+          },
+          {
+            "description": "Attribute modifier",
+            "name": "-remove"
+          },
+          {
+            "description": "Attribute modifier",
+            "name": [
+              "-template",
+              "-t"
+            ]
+          },
+          {
+            "description": "Type modifier",
+            "name": "-create"
+          },
+          {
+            "description": "Type modifier",
+            "name": "-modify"
+          },
+          {
+            "description": "Type modifier",
+            "name": "-script"
+          },
+          {
+            "description": "Type modifier",
+            "name": "-symlink"
+          }
+        ]
+      },
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "chezmoi"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "chezmoi#custom#24",
+  "version": 1
+}

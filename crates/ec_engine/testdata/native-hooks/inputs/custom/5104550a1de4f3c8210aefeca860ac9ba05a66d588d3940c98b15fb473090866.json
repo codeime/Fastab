@@ -1,0 +1,148 @@
+{
+  "bodySha256": "5104550a1de4f3c8210aefeca860ac9ba05a66d588d3940c98b15fb473090866",
+  "cases": [
+    {
+      "args": [
+        [
+          "tldr"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "-Al",
+            "/home/user/.tldrc/tldr/pages/android/",
+            "/home/user/.tldrc/tldr/pages/common/",
+            "/home/user/.tldrc/tldr/pages/linux/",
+            "/home/user/.tldrc/tldr/pages/osx/",
+            "/home/user/.tldrc/tldr/pages/sunos/",
+            "/home/user/.tldrc/tldr/pages/windows/"
+          ],
+          "command": "ls",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "tldr",
+          "status"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "-Al",
+            "/home/user/.tldrc/tldr/pages/android/",
+            "/home/user/.tldrc/tldr/pages/common/",
+            "/home/user/.tldrc/tldr/pages/linux/",
+            "/home/user/.tldrc/tldr/pages/osx/",
+            "/home/user/.tldrc/tldr/pages/sunos/",
+            "/home/user/.tldrc/tldr/pages/windows/"
+          ],
+          "command": "ls",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "tldr",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "-Al",
+            "/home/user/.tldrc/tldr/pages/android/",
+            "/home/user/.tldrc/tldr/pages/common/",
+            "/home/user/.tldrc/tldr/pages/linux/",
+            "/home/user/.tldrc/tldr/pages/osx/",
+            "/home/user/.tldrc/tldr/pages/sunos/",
+            "/home/user/.tldrc/tldr/pages/windows/"
+          ],
+          "command": "ls",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "tldr"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "tldr#custom#3",
+  "version": 1
+}

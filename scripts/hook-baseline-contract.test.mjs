@@ -73,8 +73,8 @@ test("unknown fields throw at every object layer", async () => {
   assert.throws(() => validateBaseline(extraSuggestion), /unknown field "score"/);
 
   const extraExec = clone(sample);
-  extraExec.cases[0].exec[0].delayMs = 10;
-  assert.throws(() => validateBaseline(extraExec), /unknown field "delayMs"/);
+  extraExec.cases[0].exec[0].foo = 10;
+  assert.throws(() => validateBaseline(extraExec), /unknown field "foo"/);
 
   const extraContext = clone(sample);
   extraContext.cases[0].context.hostname = "box";
@@ -128,6 +128,16 @@ test("args count and type must match the field contract", async () => {
 
   trigger.cases[0].args = ["only-one"];
   assert.throws(() => validateBaseline(trigger), /has 1 value\(s\); trigger requires 2/);
+});
+
+test("delayMs-only exec rules are valid for timeout cases", async () => {
+  const sample = await loadSample();
+  const timeout = clone(sample);
+  timeout.cases[0].id = "timeout";
+  timeout.cases[0].timeoutMs = 50;
+  timeout.cases[0].exec = [{ delayMs: 10_000 }];
+  timeout.cases[0].expected = { kind: "timeout" };
+  assert.equal(validateBaseline(timeout), timeout);
 });
 
 test("timeout expected may omit value; other kinds stay typed", async () => {

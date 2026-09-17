@@ -1,0 +1,493 @@
+{
+  "bodySha256": "fde95bc4219fd9ff0a036e870a458c96dd54ba80ebe06fb725b1224fd0b51ebf",
+  "cases": [
+    {
+      "args": [
+        [
+          "cargo"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "Sets the maximum number of compiler processes to run in parallel",
+            "insertValue": "build.jobs=",
+            "name": "build.jobs"
+          },
+          {
+            "description": "Path to the rustc compiler",
+            "insertValue": "build.rustc=",
+            "name": "build.rustc"
+          },
+          {
+            "description": "Sets a wrapper to execute instead of rustc",
+            "insertValue": "build.rustc-wrapper=",
+            "name": "build.rustc-wrapper"
+          },
+          {
+            "description": "The default target platform triples to compile to",
+            "insertValue": "build.target=",
+            "name": "build.target"
+          },
+          {
+            "description": "The path to where all compiler output is placed",
+            "insertValue": "build.target-dir=",
+            "name": "build.target-dir"
+          },
+          {
+            "description": "Extra command-line flags to pass to rustc",
+            "insertValue": "build.rustflags=",
+            "name": "build.rustflags"
+          },
+          {
+            "description": "Extra command-line flags to pass to rustdoc",
+            "insertValue": "build.rustdocflags=",
+            "name": "build.rustdocflags"
+          },
+          {
+            "description": "Whether or not to perform incremental compilation",
+            "insertValue": "build.incremental=",
+            "name": "build.incremental"
+          },
+          {
+            "description": "Strips the given path prefix from dep info file paths",
+            "insertValue": "build.dep-info-basedir=",
+            "name": "build.dep-info-basedir"
+          },
+          {
+            "description": "This option sets the browser to be used by cargo doc, overriding the BROWSER environment variable when opening documentation with the --open option",
+            "insertValue": "doc.browser=",
+            "name": "doc.browser"
+          },
+          {
+            "description": "Specifies the source control system to use for initializing a new repository",
+            "insertValue": "cargo-new.vcs=",
+            "name": "cargo-new.vcs"
+          },
+          {
+            "description": "Controls how often we display a notification to the terminal when a future incompat report is available",
+            "insertValue": "future-incompat-report.frequency=",
+            "name": "future-incompat-report.frequency"
+          },
+          {
+            "description": "If true, enables debugging of HTTP requests",
+            "insertValue": "http.debug=",
+            "name": "http.debug"
+          },
+          {
+            "description": "Sets an HTTP and HTTPS proxy to use",
+            "insertValue": "http.proxy=",
+            "name": "http.proxy"
+          },
+          {
+            "description": "Sets the timeout for each HTTP request, in seconds",
+            "insertValue": "http.timeout=",
+            "name": "http.timeout"
+          },
+          {
+            "description": "Sets the path to a CA certificate bundle",
+            "insertValue": "http.cainfo=",
+            "name": "http.cainfo"
+          },
+          {
+            "description": "This determines whether or not TLS certificate revocation checks should be performed. This only works on Windows",
+            "insertValue": "http.check-revoke=",
+            "name": "http.check-revoke"
+          },
+          {
+            "description": "This sets the minimum TLS version to use",
+            "insertValue": "http.ssl-version=",
+            "name": "http.ssl-version"
+          },
+          {
+            "description": "This setting controls timeout behavior for slow connections",
+            "insertValue": "http.low-speed-limit=",
+            "name": "http.low-speed-limit"
+          },
+          {
+            "description": "When `true`, Cargo will attempt to use the HTTP2 protocol with multiplexing",
+            "insertValue": "http.multiplexing=",
+            "name": "http.multiplexing"
+          },
+          {
+            "description": "Specifies a custom user-agent header to use",
+            "insertValue": "http.user-agent=",
+            "name": "http.user-agent"
+          },
+          {
+            "description": "Sets the path to the root directory for installing executables for `cargo install`",
+            "insertValue": "install.root=",
+            "name": "install.root"
+          },
+          {
+            "description": "Number of times to retry possibly spurious network errors",
+            "insertValue": "net.retry=",
+            "name": "net.retry"
+          },
+          {
+            "description": "If this is `true`, then Cargo will use the git executable to fetch registry indexes and git dependencies. If `false`, then it uses a built-in git library",
+            "insertValue": "net.git-fetch-with-cli=",
+            "name": "net.git-fetch-with-cli"
+          },
+          {
+            "description": "If this is true, then Cargo will avoid accessing the network, and attempt to proceed with locally cached data",
+            "insertValue": "net.offline=",
+            "name": "net.offline"
+          }
+        ]
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "cargo",
+          "status"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "Sets the maximum number of compiler processes to run in parallel",
+            "insertValue": "build.jobs=",
+            "name": "build.jobs"
+          },
+          {
+            "description": "Path to the rustc compiler",
+            "insertValue": "build.rustc=",
+            "name": "build.rustc"
+          },
+          {
+            "description": "Sets a wrapper to execute instead of rustc",
+            "insertValue": "build.rustc-wrapper=",
+            "name": "build.rustc-wrapper"
+          },
+          {
+            "description": "The default target platform triples to compile to",
+            "insertValue": "build.target=",
+            "name": "build.target"
+          },
+          {
+            "description": "The path to where all compiler output is placed",
+            "insertValue": "build.target-dir=",
+            "name": "build.target-dir"
+          },
+          {
+            "description": "Extra command-line flags to pass to rustc",
+            "insertValue": "build.rustflags=",
+            "name": "build.rustflags"
+          },
+          {
+            "description": "Extra command-line flags to pass to rustdoc",
+            "insertValue": "build.rustdocflags=",
+            "name": "build.rustdocflags"
+          },
+          {
+            "description": "Whether or not to perform incremental compilation",
+            "insertValue": "build.incremental=",
+            "name": "build.incremental"
+          },
+          {
+            "description": "Strips the given path prefix from dep info file paths",
+            "insertValue": "build.dep-info-basedir=",
+            "name": "build.dep-info-basedir"
+          },
+          {
+            "description": "This option sets the browser to be used by cargo doc, overriding the BROWSER environment variable when opening documentation with the --open option",
+            "insertValue": "doc.browser=",
+            "name": "doc.browser"
+          },
+          {
+            "description": "Specifies the source control system to use for initializing a new repository",
+            "insertValue": "cargo-new.vcs=",
+            "name": "cargo-new.vcs"
+          },
+          {
+            "description": "Controls how often we display a notification to the terminal when a future incompat report is available",
+            "insertValue": "future-incompat-report.frequency=",
+            "name": "future-incompat-report.frequency"
+          },
+          {
+            "description": "If true, enables debugging of HTTP requests",
+            "insertValue": "http.debug=",
+            "name": "http.debug"
+          },
+          {
+            "description": "Sets an HTTP and HTTPS proxy to use",
+            "insertValue": "http.proxy=",
+            "name": "http.proxy"
+          },
+          {
+            "description": "Sets the timeout for each HTTP request, in seconds",
+            "insertValue": "http.timeout=",
+            "name": "http.timeout"
+          },
+          {
+            "description": "Sets the path to a CA certificate bundle",
+            "insertValue": "http.cainfo=",
+            "name": "http.cainfo"
+          },
+          {
+            "description": "This determines whether or not TLS certificate revocation checks should be performed. This only works on Windows",
+            "insertValue": "http.check-revoke=",
+            "name": "http.check-revoke"
+          },
+          {
+            "description": "This sets the minimum TLS version to use",
+            "insertValue": "http.ssl-version=",
+            "name": "http.ssl-version"
+          },
+          {
+            "description": "This setting controls timeout behavior for slow connections",
+            "insertValue": "http.low-speed-limit=",
+            "name": "http.low-speed-limit"
+          },
+          {
+            "description": "When `true`, Cargo will attempt to use the HTTP2 protocol with multiplexing",
+            "insertValue": "http.multiplexing=",
+            "name": "http.multiplexing"
+          },
+          {
+            "description": "Specifies a custom user-agent header to use",
+            "insertValue": "http.user-agent=",
+            "name": "http.user-agent"
+          },
+          {
+            "description": "Sets the path to the root directory for installing executables for `cargo install`",
+            "insertValue": "install.root=",
+            "name": "install.root"
+          },
+          {
+            "description": "Number of times to retry possibly spurious network errors",
+            "insertValue": "net.retry=",
+            "name": "net.retry"
+          },
+          {
+            "description": "If this is `true`, then Cargo will use the git executable to fetch registry indexes and git dependencies. If `false`, then it uses a built-in git library",
+            "insertValue": "net.git-fetch-with-cli=",
+            "name": "net.git-fetch-with-cli"
+          },
+          {
+            "description": "If this is true, then Cargo will avoid accessing the network, and attempt to proceed with locally cached data",
+            "insertValue": "net.offline=",
+            "name": "net.offline"
+          }
+        ]
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "cargo",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "Sets the maximum number of compiler processes to run in parallel",
+            "insertValue": "build.jobs=",
+            "name": "build.jobs"
+          },
+          {
+            "description": "Path to the rustc compiler",
+            "insertValue": "build.rustc=",
+            "name": "build.rustc"
+          },
+          {
+            "description": "Sets a wrapper to execute instead of rustc",
+            "insertValue": "build.rustc-wrapper=",
+            "name": "build.rustc-wrapper"
+          },
+          {
+            "description": "The default target platform triples to compile to",
+            "insertValue": "build.target=",
+            "name": "build.target"
+          },
+          {
+            "description": "The path to where all compiler output is placed",
+            "insertValue": "build.target-dir=",
+            "name": "build.target-dir"
+          },
+          {
+            "description": "Extra command-line flags to pass to rustc",
+            "insertValue": "build.rustflags=",
+            "name": "build.rustflags"
+          },
+          {
+            "description": "Extra command-line flags to pass to rustdoc",
+            "insertValue": "build.rustdocflags=",
+            "name": "build.rustdocflags"
+          },
+          {
+            "description": "Whether or not to perform incremental compilation",
+            "insertValue": "build.incremental=",
+            "name": "build.incremental"
+          },
+          {
+            "description": "Strips the given path prefix from dep info file paths",
+            "insertValue": "build.dep-info-basedir=",
+            "name": "build.dep-info-basedir"
+          },
+          {
+            "description": "This option sets the browser to be used by cargo doc, overriding the BROWSER environment variable when opening documentation with the --open option",
+            "insertValue": "doc.browser=",
+            "name": "doc.browser"
+          },
+          {
+            "description": "Specifies the source control system to use for initializing a new repository",
+            "insertValue": "cargo-new.vcs=",
+            "name": "cargo-new.vcs"
+          },
+          {
+            "description": "Controls how often we display a notification to the terminal when a future incompat report is available",
+            "insertValue": "future-incompat-report.frequency=",
+            "name": "future-incompat-report.frequency"
+          },
+          {
+            "description": "If true, enables debugging of HTTP requests",
+            "insertValue": "http.debug=",
+            "name": "http.debug"
+          },
+          {
+            "description": "Sets an HTTP and HTTPS proxy to use",
+            "insertValue": "http.proxy=",
+            "name": "http.proxy"
+          },
+          {
+            "description": "Sets the timeout for each HTTP request, in seconds",
+            "insertValue": "http.timeout=",
+            "name": "http.timeout"
+          },
+          {
+            "description": "Sets the path to a CA certificate bundle",
+            "insertValue": "http.cainfo=",
+            "name": "http.cainfo"
+          },
+          {
+            "description": "This determines whether or not TLS certificate revocation checks should be performed. This only works on Windows",
+            "insertValue": "http.check-revoke=",
+            "name": "http.check-revoke"
+          },
+          {
+            "description": "This sets the minimum TLS version to use",
+            "insertValue": "http.ssl-version=",
+            "name": "http.ssl-version"
+          },
+          {
+            "description": "This setting controls timeout behavior for slow connections",
+            "insertValue": "http.low-speed-limit=",
+            "name": "http.low-speed-limit"
+          },
+          {
+            "description": "When `true`, Cargo will attempt to use the HTTP2 protocol with multiplexing",
+            "insertValue": "http.multiplexing=",
+            "name": "http.multiplexing"
+          },
+          {
+            "description": "Specifies a custom user-agent header to use",
+            "insertValue": "http.user-agent=",
+            "name": "http.user-agent"
+          },
+          {
+            "description": "Sets the path to the root directory for installing executables for `cargo install`",
+            "insertValue": "install.root=",
+            "name": "install.root"
+          },
+          {
+            "description": "Number of times to retry possibly spurious network errors",
+            "insertValue": "net.retry=",
+            "name": "net.retry"
+          },
+          {
+            "description": "If this is `true`, then Cargo will use the git executable to fetch registry indexes and git dependencies. If `false`, then it uses a built-in git library",
+            "insertValue": "net.git-fetch-with-cli=",
+            "name": "net.git-fetch-with-cli"
+          },
+          {
+            "description": "If this is true, then Cargo will avoid accessing the network, and attempt to proceed with locally cached data",
+            "insertValue": "net.offline=",
+            "name": "net.offline"
+          }
+        ]
+      },
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "cargo"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 41,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "cargo#custom#104",
+  "version": 1
+}

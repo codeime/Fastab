@@ -1,0 +1,91 @@
+{
+  "bodySha256": "bd6bab1e11aec7db247ba5b019342daba7379dd6095257ed4797f0ff1beda0cc",
+  "cases": [
+    {
+      "args": [
+        ""
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "prefix"
+          ],
+          "command": "npm",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "id": "empty",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "rushx"
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "rushx",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "prefix"
+          ],
+          "command": "npm",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "id": "token",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "rushx"
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "alias",
+  "hookCount": 3,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "rushx#alias#1",
+  "version": 1
+}

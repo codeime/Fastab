@@ -1,0 +1,199 @@
+{
+  "bodySha256": "2176333a01195561f613dca132852a71d43c790bdd316c99b3533f02ba9fff46",
+  "cases": [
+    {
+      "args": [
+        [
+          "esbuild"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "name": "esnext"
+          },
+          {
+            "name": "es2016"
+          },
+          {
+            "name": "es2022"
+          },
+          {
+            "name": "chrome"
+          },
+          {
+            "name": "firefox"
+          },
+          {
+            "name": "ie"
+          },
+          {
+            "name": "node"
+          },
+          {
+            "name": "safari"
+          },
+          {
+            "name": "opera"
+          }
+        ]
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "esbuild",
+          "status"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "name": "esnext"
+          },
+          {
+            "name": "es2016"
+          },
+          {
+            "name": "es2022"
+          },
+          {
+            "name": "chrome"
+          },
+          {
+            "name": "firefox"
+          },
+          {
+            "name": "ie"
+          },
+          {
+            "name": "node"
+          },
+          {
+            "name": "safari"
+          },
+          {
+            "name": "opera"
+          }
+        ]
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "esbuild",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "name": "esnext"
+          },
+          {
+            "name": "es2016"
+          },
+          {
+            "name": "es2022"
+          },
+          {
+            "name": "chrome"
+          },
+          {
+            "name": "firefox"
+          },
+          {
+            "name": "ie"
+          },
+          {
+            "name": "node"
+          },
+          {
+            "name": "safari"
+          },
+          {
+            "name": "opera"
+          }
+        ]
+      },
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "esbuild"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "esbuild#custom#4",
+  "version": 1
+}

@@ -58,11 +58,18 @@ pub struct BaselineCase {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ExecRule {
-    pub command: String,
-    pub args: Vec<String>,
-    pub stdout: String,
-    pub stderr: String,
-    pub status: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<i64>,
+    #[serde(default, rename = "delayMs", skip_serializing_if = "Option::is_none")]
+    pub delay_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -308,8 +315,12 @@ fn validate_baseline(baseline: &Baseline) -> BaselineResult<()> {
             validate_arg(value, ty, &case.id)?;
         }
         for rule in &case.exec {
-            if rule.command.is_empty() {
-                return Err(err(format!("case {:?} exec command must be non-empty", case.id)));
+            let has_command = rule.command.as_ref().is_some_and(|command| !command.is_empty());
+            if !has_command && rule.delay_ms.is_none() {
+                return Err(err(format!(
+                    "case {:?} exec rule must have command or delayMs",
+                    case.id
+                )));
             }
         }
         validate_expected(&case.expected, result_kind, &case.id)?;
@@ -455,8 +466,8 @@ mod tests {
         let loaded = load_all_from(root.path()).expect("load_all_from");
         assert_eq!(loaded, vec![baseline]);
 
-        let empty = load_all().expect("empty committed baseline dir");
-        assert!(empty.is_empty());
+        let committed = load_all().expect("committed hook baselines");
+        assert_eq!(committed.len(), 594);
     }
 
     #[test]

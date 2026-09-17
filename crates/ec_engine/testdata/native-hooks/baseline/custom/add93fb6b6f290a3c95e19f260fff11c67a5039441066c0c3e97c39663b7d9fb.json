@@ -1,0 +1,322 @@
+{
+  "bodySha256": "add93fb6b6f290a3c95e19f260fff11c67a5039441066c0c3e97c39663b7d9fb",
+  "cases": [
+    {
+      "args": [
+        [
+          "twilio"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "args": {
+              "description": "Shell type",
+              "name": "shell",
+              "suggestions": [
+                {
+                  "icon": "fig://icon?type=string",
+                  "name": "bash"
+                },
+                {
+                  "icon": "fig://icon?type=string",
+                  "name": "zsh"
+                }
+              ]
+            },
+            "description": "Display autocomplete installation instructions",
+            "name": "autocomplete",
+            "type": "subcommand"
+          },
+          {
+            "description": "Manage Twilio CLI configurations",
+            "name": "config",
+            "type": "subcommand"
+          },
+          {
+            "description": "Show a list of log events for the account",
+            "name": "debugger",
+            "type": "subcommand"
+          },
+          {
+            "description": "Send emails to single or multiple recipients using Twilio SendGrid",
+            "name": "email",
+            "type": "subcommand"
+          },
+          {
+            "description": "Provide feedback to the CLI team",
+            "name": "feedback",
+            "type": "subcommand"
+          },
+          {
+            "description": "Create a new profile to store Twilio Account credentials and configuration",
+            "name": "login",
+            "type": "subcommand"
+          },
+          {
+            "description": "Manage Twilio phone numbers",
+            "name": "phone-numbers",
+            "type": "subcommand"
+          },
+          {
+            "description": "List available plugins for installation",
+            "name": "plugins",
+            "type": "subcommand"
+          },
+          {
+            "description": "Manage credentials for Twilio profiles",
+            "name": "profiles",
+            "type": "subcommand"
+          },
+          {
+            "args": {
+              "isOptional": true,
+              "name": "channel"
+            },
+            "description": "Update the twilio CLI",
+            "name": "update",
+            "type": "subcommand"
+          }
+        ]
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "twilio",
+          "help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "args": {
+              "description": "Shell type",
+              "name": "shell",
+              "suggestions": [
+                {
+                  "icon": "fig://icon?type=string",
+                  "name": "bash"
+                },
+                {
+                  "icon": "fig://icon?type=string",
+                  "name": "zsh"
+                }
+              ]
+            },
+            "description": "Display autocomplete installation instructions",
+            "name": "autocomplete",
+            "type": "subcommand"
+          },
+          {
+            "description": "Manage Twilio CLI configurations",
+            "name": "config",
+            "type": "subcommand"
+          },
+          {
+            "description": "Show a list of log events for the account",
+            "name": "debugger",
+            "type": "subcommand"
+          },
+          {
+            "description": "Send emails to single or multiple recipients using Twilio SendGrid",
+            "name": "email",
+            "type": "subcommand"
+          },
+          {
+            "description": "Provide feedback to the CLI team",
+            "name": "feedback",
+            "type": "subcommand"
+          },
+          {
+            "description": "Create a new profile to store Twilio Account credentials and configuration",
+            "name": "login",
+            "type": "subcommand"
+          },
+          {
+            "description": "Manage Twilio phone numbers",
+            "name": "phone-numbers",
+            "type": "subcommand"
+          },
+          {
+            "description": "List available plugins for installation",
+            "name": "plugins",
+            "type": "subcommand"
+          },
+          {
+            "description": "Manage credentials for Twilio profiles",
+            "name": "profiles",
+            "type": "subcommand"
+          },
+          {
+            "args": {
+              "isOptional": true,
+              "name": "channel"
+            },
+            "description": "Update the twilio CLI",
+            "name": "update",
+            "type": "subcommand"
+          }
+        ]
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "twilio",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "args": {
+              "description": "Shell type",
+              "name": "shell",
+              "suggestions": [
+                {
+                  "icon": "fig://icon?type=string",
+                  "name": "bash"
+                },
+                {
+                  "icon": "fig://icon?type=string",
+                  "name": "zsh"
+                }
+              ]
+            },
+            "description": "Display autocomplete installation instructions",
+            "name": "autocomplete",
+            "type": "subcommand"
+          },
+          {
+            "description": "Manage Twilio CLI configurations",
+            "name": "config",
+            "type": "subcommand"
+          },
+          {
+            "description": "Show a list of log events for the account",
+            "name": "debugger",
+            "type": "subcommand"
+          },
+          {
+            "description": "Send emails to single or multiple recipients using Twilio SendGrid",
+            "name": "email",
+            "type": "subcommand"
+          },
+          {
+            "description": "Provide feedback to the CLI team",
+            "name": "feedback",
+            "type": "subcommand"
+          },
+          {
+            "description": "Create a new profile to store Twilio Account credentials and configuration",
+            "name": "login",
+            "type": "subcommand"
+          },
+          {
+            "description": "Manage Twilio phone numbers",
+            "name": "phone-numbers",
+            "type": "subcommand"
+          },
+          {
+            "description": "List available plugins for installation",
+            "name": "plugins",
+            "type": "subcommand"
+          },
+          {
+            "description": "Manage credentials for Twilio profiles",
+            "name": "profiles",
+            "type": "subcommand"
+          },
+          {
+            "args": {
+              "isOptional": true,
+              "name": "channel"
+            },
+            "description": "Update the twilio CLI",
+            "name": "update",
+            "type": "subcommand"
+          }
+        ]
+      },
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "twilio"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 2,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "twilio#custom#0",
+  "version": 1
+}

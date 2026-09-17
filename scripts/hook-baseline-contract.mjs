@@ -55,7 +55,21 @@ export const CONTEXT_FIELDS = Object.freeze([
   "isDangerous",
 ]);
 
-export const EXEC_FIELDS = Object.freeze(["command", "args", "stdout", "stderr", "status"]);
+export const EXEC_FIELDS = Object.freeze([
+  "command",
+  "args",
+  "stdout",
+  "stderr",
+  "status",
+  "delayMs",
+]);
+export const EXEC_COMMAND_FIELDS = Object.freeze([
+  "command",
+  "args",
+  "stdout",
+  "stderr",
+  "status",
+]);
 
 export const BASELINE_FIELDS = Object.freeze([
   "version",
@@ -68,6 +82,15 @@ export const BASELINE_FIELDS = Object.freeze([
 ]);
 
 export const CASE_FIELDS = Object.freeze(["id", "args", "exec", "context", "timeoutMs", "expected"]);
+export const INPUT_CASE_FIELDS = Object.freeze([
+  "id",
+  "args",
+  "exec",
+  "context",
+  "timeoutMs",
+  "synthetic",
+]);
+export const INPUT_BASELINE_FIELDS = BASELINE_FIELDS.filter((key) => key !== "cases");
 
 export const ARG_TYPES = Object.freeze(["string", "string-array", "suggestion-array"]);
 
@@ -195,6 +218,34 @@ export function validateBaseline(value) {
   return value;
 }
 
+/**
+ * Input fixtures are baselines without `expected`. `synthetic` marks a case
+ * whose `normal` stdout did not come from the T1.3 CLI sample library.
+ */
+export function validateInputFixture(value) {
+  assertPlainObject(value, "input");
+  assertKnownKeys(value, new Set([...INPUT_BASELINE_FIELDS, "cases"]), "input");
+  assertRequiredKeys(value, [...INPUT_BASELINE_FIELDS, "cases"], "input");
+  const baseline = {
+    ...value,
+    cases: value.cases.map((item, index) => {
+      const itemPath = `input.cases[${index}]`;
+      assertPlainObject(item, itemPath);
+      assertKnownKeys(item, new Set(INPUT_CASE_FIELDS), itemPath);
+      const { synthetic: _synthetic, ...rest } = item;
+      if (Object.hasOwn(item, "synthetic") && item.synthetic !== true) {
+        throw new Error(`${itemPath}.synthetic must be true when present`);
+      }
+      return {
+        ...rest,
+        expected: { kind: "timeout" },
+      };
+    }),
+  };
+  validateBaseline(baseline);
+  return value;
+}
+
 function validateCase(value, field, path) {
   assertPlainObject(value, path);
   assertKnownKeys(value, CASE_FIELD_SET, path);
@@ -258,21 +309,34 @@ function validateExec(value, path) {
     const itemPath = `${path}[${index}]`;
     assertPlainObject(item, itemPath);
     assertKnownKeys(item, EXEC_FIELD_SET, itemPath);
-    assertRequiredKeys(item, EXEC_FIELDS, itemPath);
-    if (typeof item.command !== "string" || item.command.length === 0) {
-      throw new Error(`${itemPath}.command must be a non-empty string`);
+    const hasDelay = Object.hasOwn(item, "delayMs");
+    const hasCommand = Object.hasOwn(item, "command");
+    if (hasDelay) {
+      if (!Number.isInteger(item.delayMs) || item.delayMs < 0) {
+        throw new Error(`${itemPath}.delayMs must be a non-negative integer`);
+      }
     }
-    if (!Array.isArray(item.args) || item.args.some((arg) => typeof arg !== "string")) {
-      throw new Error(`${itemPath}.args must be an array of strings`);
+    if (hasCommand) {
+      assertRequiredKeys(item, EXEC_COMMAND_FIELDS, itemPath);
+      if (typeof item.command !== "string" || item.command.length === 0) {
+        throw new Error(`${itemPath}.command must be a non-empty string`);
+      }
+      if (!Array.isArray(item.args) || item.args.some((arg) => typeof arg !== "string")) {
+        throw new Error(`${itemPath}.args must be an array of strings`);
+      }
+      if (typeof item.stdout !== "string") {
+        throw new Error(`${itemPath}.stdout must be a string`);
+      }
+      if (typeof item.stderr !== "string") {
+        throw new Error(`${itemPath}.stderr must be a string`);
+      }
+      if (!Number.isInteger(item.status)) {
+        throw new Error(`${itemPath}.status must be an integer`);
+      }
+      return;
     }
-    if (typeof item.stdout !== "string") {
-      throw new Error(`${itemPath}.stdout must be a string`);
-    }
-    if (typeof item.stderr !== "string") {
-      throw new Error(`${itemPath}.stderr must be a string`);
-    }
-    if (!Number.isInteger(item.status)) {
-      throw new Error(`${itemPath}.status must be an integer`);
+    if (!hasDelay) {
+      throw new Error(`${itemPath} must have command or delayMs`);
     }
   });
 }

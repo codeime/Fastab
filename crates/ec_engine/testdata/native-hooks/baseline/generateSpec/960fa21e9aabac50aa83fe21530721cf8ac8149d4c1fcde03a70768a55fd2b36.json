@@ -1,0 +1,2417 @@
+{
+  "bodySha256": "960fa21e9aabac50aa83fe21530721cf8ac8149d4c1fcde03a70768a55fd2b36",
+  "cases": [
+    {
+      "args": [
+        [
+          "task"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "--version"
+          ],
+          "command": "task",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "expected": {
+        "kind": "spec",
+        "value": {
+          "args": {
+            "description": "Search criteria that select tasks",
+            "generators": {
+              "postProcess": {
+                "bodySha256": "720ffd787cd0e9b7c264089b01cfca64011f25ccd98b36ac61e196748d351404",
+                "kind": "function"
+              },
+              "script": [
+                "task",
+                "export"
+              ]
+            },
+            "isOptional": true,
+            "isVariadic": true,
+            "name": "filters"
+          },
+          "description": "A command line todo manager",
+          "name": "taskwarrior",
+          "options": [
+            {
+              "description": "This is the only conventional command line argument that Taskwarrior supports, and is intended for add-on scripts to verify the version number of an installed Taskwarrior without invoking the mechanisms that create default files",
+              "name": "--version"
+            }
+          ],
+          "subcommands": [
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all tasks matching the filter, that are started but not completed",
+              "name": "active"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all tasks matching the filter, including parents of recurring tasks",
+              "name": "all"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all tasks matching the filter, that are currently blocked by other tasks",
+              "name": "blocked"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all tasks matching the filter, that block other tasks",
+              "name": "blocking"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a graphical burndown chart, by day. Is affected by the context",
+              "name": "burndown.daily"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a graphical burndown chart, by week.  Note that 'burndown' is an alias to the 'burndown.weekly' report. Is affected by the context",
+              "name": "burndown.weekly"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a graphical burndown chart, by month. Is affected by the context",
+              "name": "burndown.monthly"
+            },
+            {
+              "args": [
+                {
+                  "description": "The year number",
+                  "isOptional": true,
+                  "isVariadic": true,
+                  "name": "year"
+                },
+                {
+                  "description": "The year number",
+                  "isOptional": true,
+                  "isVariadic": true,
+                  "name": "month"
+                },
+                {
+                  "description": "Show tasks that are due",
+                  "isOptional": true,
+                  "isVariadic": true,
+                  "name": "due"
+                }
+              ],
+              "description": "Shows a monthly calendar with due tasks marked",
+              "name": "calendar"
+            },
+            {
+              "description": "Shows all the supported commands, with some details of each",
+              "name": "commands"
+            },
+            {
+              "description": "Shows diagnostic information, of the kind needed when reporting a problem",
+              "name": "diagnostics"
+            },
+            {
+              "description": "Displays the Taskwarrior logo",
+              "name": "logo"
+            },
+            {
+              "description": "Guides the user through important release notes anytime a new version of Taskwarrior is installed",
+              "name": "news"
+            },
+            {
+              "description": "Lists all supported reports",
+              "name": "reports"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all tasks matching the filter that are completed",
+              "name": "completed"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Display only a count of tasks matching the filter. Is affected by the context",
+              "name": "count"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Exports all tasks in the JSON format matching the filter",
+              "name": "export"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a graphical report of task status by year",
+              "name": "ghistory.annual"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a graphical report of task status by month",
+              "name": "ghistory.monthly"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a graphical report of task status by week",
+              "name": "ghistory.weekly"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a graphical report of task status by day",
+              "name": "ghistory.daily"
+            },
+            {
+              "description": "Shows the long usage text",
+              "name": "help"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a report of task history by year",
+              "name": "history.annual"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a report of task history by month",
+              "name": "history.monthly"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a report of task history by week",
+              "name": "history.weekly"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a report of task history by day",
+              "name": "history.daily"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Applies the filter then extracts only the task IDs and presents them as a space-separated list",
+              "name": "ids"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Applies the filter on all tasks (even deleted and completed tasks) then extracts only the task UUIDs and presents them as a space-separated list",
+              "name": "uuids"
+            },
+            {
+              "description": "Shows a list of UDAs that are defined, including their name, type, label, and allowed values",
+              "name": "udas"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all data and metadata for the specified tasks",
+              "name": "information"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Provides the most detailed listing of tasks matching the filter",
+              "name": "long"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Provides a short listing of tasks matching the filter",
+              "name": "ls"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Provides a minimal listing of tasks matching the filter",
+              "name": "minimal"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows the newest tasks matching the filter",
+              "name": "newest"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a page of the most urgent tasks, sorted by urgency, which is a calculated value",
+              "name": "next"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a page of the most urgent ready tasks, sorted by urgency with started tasks first",
+              "name": "ready"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows the oldest tasks matching the filter",
+              "name": "oldest"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all incomplete tasks matching the filter that are beyond their due date",
+              "name": "overdue"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Lists all project names that are current used by pending tasks, and the number of tasks for each",
+              "name": "projects"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all recurring tasks matching the filter",
+              "name": "recurring"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all tasks that are not currently blocked by other tasks, matching the filter",
+              "name": "unblocked"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all waiting tasks matching the filter",
+              "name": "waiting"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Adds a new pending task to the task list",
+              "icon": "https://f-droid.org/repo/icons-640/kvj.taskw.3.png",
+              "name": "add"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Adds an annotation to an existing task",
+              "name": "annotate"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Appends description text to an existing task",
+              "name": "append"
+            },
+            {
+              "args": {
+                "description": "The task to delete",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isVariadic": true,
+                "name": "Task"
+              },
+              "description": "Deletes the specified task from the task list",
+              "name": [
+                "delete",
+                "rm"
+              ]
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "name": "mods"
+              },
+              "description": "Deletes an annotation for the specified task",
+              "name": "denotate"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Marks the specified task as done",
+              "name": "done"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Duplicates the specified task and allows modifications",
+              "name": "duplicate"
+            },
+            {
+              "args": {
+                "description": "The task to edit",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "5342c0a575a0cb48169ed9f018743cb762ca87dfb09d5055be4dd5a9d97f4727",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "name": "Task"
+              },
+              "description": "Launches a text editor to let you modify all aspects of a task directly",
+              "name": "edit"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Adds a new task that is already completed, to the task list",
+              "name": "log"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Modifies the existing task with provided information",
+              "name": "modify"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Prepends description text to and existing task",
+              "name": "prepend"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Permanently removes the specified tasks from the data files",
+              "name": "purge"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Marks the specified tasks as started",
+              "icon": "https://f-droid.org/repo/icons-640/kvj.taskw.3.png",
+              "name": "start"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Removes the start time from the specified task",
+              "icon": "https://f-droid.org/repo/icons-640/kvj.taskw.3.png",
+              "name": "stop"
+            },
+            {
+              "args": {
+                "isVariadic": true,
+                "name": "name"
+              },
+              "description": "Sets the currently active context",
+              "name": "context",
+              "subcommands": [
+                {
+                  "args": {
+                    "isVariadic": true,
+                    "name": "name"
+                  },
+                  "description": "Deletes the context with the name",
+                  "name": "delete"
+                },
+                {
+                  "args": [
+                    {
+                      "isVariadic": true,
+                      "name": "name"
+                    },
+                    {
+                      "description": "Changes to apply to the selected tasks",
+                      "generators": {
+                        "postProcess": {
+                          "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                          "kind": "function"
+                        },
+                        "script": [
+                          "task",
+                          "export"
+                        ]
+                      },
+                      "isOptional": true,
+                      "isVariadic": true,
+                      "name": "mods"
+                    }
+                  ],
+                  "description": "Defines a new context with the name and definition filter",
+                  "name": "define"
+                },
+                {
+                  "description": "Outputs a list of available contexts along with their definitions",
+                  "name": "list"
+                },
+                {
+                  "description": "Clears the currently active context, if any was set",
+                  "name": "none"
+                },
+                {
+                  "description": "Shows the currently active context, along with its definition",
+                  "name": "show"
+                }
+              ]
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows statistics of the tasks defined by the filter",
+              "name": "stats"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a report of aggregated task status by project",
+              "name": "summary"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Show a list of all tags used",
+              "name": "tags"
+            },
+            {
+              "args": {
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "weeks"
+              },
+              "description": "Shows a weekly report of tasks completed and started",
+              "name": "timesheet"
+            },
+            {
+              "description": "Reverts the most recent action",
+              "name": "undo"
+            },
+            {
+              "description": "Shows the Taskwarrior version number",
+              "name": "version"
+            }
+          ]
+        }
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "task",
+          "status"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "args": [
+            "--version"
+          ],
+          "command": "task",
+          "status": 127,
+          "stderr": "command not found",
+          "stdout": ""
+        }
+      ],
+      "expected": {
+        "kind": "spec",
+        "value": {
+          "args": {
+            "description": "Search criteria that select tasks",
+            "generators": {
+              "postProcess": {
+                "bodySha256": "720ffd787cd0e9b7c264089b01cfca64011f25ccd98b36ac61e196748d351404",
+                "kind": "function"
+              },
+              "script": [
+                "task",
+                "export"
+              ]
+            },
+            "isOptional": true,
+            "isVariadic": true,
+            "name": "filters"
+          },
+          "description": "A command line todo manager",
+          "name": "taskwarrior",
+          "options": [
+            {
+              "description": "This is the only conventional command line argument that Taskwarrior supports, and is intended for add-on scripts to verify the version number of an installed Taskwarrior without invoking the mechanisms that create default files",
+              "name": "--version"
+            }
+          ],
+          "subcommands": [
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all tasks matching the filter, that are started but not completed",
+              "name": "active"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all tasks matching the filter, including parents of recurring tasks",
+              "name": "all"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all tasks matching the filter, that are currently blocked by other tasks",
+              "name": "blocked"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all tasks matching the filter, that block other tasks",
+              "name": "blocking"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a graphical burndown chart, by day. Is affected by the context",
+              "name": "burndown.daily"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a graphical burndown chart, by week.  Note that 'burndown' is an alias to the 'burndown.weekly' report. Is affected by the context",
+              "name": "burndown.weekly"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a graphical burndown chart, by month. Is affected by the context",
+              "name": "burndown.monthly"
+            },
+            {
+              "args": [
+                {
+                  "description": "The year number",
+                  "isOptional": true,
+                  "isVariadic": true,
+                  "name": "year"
+                },
+                {
+                  "description": "The year number",
+                  "isOptional": true,
+                  "isVariadic": true,
+                  "name": "month"
+                },
+                {
+                  "description": "Show tasks that are due",
+                  "isOptional": true,
+                  "isVariadic": true,
+                  "name": "due"
+                }
+              ],
+              "description": "Shows a monthly calendar with due tasks marked",
+              "name": "calendar"
+            },
+            {
+              "description": "Shows all the supported commands, with some details of each",
+              "name": "commands"
+            },
+            {
+              "description": "Shows diagnostic information, of the kind needed when reporting a problem",
+              "name": "diagnostics"
+            },
+            {
+              "description": "Displays the Taskwarrior logo",
+              "name": "logo"
+            },
+            {
+              "description": "Guides the user through important release notes anytime a new version of Taskwarrior is installed",
+              "name": "news"
+            },
+            {
+              "description": "Lists all supported reports",
+              "name": "reports"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all tasks matching the filter that are completed",
+              "name": "completed"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Display only a count of tasks matching the filter. Is affected by the context",
+              "name": "count"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Exports all tasks in the JSON format matching the filter",
+              "name": "export"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a graphical report of task status by year",
+              "name": "ghistory.annual"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a graphical report of task status by month",
+              "name": "ghistory.monthly"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a graphical report of task status by week",
+              "name": "ghistory.weekly"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a graphical report of task status by day",
+              "name": "ghistory.daily"
+            },
+            {
+              "description": "Shows the long usage text",
+              "name": "help"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a report of task history by year",
+              "name": "history.annual"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a report of task history by month",
+              "name": "history.monthly"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a report of task history by week",
+              "name": "history.weekly"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a report of task history by day",
+              "name": "history.daily"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Applies the filter then extracts only the task IDs and presents them as a space-separated list",
+              "name": "ids"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Applies the filter on all tasks (even deleted and completed tasks) then extracts only the task UUIDs and presents them as a space-separated list",
+              "name": "uuids"
+            },
+            {
+              "description": "Shows a list of UDAs that are defined, including their name, type, label, and allowed values",
+              "name": "udas"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all data and metadata for the specified tasks",
+              "name": "information"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Provides the most detailed listing of tasks matching the filter",
+              "name": "long"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Provides a short listing of tasks matching the filter",
+              "name": "ls"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Provides a minimal listing of tasks matching the filter",
+              "name": "minimal"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows the newest tasks matching the filter",
+              "name": "newest"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a page of the most urgent tasks, sorted by urgency, which is a calculated value",
+              "name": "next"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a page of the most urgent ready tasks, sorted by urgency with started tasks first",
+              "name": "ready"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows the oldest tasks matching the filter",
+              "name": "oldest"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all incomplete tasks matching the filter that are beyond their due date",
+              "name": "overdue"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Lists all project names that are current used by pending tasks, and the number of tasks for each",
+              "name": "projects"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all recurring tasks matching the filter",
+              "name": "recurring"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all tasks that are not currently blocked by other tasks, matching the filter",
+              "name": "unblocked"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows all waiting tasks matching the filter",
+              "name": "waiting"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Adds a new pending task to the task list",
+              "icon": "https://f-droid.org/repo/icons-640/kvj.taskw.3.png",
+              "name": "add"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Adds an annotation to an existing task",
+              "name": "annotate"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Appends description text to an existing task",
+              "name": "append"
+            },
+            {
+              "args": {
+                "description": "The task to delete",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isVariadic": true,
+                "name": "Task"
+              },
+              "description": "Deletes the specified task from the task list",
+              "name": [
+                "delete",
+                "rm"
+              ]
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "name": "mods"
+              },
+              "description": "Deletes an annotation for the specified task",
+              "name": "denotate"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Marks the specified task as done",
+              "name": "done"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Duplicates the specified task and allows modifications",
+              "name": "duplicate"
+            },
+            {
+              "args": {
+                "description": "The task to edit",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "5342c0a575a0cb48169ed9f018743cb762ca87dfb09d5055be4dd5a9d97f4727",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "name": "Task"
+              },
+              "description": "Launches a text editor to let you modify all aspects of a task directly",
+              "name": "edit"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Adds a new task that is already completed, to the task list",
+              "name": "log"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Modifies the existing task with provided information",
+              "name": "modify"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Prepends description text to and existing task",
+              "name": "prepend"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Permanently removes the specified tasks from the data files",
+              "name": "purge"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Marks the specified tasks as started",
+              "icon": "https://f-droid.org/repo/icons-640/kvj.taskw.3.png",
+              "name": "start"
+            },
+            {
+              "args": {
+                "description": "Changes to apply to the selected tasks",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "1144ba77e64bd8a2e418ce88e7e261d54b877c235d0bbc0ce35bab5b33a1b82e",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "mods"
+              },
+              "description": "Removes the start time from the specified task",
+              "icon": "https://f-droid.org/repo/icons-640/kvj.taskw.3.png",
+              "name": "stop"
+            },
+            {
+              "args": {
+                "isVariadic": true,
+                "name": "name"
+              },
+              "description": "Sets the currently active context",
+              "name": "context",
+              "subcommands": [
+                {
+                  "args": {
+                    "isVariadic": true,
+                    "name": "name"
+                  },
+                  "description": "Deletes the context with the name",
+                  "name": "delete"
+                },
+                {
+                  "args": [
+                    {
+                      "isVariadic": true,
+                      "name": "name"
+                    },
+                    {
+                      "description": "Changes to apply to the selected tasks",
+                      "generators": {
+                        "postProcess": {
+                          "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                          "kind": "function"
+                        },
+                        "script": [
+                          "task",
+                          "export"
+                        ]
+                      },
+                      "isOptional": true,
+                      "isVariadic": true,
+                      "name": "mods"
+                    }
+                  ],
+                  "description": "Defines a new context with the name and definition filter",
+                  "name": "define"
+                },
+                {
+                  "description": "Outputs a list of available contexts along with their definitions",
+                  "name": "list"
+                },
+                {
+                  "description": "Clears the currently active context, if any was set",
+                  "name": "none"
+                },
+                {
+                  "description": "Shows the currently active context, along with its definition",
+                  "name": "show"
+                }
+              ]
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows statistics of the tasks defined by the filter",
+              "name": "stats"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Shows a report of aggregated task status by project",
+              "name": "summary"
+            },
+            {
+              "args": {
+                "description": "Task search criteria",
+                "generators": {
+                  "postProcess": {
+                    "bodySha256": "feef5a885d7943558502bb5e69418090e5908d1d5f49fa71b7787105ada288bd",
+                    "kind": "function"
+                  },
+                  "script": [
+                    "task",
+                    "export"
+                  ]
+                },
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "filters"
+              },
+              "description": "Show a list of all tags used",
+              "name": "tags"
+            },
+            {
+              "args": {
+                "isOptional": true,
+                "isVariadic": true,
+                "name": "weeks"
+              },
+              "description": "Shows a weekly report of tasks completed and started",
+              "name": "timesheet"
+            },
+            {
+              "description": "Reverts the most recent action",
+              "name": "undo"
+            },
+            {
+              "description": "Shows the Taskwarrior version number",
+              "name": "version"
+            }
+          ]
+        }
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "task"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "generateSpec",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "task#generateSpec#0",
+  "version": 1
+}

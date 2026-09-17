@@ -1,0 +1,262 @@
+{
+  "bodySha256": "111e4cf667dc7a906760475f6dd4eca45bb903941a433cc4775e2f8c2cdb7d40",
+  "cases": [
+    {
+      "args": [
+        [
+          "man"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "General commands",
+            "icon": "📑",
+            "insertValue": "1:",
+            "name": "1"
+          },
+          {
+            "description": "System calls",
+            "icon": "📑",
+            "insertValue": "2:",
+            "name": "2"
+          },
+          {
+            "description": "C library functions",
+            "icon": "📑",
+            "insertValue": "3:",
+            "name": "3"
+          },
+          {
+            "description": "Devices and special files",
+            "icon": "📑",
+            "insertValue": "4:",
+            "name": "4"
+          },
+          {
+            "description": "File formats and conventions",
+            "icon": "📑",
+            "insertValue": "5:",
+            "name": "5"
+          },
+          {
+            "description": "Games, etc",
+            "icon": "📑",
+            "insertValue": "6:",
+            "name": "6"
+          },
+          {
+            "description": "Miscellanea",
+            "icon": "📑",
+            "insertValue": "7:",
+            "name": "7"
+          },
+          {
+            "description": "System admin and daemons",
+            "icon": "📑",
+            "insertValue": "8:",
+            "name": "8"
+          }
+        ]
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "man",
+          "status"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "General commands",
+            "icon": "📑",
+            "insertValue": "1:",
+            "name": "1"
+          },
+          {
+            "description": "System calls",
+            "icon": "📑",
+            "insertValue": "2:",
+            "name": "2"
+          },
+          {
+            "description": "C library functions",
+            "icon": "📑",
+            "insertValue": "3:",
+            "name": "3"
+          },
+          {
+            "description": "Devices and special files",
+            "icon": "📑",
+            "insertValue": "4:",
+            "name": "4"
+          },
+          {
+            "description": "File formats and conventions",
+            "icon": "📑",
+            "insertValue": "5:",
+            "name": "5"
+          },
+          {
+            "description": "Games, etc",
+            "icon": "📑",
+            "insertValue": "6:",
+            "name": "6"
+          },
+          {
+            "description": "Miscellanea",
+            "icon": "📑",
+            "insertValue": "7:",
+            "name": "7"
+          },
+          {
+            "description": "System admin and daemons",
+            "icon": "📑",
+            "insertValue": "8:",
+            "name": "8"
+          }
+        ]
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "man",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "General commands",
+            "icon": "📑",
+            "insertValue": "1:",
+            "name": "1"
+          },
+          {
+            "description": "System calls",
+            "icon": "📑",
+            "insertValue": "2:",
+            "name": "2"
+          },
+          {
+            "description": "C library functions",
+            "icon": "📑",
+            "insertValue": "3:",
+            "name": "3"
+          },
+          {
+            "description": "Devices and special files",
+            "icon": "📑",
+            "insertValue": "4:",
+            "name": "4"
+          },
+          {
+            "description": "File formats and conventions",
+            "icon": "📑",
+            "insertValue": "5:",
+            "name": "5"
+          },
+          {
+            "description": "Games, etc",
+            "icon": "📑",
+            "insertValue": "6:",
+            "name": "6"
+          },
+          {
+            "description": "Miscellanea",
+            "icon": "📑",
+            "insertValue": "7:",
+            "name": "7"
+          },
+          {
+            "description": "System admin and daemons",
+            "icon": "📑",
+            "insertValue": "8:",
+            "name": "8"
+          }
+        ]
+      },
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "man"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "man#custom#0",
+  "version": 1
+}

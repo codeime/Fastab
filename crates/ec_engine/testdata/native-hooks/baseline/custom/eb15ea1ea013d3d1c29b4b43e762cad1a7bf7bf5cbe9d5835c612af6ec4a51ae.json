@@ -1,0 +1,358 @@
+{
+  "bodySha256": "eb15ea1ea013d3d1c29b4b43e762cad1a7bf7bf5cbe9d5835c612af6ec4a51ae",
+  "cases": [
+    {
+      "args": [
+        [
+          "dd"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "The same as 'unblock' except characters are translated from EBCDIC to ASCII",
+            "icon": "fig://icon?type=string",
+            "name": "ascii"
+          },
+          {
+            "description": "The same as 'unblock' except characters are translated from EBCDIC to ASCII",
+            "icon": "fig://icon?type=string",
+            "name": "oldascii"
+          },
+          {
+            "description": "Treats the input as a sequence of newline or EOF-terminated variable length records of independent input and output block boundaries",
+            "icon": "fig://icon?type=string",
+            "name": "block"
+          },
+          {
+            "description": "The same as the 'block' value except that characters are translated from ASCII to EBCDIC after the records are converted",
+            "icon": "fig://icon?type=string",
+            "name": "ebcdic"
+          },
+          {
+            "description": "The same as the 'block' value except that characters are translated from ASCII to EBCDIC after the records are converted",
+            "icon": "fig://icon?type=string",
+            "name": "ibm"
+          },
+          {
+            "description": "The same as the 'block' value except that characters are translated from ASCII to EBCDIC after the records are converted",
+            "icon": "fig://icon?type=string",
+            "name": "oldebcdic"
+          },
+          {
+            "description": "The same as the 'block' value except that characters are translated from ASCII to EBCDIC after the records are converted",
+            "icon": "fig://icon?type=string",
+            "name": "oldibm"
+          },
+          {
+            "description": "Transform uppercase characters into lowercase characters",
+            "icon": "fig://icon?type=string",
+            "name": "lcase"
+          },
+          {
+            "description": "Do not stop processing on an input error",
+            "icon": "fig://icon?type=string",
+            "name": "noerror"
+          },
+          {
+            "description": "Do not truncate the output file. This will preserve any blocks in the output file not explicitly written by dd",
+            "icon": "fig://icon?type=string",
+            "name": "notrunc"
+          },
+          {
+            "description": "Pad the final output block to the full output block size",
+            "icon": "fig://icon?type=string",
+            "name": "osync"
+          },
+          {
+            "description": "If one or more output blocks would consist solely of NUL bytes, try to seek the output file by the required space instead of filling them with NULs, resulting in a sparse file",
+            "icon": "fig://icon?type=string",
+            "name": "sparse"
+          },
+          {
+            "description": "Swap every pair of input bytes",
+            "icon": "fig://icon?type=string",
+            "name": "swab"
+          },
+          {
+            "description": "Pad every input block to the input buffer size",
+            "icon": "fig://icon?type=string",
+            "name": "sync"
+          },
+          {
+            "description": "Transform lowercase characters into uppercase characters",
+            "icon": "fig://icon?type=string",
+            "name": "ucase"
+          },
+          {
+            "description": "Treats the input as a sequence of fixed length records independent of input and output block boundaries",
+            "icon": "fig://icon?type=string",
+            "name": "unblock"
+          }
+        ]
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "dd",
+          "status"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "The same as 'unblock' except characters are translated from EBCDIC to ASCII",
+            "icon": "fig://icon?type=string",
+            "name": "ascii"
+          },
+          {
+            "description": "The same as 'unblock' except characters are translated from EBCDIC to ASCII",
+            "icon": "fig://icon?type=string",
+            "name": "oldascii"
+          },
+          {
+            "description": "Treats the input as a sequence of newline or EOF-terminated variable length records of independent input and output block boundaries",
+            "icon": "fig://icon?type=string",
+            "name": "block"
+          },
+          {
+            "description": "The same as the 'block' value except that characters are translated from ASCII to EBCDIC after the records are converted",
+            "icon": "fig://icon?type=string",
+            "name": "ebcdic"
+          },
+          {
+            "description": "The same as the 'block' value except that characters are translated from ASCII to EBCDIC after the records are converted",
+            "icon": "fig://icon?type=string",
+            "name": "ibm"
+          },
+          {
+            "description": "The same as the 'block' value except that characters are translated from ASCII to EBCDIC after the records are converted",
+            "icon": "fig://icon?type=string",
+            "name": "oldebcdic"
+          },
+          {
+            "description": "The same as the 'block' value except that characters are translated from ASCII to EBCDIC after the records are converted",
+            "icon": "fig://icon?type=string",
+            "name": "oldibm"
+          },
+          {
+            "description": "Transform uppercase characters into lowercase characters",
+            "icon": "fig://icon?type=string",
+            "name": "lcase"
+          },
+          {
+            "description": "Do not stop processing on an input error",
+            "icon": "fig://icon?type=string",
+            "name": "noerror"
+          },
+          {
+            "description": "Do not truncate the output file. This will preserve any blocks in the output file not explicitly written by dd",
+            "icon": "fig://icon?type=string",
+            "name": "notrunc"
+          },
+          {
+            "description": "Pad the final output block to the full output block size",
+            "icon": "fig://icon?type=string",
+            "name": "osync"
+          },
+          {
+            "description": "If one or more output blocks would consist solely of NUL bytes, try to seek the output file by the required space instead of filling them with NULs, resulting in a sparse file",
+            "icon": "fig://icon?type=string",
+            "name": "sparse"
+          },
+          {
+            "description": "Swap every pair of input bytes",
+            "icon": "fig://icon?type=string",
+            "name": "swab"
+          },
+          {
+            "description": "Pad every input block to the input buffer size",
+            "icon": "fig://icon?type=string",
+            "name": "sync"
+          },
+          {
+            "description": "Transform lowercase characters into uppercase characters",
+            "icon": "fig://icon?type=string",
+            "name": "ucase"
+          },
+          {
+            "description": "Treats the input as a sequence of fixed length records independent of input and output block boundaries",
+            "icon": "fig://icon?type=string",
+            "name": "unblock"
+          }
+        ]
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "dd",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "description": "The same as 'unblock' except characters are translated from EBCDIC to ASCII",
+            "icon": "fig://icon?type=string",
+            "name": "ascii"
+          },
+          {
+            "description": "The same as 'unblock' except characters are translated from EBCDIC to ASCII",
+            "icon": "fig://icon?type=string",
+            "name": "oldascii"
+          },
+          {
+            "description": "Treats the input as a sequence of newline or EOF-terminated variable length records of independent input and output block boundaries",
+            "icon": "fig://icon?type=string",
+            "name": "block"
+          },
+          {
+            "description": "The same as the 'block' value except that characters are translated from ASCII to EBCDIC after the records are converted",
+            "icon": "fig://icon?type=string",
+            "name": "ebcdic"
+          },
+          {
+            "description": "The same as the 'block' value except that characters are translated from ASCII to EBCDIC after the records are converted",
+            "icon": "fig://icon?type=string",
+            "name": "ibm"
+          },
+          {
+            "description": "The same as the 'block' value except that characters are translated from ASCII to EBCDIC after the records are converted",
+            "icon": "fig://icon?type=string",
+            "name": "oldebcdic"
+          },
+          {
+            "description": "The same as the 'block' value except that characters are translated from ASCII to EBCDIC after the records are converted",
+            "icon": "fig://icon?type=string",
+            "name": "oldibm"
+          },
+          {
+            "description": "Transform uppercase characters into lowercase characters",
+            "icon": "fig://icon?type=string",
+            "name": "lcase"
+          },
+          {
+            "description": "Do not stop processing on an input error",
+            "icon": "fig://icon?type=string",
+            "name": "noerror"
+          },
+          {
+            "description": "Do not truncate the output file. This will preserve any blocks in the output file not explicitly written by dd",
+            "icon": "fig://icon?type=string",
+            "name": "notrunc"
+          },
+          {
+            "description": "Pad the final output block to the full output block size",
+            "icon": "fig://icon?type=string",
+            "name": "osync"
+          },
+          {
+            "description": "If one or more output blocks would consist solely of NUL bytes, try to seek the output file by the required space instead of filling them with NULs, resulting in a sparse file",
+            "icon": "fig://icon?type=string",
+            "name": "sparse"
+          },
+          {
+            "description": "Swap every pair of input bytes",
+            "icon": "fig://icon?type=string",
+            "name": "swab"
+          },
+          {
+            "description": "Pad every input block to the input buffer size",
+            "icon": "fig://icon?type=string",
+            "name": "sync"
+          },
+          {
+            "description": "Transform lowercase characters into uppercase characters",
+            "icon": "fig://icon?type=string",
+            "name": "ucase"
+          },
+          {
+            "description": "Treats the input as a sequence of fixed length records independent of input and output block boundaries",
+            "icon": "fig://icon?type=string",
+            "name": "unblock"
+          }
+        ]
+      },
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "dd"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "dd#custom#0",
+  "version": 1
+}

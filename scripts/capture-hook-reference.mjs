@@ -749,8 +749,8 @@ export async function captureHookReference(options = {}) {
   if (typeof hookId !== "string" || !hookId) {
     throw new Error("hookId is required");
   }
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 7000) {
-    throw new Error("reference timeout must be 100..7000 ms");
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 50 || timeoutMs > 7000) {
+    throw new Error("reference timeout must be 50..7000 ms");
   }
   return withReferenceAudit(
     { sourceRoot, irRoot, hooksRoot },
@@ -807,8 +807,8 @@ export async function captureHookModuleReference(options = {}) {
   if (typeof hookId !== "string" || !hookId) {
     throw new Error("hookId is required");
   }
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 7000) {
-    throw new Error("reference timeout must be 100..7000 ms");
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 50 || timeoutMs > 7000) {
+    throw new Error("reference timeout must be 50..7000 ms");
   }
   return withReferenceAudit(
     { sourceRoot, irRoot, hooksRoot },
@@ -867,8 +867,8 @@ export async function captureHookReferenceBatch(options = {}) {
     throw new Error("hookId is required");
   }
   validateInvocationBatch(invocations);
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 7000) {
-    throw new Error("reference timeout must be 100..7000 ms");
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 50 || timeoutMs > 7000) {
+    throw new Error("reference timeout must be 50..7000 ms");
   }
   return withReferenceAudit(
     { sourceRoot, irRoot, hooksRoot },
@@ -922,8 +922,8 @@ export async function captureHookModuleReferenceBatch(options = {}) {
     throw new Error("hookId is required");
   }
   validateInvocationBatch(invocations);
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 7000) {
-    throw new Error("reference timeout must be 100..7000 ms");
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 50 || timeoutMs > 7000) {
+    throw new Error("reference timeout must be 50..7000 ms");
   }
   return withReferenceAudit(
     { sourceRoot, irRoot, hooksRoot },

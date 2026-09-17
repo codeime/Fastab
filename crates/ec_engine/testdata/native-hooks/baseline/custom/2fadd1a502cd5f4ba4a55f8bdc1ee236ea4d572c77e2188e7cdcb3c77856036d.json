@@ -1,0 +1,202 @@
+{
+  "bodySha256": "2fadd1a502cd5f4ba4a55f8bdc1ee236ea4d572c77e2188e7cdcb3c77856036d",
+  "cases": [
+    {
+      "args": [
+        [
+          "file"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "insertValue": "bytes=",
+            "name": "bytes"
+          },
+          {
+            "insertValue": "elf_notes=",
+            "name": "elf_notes"
+          },
+          {
+            "insertValue": "elf_phum=",
+            "name": "elf_phum"
+          },
+          {
+            "insertValue": "encoding=",
+            "name": "encoding"
+          },
+          {
+            "insertValue": "indir=",
+            "name": "indir"
+          },
+          {
+            "insertValue": "name=",
+            "name": "name"
+          },
+          {
+            "insertValue": "regex=",
+            "name": "regex"
+          }
+        ]
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "file",
+          "status"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "insertValue": "bytes=",
+            "name": "bytes"
+          },
+          {
+            "insertValue": "elf_notes=",
+            "name": "elf_notes"
+          },
+          {
+            "insertValue": "elf_phum=",
+            "name": "elf_phum"
+          },
+          {
+            "insertValue": "encoding=",
+            "name": "encoding"
+          },
+          {
+            "insertValue": "indir=",
+            "name": "indir"
+          },
+          {
+            "insertValue": "name=",
+            "name": "name"
+          },
+          {
+            "insertValue": "regex=",
+            "name": "regex"
+          }
+        ]
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "file",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "insertValue": "bytes=",
+            "name": "bytes"
+          },
+          {
+            "insertValue": "elf_notes=",
+            "name": "elf_notes"
+          },
+          {
+            "insertValue": "elf_phum=",
+            "name": "elf_phum"
+          },
+          {
+            "insertValue": "encoding=",
+            "name": "encoding"
+          },
+          {
+            "insertValue": "indir=",
+            "name": "indir"
+          },
+          {
+            "insertValue": "name=",
+            "name": "name"
+          },
+          {
+            "insertValue": "regex=",
+            "name": "regex"
+          }
+        ]
+      },
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "file"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "file#custom#0",
+  "version": 1
+}

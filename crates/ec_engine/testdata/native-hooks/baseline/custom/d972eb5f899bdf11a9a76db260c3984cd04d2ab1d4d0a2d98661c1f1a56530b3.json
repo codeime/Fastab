@@ -1,0 +1,1720 @@
+{
+  "bodySha256": "d972eb5f899bdf11a9a76db260c3984cd04d2ab1d4d0a2d98661c1f1a56530b3",
+  "cases": [
+    {
+      "args": [
+        [
+          "osqueryi"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "name": "account_policy_data"
+          },
+          {
+            "name": "acpi_tables"
+          },
+          {
+            "name": "ad_config"
+          },
+          {
+            "name": "alf"
+          },
+          {
+            "name": "alf_exceptions"
+          },
+          {
+            "name": "alf_explicit_auths"
+          },
+          {
+            "name": "app_schemes"
+          },
+          {
+            "name": "apps"
+          },
+          {
+            "name": "arp_cache"
+          },
+          {
+            "name": "asl"
+          },
+          {
+            "name": "atom_packages"
+          },
+          {
+            "name": "augeas"
+          },
+          {
+            "name": "authorization_mechanisms"
+          },
+          {
+            "name": "authorizations"
+          },
+          {
+            "name": "authorized_keys"
+          },
+          {
+            "name": "azure_instance_metadata"
+          },
+          {
+            "name": "azure_instance_tags"
+          },
+          {
+            "name": "battery"
+          },
+          {
+            "name": "block_devices"
+          },
+          {
+            "name": "browser_plugins"
+          },
+          {
+            "name": "carbon_black_info"
+          },
+          {
+            "name": "carves"
+          },
+          {
+            "name": "certificates"
+          },
+          {
+            "name": "chrome_extension_content_scripts"
+          },
+          {
+            "name": "chrome_extensions"
+          },
+          {
+            "name": "cpu_time"
+          },
+          {
+            "name": "crashes"
+          },
+          {
+            "name": "crontab"
+          },
+          {
+            "name": "cups_destinations"
+          },
+          {
+            "name": "cups_jobs"
+          },
+          {
+            "name": "curl"
+          },
+          {
+            "name": "curl_certificate"
+          },
+          {
+            "name": "device_file"
+          },
+          {
+            "name": "device_firmware"
+          },
+          {
+            "name": "device_hash"
+          },
+          {
+            "name": "device_partitions"
+          },
+          {
+            "name": "disk_encryption"
+          },
+          {
+            "name": "disk_events"
+          },
+          {
+            "name": "dns_resolvers"
+          },
+          {
+            "name": "docker_container_envs"
+          },
+          {
+            "name": "docker_container_fs_changes"
+          },
+          {
+            "name": "docker_container_labels"
+          },
+          {
+            "name": "docker_container_mounts"
+          },
+          {
+            "name": "docker_container_networks"
+          },
+          {
+            "name": "docker_container_ports"
+          },
+          {
+            "name": "docker_container_processes"
+          },
+          {
+            "name": "docker_container_stats"
+          },
+          {
+            "name": "docker_containers"
+          },
+          {
+            "name": "docker_image_history"
+          },
+          {
+            "name": "docker_image_labels"
+          },
+          {
+            "name": "docker_image_layers"
+          },
+          {
+            "name": "docker_images"
+          },
+          {
+            "name": "docker_info"
+          },
+          {
+            "name": "docker_network_labels"
+          },
+          {
+            "name": "docker_networks"
+          },
+          {
+            "name": "docker_version"
+          },
+          {
+            "name": "docker_volume_labels"
+          },
+          {
+            "name": "docker_volumes"
+          },
+          {
+            "name": "ec2_instance_metadata"
+          },
+          {
+            "name": "ec2_instance_tags"
+          },
+          {
+            "name": "es_process_events"
+          },
+          {
+            "name": "es_process_file_events"
+          },
+          {
+            "name": "etc_hosts"
+          },
+          {
+            "name": "etc_protocols"
+          },
+          {
+            "name": "etc_services"
+          },
+          {
+            "name": "event_taps"
+          },
+          {
+            "name": "extended_attributes"
+          },
+          {
+            "name": "fan_speed_sensors"
+          },
+          {
+            "name": "file"
+          },
+          {
+            "name": "file_events"
+          },
+          {
+            "name": "firefox_addons"
+          },
+          {
+            "name": "gatekeeper"
+          },
+          {
+            "name": "gatekeeper_approved_apps"
+          },
+          {
+            "name": "groups"
+          },
+          {
+            "name": "hardware_events"
+          },
+          {
+            "name": "hash"
+          },
+          {
+            "name": "homebrew_packages"
+          },
+          {
+            "name": "ibridge_info"
+          },
+          {
+            "name": "interface_addresses"
+          },
+          {
+            "name": "interface_details"
+          },
+          {
+            "name": "interface_ipv6"
+          },
+          {
+            "name": "iokit_devicetree"
+          },
+          {
+            "name": "iokit_registry"
+          },
+          {
+            "name": "kernel_extensions"
+          },
+          {
+            "name": "kernel_info"
+          },
+          {
+            "name": "kernel_panics"
+          },
+          {
+            "name": "keychain_acls"
+          },
+          {
+            "name": "keychain_items"
+          },
+          {
+            "name": "known_hosts"
+          },
+          {
+            "name": "last"
+          },
+          {
+            "name": "launchd"
+          },
+          {
+            "name": "launchd_overrides"
+          },
+          {
+            "name": "listening_ports"
+          },
+          {
+            "name": "load_average"
+          },
+          {
+            "name": "location_services"
+          },
+          {
+            "name": "logged_in_users"
+          },
+          {
+            "name": "magic"
+          },
+          {
+            "name": "managed_policies"
+          },
+          {
+            "name": "mdfind"
+          },
+          {
+            "name": "mdls"
+          },
+          {
+            "name": "memory_array_mapped_addresses"
+          },
+          {
+            "name": "memory_arrays"
+          },
+          {
+            "name": "memory_device_mapped_addresses"
+          },
+          {
+            "name": "memory_devices"
+          },
+          {
+            "name": "memory_error_info"
+          },
+          {
+            "name": "mounts"
+          },
+          {
+            "name": "nfs_shares"
+          },
+          {
+            "name": "npm_packages"
+          },
+          {
+            "name": "nvram"
+          },
+          {
+            "name": "oem_strings"
+          },
+          {
+            "name": "os_version"
+          },
+          {
+            "name": "osquery_events"
+          },
+          {
+            "name": "osquery_extensions"
+          },
+          {
+            "name": "osquery_flags"
+          },
+          {
+            "name": "osquery_info"
+          },
+          {
+            "name": "osquery_packs"
+          },
+          {
+            "name": "osquery_registry"
+          },
+          {
+            "name": "osquery_schedule"
+          },
+          {
+            "name": "package_bom"
+          },
+          {
+            "name": "package_install_history"
+          },
+          {
+            "name": "package_receipts"
+          },
+          {
+            "name": "password_policy"
+          },
+          {
+            "name": "pci_devices"
+          },
+          {
+            "name": "platform_info"
+          },
+          {
+            "name": "plist"
+          },
+          {
+            "name": "power_sensors"
+          },
+          {
+            "name": "preferences"
+          },
+          {
+            "name": "process_envs"
+          },
+          {
+            "name": "process_events"
+          },
+          {
+            "name": "process_memory_map"
+          },
+          {
+            "name": "process_open_files"
+          },
+          {
+            "name": "process_open_sockets"
+          },
+          {
+            "name": "processes"
+          },
+          {
+            "name": "prometheus_metrics"
+          },
+          {
+            "name": "python_packages"
+          },
+          {
+            "name": "quicklook_cache"
+          },
+          {
+            "name": "routes"
+          },
+          {
+            "name": "running_apps"
+          },
+          {
+            "name": "safari_extensions"
+          },
+          {
+            "name": "sandboxes"
+          },
+          {
+            "name": "screenlock"
+          },
+          {
+            "name": "shared_folders"
+          },
+          {
+            "name": "sharing_preferences"
+          },
+          {
+            "name": "shell_history"
+          },
+          {
+            "name": "signature"
+          },
+          {
+            "name": "sip_config"
+          },
+          {
+            "name": "smbios_tables"
+          },
+          {
+            "name": "smc_keys"
+          },
+          {
+            "name": "socket_events"
+          },
+          {
+            "name": "ssh_configs"
+          },
+          {
+            "name": "startup_items"
+          },
+          {
+            "name": "sudoers"
+          },
+          {
+            "name": "suid_bin"
+          },
+          {
+            "name": "system_controls"
+          },
+          {
+            "name": "system_extensions"
+          },
+          {
+            "name": "system_info"
+          },
+          {
+            "name": "temperature_sensors"
+          },
+          {
+            "name": "time"
+          },
+          {
+            "name": "time_machine_backups"
+          },
+          {
+            "name": "time_machine_destinations"
+          },
+          {
+            "name": "ulimit_info"
+          },
+          {
+            "name": "uptime"
+          },
+          {
+            "name": "usb_devices"
+          },
+          {
+            "name": "user_events"
+          },
+          {
+            "name": "user_groups"
+          },
+          {
+            "name": "user_interaction_events"
+          },
+          {
+            "name": "user_ssh_keys"
+          },
+          {
+            "name": "users"
+          },
+          {
+            "name": "virtual_memory_info"
+          },
+          {
+            "name": "wifi_networks"
+          },
+          {
+            "name": "wifi_status"
+          },
+          {
+            "name": "wifi_survey"
+          },
+          {
+            "name": "xprotect_entries"
+          },
+          {
+            "name": "xprotect_meta"
+          },
+          {
+            "name": "xprotect_reports"
+          },
+          {
+            "name": "yara"
+          },
+          {
+            "name": "yara_events"
+          },
+          {
+            "name": "ycloud_instance_metadata"
+          }
+        ]
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "osqueryi",
+          "status"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "name": "account_policy_data"
+          },
+          {
+            "name": "acpi_tables"
+          },
+          {
+            "name": "ad_config"
+          },
+          {
+            "name": "alf"
+          },
+          {
+            "name": "alf_exceptions"
+          },
+          {
+            "name": "alf_explicit_auths"
+          },
+          {
+            "name": "app_schemes"
+          },
+          {
+            "name": "apps"
+          },
+          {
+            "name": "arp_cache"
+          },
+          {
+            "name": "asl"
+          },
+          {
+            "name": "atom_packages"
+          },
+          {
+            "name": "augeas"
+          },
+          {
+            "name": "authorization_mechanisms"
+          },
+          {
+            "name": "authorizations"
+          },
+          {
+            "name": "authorized_keys"
+          },
+          {
+            "name": "azure_instance_metadata"
+          },
+          {
+            "name": "azure_instance_tags"
+          },
+          {
+            "name": "battery"
+          },
+          {
+            "name": "block_devices"
+          },
+          {
+            "name": "browser_plugins"
+          },
+          {
+            "name": "carbon_black_info"
+          },
+          {
+            "name": "carves"
+          },
+          {
+            "name": "certificates"
+          },
+          {
+            "name": "chrome_extension_content_scripts"
+          },
+          {
+            "name": "chrome_extensions"
+          },
+          {
+            "name": "cpu_time"
+          },
+          {
+            "name": "crashes"
+          },
+          {
+            "name": "crontab"
+          },
+          {
+            "name": "cups_destinations"
+          },
+          {
+            "name": "cups_jobs"
+          },
+          {
+            "name": "curl"
+          },
+          {
+            "name": "curl_certificate"
+          },
+          {
+            "name": "device_file"
+          },
+          {
+            "name": "device_firmware"
+          },
+          {
+            "name": "device_hash"
+          },
+          {
+            "name": "device_partitions"
+          },
+          {
+            "name": "disk_encryption"
+          },
+          {
+            "name": "disk_events"
+          },
+          {
+            "name": "dns_resolvers"
+          },
+          {
+            "name": "docker_container_envs"
+          },
+          {
+            "name": "docker_container_fs_changes"
+          },
+          {
+            "name": "docker_container_labels"
+          },
+          {
+            "name": "docker_container_mounts"
+          },
+          {
+            "name": "docker_container_networks"
+          },
+          {
+            "name": "docker_container_ports"
+          },
+          {
+            "name": "docker_container_processes"
+          },
+          {
+            "name": "docker_container_stats"
+          },
+          {
+            "name": "docker_containers"
+          },
+          {
+            "name": "docker_image_history"
+          },
+          {
+            "name": "docker_image_labels"
+          },
+          {
+            "name": "docker_image_layers"
+          },
+          {
+            "name": "docker_images"
+          },
+          {
+            "name": "docker_info"
+          },
+          {
+            "name": "docker_network_labels"
+          },
+          {
+            "name": "docker_networks"
+          },
+          {
+            "name": "docker_version"
+          },
+          {
+            "name": "docker_volume_labels"
+          },
+          {
+            "name": "docker_volumes"
+          },
+          {
+            "name": "ec2_instance_metadata"
+          },
+          {
+            "name": "ec2_instance_tags"
+          },
+          {
+            "name": "es_process_events"
+          },
+          {
+            "name": "es_process_file_events"
+          },
+          {
+            "name": "etc_hosts"
+          },
+          {
+            "name": "etc_protocols"
+          },
+          {
+            "name": "etc_services"
+          },
+          {
+            "name": "event_taps"
+          },
+          {
+            "name": "extended_attributes"
+          },
+          {
+            "name": "fan_speed_sensors"
+          },
+          {
+            "name": "file"
+          },
+          {
+            "name": "file_events"
+          },
+          {
+            "name": "firefox_addons"
+          },
+          {
+            "name": "gatekeeper"
+          },
+          {
+            "name": "gatekeeper_approved_apps"
+          },
+          {
+            "name": "groups"
+          },
+          {
+            "name": "hardware_events"
+          },
+          {
+            "name": "hash"
+          },
+          {
+            "name": "homebrew_packages"
+          },
+          {
+            "name": "ibridge_info"
+          },
+          {
+            "name": "interface_addresses"
+          },
+          {
+            "name": "interface_details"
+          },
+          {
+            "name": "interface_ipv6"
+          },
+          {
+            "name": "iokit_devicetree"
+          },
+          {
+            "name": "iokit_registry"
+          },
+          {
+            "name": "kernel_extensions"
+          },
+          {
+            "name": "kernel_info"
+          },
+          {
+            "name": "kernel_panics"
+          },
+          {
+            "name": "keychain_acls"
+          },
+          {
+            "name": "keychain_items"
+          },
+          {
+            "name": "known_hosts"
+          },
+          {
+            "name": "last"
+          },
+          {
+            "name": "launchd"
+          },
+          {
+            "name": "launchd_overrides"
+          },
+          {
+            "name": "listening_ports"
+          },
+          {
+            "name": "load_average"
+          },
+          {
+            "name": "location_services"
+          },
+          {
+            "name": "logged_in_users"
+          },
+          {
+            "name": "magic"
+          },
+          {
+            "name": "managed_policies"
+          },
+          {
+            "name": "mdfind"
+          },
+          {
+            "name": "mdls"
+          },
+          {
+            "name": "memory_array_mapped_addresses"
+          },
+          {
+            "name": "memory_arrays"
+          },
+          {
+            "name": "memory_device_mapped_addresses"
+          },
+          {
+            "name": "memory_devices"
+          },
+          {
+            "name": "memory_error_info"
+          },
+          {
+            "name": "mounts"
+          },
+          {
+            "name": "nfs_shares"
+          },
+          {
+            "name": "npm_packages"
+          },
+          {
+            "name": "nvram"
+          },
+          {
+            "name": "oem_strings"
+          },
+          {
+            "name": "os_version"
+          },
+          {
+            "name": "osquery_events"
+          },
+          {
+            "name": "osquery_extensions"
+          },
+          {
+            "name": "osquery_flags"
+          },
+          {
+            "name": "osquery_info"
+          },
+          {
+            "name": "osquery_packs"
+          },
+          {
+            "name": "osquery_registry"
+          },
+          {
+            "name": "osquery_schedule"
+          },
+          {
+            "name": "package_bom"
+          },
+          {
+            "name": "package_install_history"
+          },
+          {
+            "name": "package_receipts"
+          },
+          {
+            "name": "password_policy"
+          },
+          {
+            "name": "pci_devices"
+          },
+          {
+            "name": "platform_info"
+          },
+          {
+            "name": "plist"
+          },
+          {
+            "name": "power_sensors"
+          },
+          {
+            "name": "preferences"
+          },
+          {
+            "name": "process_envs"
+          },
+          {
+            "name": "process_events"
+          },
+          {
+            "name": "process_memory_map"
+          },
+          {
+            "name": "process_open_files"
+          },
+          {
+            "name": "process_open_sockets"
+          },
+          {
+            "name": "processes"
+          },
+          {
+            "name": "prometheus_metrics"
+          },
+          {
+            "name": "python_packages"
+          },
+          {
+            "name": "quicklook_cache"
+          },
+          {
+            "name": "routes"
+          },
+          {
+            "name": "running_apps"
+          },
+          {
+            "name": "safari_extensions"
+          },
+          {
+            "name": "sandboxes"
+          },
+          {
+            "name": "screenlock"
+          },
+          {
+            "name": "shared_folders"
+          },
+          {
+            "name": "sharing_preferences"
+          },
+          {
+            "name": "shell_history"
+          },
+          {
+            "name": "signature"
+          },
+          {
+            "name": "sip_config"
+          },
+          {
+            "name": "smbios_tables"
+          },
+          {
+            "name": "smc_keys"
+          },
+          {
+            "name": "socket_events"
+          },
+          {
+            "name": "ssh_configs"
+          },
+          {
+            "name": "startup_items"
+          },
+          {
+            "name": "sudoers"
+          },
+          {
+            "name": "suid_bin"
+          },
+          {
+            "name": "system_controls"
+          },
+          {
+            "name": "system_extensions"
+          },
+          {
+            "name": "system_info"
+          },
+          {
+            "name": "temperature_sensors"
+          },
+          {
+            "name": "time"
+          },
+          {
+            "name": "time_machine_backups"
+          },
+          {
+            "name": "time_machine_destinations"
+          },
+          {
+            "name": "ulimit_info"
+          },
+          {
+            "name": "uptime"
+          },
+          {
+            "name": "usb_devices"
+          },
+          {
+            "name": "user_events"
+          },
+          {
+            "name": "user_groups"
+          },
+          {
+            "name": "user_interaction_events"
+          },
+          {
+            "name": "user_ssh_keys"
+          },
+          {
+            "name": "users"
+          },
+          {
+            "name": "virtual_memory_info"
+          },
+          {
+            "name": "wifi_networks"
+          },
+          {
+            "name": "wifi_status"
+          },
+          {
+            "name": "wifi_survey"
+          },
+          {
+            "name": "xprotect_entries"
+          },
+          {
+            "name": "xprotect_meta"
+          },
+          {
+            "name": "xprotect_reports"
+          },
+          {
+            "name": "yara"
+          },
+          {
+            "name": "yara_events"
+          },
+          {
+            "name": "ycloud_instance_metadata"
+          }
+        ]
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "osqueryi",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "name": "account_policy_data"
+          },
+          {
+            "name": "acpi_tables"
+          },
+          {
+            "name": "ad_config"
+          },
+          {
+            "name": "alf"
+          },
+          {
+            "name": "alf_exceptions"
+          },
+          {
+            "name": "alf_explicit_auths"
+          },
+          {
+            "name": "app_schemes"
+          },
+          {
+            "name": "apps"
+          },
+          {
+            "name": "arp_cache"
+          },
+          {
+            "name": "asl"
+          },
+          {
+            "name": "atom_packages"
+          },
+          {
+            "name": "augeas"
+          },
+          {
+            "name": "authorization_mechanisms"
+          },
+          {
+            "name": "authorizations"
+          },
+          {
+            "name": "authorized_keys"
+          },
+          {
+            "name": "azure_instance_metadata"
+          },
+          {
+            "name": "azure_instance_tags"
+          },
+          {
+            "name": "battery"
+          },
+          {
+            "name": "block_devices"
+          },
+          {
+            "name": "browser_plugins"
+          },
+          {
+            "name": "carbon_black_info"
+          },
+          {
+            "name": "carves"
+          },
+          {
+            "name": "certificates"
+          },
+          {
+            "name": "chrome_extension_content_scripts"
+          },
+          {
+            "name": "chrome_extensions"
+          },
+          {
+            "name": "cpu_time"
+          },
+          {
+            "name": "crashes"
+          },
+          {
+            "name": "crontab"
+          },
+          {
+            "name": "cups_destinations"
+          },
+          {
+            "name": "cups_jobs"
+          },
+          {
+            "name": "curl"
+          },
+          {
+            "name": "curl_certificate"
+          },
+          {
+            "name": "device_file"
+          },
+          {
+            "name": "device_firmware"
+          },
+          {
+            "name": "device_hash"
+          },
+          {
+            "name": "device_partitions"
+          },
+          {
+            "name": "disk_encryption"
+          },
+          {
+            "name": "disk_events"
+          },
+          {
+            "name": "dns_resolvers"
+          },
+          {
+            "name": "docker_container_envs"
+          },
+          {
+            "name": "docker_container_fs_changes"
+          },
+          {
+            "name": "docker_container_labels"
+          },
+          {
+            "name": "docker_container_mounts"
+          },
+          {
+            "name": "docker_container_networks"
+          },
+          {
+            "name": "docker_container_ports"
+          },
+          {
+            "name": "docker_container_processes"
+          },
+          {
+            "name": "docker_container_stats"
+          },
+          {
+            "name": "docker_containers"
+          },
+          {
+            "name": "docker_image_history"
+          },
+          {
+            "name": "docker_image_labels"
+          },
+          {
+            "name": "docker_image_layers"
+          },
+          {
+            "name": "docker_images"
+          },
+          {
+            "name": "docker_info"
+          },
+          {
+            "name": "docker_network_labels"
+          },
+          {
+            "name": "docker_networks"
+          },
+          {
+            "name": "docker_version"
+          },
+          {
+            "name": "docker_volume_labels"
+          },
+          {
+            "name": "docker_volumes"
+          },
+          {
+            "name": "ec2_instance_metadata"
+          },
+          {
+            "name": "ec2_instance_tags"
+          },
+          {
+            "name": "es_process_events"
+          },
+          {
+            "name": "es_process_file_events"
+          },
+          {
+            "name": "etc_hosts"
+          },
+          {
+            "name": "etc_protocols"
+          },
+          {
+            "name": "etc_services"
+          },
+          {
+            "name": "event_taps"
+          },
+          {
+            "name": "extended_attributes"
+          },
+          {
+            "name": "fan_speed_sensors"
+          },
+          {
+            "name": "file"
+          },
+          {
+            "name": "file_events"
+          },
+          {
+            "name": "firefox_addons"
+          },
+          {
+            "name": "gatekeeper"
+          },
+          {
+            "name": "gatekeeper_approved_apps"
+          },
+          {
+            "name": "groups"
+          },
+          {
+            "name": "hardware_events"
+          },
+          {
+            "name": "hash"
+          },
+          {
+            "name": "homebrew_packages"
+          },
+          {
+            "name": "ibridge_info"
+          },
+          {
+            "name": "interface_addresses"
+          },
+          {
+            "name": "interface_details"
+          },
+          {
+            "name": "interface_ipv6"
+          },
+          {
+            "name": "iokit_devicetree"
+          },
+          {
+            "name": "iokit_registry"
+          },
+          {
+            "name": "kernel_extensions"
+          },
+          {
+            "name": "kernel_info"
+          },
+          {
+            "name": "kernel_panics"
+          },
+          {
+            "name": "keychain_acls"
+          },
+          {
+            "name": "keychain_items"
+          },
+          {
+            "name": "known_hosts"
+          },
+          {
+            "name": "last"
+          },
+          {
+            "name": "launchd"
+          },
+          {
+            "name": "launchd_overrides"
+          },
+          {
+            "name": "listening_ports"
+          },
+          {
+            "name": "load_average"
+          },
+          {
+            "name": "location_services"
+          },
+          {
+            "name": "logged_in_users"
+          },
+          {
+            "name": "magic"
+          },
+          {
+            "name": "managed_policies"
+          },
+          {
+            "name": "mdfind"
+          },
+          {
+            "name": "mdls"
+          },
+          {
+            "name": "memory_array_mapped_addresses"
+          },
+          {
+            "name": "memory_arrays"
+          },
+          {
+            "name": "memory_device_mapped_addresses"
+          },
+          {
+            "name": "memory_devices"
+          },
+          {
+            "name": "memory_error_info"
+          },
+          {
+            "name": "mounts"
+          },
+          {
+            "name": "nfs_shares"
+          },
+          {
+            "name": "npm_packages"
+          },
+          {
+            "name": "nvram"
+          },
+          {
+            "name": "oem_strings"
+          },
+          {
+            "name": "os_version"
+          },
+          {
+            "name": "osquery_events"
+          },
+          {
+            "name": "osquery_extensions"
+          },
+          {
+            "name": "osquery_flags"
+          },
+          {
+            "name": "osquery_info"
+          },
+          {
+            "name": "osquery_packs"
+          },
+          {
+            "name": "osquery_registry"
+          },
+          {
+            "name": "osquery_schedule"
+          },
+          {
+            "name": "package_bom"
+          },
+          {
+            "name": "package_install_history"
+          },
+          {
+            "name": "package_receipts"
+          },
+          {
+            "name": "password_policy"
+          },
+          {
+            "name": "pci_devices"
+          },
+          {
+            "name": "platform_info"
+          },
+          {
+            "name": "plist"
+          },
+          {
+            "name": "power_sensors"
+          },
+          {
+            "name": "preferences"
+          },
+          {
+            "name": "process_envs"
+          },
+          {
+            "name": "process_events"
+          },
+          {
+            "name": "process_memory_map"
+          },
+          {
+            "name": "process_open_files"
+          },
+          {
+            "name": "process_open_sockets"
+          },
+          {
+            "name": "processes"
+          },
+          {
+            "name": "prometheus_metrics"
+          },
+          {
+            "name": "python_packages"
+          },
+          {
+            "name": "quicklook_cache"
+          },
+          {
+            "name": "routes"
+          },
+          {
+            "name": "running_apps"
+          },
+          {
+            "name": "safari_extensions"
+          },
+          {
+            "name": "sandboxes"
+          },
+          {
+            "name": "screenlock"
+          },
+          {
+            "name": "shared_folders"
+          },
+          {
+            "name": "sharing_preferences"
+          },
+          {
+            "name": "shell_history"
+          },
+          {
+            "name": "signature"
+          },
+          {
+            "name": "sip_config"
+          },
+          {
+            "name": "smbios_tables"
+          },
+          {
+            "name": "smc_keys"
+          },
+          {
+            "name": "socket_events"
+          },
+          {
+            "name": "ssh_configs"
+          },
+          {
+            "name": "startup_items"
+          },
+          {
+            "name": "sudoers"
+          },
+          {
+            "name": "suid_bin"
+          },
+          {
+            "name": "system_controls"
+          },
+          {
+            "name": "system_extensions"
+          },
+          {
+            "name": "system_info"
+          },
+          {
+            "name": "temperature_sensors"
+          },
+          {
+            "name": "time"
+          },
+          {
+            "name": "time_machine_backups"
+          },
+          {
+            "name": "time_machine_destinations"
+          },
+          {
+            "name": "ulimit_info"
+          },
+          {
+            "name": "uptime"
+          },
+          {
+            "name": "usb_devices"
+          },
+          {
+            "name": "user_events"
+          },
+          {
+            "name": "user_groups"
+          },
+          {
+            "name": "user_interaction_events"
+          },
+          {
+            "name": "user_ssh_keys"
+          },
+          {
+            "name": "users"
+          },
+          {
+            "name": "virtual_memory_info"
+          },
+          {
+            "name": "wifi_networks"
+          },
+          {
+            "name": "wifi_status"
+          },
+          {
+            "name": "wifi_survey"
+          },
+          {
+            "name": "xprotect_entries"
+          },
+          {
+            "name": "xprotect_meta"
+          },
+          {
+            "name": "xprotect_reports"
+          },
+          {
+            "name": "yara"
+          },
+          {
+            "name": "yara_events"
+          },
+          {
+            "name": "ycloud_instance_metadata"
+          }
+        ]
+      },
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "osqueryi"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "timeout"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 2,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "osqueryi#custom#0",
+  "version": 1
+}
