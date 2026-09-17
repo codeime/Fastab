@@ -16,9 +16,11 @@ mod rank;
 mod runtime;
 mod snapshot;
 mod spec_pair;
-// Native sidecar loading will consume this API in the next migration slice.
-// Keep the not-yet-wired parser/evaluator test-only until that production path
-// is reviewed and connected.
+// Native sidecar loading will consume these APIs in later migration slices.
+// Keep the not-yet-wired parsers/evaluators test-only until that production
+// path is reviewed and connected.
+#[cfg(test)]
+mod hook_baseline;
 #[cfg(test)]
 mod typed_hook;
 mod worker;

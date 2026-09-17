@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "kind": "native-hook-baseline",
+  "field": "postProcess",
+  "bodySha256": "57ac01d9a722bb8a6f4d8edfe88b6f8d52ababb70348740e130e2c5dfee28cbf",
+  "representativeHookId": "git#postProcess#3",
+  "hookCount": 12,
+  "cases": [
+    {
+      "id": "normal",
+      "args": ["<stdout 原文>", ["git", "checkout", ""]],
+      "exec": [
+        {
+          "command": "git",
+          "args": ["branch"],
+          "stdout": "  main\n",
+          "stderr": "",
+          "status": 0
+        }
+      ],
+      "context": {
+        "currentWorkingDirectory": "/repo",
+        "currentProcess": "zsh",
+        "sshPrefix": "",
+        "environmentVariables": {
+          "HOME": "/home/user"
+        },
+        "searchTerm": "",
+        "isDangerous": false
+      },
+      "timeoutMs": 5000,
+      "expected": {
+        "kind": "suggestions",
+        "value": [
+          {
+            "name": "main",
+            "insertValue": "main",
+            "priority": 50,
+            "type": "arg"
+          }
+        ]
+      }
+    }
+  ]
+}
