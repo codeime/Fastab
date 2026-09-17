@@ -40,7 +40,12 @@ const MAX_RESULTS: usize = 50;
 const MAX_CACHED: usize = 32;
 
 pub(crate) fn configured_script_timeout_ms() -> i64 {
-    fig_settings::settings::get_int("autocomplete.scriptTimeout")
+    configured_script_timeout_ms_from(&fig_settings::settings::Settings::new())
+}
+
+pub(crate) fn configured_script_timeout_ms_from(settings: &fig_settings::settings::Settings) -> i64 {
+    settings
+        .get_int("autocomplete.scriptTimeout")
         .ok()
         .flatten()
         .unwrap_or(DEFAULT_SCRIPT_TIMEOUT_MS)
@@ -933,7 +938,7 @@ fn shape_script_output(
 ) -> Vec<Suggestion> {
     // `executeCommandTimeout` hands both branches `cleanOutput(stdout)`.
     let stdout = crate::js_host::clean_output(stdout);
-    if let Some(separator) = arg.split_on.as_deref() {
+    if let Some(separator) = arg.split_on.as_deref().filter(|value| !value.is_empty()) {
         return all_split(&stdout, separator);
     }
     if let Some(hook_id) = arg.js_post_process.as_deref() {
@@ -957,7 +962,7 @@ fn run_script(
         return Vec::new();
     };
     let stdout = process::execute(command, args, cwd, timeout);
-    match split_on {
+    match split_on.filter(|value| !value.is_empty()) {
         Some(separator) => filter_split(&stdout, query, fuzzy, separator),
         None => Vec::new(),
     }
@@ -974,8 +979,9 @@ fn filter_lines(stdout: &str, query: &str, fuzzy: bool) -> Vec<Suggestion> {
         .collect()
 }
 
-/// Fig's `getScriptSuggestions` trims stdout, then `split(splitOn)`, and
-/// drops empty pieces. Keep that shape so comma/`\n` generators match.
+/// Fig's `getScriptSuggestions` trims the whole stdout, then
+/// `split(splitOn)`. It does not trim or drop each piece: spaces and empty
+/// segments can be meaningful for the returned name and insert value.
 fn filter_split(stdout: &str, query: &str, fuzzy: bool, split_on: &str) -> Vec<Suggestion> {
     if split_on.is_empty() {
         return filter_lines(stdout, query, fuzzy);
@@ -986,8 +992,6 @@ fn filter_split(stdout: &str, query: &str, fuzzy: bool, split_on: &str) -> Vec<S
     }
     trimmed
         .split(split_on)
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
         .filter(|part| matches_query(part, query, fuzzy))
         .take(MAX_RESULTS)
         .map(|part| Suggestion::new(part, "", "arg").with_insert_value(part))
@@ -1013,8 +1017,6 @@ fn all_split(stdout: &str, split_on: &str) -> Vec<Suggestion> {
     }
     trimmed
         .split(split_on)
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
         .map(|part| Suggestion::new(part, "", "arg").with_insert_value(part))
         .collect()
 }
@@ -1426,7 +1428,9 @@ mod tests {
     }
 
     #[test]
-    fn empty_split_on_falls_back_to_newlines_and_trims_cr() {
+    fn empty_split_helper_is_defensive_and_raw_crlf_pieces_are_preserved() {
+        // The public generation paths already discard falsy splitOn: "".
+        // This helper-only branch remains defensive and line-oriented.
         assert_eq!(
             filter_split("alpha\r\nbeta\r\nalpaca\r\n", "al", false, "")
                 .iter()
@@ -1434,12 +1438,29 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["alpha", "alpaca"]
         );
+        // JS trims the entire output, not each interior split piece. When
+        // handed raw CRLF, an interior CR is therefore preserved.
         assert_eq!(
             filter_split("alpha\r\nbeta\r\nalpaca\r\n", "al", false, "\n")
                 .iter()
                 .map(|s| s.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["alpha", "alpaca"]
+            vec!["alpha\r", "alpaca"]
+        );
+    }
+
+    #[test]
+    fn split_on_preserves_each_piece_exactly_after_outer_trim() {
+        let stdout = "  alpha,  beta  ,,gamma  ";
+        let rows = all_split(stdout, ",");
+        let names: Vec<_> = rows.iter().map(|row| row.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "  beta  ", "", "gamma"]);
+        let inserted: Vec<_> = rows.iter().map(|row| row.insert_value.as_deref()).collect();
+        assert_eq!(inserted, vec![Some("alpha"), Some("  beta  "), Some(""), Some("gamma")]);
+        let filtered = filter_split(stdout, "  b", false, ",");
+        assert_eq!(
+            filtered.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
+            vec!["  beta  "]
         );
     }
 
@@ -2242,6 +2263,41 @@ mod tests {
         let rows = host.enter("/", || generate_for_arg(&arg, &["demo".into()], "", "/", false));
         let names: Vec<_> = rows.iter().map(|row| row.name.as_str()).collect();
         assert_eq!(names, vec!["alpha", "beta"]);
+
+        // An empty JS string is falsy, so this form must take postProcess
+        // instead of splitting output into lines.
+        let empty_split = ArgSpec {
+            split_on: Some(String::new()),
+            ..arg
+        };
+        // A different command slot avoids reusing the generator-session
+        // result from the preceding request.
+        let rows = host.enter("/", || {
+            generate_for_arg(&empty_split, &["demo-empty".into()], "", "/", false)
+        });
+        let names: Vec<_> = rows.iter().map(|row| row.name.as_str()).collect();
+        assert_eq!(names, vec!["from-hook"]);
+    }
+
+    #[test]
+    fn empty_split_on_without_post_process_has_no_script_rows() {
+        // Both the desktop and the host-less engine must treat the empty
+        // string as JS falsy. With no postProcess there is no row shape.
+        let script = vec!["printf".into(), "alpha\nbeta\n".into()];
+        let rows = run_script(&script, "", "/", false, Duration::from_secs(1), Some(""));
+        assert!(rows.is_empty(), "{rows:?}");
+
+        let dir = tempfile::tempdir().unwrap();
+        let host = crate::js_host::JsHost::new(dir.path().join("hooks"));
+        let arg = ArgSpec {
+            script,
+            split_on: Some(String::new()),
+            ..ArgSpec::default()
+        };
+        let rows = host.enter("/", || {
+            generate_for_arg(&arg, &["empty-split-no-hook".into()], "", "/", false)
+        });
+        assert!(rows.is_empty(), "{rows:?}");
     }
 
     #[test]

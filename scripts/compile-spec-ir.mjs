@@ -1,14 +1,37 @@
 #!/usr/bin/env node
 /**
  * Compile bundled Fig JS specs into static JSON IR for the Rust engine.
- * Static walk data stays in JSON. Fig functions (postProcess / custom /
- * generateSpec / function script) are extracted as standalone hook modules
- * and referenced from the IR by id. Known Rust builtins still replace the
- * matching git/npm scripts.
+ * Static walk data stays in JSON. Fig functions keep legacy standalone files
+ * under hooks/ for audit and compatibility. The runtime path uses one
+ * closure-preserving table per source module under source-modules/, referenced
+ * through hook-modules.json. Known Rust builtins still replace matching
+ * git/npm scripts.
  */
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import {
+  mkdir,
+  lstat,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rmdir,
+  rm,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { Script } from "node:vm";
+import * as acorn from "acorn";
 
 import {
   createFilepathsBinder,
@@ -16,8 +39,59 @@ import {
   isFilepathsHelper,
   nativeFilepathsFromHelper,
 } from "./filepaths-helper.mjs";
+import {
+  HOOK_MODULE_MANIFEST,
+  HOOK_MODULES_DIR,
+  hookFileName,
+  KNOWN_NON_SPEC_FILES,
+  SUPPORTED_HOOK_FIELDS,
+  SUPPORTED_IR_HOOK_FIELDS,
+  TYPED_HOOK_CATALOG_MAX_BYTES,
+  TYPED_HOOK_CATALOG_MAX_HOOKS,
+  TYPED_HOOK_DESCRIPTOR_MAX_BYTES,
+  TYPED_HOOK_ID_MAX_BYTES,
+  TYPED_HOOK_MODULE_MAX_BYTES,
+  TYPED_HOOK_PATH_MAX_BYTES,
+  TYPED_HOOK_SIDECAR,
+  TYPED_HOOK_SIDECAR_KIND,
+  TYPED_HOOK_SIDECAR_VERSION,
+  utf8ByteLength,
+} from "./spec-hook-contract.mjs";
+import {
+  assertNoSymlinkInPath,
+  PAIR_LOCK_NAME,
+  PAIR_MARKER_NAME,
+  comparePath,
+  createPairMarker,
+  pairJournalExists,
+  publishPairDirectories,
+  verifyPair,
+  withPairLock,
+  writePairMarker,
+} from "./spec-pair.mjs";
+import {
+  compileTypedHook,
+  TypedHookCompileError,
+  TYPED_HOOK_CONTRACTS,
+  TYPED_HOOK_IR_VERSION,
+} from "./typed-hook-ir.mjs";
+
+export {
+  HOOK_MODULE_MANIFEST,
+  HOOK_MODULES_DIR,
+  hookFileName,
+  KNOWN_NON_SPEC_FILES,
+  SUPPORTED_HOOK_FIELDS,
+  SUPPORTED_IR_HOOK_FIELDS,
+  TYPED_HOOK_SIDECAR,
+};
 
 const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+const pairLockPath = join(repoDir, "bundle", PAIR_LOCK_NAME);
+const canonicalSourceDir = join(repoDir, "bundle", "specs");
+const canonicalIrDir = join(repoDir, "bundle", "specs-ir");
+
+const NATIVE_REWRITE_FIELDS = new Set(["custom", "trigger", "getQueryTerm"]);
 
 const GIT_ALIASES_SCRIPT = [
   "git",
@@ -88,8 +162,10 @@ async function applyLoadSpec(raw, ctx, out) {
     out.loadSpec = raw.loadSpec.trim();
     return;
   }
-  if (typeof raw.loadSpec === "function" && ctx?.hooks) {
-    const hookId = extractHook(ctx.hooks, "loadSpec", raw.loadSpec);
+  if (typeof raw.loadSpec === "function") {
+    const hookId = extractHook(ctx.hooks, "loadSpec", raw.loadSpec, {
+      owner: raw,
+    });
     if (hookId) out.jsLoadSpec = hookId;
     return;
   }
@@ -142,11 +218,315 @@ function splitOnOf(gen) {
 }
 
 export function createHookBag(specId) {
-  return { specId, next: 0, files: new Map() };
+  return {
+    specId,
+    next: 0,
+    files: new Map(),
+    extracted: new Map(),
+    extractions: [],
+    bindings: new Map(),
+  };
 }
 
-export function hookFileName(id) {
-  return `${String(id).replace(/[^A-Za-z0-9._-]+/g, "_")}.js`;
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function sourceModuleFileName(sourcePath) {
+  return `${sha256(sourcePath).slice(0, 24)}.js`;
+}
+
+function sourcePathSegments(path) {
+  if (!/^root(?:\.[A-Za-z_$][\w$]*|\[\d+\])*$/.test(path)) {
+    throw new Error(`invalid audited source hook path ${path}`);
+  }
+  return [...path.matchAll(/\.([A-Za-z_$][\w$]*)|\[(\d+)\]/g)].map(
+    (match) => match[1] ?? Number(match[2]),
+  );
+}
+
+function propertyAccess(root, segments) {
+  return segments.reduce(
+    (expression, segment) => `${expression}[${JSON.stringify(segment)}]`,
+    root,
+  );
+}
+
+export function transformDefaultExport(source, sourcePath) {
+  let ast;
+  try {
+    ast = acorn.parse(source, {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      allowHashBang: true,
+    });
+  } catch (error) {
+    throw new Error(
+      `cannot parse ${sourcePath} for closure-preserving hooks: ${error.message}`,
+      { cause: error },
+    );
+  }
+  const suffix = sha256(sourcePath).slice(0, 16);
+  const injectedDefault = `__ec_default_${suffix}`;
+  let defaultExpression = null;
+  const replacements = [];
+  for (const node of ast.body) {
+    if (
+      node.type === "ImportDeclaration" ||
+      node.type === "ExportAllDeclaration"
+    ) {
+      throw new Error(
+        `${sourcePath} uses module imports/re-exports; add an explicit build-time bundling adapter before preserving its hook closures`,
+      );
+    }
+    if (node.type === "ExportDefaultDeclaration") {
+      if (defaultExpression) {
+        throw new Error(`${sourcePath} has more than one default export`);
+      }
+      const declaration = node.declaration;
+      if (
+        (declaration.type === "FunctionDeclaration" ||
+          declaration.type === "ClassDeclaration") &&
+        declaration.id?.name
+      ) {
+        defaultExpression = declaration.id.name;
+        replacements.push({
+          start: node.start,
+          end: node.end,
+          text: source.slice(declaration.start, declaration.end),
+        });
+      } else {
+        defaultExpression = injectedDefault;
+        replacements.push({
+          start: node.start,
+          end: node.end,
+          text: `const ${injectedDefault} = (${source.slice(declaration.start, declaration.end)});`,
+        });
+      }
+      continue;
+    }
+    if (node.type !== "ExportNamedDeclaration") continue;
+    if (node.source) {
+      throw new Error(
+        `${sourcePath} uses module imports/re-exports; add an explicit build-time bundling adapter before preserving its hook closures`,
+      );
+    }
+    for (const specifier of node.specifiers ?? []) {
+      const exported = specifier.exported?.name ?? specifier.exported?.value;
+      if (exported !== "default") continue;
+      if (defaultExpression) {
+        throw new Error(`${sourcePath} has more than one default export`);
+      }
+      if (specifier.local?.type !== "Identifier") {
+        throw new Error(`${sourcePath} has a non-identifier default export`);
+      }
+      defaultExpression = specifier.local.name;
+    }
+    replacements.push({
+      start: node.start,
+      end: node.end,
+      text: node.declaration
+        ? source.slice(node.declaration.start, node.declaration.end)
+        : "",
+    });
+  }
+  if (!defaultExpression) {
+    throw new Error(
+      `${sourcePath} has no statically addressable default export`,
+    );
+  }
+  let body = source;
+  for (const replacement of replacements.sort(
+    (left, right) => right.start - left.start,
+  )) {
+    body = `${body.slice(0, replacement.start)}${replacement.text}${body.slice(replacement.end)}`;
+  }
+  return { body, defaultExpression, suffix };
+}
+
+export function closurePreservingHookModule(source, sourcePath, instances) {
+  const { body, defaultExpression, suffix } = transformDefaultExport(
+    source,
+    sourcePath,
+  );
+  const entries = [...instances]
+    .sort((left, right) => comparePath(left.id, right.id))
+    .map((instance) => {
+      const segments = sourcePathSegments(instance.path);
+      if (segments.length === 0) {
+        throw new Error(`hook ${instance.id} cannot target the spec root`);
+      }
+      const target = propertyAccess(defaultExpression, segments);
+      if (instance.sourceField !== "custom") {
+        return `${JSON.stringify(instance.id)}: ${target}`;
+      }
+      if (!instance.ownerPath) {
+        throw new Error(
+          `custom hook ${instance.id} has no compiler-recorded owner path`,
+        );
+      }
+      const ownerSegments = sourcePathSegments(instance.ownerPath);
+      const owner = propertyAccess(defaultExpression, ownerSegments);
+      const args = `__ec_args_${suffix}`;
+      return `${JSON.stringify(instance.id)}: (...${args}) => Reflect.apply(${target}, ${owner}, ${args})`;
+    });
+  // QuickJS strips `export default` and evaluates the remaining expression as
+  // a script. An explicit strict function preserves the original ESM module's
+  // top-level semantics in both loaders: `this` is undefined and accidental
+  // globals are rejected.
+  return `export default (function () {\n"use strict";\n${body}\nreturn Object.freeze({\n${entries.join(",\n")}\n});\n})();\n`;
+}
+
+function typedHookContracts() {
+  const contract = TYPED_HOOK_CONTRACTS.trigger;
+  return {
+    trigger: {
+      irVersion: TYPED_HOOK_IR_VERSION,
+      params: [...contract.params],
+      resultType: contract.resultType,
+    },
+  };
+}
+
+function assertTypedHookCatalogString(value, label, maxBytes) {
+  if (typeof value !== "string" || !value || value.includes("\0")) {
+    throw new Error(`${label} must be a string without NUL`);
+  }
+  if (utf8ByteLength(value) > maxBytes) {
+    throw new Error(`${label} exceeds the ${maxBytes}-byte UTF-8 limit`);
+  }
+}
+
+function assertTypedHookCatalogEntry(id, entry) {
+  assertTypedHookCatalogString(id, "typed hook id", TYPED_HOOK_ID_MAX_BYTES);
+  if (id.includes("\\")) {
+    throw new Error("typed hook id must not contain a backslash");
+  }
+  assertTypedHookCatalogString(
+    entry.path,
+    `typed hook ${id} path`,
+    TYPED_HOOK_PATH_MAX_BYTES,
+  );
+  if (!/^root(?:\.[A-Za-z_$][\w$]*|\[\d+\])*$/.test(entry.path)) {
+    throw new Error(
+      `typed hook ${id} path must be a normalized source object property path`,
+    );
+  }
+  if (
+    typeof entry.module !== "string" ||
+    !/^[^/\\\0]+\.js$/.test(entry.module) ||
+    entry.module === ".js" ||
+    entry.module === "..js"
+  ) {
+    throw new Error(`typed hook ${id} module must be one safe .js basename`);
+  }
+  if (utf8ByteLength(entry.module) > TYPED_HOOK_MODULE_MAX_BYTES) {
+    throw new Error(
+      `typed hook ${id} module exceeds the ${TYPED_HOOK_MODULE_MAX_BYTES}-byte UTF-8 limit`,
+    );
+  }
+  for (const field of ["moduleSha256", "functionBodySha256"]) {
+    if (
+      typeof entry[field] !== "string" ||
+      !/^[a-f0-9]{64}$/.test(entry[field])
+    ) {
+      throw new Error(`typed hook ${id} ${field} must be a lowercase SHA-256`);
+    }
+  }
+  if (entry.sourceField !== "trigger") {
+    throw new Error(`typed hook ${id} sourceField must be trigger`);
+  }
+  if (!entry.descriptor || typeof entry.descriptor !== "object") {
+    throw new Error(`typed hook ${id} descriptor must be an object`);
+  }
+  if (
+    utf8ByteLength(JSON.stringify(entry.descriptor)) >
+    TYPED_HOOK_DESCRIPTOR_MAX_BYTES
+  ) {
+    throw new Error(
+      `typed hook ${id} descriptor exceeds the ${TYPED_HOOK_DESCRIPTOR_MAX_BYTES}-byte UTF-8 limit`,
+    );
+  }
+}
+
+async function writeTypedHookSidecar({
+  stagedOutDir,
+  compilerBindings,
+  manifestHooks,
+}) {
+  const typedHooks = new Map();
+  const triggerBindings = compilerBindings
+    .filter((binding) => binding.field === "trigger")
+    .sort((left, right) => comparePath(left.id, right.id));
+
+  for (const binding of triggerBindings) {
+    const body = functionSource(binding.fn);
+    if (!body) {
+      throw new Error(
+        `cannot compile typed trigger ${binding.id}: source function body is unavailable`,
+      );
+    }
+    let descriptor;
+    try {
+      descriptor = compileTypedHook({ body, sourceField: "trigger" });
+    } catch (error) {
+      if (error instanceof TypedHookCompileError) continue;
+      throw new Error(
+        `typed trigger compilation failed for ${binding.id}: ${error.message}`,
+        { cause: error },
+      );
+    }
+
+    const manifestEntry = manifestHooks.get(binding.id);
+    if (!manifestEntry) {
+      throw new Error(
+        `typed trigger ${binding.id} has no closure module manifest entry`,
+      );
+    }
+    if (
+      manifestEntry.path !== binding.path ||
+      manifestEntry.sourceField !== "trigger" ||
+      manifestEntry.functionBodySha256 !== binding.functionBodySha256
+    ) {
+      throw new Error(
+        `typed trigger ${binding.id} does not match the compiler identity binding and closure manifest`,
+      );
+    }
+    const entry = {
+      module: manifestEntry.module,
+      moduleSha256: manifestEntry.moduleSha256,
+      path: manifestEntry.path,
+      sourceField: manifestEntry.sourceField,
+      functionBodySha256: manifestEntry.functionBodySha256,
+      descriptor,
+    };
+    assertTypedHookCatalogEntry(binding.id, entry);
+    typedHooks.set(binding.id, entry);
+  }
+
+  if (typedHooks.size > TYPED_HOOK_CATALOG_MAX_HOOKS) {
+    throw new Error(
+      `typed hook catalog exceeds the ${TYPED_HOOK_CATALOG_MAX_HOOKS}-hook limit`,
+    );
+  }
+  const sidecar = {
+    version: TYPED_HOOK_SIDECAR_VERSION,
+    kind: TYPED_HOOK_SIDECAR_KIND,
+    contracts: typedHookContracts(),
+    hooks: Object.fromEntries(
+      [...typedHooks.entries()].sort(([left], [right]) =>
+        comparePath(left, right),
+      ),
+    ),
+  };
+  const text = `${JSON.stringify(sidecar)}\n`;
+  if (utf8ByteLength(text) > TYPED_HOOK_CATALOG_MAX_BYTES) {
+    throw new Error(
+      `typed hook catalog exceeds the ${TYPED_HOOK_CATALOG_MAX_BYTES}-byte UTF-8 limit`,
+    );
+  }
+  await writeOutputFile(stagedOutDir, TYPED_HOOK_SIDECAR, text);
+  return typedHooks.size;
 }
 
 function passCtx(ctx, extra = {}) {
@@ -159,13 +539,160 @@ function passCtx(ctx, extra = {}) {
   };
 }
 
-function extractHook(hooks, kind, fn) {
-  if (!hooks || typeof fn !== "function") return undefined;
+function extractHook(hooks, kind, fn, { owner = null } = {}) {
+  if (typeof fn !== "function") return undefined;
+  if (!hooks) {
+    throw new Error(`cannot extract ${kind} hook without a hook bag`);
+  }
   const src = functionSource(fn);
-  if (!src) return undefined;
+  if (!src) {
+    throw new Error(
+      `cannot extract ${kind} hook in ${hooks.specId}: function source is unavailable`,
+    );
+  }
+  try {
+    // JsHost evaluates this exact wrapper, not an ESM module. Catch a method
+    // shorthand or other non-expression before replacing the previous IR.
+    new Script(`(${src})`);
+  } catch (error) {
+    throw new Error(
+      `cannot extract ${kind} hook in ${hooks.specId}: function is not a standalone JavaScript expression: ${error.message}`,
+      { cause: error },
+    );
+  }
   const id = `${hooks.specId}#${kind}#${hooks.next++}`;
   hooks.files.set(id, `export default ${src};\n`);
+  hooks.extractions.push({ id, field: kind, fn, owner });
+  let extracted = hooks.extracted.get(kind);
+  if (!extracted) {
+    extracted = new WeakSet();
+    hooks.extracted.set(kind, extracted);
+  }
+  extracted.add(fn);
   return id;
+}
+
+function assertNoUnknownFunctionFields(
+  value,
+  specId,
+  path = "root",
+  ancestors = new WeakSet(),
+  functions = [],
+  owner = null,
+  ownerPath = null,
+) {
+  if (typeof value === "function") return;
+  if (!value || typeof value !== "object" || ancestors.has(value)) return;
+  ancestors.add(value);
+  if (Array.isArray(value)) {
+    value.forEach((item, index) =>
+      assertNoUnknownFunctionFields(
+        item,
+        specId,
+        `${path}[${index}]`,
+        ancestors,
+        functions,
+        owner,
+        ownerPath,
+      ),
+    );
+  } else {
+    for (const key of Object.keys(value).sort(comparePath)) {
+      const childPath = `${path}.${key}`;
+      if (
+        typeof value[key] === "function" &&
+        !Object.hasOwn(SUPPORTED_HOOK_FIELDS, key)
+      ) {
+        throw new Error(
+          `unknown function field ${childPath} in ${specId}; add explicit compiler support before shipping it`,
+        );
+      }
+      if (typeof value[key] === "function") {
+        functions.push({
+          field: key,
+          path: childPath,
+          fn: value[key],
+          owner: value,
+          ownerPath: path,
+          nativeRewrite:
+            isFilepathsHelper(value) && NATIVE_REWRITE_FIELDS.has(key),
+        });
+      }
+      assertNoUnknownFunctionFields(
+        value[key],
+        specId,
+        childPath,
+        ancestors,
+        functions,
+        value,
+        path,
+      );
+    }
+  }
+  ancestors.delete(value);
+}
+
+function bindExtractedHooks(hooks, sourceFunctions, specId) {
+  const candidatesByFunction = new Map();
+  for (const record of sourceFunctions) {
+    if (record.nativeRewrite) continue;
+    const key = `${record.field}`;
+    const records = candidatesByFunction.get(record.fn) ?? new Map();
+    const byField = records.get(key) ?? [];
+    byField.push(record);
+    records.set(key, byField);
+    candidatesByFunction.set(record.fn, records);
+  }
+
+  for (const extraction of hooks.extractions) {
+    const byField = candidatesByFunction.get(extraction.fn);
+    const candidates = byField?.get(extraction.field) ?? [];
+    let matching = candidates;
+    if (extraction.field === "custom" && extraction.owner) {
+      matching = candidates.filter(
+        (candidate) => candidate.owner === extraction.owner,
+      );
+    }
+    if (matching.length === 0) {
+      throw new Error(
+        `cannot bind ${extraction.field} hook ${extraction.id} in ${specId}: no compiler-collected source path matches the function identity${extraction.field === "custom" ? " and owner" : ""}`,
+      );
+    }
+    const owners = new Set(matching.map((candidate) => candidate.owner));
+    if (extraction.field === "custom" && owners.size > 1) {
+      throw new Error(
+        `cannot bind custom hook ${extraction.id} in ${specId}: function identity has multiple owners`,
+      );
+    }
+    // Non-custom hooks can be shared by several source paths because the
+    // function object (and therefore its closure) is identical.  Selecting a
+    // stable path makes the provenance deterministic without changing the
+    // callable value.  Custom hooks always retain their exact owner path.
+    const [selected] = [...matching].sort((left, right) =>
+      comparePath(left.path, right.path),
+    );
+    hooks.bindings.set(extraction.id, {
+      id: extraction.id,
+      field: extraction.field,
+      path: selected.path,
+      ownerPath: selected.ownerPath,
+      functionBodySha256: sha256(functionSource(extraction.fn)),
+      fn: extraction.fn,
+      owner: selected.owner,
+    });
+  }
+}
+
+function assertFunctionsExtracted(functions, hooks, specId) {
+  for (const { field, path, fn, nativeRewrite } of functions) {
+    if (nativeRewrite) continue;
+    const extracted = hooks.extracted.get(field);
+    if (!extracted?.has(fn)) {
+      throw new Error(
+        `cannot extract ${field} hook in ${specId}: converter did not emit a hook for ${path}`,
+      );
+    }
+  }
 }
 
 function cacheFieldsOf(gen) {
@@ -181,7 +708,10 @@ function cacheFieldsOf(gen) {
   if (typeof cache.ttl === "number" && Number.isFinite(cache.ttl)) {
     out.cacheTtl = Math.trunc(cache.ttl);
   }
-  if (cache.strategy === "max-age" || cache.strategy === "stale-while-revalidate") {
+  if (
+    cache.strategy === "max-age" ||
+    cache.strategy === "stale-while-revalidate"
+  ) {
     out.cacheStrategy = cache.strategy;
   }
   return out;
@@ -192,8 +722,8 @@ function triggerOf(gen, ctx = {}) {
   const trigger = gen.trigger;
   if (trigger == null) return undefined;
   if (typeof trigger === "string") return { on: "string", string: trigger };
-  if (typeof trigger === "function" && ctx.hooks) {
-    const hookId = extractHook(ctx.hooks, "trigger", trigger);
+  if (typeof trigger === "function") {
+    const hookId = extractHook(ctx.hooks, "trigger", trigger, { owner: gen });
     return hookId ? { on: "function", jsTrigger: hookId } : undefined;
   }
   if (typeof trigger !== "object") return undefined;
@@ -218,7 +748,11 @@ function triggerOf(gen, ctx = {}) {
 function debounceMsOf(arg) {
   if (!arg || typeof arg !== "object") return undefined;
   if (arg.debounce === true) return 200;
-  if (typeof arg.debounce === "number" && Number.isFinite(arg.debounce) && arg.debounce > 0) {
+  if (
+    typeof arg.debounce === "number" &&
+    Number.isFinite(arg.debounce) &&
+    arg.debounce > 0
+  ) {
     return Math.trunc(arg.debounce);
   }
   return undefined;
@@ -229,7 +763,11 @@ function scriptTimeoutOf(gen) {
     return undefined;
   }
   const values = [gen.scriptTimeout];
-  if (gen.script && typeof gen.script === "object" && !Array.isArray(gen.script)) {
+  if (
+    gen.script &&
+    typeof gen.script === "object" &&
+    !Array.isArray(gen.script)
+  ) {
     values.push(gen.script.timeout);
   }
   const numeric = values
@@ -293,7 +831,9 @@ function suggestionSeedsOf(value, ctx = {}) {
       if (item && typeof item === "object" && item.description) {
         seed.description = String(item.description);
       }
-      const argsHint = argsHintOf(item && typeof item === "object" ? item.args : undefined);
+      const argsHint = argsHintOf(
+        item && typeof item === "object" ? item.args : undefined,
+      );
       if (argsHint) seed.argsHint = argsHint;
       copySuggestionMetadata(item, seed, ctx);
       return seed;
@@ -319,7 +859,9 @@ function argsHintOf(value) {
 
 function filterStrategyOf(raw) {
   const strategy = raw?.filterStrategy;
-  return ["prefix", "fuzzy", "default"].includes(strategy) ? strategy : undefined;
+  return ["prefix", "fuzzy", "default"].includes(strategy)
+    ? strategy
+    : undefined;
 }
 
 // Keep the metadata that affects acceptance and ordering in the static IR.
@@ -340,8 +882,10 @@ function copySuggestionMetadata(raw, out, ctx = {}) {
     out.originalType = raw.originalType;
   }
   if (typeof raw.getQueryTerm === "string") out.getQueryTerm = raw.getQueryTerm;
-  else if (typeof raw.getQueryTerm === "function" && ctx.hooks) {
-    const hookId = extractHook(ctx.hooks, "getQueryTerm", raw.getQueryTerm);
+  else if (typeof raw.getQueryTerm === "function") {
+    const hookId = extractHook(ctx.hooks, "getQueryTerm", raw.getQueryTerm, {
+      owner: raw,
+    });
     if (hookId) out.jsGetQueryTerm = hookId;
   }
   if (typeof raw.getQueryTerm !== "string" && raw.getQueryTerm == null) {
@@ -355,11 +899,12 @@ function copySuggestionMetadata(raw, out, ctx = {}) {
         out.getQueryTerm = generator.getQueryTerm;
         break;
       }
-      if (typeof generator.getQueryTerm === "function" && ctx.hooks) {
+      if (typeof generator.getQueryTerm === "function") {
         const hookId = extractHook(
           ctx.hooks,
           "getQueryTerm",
           generator.getQueryTerm,
+          { owner: generator },
         );
         if (hookId) {
           out.jsGetQueryTerm = hookId;
@@ -437,8 +982,10 @@ function parserDirectivesOf(raw, ctx = {}) {
   }
   if (typeof directives.alias === "string" && directives.alias) {
     out.alias = directives.alias;
-  } else if (typeof directives.alias === "function" && ctx?.hooks) {
-    const hookId = extractHook(ctx.hooks, "alias", directives.alias);
+  } else if (typeof directives.alias === "function") {
+    const hookId = extractHook(ctx.hooks, "alias", directives.alias, {
+      owner: directives,
+    });
     if (hookId) out.jsAlias = hookId;
   }
   return Object.keys(out).length ? out : undefined;
@@ -479,7 +1026,8 @@ async function convertArg(raw, ctx) {
           : Math.max(scriptTimeout, converted.scriptTimeout);
     }
     const nextCache = cacheFieldsOf(gen);
-    if (Object.keys(nextCache).length) cacheFields = { ...cacheFields, ...nextCache };
+    if (Object.keys(nextCache).length)
+      cacheFields = { ...cacheFields, ...nextCache };
     if (converted?.templates?.length) {
       templates = [...new Set([...templates, ...converted.templates])];
     }
@@ -544,14 +1092,17 @@ async function convertArg(raw, ctx) {
   }
   if (suggestions.length) out.suggestions = suggestions;
   if (!out.getQueryTerm) {
-    const queryTerm = generators.find((generator) => generator.getQueryTerm)?.getQueryTerm;
+    const queryTerm = generators.find(
+      (generator) => generator.getQueryTerm,
+    )?.getQueryTerm;
     if (queryTerm) out.getQueryTerm = queryTerm;
   }
   return out;
 }
 
 async function convertGenerator(gen, ctx, argName) {
-  if (!gen || (typeof gen !== "object" && typeof gen !== "function")) return null;
+  if (!gen || (typeof gen !== "object" && typeof gen !== "function"))
+    return null;
   if (isFilepathsHelper(gen)) {
     const hints = [argName, ...(ctx.nodeNames ?? [])];
     const literal = ctx.binder?.take(hints) ?? null;
@@ -574,29 +1125,38 @@ async function convertGenerator(gen, ctx, argName) {
   if (splitOn !== undefined && !builtin) out.splitOn = splitOn;
   const scriptTimeout = scriptTimeoutOf(gen);
   if (scriptTimeout !== undefined) out.scriptTimeout = scriptTimeout;
-  if (typeof gen.script === "function" && ctx.hooks) {
-    const hookId = extractHook(ctx.hooks, "script", gen.script);
+  if (typeof gen.script === "function") {
+    const hookId = extractHook(ctx.hooks, "script", gen.script, {
+      owner: gen,
+    });
     if (hookId) out.jsScript = hookId;
   }
-  if (typeof gen.postProcess === "function" && ctx.hooks) {
-    const hookId = extractHook(ctx.hooks, "postProcess", gen.postProcess);
+  if (typeof gen.postProcess === "function") {
+    const hookId = extractHook(ctx.hooks, "postProcess", gen.postProcess, {
+      owner: gen,
+    });
     if (hookId) out.jsPostProcess = hookId;
   }
-  if (typeof gen.custom === "function" && ctx.hooks) {
-    const hookId = extractHook(ctx.hooks, "custom", gen.custom);
+  if (typeof gen.custom === "function") {
+    const hookId = extractHook(ctx.hooks, "custom", gen.custom, {
+      owner: gen,
+    });
     if (hookId) out.jsCustom = hookId;
   }
-  if (typeof gen.filterTemplateSuggestions === "function" && ctx.hooks) {
+  if (typeof gen.filterTemplateSuggestions === "function") {
     const hookId = extractHook(
       ctx.hooks,
       "filterTemplateSuggestions",
       gen.filterTemplateSuggestions,
+      { owner: gen },
     );
     if (hookId) out.jsFilterTemplateSuggestions = hookId;
   }
   if (typeof gen.getQueryTerm === "string") out.getQueryTerm = gen.getQueryTerm;
-  else if (typeof gen.getQueryTerm === "function" && ctx.hooks) {
-    const hookId = extractHook(ctx.hooks, "getQueryTerm", gen.getQueryTerm);
+  else if (typeof gen.getQueryTerm === "function") {
+    const hookId = extractHook(ctx.hooks, "getQueryTerm", gen.getQueryTerm, {
+      owner: gen,
+    });
     if (hookId) out.jsGetQueryTerm = hookId;
   }
   Object.assign(out, cacheFieldsOf(gen));
@@ -662,10 +1222,18 @@ async function convertNode(raw, ctx) {
   if (additionalSuggestions.length)
     out.additionalSuggestions = additionalSuggestions;
 
-  if (ctx.hooks && typeof raw.generateSpec === "function") {
-    const jsGenerateSpec = extractHook(ctx.hooks, "generateSpec", raw.generateSpec);
+  if (typeof raw.generateSpec === "function") {
+    const jsGenerateSpec = extractHook(
+      ctx.hooks,
+      "generateSpec",
+      raw.generateSpec,
+      { owner: raw },
+    );
     if (jsGenerateSpec) out.jsGenerateSpec = jsGenerateSpec;
-    if (typeof raw.generateSpecCacheKey === "string" && raw.generateSpecCacheKey) {
+    if (
+      typeof raw.generateSpecCacheKey === "string" &&
+      raw.generateSpecCacheKey
+    ) {
       out.generateSpecCacheKey = raw.generateSpecCacheKey;
     }
   }
@@ -682,8 +1250,12 @@ async function convertNode(raw, ctx) {
     const converted = await convertOption(option, childCtx);
     if (converted) options.push(converted);
   }
-  const persistentOptions = options.filter((option) => option.isPersistent === true);
-  const regularOptions = options.filter((option) => option.isPersistent !== true);
+  const persistentOptions = options.filter(
+    (option) => option.isPersistent === true,
+  );
+  const regularOptions = options.filter(
+    (option) => option.isPersistent !== true,
+  );
   if (regularOptions.length) out.options = regularOptions;
   if (persistentOptions.length) out.persistentOptions = persistentOptions;
 
@@ -707,7 +1279,10 @@ async function convertNode(raw, ctx) {
         if (converted) {
           if (args.length === 0) args = [{}];
           args[0].templates = [
-            ...new Set([...(args[0].templates ?? []), ...(converted.templates ?? [])]),
+            ...new Set([
+              ...(args[0].templates ?? []),
+              ...(converted.templates ?? []),
+            ]),
           ];
           args[0].generators = [...(args[0].generators ?? []), converted];
           if (converted.getQueryTerm && !args[0].getQueryTerm) {
@@ -719,11 +1294,11 @@ async function convertNode(raw, ctx) {
       const script = scriptOf(gen);
       const jsScript =
         typeof gen?.script === "function"
-          ? extractHook(ctx.hooks, "script", gen.script)
+          ? extractHook(ctx.hooks, "script", gen.script, { owner: gen })
           : undefined;
       const jsCustom =
         typeof gen?.custom === "function"
-          ? extractHook(ctx.hooks, "custom", gen.custom)
+          ? extractHook(ctx.hooks, "custom", gen.custom, { owner: gen })
           : undefined;
       if (!script.length && !jsScript && !jsCustom) continue;
       if (args.length === 0) args = [{}];
@@ -736,6 +1311,7 @@ async function convertNode(raw, ctx) {
             ctx.hooks,
             "postProcess",
             gen.postProcess,
+            { owner: gen },
           );
           if (jsPostProcess) args[0].jsPostProcess = jsPostProcess;
         }
@@ -775,49 +1351,195 @@ function replaceNodeWithLoaded(wrapper, loaded) {
     // The parser replaces the wrapper object, but the native tree still needs
     // the spelling used by its parent (for example `compose` vs
     // `docker-compose`) to locate the loaded node.
-    names: wrapper.names?.length ? wrapper.names : loaded.names ?? [],
+    names: wrapper.names?.length ? wrapper.names : (loaded.names ?? []),
   };
 }
 
+function assertSafeSourceRelativePath(path) {
+  if (
+    typeof path !== "string" ||
+    !path ||
+    path.includes("\0") ||
+    path.includes("\\") ||
+    isAbsolute(path) ||
+    path
+      .split("/")
+      .some((segment) => !segment || segment === "." || segment === "..")
+  ) {
+    throw new Error(`unsafe source spec path: ${path}`);
+  }
+}
+
+function relativeSourcePath(base, full) {
+  const raw = relative(base, full);
+  // On POSIX, a backslash is a legal filename character.  Reject the raw
+  // spelling before any conversion so `..\\..\\outside.js` cannot become an
+  // apparently nested path.  Windows uses backslash as its path separator,
+  // and its filenames cannot contain one, so normalize only on that platform.
+  if (process.platform !== "win32") {
+    assertSafeSourceRelativePath(raw);
+    return raw;
+  }
+  const normalized = raw.split(sep).join("/");
+  assertSafeSourceRelativePath(normalized);
+  return normalized;
+}
+
+function assertPathInsideRoot(root, path, label) {
+  const relation = relative(resolve(root), resolve(path));
+  if (
+    relation === "" ||
+    isAbsolute(relation) ||
+    relation === ".." ||
+    relation.startsWith(`..${sep}`)
+  ) {
+    throw new Error(`${label} escapes its root: ${path}`);
+  }
+}
+
+async function writeOutputFile(root, path, value) {
+  assertSafeSourceRelativePath(path);
+  const destination = join(root, path);
+  assertPathInsideRoot(root, destination, "compiled IR output path");
+  await assertNoSymlinkInPath(destination);
+  await mkdir(dirname(destination), { recursive: true });
+  await assertNoSymlinkInPath(destination);
+  await writeFile(destination, value);
+}
+
+async function validateIgnoredSourceDirectory(dir, base) {
+  const rootInfo = await lstat(dir);
+  if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) {
+    throw new Error(
+      `source spec tree contains a symlink or special entry: ${dir}`,
+    );
+  }
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    relativeSourcePath(base, full);
+    const info = await lstat(full);
+    if (info.isDirectory()) {
+      await validateIgnoredSourceDirectory(full, base);
+    } else if (!info.isFile()) {
+      throw new Error(
+        `source spec tree contains a symlink or special entry: ${full}`,
+      );
+    }
+  }
+}
+
 async function walkJs(dir, base = dir, acc = []) {
+  const rootInfo = await lstat(dir);
+  if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) {
+    throw new Error(
+      `source spec tree contains a symlink or special entry: ${dir}`,
+    );
+  }
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return acc;
+  } catch (error) {
+    throw new Error(
+      `cannot read source spec directory ${dir}: ${error.message}`,
+      { cause: error },
+    );
   }
+  // Filesystem directory order is not part of the compiler contract.  Sort
+  // every level so hook ids and generated output are reproducible.
+  entries.sort((left, right) => comparePath(left.name, right.name));
   for (const entry of entries) {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name === "icons") continue;
+    const info = await lstat(full);
+    const path = relativeSourcePath(base, full);
+    if (info.isDirectory()) {
+      if (entry.name === "icons") {
+        await validateIgnoredSourceDirectory(full, base);
+        continue;
+      }
       await walkJs(full, base, acc);
     } else if (
-      entry.isFile() &&
+      info.isFile() &&
       entry.name.endsWith(".js") &&
       (entry.name !== "index.js" || dir !== base)
     ) {
-      acc.push(relative(base, full));
+      acc.push(path);
+    } else if (!info.isFile()) {
+      throw new Error(
+        `source spec tree contains a symlink or special entry: ${full}`,
+      );
     }
   }
   return acc;
 }
 
 async function readSourceIndex(srcDir) {
+  const sourceIndexPath = join(srcDir, "index.json");
+  let text;
   try {
-    const index = JSON.parse(await readFile(join(srcDir, "index.json"), "utf8"));
-    const list = (value) =>
-      Array.isArray(value)
-        ? new Set(value.filter((item) => typeof item === "string" && item))
-        : new Set();
-    return {
-      completions: list(index.completions),
-      diffVersionedCompletions: list(index.diffVersionedCompletions),
-    };
-  } catch {
-    // Small compiler fixtures and older source trees may not ship an index.
-    // In that case preserve the compiler's historical file-tree discovery.
-    return null;
+    const info = await lstat(sourceIndexPath);
+    if (info.isSymbolicLink() || !info.isFile()) {
+      throw new Error(
+        `source index is a symlink or special entry: ${sourceIndexPath}`,
+      );
+    }
+    text = await readFile(sourceIndexPath, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      // Small compiler fixtures and older source trees may not ship an index.
+      // In that case preserve the compiler's historical file-tree discovery.
+      return null;
+    }
+    throw new Error(
+      `cannot read source index ${sourceIndexPath}: ${error.message}`,
+      { cause: error },
+    );
   }
+  let index;
+  try {
+    index = JSON.parse(text);
+  } catch (error) {
+    throw new Error(
+      `cannot parse source index ${sourceIndexPath}: ${error.message}`,
+      { cause: error },
+    );
+  }
+  if (!index || typeof index !== "object" || Array.isArray(index)) {
+    throw new Error(
+      `cannot parse source index ${sourceIndexPath}: index must be a JSON object`,
+    );
+  }
+  const completionNames = index.completions;
+  if (
+    !Array.isArray(completionNames) ||
+    completionNames.length === 0 ||
+    completionNames.some(
+      (item) => typeof item !== "string" || item.trim().length === 0,
+    )
+  ) {
+    throw new Error(
+      `cannot parse source index ${sourceIndexPath}: completions must be a non-empty array of strings`,
+    );
+  }
+  for (const field of ["diffVersionedCompletions"]) {
+    if (
+      field in index &&
+      (!Array.isArray(index[field]) ||
+        index[field].some(
+          (item) => typeof item !== "string" || item.trim().length === 0,
+        ))
+    ) {
+      throw new Error(
+        `cannot parse source index ${sourceIndexPath}: ${field} must be an array of strings`,
+      );
+    }
+  }
+  const list = (value) =>
+    new Set(Array.isArray(value) ? value.map((item) => item.trim()) : []);
+  return {
+    completions: list(index.completions),
+    diffVersionedCompletions: list(index.diffVersionedCompletions),
+  };
 }
 
 function sourceCommandAllowed(sourceIndex, name) {
@@ -829,147 +1551,590 @@ function sourceCommandAllowed(sourceIndex, name) {
 }
 
 function sourceVersionedRoot(sourceIndex, directory) {
-  return (
-    !sourceIndex || sourceIndex.diffVersionedCompletions.has(directory)
+  return !sourceIndex || sourceIndex.diffVersionedCompletions.has(directory);
+}
+
+async function writeClosurePreservingHookModules({
+  srcDir,
+  stagedOutDir,
+  compiledSpecs,
+}) {
+  // The audit remains a pre-manifest completeness gate, but it is deliberately
+  // not the source of the module mapping. The compiler already has the actual
+  // function identity and owner object for every extraction; rebuilding that
+  // relation from function text would reintroduce collisions between closures.
+  const { auditSpecsHooks } = await import("./audit-spec-hooks.mjs");
+  const audit = await auditSpecsHooks({
+    sourceRoot: srcDir,
+    irRoot: stagedOutDir,
+    pair: "skip",
+    // This is the compiler's intentional pre-manifest completeness pass.
+    // Every audit of a published/staged output keeps the default strict gate.
+    validateHookModules: false,
+    // The typed sidecar is emitted after the closure manifest; this is the
+    // paired, explicit opt-out for that one pre-manifest pass.
+    validateTypedHooks: false,
+  });
+  if (audit.ok !== true) {
+    const counts = Object.fromEntries(
+      Object.entries(audit.errors ?? {}).map(([name, entries]) => [
+        name,
+        Array.isArray(entries) ? entries.length : 0,
+      ]),
+    );
+    throw new Error(
+      `cannot build closure-preserving hook modules from a failing source/IR audit: ${JSON.stringify(counts)}; sourceReadErrors=${JSON.stringify(audit.errors?.sourceReadErrors ?? [])}`,
+    );
+  }
+
+  const modulesDir = join(stagedOutDir, HOOK_MODULES_DIR);
+  assertSafeSourceRelativePath(HOOK_MODULES_DIR);
+  assertPathInsideRoot(stagedOutDir, modulesDir, "compiled IR module directory");
+  await assertNoSymlinkInPath(modulesDir);
+  await mkdir(modulesDir, { recursive: true });
+  await assertNoSymlinkInPath(modulesDir);
+  const manifestHooks = new Map();
+  const manifestModules = new Map();
+  let moduleCount = 0;
+  let hookCount = 0;
+
+  const auditedIds = new Set((audit.hookManifest ?? []).map(({ id }) => id));
+  const compilerBindings = compiledSpecs.flatMap((item) => [
+    ...item.hooks.bindings.values(),
+  ]);
+  const compilerIds = new Set(compilerBindings.map(({ id }) => id));
+  if (
+    compilerIds.size !== auditedIds.size ||
+    [...auditedIds].some((id) => !compilerIds.has(id))
+  ) {
+    throw new Error(
+      `compiler hook bindings do not match the pre-manifest audit (${compilerIds.size}/${auditedIds.size})`,
+    );
+  }
+
+  for (const item of compiledSpecs) {
+    const record = {
+      source: item.rel,
+      sourceSha256: null,
+    };
+    assertSafeSourceRelativePath(record.source);
+    const instances = [...item.hooks.bindings.values()].map((binding) => ({
+      ...binding,
+      sourceField: binding.field,
+    }));
+    if (instances.length === 0) continue;
+    const sourcePath = join(srcDir, record.source);
+    assertPathInsideRoot(srcDir, sourcePath, "source hook path");
+    const sourceInfo = await lstat(sourcePath);
+    if (sourceInfo.isSymbolicLink() || !sourceInfo.isFile()) {
+      throw new Error(
+        `source hook is a symlink or special entry: ${sourcePath}`,
+      );
+    }
+    const source = await readFile(sourcePath, "utf8");
+    record.sourceSha256 = sha256(source);
+    const moduleFile = sourceModuleFileName(record.source);
+    if (manifestModules.has(moduleFile)) {
+      throw new Error(
+        `closure-preserving module filename collision for ${record.source}`,
+      );
+    }
+    const moduleSource = closurePreservingHookModule(
+      source,
+      record.source,
+      instances,
+    );
+    const expression = moduleSource
+      .trim()
+      .replace(/^export\s+default\s+/, "")
+      .replace(/;$/, "");
+    try {
+      new Script(`(${expression})`, { filename: moduleFile });
+    } catch (error) {
+      throw new Error(
+        `closure-preserving module ${moduleFile} is not a standalone expression: ${error.message}`,
+        { cause: error },
+      );
+    }
+    const moduleSha256 = sha256(moduleSource);
+    await writeOutputFile(
+      stagedOutDir,
+      `${HOOK_MODULES_DIR}/${moduleFile}`,
+      moduleSource,
+    );
+    const hookIds = instances.map((instance) => instance.id).sort();
+    manifestModules.set(moduleFile, {
+      source: record.source,
+      sourceSha256: record.sourceSha256,
+      moduleSha256,
+      hookIds,
+    });
+    for (const instance of instances) {
+      if (manifestHooks.has(instance.id)) {
+        throw new Error(`duplicate closure-preserving hook id ${instance.id}`);
+      }
+      manifestHooks.set(instance.id, {
+        module: moduleFile,
+        moduleSha256,
+        path: instance.path,
+        sourceField: instance.sourceField,
+        functionBodySha256: instance.functionBodySha256,
+      });
+      hookCount += 1;
+    }
+    moduleCount += 1;
+  }
+
+  if (hookCount !== audit.hookManifest.length) {
+    throw new Error(
+      `closure-preserving manifest covers ${hookCount}/${audit.hookManifest.length} audited hooks`,
+    );
+  }
+  const manifest = {
+    version: 1,
+    kind: "closure-preserving-hook-modules",
+    hooks: Object.fromEntries(
+      [...manifestHooks.entries()].sort(([left], [right]) =>
+        comparePath(left, right),
+      ),
+    ),
+    modules: Object.fromEntries(
+      [...manifestModules.entries()].sort(([left], [right]) =>
+        comparePath(left, right),
+      ),
+    ),
+  };
+  await writeOutputFile(
+    stagedOutDir,
+    HOOK_MODULE_MANIFEST,
+    `${JSON.stringify(manifest)}\n`,
   );
+  const typedHooks = await writeTypedHookSidecar({
+    stagedOutDir,
+    compilerBindings,
+    manifestHooks,
+  });
+  return { modules: moduleCount, hooks: hookCount, typedHooks };
+}
+
+async function publishDirectory(stagedDir, outDir) {
+  await assertNoSymlinkInPath(outDir);
+  try {
+    await assertManagedIrOutput(outDir, { allowLegacyCanonical: true });
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  await publishPairDirectories({
+    irStage: stagedDir,
+    irCanonical: outDir,
+    lockPath: pairLockPath,
+  });
+}
+
+async function pathExists(path) {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function snapshotDirectory(directory) {
+  const rootInfo = await lstat(directory);
+  if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) {
+    throw new Error(
+      `compiled IR destination is not a regular directory: ${directory}`,
+    );
+  }
+  const files = [];
+  const directories = [];
+  async function walk(current, relativePath = "") {
+    const entries = await readdir(current, { withFileTypes: true });
+    entries.sort((left, right) => comparePath(left.name, right.name));
+    for (const entry of entries) {
+      const full = join(current, entry.name);
+      const path = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+      const info = await lstat(full);
+      if (info.isDirectory()) {
+        directories.push(path);
+        await walk(full, path);
+      } else if (info.isFile()) {
+        files.push({ path, sha256: sha256(await readFile(full)) });
+      } else {
+        throw new Error(
+          `compiled IR destination contains a link or special entry: ${full}`,
+        );
+      }
+    }
+  }
+  await walk(directory);
+  return { files, directories };
+}
+
+function snapshotsEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+async function assertSnapshotUnchanged(directory, expected) {
+  const actual = await snapshotDirectory(directory);
+  if (!snapshotsEqual(actual, expected)) {
+    throw new Error(
+      `refusing to remove changed compiled IR backup: ${directory}`,
+    );
+  }
+}
+
+async function removeSnapshotDirectory(directory, snapshot) {
+  await assertSnapshotUnchanged(directory, snapshot);
+  for (const file of snapshot.files) {
+    const full = join(directory, file.path);
+    const info = await lstat(full);
+    if (!info.isFile() || sha256(await readFile(full)) !== file.sha256) {
+      throw new Error(
+        `refusing to remove changed compiled IR backup file: ${full}`,
+      );
+    }
+    await unlink(full);
+  }
+  for (const path of [...snapshot.directories].sort(
+    (left, right) =>
+      right.split("/").length - left.split("/").length ||
+      comparePath(right, left),
+  )) {
+    await rmdir(join(directory, path));
+  }
+  await rmdir(directory);
+}
+
+async function assertManagedIrOutput(
+  directory,
+  { allowLegacyCanonical = false } = {},
+) {
+  const snapshot = await snapshotDirectory(directory);
+  if (snapshot.files.length === 0 && snapshot.directories.length === 0) {
+    return snapshot;
+  }
+  if (allowLegacyCanonical && resolve(directory) === resolve(canonicalIrDir)) {
+    try {
+      await lstat(join(directory, PAIR_MARKER_NAME));
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        // This is the one migration exception: older checkouts have a
+        // generated canonical IR tree without a marker. The compiler has
+        // already produced and audited the replacement staged tree before
+        // this function runs, so the known canonical location can be
+        // replaced once. Caller-supplied custom output directories remain
+        // marker-owned and fail closed.
+        return snapshot;
+      }
+      throw error;
+    }
+  }
+  try {
+    await verifyPair({ irRoot: directory, irOnly: true });
+  } catch (error) {
+    throw new Error(
+      `refusing to replace non-empty compiled IR destination without a valid ${PAIR_MARKER_NAME}: ${directory}`,
+      { cause: error },
+    );
+  }
+  return snapshot;
+}
+
+async function compileSpecsIrUnlocked({
+  srcDir = join(repoDir, "bundle", "specs"),
+  outDir = join(repoDir, "bundle", "specs-ir"),
+} = {}) {
+  // The caller may supply an arbitrary output directory. Check every existing
+  // parent (including a dangling final link) before mkdir/rename so a compile
+  // can never publish through an alias.
+  await assertNoSymlinkInPath(outDir);
+  // The compiler API is also allowed to compile arbitrary source fixtures.
+  // Validate the source root here (not only in the CLI wrapper) so callers
+  // cannot make an API compile follow a source-tree symlink.
+  await assertNoSymlinkInPath(srcDir);
+  const files = await walkJs(srcDir);
+  if (!files.length) {
+    throw new Error(`source spec tree ${srcDir} contains no JavaScript specs`);
+  }
+  const sourceIndex = await readSourceIndex(srcDir);
+  await mkdir(dirname(outDir), { recursive: true });
+  const stagedOutDir = await mkdtemp(
+    join(dirname(outDir), `.${basename(outDir)}.tmp-`),
+  );
+  let published = false;
+
+  try {
+    const nestedIndexDirs = new Set(
+      files
+        .filter((rel) => rel.endsWith("/index.js"))
+        .map((rel) => dirname(rel)),
+    );
+    const compiledSpecs = [];
+    let compiled = 0;
+    let failed = 0;
+    let skipped = 0;
+    let hooksWritten = 0;
+    const failures = [];
+    const hooksDir = join(stagedOutDir, "hooks");
+    assertSafeSourceRelativePath("hooks");
+    assertPathInsideRoot(stagedOutDir, hooksDir, "compiled IR hook directory");
+    await assertNoSymlinkInPath(hooksDir);
+    const hookFilesByName = new Map();
+    await mkdir(hooksDir, { recursive: true });
+    await assertNoSymlinkInPath(hooksDir);
+
+    for (const rel of files) {
+      assertSafeSourceRelativePath(rel);
+      const normalizedRel = rel;
+      if (KNOWN_NON_SPEC_FILES.has(normalizedRel)) {
+        skipped += 1;
+        if (
+          (compiled + skipped + failed) % 100 === 0 ||
+          compiled + skipped + failed === files.length
+        ) {
+          process.stdout.write(
+            `Compiled ${compiled}/${files.length} specs (${skipped} allowlisted skipped)\n`,
+          );
+        }
+        continue;
+      }
+      const src = join(srcDir, rel);
+      assertPathInsideRoot(srcDir, src, "source spec path");
+      try {
+        const specId = normalizedRel.replace(/\.js$/, "");
+        const hooks = createHookBag(specId);
+        const sourceInfo = await lstat(src);
+        if (sourceInfo.isSymbolicLink() || !sourceInfo.isFile()) {
+          throw new Error(
+            `source spec is a symlink or special entry: ${src}`,
+          );
+        }
+        const source = await readFile(src, "utf8");
+        const binder = createFilepathsBinder(source);
+        const mod = await import(pathToFileURL(src).href);
+        const rawSpec = mod.default ?? mod;
+        const sourceFunctions = [];
+        assertNoUnknownFunctionFields(
+          rawSpec,
+          specId,
+          "root",
+          new WeakSet(),
+          sourceFunctions,
+        );
+        const spec = await convertNode(rawSpec, { hooks, source, binder });
+        if (!spec) {
+          throw new Error(
+            `source did not produce a static spec (add the file to ${"KNOWN_NON_SPEC_FILES"} only when it is a reviewed helper/barrel)`,
+          );
+        }
+        assertFunctionsExtracted(sourceFunctions, hooks, specId);
+        bindExtractedHooks(hooks, sourceFunctions, specId);
+        const destRel = normalizedRel.replace(/\.js$/, ".json");
+        await writeOutputFile(
+          stagedOutDir,
+          destRel,
+          `${JSON.stringify(spec)}\n`,
+        );
+        for (const [id, hookSource] of hooks.files) {
+          const filename = hookFileName(id);
+          const previousId = hookFilesByName.get(filename);
+          if (previousId && previousId !== id) {
+            throw new Error(
+              `hook filename collision: ${filename} represents both ${previousId} and ${id}`,
+            );
+          }
+          hookFilesByName.set(filename, id);
+          await writeOutputFile(
+            stagedOutDir,
+            `hooks/${filename}`,
+            hookSource,
+          );
+          hooksWritten += 1;
+        }
+        compiled += 1;
+        compiledSpecs.push({ rel: normalizedRel, destRel, spec, hooks });
+      } catch (err) {
+        failed += 1;
+        failures.push({ rel: normalizedRel, message: err.message });
+      }
+      if (
+        (compiled + skipped + failed) % 100 === 0 ||
+        compiled + skipped + failed === files.length
+      ) {
+        process.stdout.write(
+          `Compiled ${compiled}/${files.length} specs (${skipped} allowlisted skipped, ${failed} failed)\n`,
+        );
+      }
+    }
+
+    if (failures.length) {
+      const details = failures
+        .sort((left, right) => comparePath(left.rel, right.rel))
+        .map(({ rel, message }) => `${rel}: ${message}`)
+        .join("\n");
+      throw new Error(
+        `spec compilation failed closed for ${failures.length} file(s):\n${details}`,
+      );
+    }
+
+    if (!compiledSpecs.length) {
+      throw new Error(
+        `source spec tree ${srcDir} produced no compilable specs; ` +
+          `review the explicit KNOWN_NON_SPEC_FILES allowlist`,
+      );
+    }
+
+    const hookModules = await writeClosurePreservingHookModules({
+      srcDir,
+      stagedOutDir,
+      compiledSpecs,
+    });
+
+    const commandFiles = new Map();
+    const candidateFor = (name, candidate) => {
+      if (!name || !candidate) return;
+      const current = commandFiles.get(name);
+      if (!current || compareFileCandidates(candidate, current) > 0) {
+        commandFiles.set(name, candidate);
+      }
+    };
+    for (const item of compiledSpecs) {
+      const rel = item.rel.replaceAll("\\", "/");
+      const slash = rel.lastIndexOf("/");
+      const directory = slash === -1 ? "" : rel.slice(0, slash);
+      const basename = rel.slice(slash + 1);
+      if (!directory) {
+        // The file name is the canonical root command.  Spec-declared names are
+        // aliases only; giving them a lower priority prevents a colliding alias
+        // (for example `j.js` naming itself `autojump`) from shadowing the
+        // command's own file.
+        const canonical = rel.slice(0, -3);
+        if (sourceCommandAllowed(sourceIndex, canonical)) {
+          candidateFor(canonical, { destRel: item.destRel, priority: 6 });
+        }
+        for (const name of item.spec.names) {
+          if (sourceCommandAllowed(sourceIndex, name)) {
+            candidateFor(name, { destRel: item.destRel, priority: 5 });
+          }
+        }
+        continue;
+      }
+      if (!nestedIndexDirs.has(directory)) continue;
+      if (!sourceVersionedRoot(sourceIndex, directory)) continue;
+      if (basename === "index.js") {
+        // A statically exported nested index is authoritative.  Dynamic
+        // version selectors are skipped above and therefore fall through to
+        // the deterministic highest version candidate below.
+        if (sourceCommandAllowed(sourceIndex, directory)) {
+          candidateFor(directory, { destRel: item.destRel, priority: 4 });
+        }
+        for (const name of item.spec.names) {
+          if (sourceCommandAllowed(sourceIndex, name)) {
+            candidateFor(name, { destRel: item.destRel, priority: 3 });
+          }
+        }
+        continue;
+      }
+      const version = parseVersionFilename(basename);
+      if (!version) continue;
+      if (sourceCommandAllowed(sourceIndex, directory)) {
+        candidateFor(directory, {
+          destRel: item.destRel,
+          priority: 2,
+          version,
+        });
+      }
+      for (const name of item.spec.names) {
+        if (sourceCommandAllowed(sourceIndex, name)) {
+          candidateFor(name, { destRel: item.destRel, priority: 1, version });
+        }
+      }
+    }
+
+    const unique = [...commandFiles.keys()].sort();
+    await writeOutputFile(
+      stagedOutDir,
+      "index.json",
+      `${JSON.stringify({
+        completions: unique,
+        // New readers use this map to resolve command aliases without exposing
+        // nested implementation files (notably gcloud/*) as top-level commands.
+        // Readers predating this field continue to use relative file names.
+        files: Object.fromEntries(
+          [...commandFiles.entries()]
+            .sort(([left], [right]) =>
+              left < right ? -1 : left > right ? 1 : 0,
+            )
+            .map(([name, candidate]) => [name, candidate.destRel]),
+        ),
+      })}\n`,
+    );
+    const pairMarker = await createPairMarker({
+      sourceRoot: srcDir,
+      irRoot: stagedOutDir,
+    });
+    assertSafeSourceRelativePath(PAIR_MARKER_NAME);
+    const pairMarkerPath = join(stagedOutDir, PAIR_MARKER_NAME);
+    assertPathInsideRoot(
+      stagedOutDir,
+      pairMarkerPath,
+      "compiled IR pair marker path",
+    );
+    await assertNoSymlinkInPath(pairMarkerPath);
+    await writePairMarker(stagedOutDir, pairMarker);
+    await verifyPair({ sourceRoot: srcDir, irRoot: stagedOutDir });
+    const { auditSpecsHooks } = await import("./audit-spec-hooks.mjs");
+    const finalAudit = await auditSpecsHooks({
+      sourceRoot: srcDir,
+      irRoot: stagedOutDir,
+    });
+    if (!finalAudit.ok) {
+      const failures = Object.entries(finalAudit.errors)
+        .filter(([, entries]) => entries.length)
+        .map(([name, entries]) => `${name}=${entries.length}`);
+      throw new Error(
+        `Spec IR pre-publish audit failed: ${failures.join(", ")}`,
+      );
+    }
+    await publishDirectory(stagedOutDir, outDir);
+    published = true;
+    process.stdout.write(
+      `Wrote ${compiled} IR specs (${unique.length} names, ${hooksWritten} hooks in ${hookModules.modules} closure-preserving modules, ${hookModules.typedHooks} typed trigger hooks; ${skipped} allowlisted skipped) to ${outDir}\n`,
+    );
+    return {
+      compiled,
+      failed,
+      skipped,
+      allowlistedSkipped: skipped,
+      names: unique.length,
+      hooks: hooksWritten,
+      hookModules: hookModules.modules,
+      typedHooks: hookModules.typedHooks,
+    };
+  } finally {
+    if (!published && !(await pairJournalExists(pairLockPath))) {
+      await rm(stagedOutDir, { recursive: true, force: true });
+    }
+  }
 }
 
 export async function compileSpecsIr({
   srcDir = join(repoDir, "bundle", "specs"),
   outDir = join(repoDir, "bundle", "specs-ir"),
 } = {}) {
-  const files = await walkJs(srcDir);
-  const sourceIndex = await readSourceIndex(srcDir);
-  await rm(outDir, { force: true, recursive: true });
-  await mkdir(outDir, { recursive: true });
-
-  const nestedIndexDirs = new Set(
-    files
-      .filter((rel) => rel.endsWith("/index.js"))
-      .map((rel) => dirname(rel)),
+  return withPairLock(pairLockPath, () =>
+    compileSpecsIrUnlocked({ srcDir, outDir }),
   );
-  const compiledSpecs = [];
-  let compiled = 0;
-  let failed = 0;
-  let hooksWritten = 0;
-  const hooksDir = join(outDir, "hooks");
-  await mkdir(hooksDir, { recursive: true });
-
-  for (const rel of files) {
-    const src = join(srcDir, rel);
-    try {
-      const specId = rel.replace(/\.js$/, "").replaceAll("\\", "/");
-      const hooks = createHookBag(specId);
-      const source = await readFile(src, "utf8");
-      const binder = createFilepathsBinder(source);
-      const mod = await import(pathToFileURL(src).href);
-      const spec = await convertNode(mod.default ?? mod, { hooks, source, binder });
-      if (!spec) {
-        failed += 1;
-        continue;
-      }
-      const destRel = rel.replace(/\.js$/, ".json");
-      const dest = join(outDir, destRel);
-      await mkdir(dirname(dest), { recursive: true });
-      await writeFile(dest, `${JSON.stringify(spec)}\n`);
-      for (const [id, source] of hooks.files) {
-        await writeFile(join(hooksDir, hookFileName(id)), source);
-        hooksWritten += 1;
-      }
-      compiled += 1;
-      compiledSpecs.push({ rel, destRel, spec });
-    } catch (err) {
-      failed += 1;
-      process.stderr.write(`warning: skip ${rel}: ${err.message}\n`);
-    }
-    if ((compiled + failed) % 100 === 0 || compiled + failed === files.length) {
-      process.stdout.write(
-        `Compiled ${compiled}/${files.length} specs (${failed} skipped)\n`,
-      );
-    }
-  }
-
-  const commandFiles = new Map();
-  const candidateFor = (name, candidate) => {
-    if (!name || !candidate) return;
-    const current = commandFiles.get(name);
-    if (!current || compareFileCandidates(candidate, current) > 0) {
-      commandFiles.set(name, candidate);
-    }
-  };
-  for (const item of compiledSpecs) {
-    const rel = item.rel.replaceAll("\\", "/");
-    const slash = rel.lastIndexOf("/");
-    const directory = slash === -1 ? "" : rel.slice(0, slash);
-    const basename = rel.slice(slash + 1);
-    if (!directory) {
-      // The file name is the canonical root command.  Spec-declared names are
-      // aliases only; giving them a lower priority prevents a colliding alias
-      // (for example `j.js` naming itself `autojump`) from shadowing the
-      // command's own file.
-      const canonical = rel.slice(0, -3);
-      if (sourceCommandAllowed(sourceIndex, canonical)) {
-        candidateFor(canonical, { destRel: item.destRel, priority: 6 });
-      }
-      for (const name of item.spec.names) {
-        if (sourceCommandAllowed(sourceIndex, name)) {
-          candidateFor(name, { destRel: item.destRel, priority: 5 });
-        }
-      }
-      continue;
-    }
-    if (!nestedIndexDirs.has(directory)) continue;
-    if (!sourceVersionedRoot(sourceIndex, directory)) continue;
-    if (basename === "index.js") {
-      // A statically exported nested index is authoritative.  Dynamic
-      // version selectors are skipped above and therefore fall through to
-      // the deterministic highest version candidate below.
-      if (sourceCommandAllowed(sourceIndex, directory)) {
-        candidateFor(directory, { destRel: item.destRel, priority: 4 });
-      }
-      for (const name of item.spec.names) {
-        if (sourceCommandAllowed(sourceIndex, name)) {
-          candidateFor(name, { destRel: item.destRel, priority: 3 });
-        }
-      }
-      continue;
-    }
-    const version = parseVersionFilename(basename);
-    if (!version) continue;
-    if (sourceCommandAllowed(sourceIndex, directory)) {
-      candidateFor(directory, { destRel: item.destRel, priority: 2, version });
-    }
-    for (const name of item.spec.names) {
-      if (sourceCommandAllowed(sourceIndex, name)) {
-        candidateFor(name, { destRel: item.destRel, priority: 1, version });
-      }
-    }
-  }
-
-  const unique = [...commandFiles.keys()].sort();
-  await writeFile(
-    join(outDir, "index.json"),
-    `${JSON.stringify({
-      completions: unique,
-      // New readers use this map to resolve command aliases without exposing
-      // nested implementation files (notably gcloud/*) as top-level commands.
-      // Readers predating this field continue to use relative file names.
-      files: Object.fromEntries(
-        [...commandFiles.entries()]
-          .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-          .map(([name, candidate]) => [name, candidate.destRel]),
-      ),
-    })}\n`,
-  );
-  process.stdout.write(
-    `Wrote ${compiled} IR specs (${unique.length} names, ${hooksWritten} hooks) to ${outDir}\n`,
-  );
-  return { compiled, failed, names: unique.length, hooks: hooksWritten };
 }
 
 function parseVersionFilename(filename) {
   const stem = filename.replace(/\.js$/, "");
-  const match = stem.match(/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?$/);
+  const match = stem.match(
+    /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?$/,
+  );
   if (!match) return null;
   return {
     numbers: [match[1], match[2] ?? "0", match[3] ?? "0"].map(Number),
@@ -989,7 +2154,11 @@ function compareVersions(left, right) {
   if (left.prerelease && right.prerelease) {
     const leftParts = left.prerelease.split(".");
     const rightParts = right.prerelease.split(".");
-    for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    for (
+      let index = 0;
+      index < Math.max(leftParts.length, rightParts.length);
+      index += 1
+    ) {
       if (index >= leftParts.length) return -1;
       if (index >= rightParts.length) return 1;
       const leftPart = leftParts[index];
@@ -1008,16 +2177,81 @@ function compareVersions(left, right) {
 }
 
 function compareFileCandidates(left, right) {
-  if (left.priority !== right.priority) return left.priority > right.priority ? 1 : -1;
-  if (left.version && right.version) return compareVersions(left.version, right.version);
-  return left.destRel.localeCompare(right.destRel) > 0 ? 1 : -1;
+  if (left.priority !== right.priority)
+    return left.priority > right.priority ? 1 : -1;
+  if (left.version && right.version)
+    return compareVersions(left.version, right.version);
+  return comparePath(left.destRel, right.destRel);
+}
+
+async function canonicalDestination(path) {
+  let existing = resolve(path);
+  const missing = [];
+  while (true) {
+    try {
+      return join(await realpath(existing), ...missing);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      const parent = dirname(existing);
+      if (parent === existing) throw error;
+      missing.unshift(basename(existing));
+      existing = parent;
+    }
+  }
+}
+
+function isSelfOrDescendant(parent, child) {
+  const path = relative(parent, child);
+  return (
+    path === "" ||
+    (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`))
+  );
+}
+
+/**
+ * The standalone compiler is also a publisher for the canonical pair. Keep
+ * its two environment overrides atomic in the same way as the sync script:
+ * either both paths identify the canonical source/IR pair, or both are
+ * distinct custom paths. This guard belongs at the CLI boundary so callers of
+ * compileSpecsIr() can continue using arbitrary temporary fixture paths.
+ */
+async function assertCliDestinationPair(srcDir, outDir) {
+  // Validate both paths before resolving either destination. In particular,
+  // a dangling final link must be rejected instead of being mistaken for a
+  // missing custom output that can be created by the compiler.
+  await assertNoSymlinkInPath(srcDir);
+  await assertNoSymlinkInPath(outDir);
+
+  const normalizedSourceDir = await canonicalDestination(srcDir);
+  const normalizedIrDir = await canonicalDestination(outDir);
+  const normalizedCanonicalSourceDir = await canonicalDestination(
+    canonicalSourceDir,
+  );
+  const normalizedCanonicalIrDir = await canonicalDestination(canonicalIrDir);
+
+  if (
+    isSelfOrDescendant(normalizedSourceDir, normalizedIrDir) ||
+    isSelfOrDescendant(normalizedIrDir, normalizedSourceDir)
+  ) {
+    throw new Error("bundled specs and compiled IR destinations cannot overlap");
+  }
+
+  const sourceIsCanonical =
+    normalizedSourceDir === normalizedCanonicalSourceDir;
+  const irIsCanonical = normalizedIrDir === normalizedCanonicalIrDir;
+  if (sourceIsCanonical !== irIsCanonical) {
+    throw new Error(
+      "custom outputs require both destinations to be canonical or distinct custom paths",
+    );
+  }
 }
 
 const isMain =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMain) {
-  const srcDir = process.env.EC_SPECS_SRC || join(repoDir, "bundle", "specs");
+  const srcDir = process.env.EC_SPECS_SRC || canonicalSourceDir;
   const outDir = process.env.EC_SPECS_IR || join(repoDir, "bundle", "specs-ir");
+  await assertCliDestinationPair(srcDir, outDir);
   await compileSpecsIr({ srcDir, outDir });
 }

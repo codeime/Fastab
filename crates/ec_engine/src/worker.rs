@@ -147,7 +147,7 @@ impl EngineClient {
                             continue;
                         },
                         JobKind::ClearCaches => {
-                            clear_caches(&mut engine, &mut registry_template);
+                            clear_caches(&supervisor_specs_dir, &mut engine, &mut registry_template);
                             continue;
                         },
                         JobKind::Complete { request, reply } => Job {
@@ -171,7 +171,9 @@ impl EngineClient {
                             &accepted_name,
                             timestamp,
                         ),
-                        SideEffect::ClearCaches => clear_caches(&mut engine, &mut registry_template),
+                        SideEffect::ClearCaches => {
+                            clear_caches(&supervisor_specs_dir, &mut engine, &mut registry_template);
+                        },
                     });
                     let JobKind::Complete { request, reply } = latest.kind else {
                         unreachable!("drain_to_latest returns a completion job");
@@ -304,13 +306,23 @@ enum SideEffect {
     ClearCaches,
 }
 
-fn clear_caches(engine: &mut Option<Engine>, registry_template: &mut Option<Registry>) {
+fn clear_caches(specs_dir: &Path, engine: &mut Option<Engine>, registry_template: &mut Option<Registry>) {
     if let Some(engine) = engine.as_mut() {
-        engine.clear_caches();
+        // Keep the old snapshot/template when the canonical directory is
+        // temporarily absent during publication. A failed reset must not
+        // turn a valid generation into an empty/stale worker state.
+        if engine.clear_caches_and_report() {
+            *registry_template = None;
+        }
+        return;
     }
-    // The pristine index a reset engine is rebuilt from would otherwise keep
-    // serving the spec files as they were at startup.
-    *registry_template = None;
+
+    // A timed-out attempt may have left only the pristine template. Refresh
+    // it when the new generation is available, but retain the last good one
+    // across a missing-window so the next completion can still use it.
+    if let Ok(registry) = Engine::load_registry(specs_dir) {
+        *registry_template = Some(registry);
+    }
 }
 
 impl AttemptFailure {
@@ -394,7 +406,8 @@ fn record_acceptance(
     }
 }
 
-/// Build an engine, indexing the specs directory only the first time.
+/// Build an engine from the last known generation when it is still current;
+/// refresh a stale template before handing it to a replacement attempt.
 ///
 /// A timed-out attempt keeps the engine it was given, so the supervisor has to
 /// construct a fresh one. Re-reading the index on every reset made the first
@@ -406,7 +419,25 @@ fn rebuild_engine(
     acceptance: &Arc<Mutex<AcceptanceIndex>>,
 ) -> anyhow::Result<Engine> {
     let registry = match template {
-        Some(registry) => registry.clone(),
+        Some(registry) if !registry.needs_refresh() => registry.clone(),
+        Some(registry) => {
+            // A successful generation replacement must not leave a timed-out
+            // worker rebuilding from the old template. If the publisher is
+            // in its brief missing window, keep that last good template as a
+            // fallback; Engine::complete will retry the atomic rebind at the
+            // next request boundary.
+            let previous = registry.clone();
+            match Engine::load_registry(specs_dir) {
+                Ok(registry) => {
+                    *template = Some(registry.clone());
+                    registry
+                },
+                Err(error) => {
+                    tracing::debug!(%error, "engine rebuild deferred while retaining the last registry template");
+                    previous
+                },
+            }
+        },
         None => {
             let registry = Engine::load_registry(specs_dir)?;
             template.get_or_insert(registry).clone()
@@ -519,6 +550,57 @@ mod tests {
         std::fs::remove_file(dir.path().join("index.json")).unwrap();
         let engine = rebuild_engine(dir.path(), &mut template, &acceptance).expect("rebuild without disk");
         assert!(!engine.registry().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rebuilding_engine_does_not_reuse_a_stale_registry_template() {
+        let root = tempfile::tempdir().unwrap();
+        let generation_a = root.path().join("generation-a");
+        let generation_b = root.path().join("generation-b");
+        for (dir, child) in [(&generation_a, "from-a"), (&generation_b, "from-b")] {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(
+                dir.join("git.json"),
+                serde_json::json!({
+                    "names": ["git"],
+                    "subcommands": [{"names": [child]}]
+                })
+                .to_string(),
+            )
+            .unwrap();
+            std::fs::write(dir.join("index.json"), r#"{"files":{"git":"git.json"}}"#).unwrap();
+        }
+        let canonical = root.path().join("specs-ir");
+        let backup = root.path().join("specs-ir.backup");
+        std::fs::rename(&generation_a, &canonical).unwrap();
+        let acceptance = Arc::new(Mutex::new(AcceptanceIndex::default()));
+        let mut template = None;
+        let _engine_a = rebuild_engine(&canonical, &mut template, &acceptance).expect("generation A");
+
+        // The old template is retained for a missing-window fallback, but a
+        // stable replacement must be indexed before a timed-out rebuild uses
+        // it again.
+        std::fs::rename(&canonical, &backup).unwrap();
+        std::fs::rename(&generation_b, &canonical).unwrap();
+        let mut engine_b = rebuild_engine(&canonical, &mut template, &acceptance).expect("generation B");
+        let result = engine_b
+            .complete(CompleteRequest {
+                buffer: "git ".into(),
+                cwd: "/tmp".into(),
+                include_history: false,
+                ..CompleteRequest::default()
+            })
+            .expect("generation B completion");
+        assert!(
+            result.suggestions.iter().any(|suggestion| suggestion.name == "from-b"),
+            "the stale A template must not survive a stable B replacement"
+        );
+        assert!(!template.as_ref().expect("refreshed template").needs_refresh());
+
+        // Cleanup must not be needed for the safety assertion, but mirrors
+        // the publisher's backup lifecycle.
+        std::fs::remove_dir_all(backup).unwrap();
     }
 
     #[test]

@@ -1,0 +1,1 @@
+{"version":1,"kind":"typed-hook-expressions","contracts":{"trigger":{"irVersion":1,"params":["string","string"],"resultType":"bool"}},"hooks":{}}

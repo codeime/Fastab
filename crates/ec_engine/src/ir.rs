@@ -6,8 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
+
+use crate::snapshot::{DirectorySnapshot, EntryKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -397,6 +399,10 @@ impl Spec {
 #[derive(Debug, Default, Clone)]
 pub struct Registry {
     specs: HashMap<String, Arc<Spec>>,
+    /// The captured generation against which both the index and lazy spec
+    /// files are checked. Cloning a registry clones this handle, not an
+    /// unchecked canonical path.
+    snapshot: Option<DirectorySnapshot>,
     files: HashMap<Arc<str>, PathBuf>,
     /// Root directory is retained so a node's `loadSpec: "foo/bar"` can be
     /// resolved without adding every implementation path to command names.
@@ -559,23 +565,37 @@ impl Registry {
         let Some(path) = self.files.get(name).cloned() else {
             return;
         };
-        let root = self.root.clone();
         let files = self.files.clone();
-        if let Ok(mut spec) = load_spec_file(&path, &root, &files, &mut Vec::new()) {
-            if self.loaded.len() >= MAX_CACHED_SPECS {
-                self.evict_oldest_spec();
-            }
-            if !spec.names.iter().any(|candidate| candidate == name) {
-                spec.names.push(name.to_string());
-            }
-            if !self.has_command_file_map {
-                for alias in &spec.names {
-                    if !alias.is_empty() {
-                        self.remember_file(alias.clone(), path.clone());
+        let loaded = if let Some(snapshot) = self.snapshot.as_ref() {
+            load_snapshot_file(snapshot, &path, &files, &mut Vec::new())
+        } else {
+            let root = self.root.clone();
+            load_spec_file(&path, &root, &files, &mut Vec::new())
+        };
+        match loaded {
+            Ok(mut spec) => {
+                if self.loaded.len() >= MAX_CACHED_SPECS {
+                    self.evict_oldest_spec();
+                }
+                if !spec.names.iter().any(|candidate| candidate == name) {
+                    spec.names.push(name.to_string());
+                }
+                if !self.has_command_file_map {
+                    for alias in &spec.names {
+                        if !alias.is_empty() {
+                            self.remember_file(alias.clone(), path.clone());
+                        }
                     }
                 }
-            }
-            self.insert_loaded(spec, Some(&path));
+                self.insert_loaded(spec, Some(&path));
+            },
+            Err(error) => {
+                // A missing/different generation must not look like an
+                // ordinary absent command. The snapshot marks itself stale
+                // for I/O or digest failures; the next Engine request will
+                // attempt an atomic Registry+JsHost rebuild.
+                tracing::warn!(command = %name, path = %path.display(), %error, "spec lazy load failed");
+            },
         }
     }
 
@@ -676,16 +696,30 @@ impl Registry {
     }
 
     pub fn load(dir: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let dir = dir.as_ref();
-        if !dir.is_dir() {
-            return Err(anyhow!("specs IR directory does not exist: {}", dir.display()));
-        }
+        let snapshot = DirectorySnapshot::open(dir.as_ref())
+            .with_context(|| format!("open specs IR directory: {}", dir.as_ref().display()))?;
+        Self::load_snapshot(snapshot)
+    }
+
+    pub(crate) fn load_snapshot(snapshot: DirectorySnapshot) -> anyhow::Result<Self> {
+        crate::spec_pair::verify_if_present_snapshot(&snapshot)?;
         let mut registry = Self::new();
-        registry.root = dir.to_path_buf();
-        registry.has_command_file_map = read_index(dir, &mut registry)?;
-        index_dir(dir, dir, &mut registry)?;
+        registry.root = snapshot.display_path().to_path_buf();
+        registry.snapshot = Some(snapshot.clone());
+        registry.has_command_file_map = read_index_snapshot(&snapshot, &mut registry)?;
+        index_dir_snapshot(&snapshot, Path::new(""), &mut registry)?;
         registry.rebuild_names();
         Ok(registry)
+    }
+
+    pub(crate) fn snapshot(&self) -> Option<DirectorySnapshot> {
+        self.snapshot.clone()
+    }
+
+    pub(crate) fn needs_refresh(&self) -> bool {
+        self.snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.is_stale() || snapshot.generation_changed())
     }
 
     /// Overlay JSON specs from `dir` for the life of the registry. Used for
@@ -828,13 +862,15 @@ fn safe_index_path(root: &Path, relative: &str) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-fn read_index(root: &Path, registry: &mut Registry) -> anyhow::Result<bool> {
-    let path = root.join("index.json");
-    if !path.is_file() {
+fn read_index_snapshot(snapshot: &DirectorySnapshot, registry: &mut Registry) -> anyhow::Result<bool> {
+    let relative = Path::new("index.json");
+    let Some(bytes) = snapshot
+        .read_optional_file(relative)
+        .with_context(|| format!("read {}", relative.display()))?
+    else {
         return Ok(false);
-    }
-    let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-    let index: IrIndex = serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
+    };
+    let index: IrIndex = serde_json::from_slice(&bytes).with_context(|| format!("parse {}", relative.display()))?;
     let Some(files) = index.files else {
         return Ok(false);
     };
@@ -842,10 +878,13 @@ fn read_index(root: &Path, registry: &mut Registry) -> anyhow::Result<bool> {
         if command.is_empty() {
             continue;
         }
-        let Some(path) = safe_index_path(root, &relative) else {
+        let relative = relative.trim().trim_start_matches("./");
+        let Some(path) = safe_relative_path(relative) else {
             continue;
         };
-        registry.remember_file(command, path);
+        if snapshot.is_file(&path) {
+            registry.remember_file(command, path);
+        }
     }
     // The presence of `files`, even when every entry is invalid, is
     // authoritative.  `Registry::load` must not fall back to recursively
@@ -853,24 +892,29 @@ fn read_index(root: &Path, registry: &mut Registry) -> anyhow::Result<bool> {
     Ok(true)
 }
 
-fn index_dir(root: &Path, dir: &Path, registry: &mut Registry) -> anyhow::Result<()> {
-    for entry in fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            index_dir(root, &path, registry)?;
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+fn index_dir_snapshot(snapshot: &DirectorySnapshot, dir: &Path, registry: &mut Registry) -> anyhow::Result<()> {
+    for name in snapshot
+        .read_dir(dir)
+        .with_context(|| format!("read {}", dir.display()))?
+    {
+        let Some(name_str) = name.to_str() else {
             continue;
         };
-        if name == "index.json" || !name.ends_with(".json") {
+        let path = dir.join(&name);
+        match snapshot
+            .kind(&path)
+            .with_context(|| format!("inspect {}", path.display()))?
+        {
+            EntryKind::Directory => {
+                index_dir_snapshot(snapshot, &path, registry)?;
+                continue;
+            },
+            EntryKind::File => {},
+        }
+        if name_str == "index.json" || !name_str.ends_with(".json") {
             continue;
         }
-        let Ok(rel) = path.strip_prefix(root) else {
-            continue;
-        };
-        let key = rel.with_extension("").to_string_lossy().replace('\\', "/");
+        let key = path.with_extension("").to_string_lossy().replace('\\', "/");
         if !key.is_empty() && key != "index" {
             // With the new command map, every command entry comes from
             // index.json.  All JSON paths are implementation details and are
@@ -884,6 +928,18 @@ fn index_dir(root: &Path, dir: &Path, registry: &mut Registry) -> anyhow::Result
         }
     }
     Ok(())
+}
+
+fn safe_relative_path(relative: &str) -> Option<PathBuf> {
+    let path = Path::new(relative);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    Some(path.to_path_buf())
 }
 
 fn resolve_reference_path(root: &Path, files: &HashMap<Arc<str>, PathBuf>, reference: &str) -> Option<PathBuf> {
@@ -992,6 +1048,120 @@ fn load_spec_file(
     stack: &mut Vec<PathBuf>,
 ) -> anyhow::Result<Spec> {
     load_spec_file_inner(path, root, files, stack)
+}
+
+fn resolve_snapshot_reference_path(
+    snapshot: &DirectorySnapshot,
+    files: &HashMap<Arc<str>, PathBuf>,
+    reference: &str,
+) -> Option<PathBuf> {
+    let reference = reference.trim().trim_start_matches("./");
+    if reference.is_empty() || reference.contains('\\') {
+        return None;
+    }
+    if let Some(path) = files.get(reference) {
+        return Some(path.clone());
+    }
+    let relative = if reference.ends_with(".json") {
+        reference.to_string()
+    } else {
+        format!("{reference}.json")
+    };
+    let path = safe_relative_path(&relative)?;
+    snapshot.is_file(&path).then_some(path)
+}
+
+fn resolve_snapshot_spec_references(
+    spec: &mut Spec,
+    snapshot: &DirectorySnapshot,
+    files: &HashMap<Arc<str>, PathBuf>,
+    stack: &mut Vec<PathBuf>,
+) -> anyhow::Result<()> {
+    let load_spec = spec.load_spec.take();
+    if let Some(load_spec) = load_spec {
+        let target = match load_spec {
+            LoadSpec::Path(reference) => resolve_snapshot_reference_path(snapshot, files, &reference),
+            LoadSpec::Inline(target) => {
+                replace_spec_with_loaded(spec, *target);
+                None
+            },
+        };
+        if let Some(target_path) = target {
+            let already_loading = stack.iter().any(|path| path == &target_path);
+            if !already_loading {
+                let loaded = load_snapshot_file_inner(snapshot, &target_path, files, stack)?;
+                replace_spec_with_loaded(spec, loaded);
+            }
+        }
+    }
+
+    for child in &mut spec.subcommands {
+        resolve_snapshot_spec_references(child, snapshot, files, stack)?;
+    }
+    for arg in &mut spec.args {
+        resolve_snapshot_arg_spec(arg, snapshot, files, stack)?;
+    }
+    for option in &mut spec.options {
+        for arg in &mut option.args {
+            resolve_snapshot_arg_spec(arg, snapshot, files, stack)?;
+        }
+    }
+    Ok(())
+}
+
+fn resolve_snapshot_arg_spec(
+    arg: &mut ArgSpec,
+    snapshot: &DirectorySnapshot,
+    files: &HashMap<Arc<str>, PathBuf>,
+    stack: &mut Vec<PathBuf>,
+) -> anyhow::Result<()> {
+    let Some(load_spec) = arg.load_spec.as_ref() else {
+        return Ok(());
+    };
+    match load_spec {
+        LoadSpec::Path(reference) => {
+            let Some(target_path) = resolve_snapshot_reference_path(snapshot, files, reference) else {
+                return Ok(());
+            };
+            if stack.iter().any(|path| path == &target_path) {
+                return Ok(());
+            }
+            let loaded = load_snapshot_file_inner(snapshot, &target_path, files, stack)?;
+            arg.resolved_spec = Some(Box::new(loaded));
+        },
+        LoadSpec::Inline(target) => {
+            let mut loaded = (**target).clone();
+            resolve_snapshot_spec_references(&mut loaded, snapshot, files, stack)?;
+            arg.resolved_spec = Some(Box::new(loaded));
+        },
+    }
+    Ok(())
+}
+
+fn load_snapshot_file_inner(
+    snapshot: &DirectorySnapshot,
+    path: &Path,
+    files: &HashMap<Arc<str>, PathBuf>,
+    stack: &mut Vec<PathBuf>,
+) -> anyhow::Result<Spec> {
+    let bytes = snapshot
+        .read_file(path)
+        .with_context(|| format!("read {}", path.display()))?;
+    let mut spec: Spec = serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
+    stack.push(path.to_path_buf());
+    let resolved = resolve_snapshot_spec_references(&mut spec, snapshot, files, stack);
+    stack.pop();
+    resolved?;
+    Ok(spec)
+}
+
+fn load_snapshot_file(
+    snapshot: &DirectorySnapshot,
+    path: &Path,
+    files: &HashMap<Arc<str>, PathBuf>,
+    stack: &mut Vec<PathBuf>,
+) -> anyhow::Result<Spec> {
+    load_snapshot_file_inner(snapshot, path, files, stack)
 }
 
 #[cfg(test)]
@@ -1473,6 +1643,48 @@ mod tests {
         assert!(a.args[0].resolved_spec.is_none());
         let cycle = a.args[1].resolved_spec.as_deref().expect("cycle target loads once");
         assert!(cycle.args[0].resolved_spec.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn changed_nested_snapshot_file_does_not_cache_a_partial_parent() {
+        fn write_generation(root: &Path, nested_description: &str) {
+            fs::create_dir_all(root).unwrap();
+            fs::write(
+                root.join("demo.json"),
+                r#"{"names":["demo"],"subcommands":[{"names":["child"],"loadSpec":"nested"}]}"#,
+            )
+            .unwrap();
+            fs::write(
+                root.join("nested.json"),
+                serde_json::json!({
+                    "names": ["nested"],
+                    "description": nested_description,
+                })
+                .to_string(),
+            )
+            .unwrap();
+            fs::write(root.join("index.json"), r#"{"files":{"demo":"demo.json"}}"#).unwrap();
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let generation_a = root.path().join("generation-a");
+        let generation_b = root.path().join("generation-b");
+        write_generation(&generation_a, "generation A");
+        write_generation(&generation_b, "generation B");
+        let canonical = root.path().join("specs-ir");
+        let backup = root.path().join("backup");
+        fs::rename(&generation_a, &canonical).unwrap();
+        let mut registry = Registry::load(&canonical).expect("generation A registry");
+
+        // The parent bytes are identical, but its nested loadSpec differs.
+        // Returning and caching the parent without that child would expose a
+        // partial generation until LRU eviction or a manual cache clear.
+        fs::rename(&canonical, &backup).unwrap();
+        fs::rename(&generation_b, &canonical).unwrap();
+        assert!(registry.get("demo").is_none());
+        assert!(!registry.is_cached("demo"));
+        assert!(registry.needs_refresh());
     }
 
     #[test]

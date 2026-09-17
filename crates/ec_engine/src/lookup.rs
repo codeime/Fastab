@@ -668,8 +668,9 @@ pub(crate) fn help_template_suggestions(root: &Spec, current: &Spec, query: &str
         .collect()
 }
 
-fn command_is_disabled(command: &str) -> bool {
-    fig_settings::settings::get::<Vec<String>>("autocomplete.disableForCommands")
+fn command_is_disabled(settings: &fig_settings::settings::Settings, command: &str) -> bool {
+    settings
+        .get::<Vec<String>>("autocomplete.disableForCommands")
         .ok()
         .flatten()
         .is_some_and(|commands| command_is_disabled_from(&commands, command))
@@ -1137,7 +1138,7 @@ fn resolve_arg_alias(arg: &ArgSpec, token: &str) -> Option<String> {
     }
     let hook_id = directives.js_alias.as_deref()?;
     let (host, cwd) = crate::js_host::current()?;
-    let timeout = Duration::from_millis(u64::try_from(crate::generate::DEFAULT_SCRIPT_TIMEOUT_MS).unwrap_or(5_000));
+    let timeout = dynamic_hook_timeout();
     host.alias(hook_id, token, cwd, timeout)
 }
 
@@ -1158,7 +1159,7 @@ fn apply_js_load_spec(current: &mut Arc<Spec>, token: &str) {
     let Some((host, cwd)) = crate::js_host::current() else {
         return;
     };
-    let timeout = Duration::from_millis(u64::try_from(crate::generate::DEFAULT_SCRIPT_TIMEOUT_MS).unwrap_or(5_000));
+    let timeout = dynamic_hook_timeout();
     let Some(loaded) = host.load_spec(&hook_id, token, cwd, timeout) else {
         return;
     };
@@ -1172,7 +1173,7 @@ fn apply_generate_spec(current: &mut Arc<Spec>, tokens: &[String]) {
     let Some((host, cwd)) = crate::js_host::current() else {
         return;
     };
-    let timeout = Duration::from_millis(u64::try_from(crate::generate::DEFAULT_SCRIPT_TIMEOUT_MS).unwrap_or(5_000));
+    let timeout = dynamic_hook_timeout();
     let generated = if let Some(key) = current.generate_spec_cache_key.as_deref() {
         let cache_key = format!("{}:{key}", tokens.first().cloned().unwrap_or_default());
         crate::js_host::cached_spec(host, &cache_key, || host.generate_spec(&hook_id, tokens, cwd, timeout))
@@ -1183,6 +1184,23 @@ fn apply_generate_spec(current: &mut Arc<Spec>, tokens: &[String]) {
         return;
     };
     *current = Arc::new(crate::js_host::merge_generated_spec(current.as_ref(), generated));
+}
+
+/// Dynamic parser hooks do not have an argument/generator object from which
+/// to inherit a timeout.  They use the same live user setting and negative
+/// value normalization as native generators: an absent or malformed setting
+/// falls back to the 5-second default, while a negative value becomes zero
+/// when converted to a Rust duration.
+fn dynamic_hook_timeout() -> Duration {
+    dynamic_hook_timeout_from_settings(&fig_settings::settings::Settings::new())
+}
+
+fn dynamic_hook_timeout_from_settings(settings: &fig_settings::settings::Settings) -> Duration {
+    duration_from_script_timeout_ms(crate::generate::configured_script_timeout_ms_from(settings))
+}
+
+fn duration_from_script_timeout_ms(milliseconds: i64) -> Duration {
+    Duration::from_millis(u64::try_from(milliseconds).unwrap_or(0))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1222,8 +1240,7 @@ fn enter_loaded_spec(
 fn next_spec_after_arg(registry: Option<&mut Registry>, arg: &ArgSpec, token: &str) -> Option<Arc<Spec>> {
     if let Some(hook_id) = arg.js_load_spec.as_deref() {
         return crate::js_host::current().and_then(|(host, cwd)| {
-            let timeout =
-                Duration::from_millis(u64::try_from(crate::generate::DEFAULT_SCRIPT_TIMEOUT_MS).unwrap_or(5_000));
+            let timeout = dynamic_hook_timeout();
             host.load_spec(hook_id, token, cwd, timeout).map(Arc::new)
         });
     }
@@ -1879,6 +1896,7 @@ fn first_token_result(
     request: &CompleteRequest,
     raw_search_term: String,
     normalized_search_term: String,
+    settings: &fig_settings::settings::Settings,
 ) -> CompleteResult {
     if !request.suggest_first_token {
         return CompleteResult {
@@ -1901,9 +1919,9 @@ fn first_token_result(
     add_exact_auto_execute(
         &mut suggestions,
         &normalized_search_term,
-        fig_settings::settings::get_bool_or("autocomplete.hideAutoExecuteSuggestion", false),
-        fig_settings::settings::get_bool_or("autocomplete.onlyShowOnTab", false),
-        fig_settings::settings::get_bool_or("autocomplete.immediatelyRunDangerousCommands", false),
+        settings.get_bool_or("autocomplete.hideAutoExecuteSuggestion", false),
+        settings.get_bool_or("autocomplete.onlyShowOnTab", false),
+        settings.get_bool_or("autocomplete.immediatelyRunDangerousCommands", false),
     );
     CompleteResult {
         suggestions,
@@ -1923,6 +1941,16 @@ fn arg_uses_history_template(arg: &ArgSpec) -> bool {
 }
 
 pub fn complete(registry: &mut Registry, request: &CompleteRequest) -> CompleteResult {
+    complete_with_settings(registry, request, &fig_settings::settings::Settings::new())
+}
+
+/// Isolated settings input for deterministic engine baselines; production uses
+/// the real settings provider through [`complete`].
+pub(crate) fn complete_with_settings(
+    registry: &mut Registry,
+    request: &CompleteRequest,
+    settings: &fig_settings::settings::Settings,
+) -> CompleteResult {
     let raw = buffer_before_cursor(&request.buffer, request.cursor);
     let buffer = completion_buffer(&request.buffer, request.cursor);
     let (mut tokens, ends_with_space) = tokenize(buffer);
@@ -1931,7 +1959,7 @@ pub fn complete(registry: &mut Registry, request: &CompleteRequest) -> CompleteR
     }
     if tokens.is_empty() {
         if is_fresh_command_position(raw) {
-            return first_token_result(request, String::new(), String::new());
+            return first_token_result(request, String::new(), String::new(), settings);
         }
         return CompleteResult {
             fuzzy: request.fuzzy,
@@ -1950,9 +1978,9 @@ pub fn complete(registry: &mut Registry, request: &CompleteRequest) -> CompleteR
     } else {
         tokens.last().cloned().unwrap_or_default()
     };
-    let prefer_verbose = fig_settings::settings::get_bool_or("autocomplete.preferVerboseSuggestions", false);
+    let prefer_verbose = settings.get_bool_or("autocomplete.preferVerboseSuggestions", false);
 
-    if command_is_disabled(command) {
+    if command_is_disabled(settings, command) {
         return CompleteResult {
             suggestions: Vec::new(),
             fuzzy: request.fuzzy,
@@ -1963,7 +1991,7 @@ pub fn complete(registry: &mut Registry, request: &CompleteRequest) -> CompleteR
     }
 
     if tokens.len() == 1 && !ends_with_space && !command.contains('/') {
-        return first_token_result(request, raw_search_term, normalized_search_term);
+        return first_token_result(request, raw_search_term, normalized_search_term, settings);
     }
 
     let query = normalized_search_term.clone();
@@ -1976,7 +2004,7 @@ pub fn complete(registry: &mut Registry, request: &CompleteRequest) -> CompleteR
         // nothing. `bin/console` is the one special case.
         single_slash_token_spec(registry, command)
     } else {
-        root_spec_for_command(registry, request, command)
+        root_spec_for_command(registry, request, command, settings)
     };
     let Some(root) = root else {
         return CompleteResult {
@@ -2148,27 +2176,27 @@ pub fn complete(registry: &mut Registry, request: &CompleteRequest) -> CompleteR
     add_exact_auto_execute(
         &mut suggestions,
         &query,
-        fig_settings::settings::get_bool_or("autocomplete.hideAutoExecuteSuggestion", false),
-        fig_settings::settings::get_bool_or("autocomplete.onlyShowOnTab", false),
-        fig_settings::settings::get_bool_or("autocomplete.immediatelyRunDangerousCommands", false),
+        settings.get_bool_or("autocomplete.hideAutoExecuteSuggestion", false),
+        settings.get_bool_or("autocomplete.onlyShowOnTab", false),
+        settings.get_bool_or("autocomplete.immediatelyRunDangerousCommands", false),
     );
     add_current_token_auto_execute(
         &mut suggestions,
         &normalized_search_term,
         suggest_current_token_for(
             context.active_arg.as_ref(),
-            fig_settings::settings::get_bool_or("autocomplete.alwaysSuggestCurrentToken", false),
+            settings.get_bool_or("autocomplete.alwaysSuggestCurrentToken", false),
         ),
-        fig_settings::settings::get_bool_or("autocomplete.hideAutoExecuteSuggestion", false),
-        fig_settings::settings::get_bool_or("autocomplete.onlyShowOnTab", false),
-        fig_settings::settings::get_bool_or("autocomplete.immediatelyRunDangerousCommands", false),
+        settings.get_bool_or("autocomplete.hideAutoExecuteSuggestion", false),
+        settings.get_bool_or("autocomplete.onlyShowOnTab", false),
+        settings.get_bool_or("autocomplete.immediatelyRunDangerousCommands", false),
     );
     add_space_auto_execute(
         &mut suggestions,
         &normalized_search_term,
-        fig_settings::settings::get_bool_or("autocomplete.immediatelyExecuteAfterSpace", false),
-        fig_settings::settings::get_bool_or("autocomplete.hideAutoExecuteSuggestion", false),
-        fig_settings::settings::get_bool_or("autocomplete.onlyShowOnTab", false),
+        settings.get_bool_or("autocomplete.immediatelyExecuteAfterSpace", false),
+        settings.get_bool_or("autocomplete.hideAutoExecuteSuggestion", false),
+        settings.get_bool_or("autocomplete.onlyShowOnTab", false),
     );
 
     let (pending_generators, debounce_ms) = crate::generate::take_pending_generators();
@@ -2183,8 +2211,13 @@ pub fn complete(registry: &mut Registry, request: &CompleteRequest) -> CompleteR
     }
 }
 
-fn root_spec_for_command(registry: &mut Registry, request: &CompleteRequest, command: &str) -> Option<Arc<Spec>> {
-    let shortcuts_token = fig_settings::settings::get_string_or("autocomplete.personalShortcutsToken", "+".into());
+fn root_spec_for_command(
+    registry: &mut Registry,
+    request: &CompleteRequest,
+    command: &str,
+    settings: &fig_settings::settings::Settings,
+) -> Option<Arc<Spec>> {
+    let shortcuts_token = settings.get_string_or("autocomplete.personalShortcutsToken", "+".into());
     if command == "?" {
         return crate::ir::load_project_fig_spec(&request.cwd, "_shortcuts")
             .or_else(|| crate::ir::load_home_fig_spec("_shortcuts"))
@@ -3680,6 +3713,35 @@ mod tests {
                 ..CompleteRequest::default()
             },
         )
+    }
+
+    #[test]
+    fn dynamic_hook_timeout_uses_the_configured_milliseconds() {
+        let defaults = fig_settings::settings::Settings::new_fake();
+        assert_eq!(dynamic_hook_timeout_from_settings(&defaults), Duration::from_secs(5));
+
+        let settings =
+            fig_settings::settings::Settings::from_slice(&[("autocomplete.scriptTimeout", serde_json::json!(250))]);
+        assert_eq!(
+            dynamic_hook_timeout_from_settings(&settings),
+            Duration::from_millis(250)
+        );
+        settings.set_value("autocomplete.scriptTimeout", 15_000).unwrap();
+        assert_eq!(dynamic_hook_timeout_from_settings(&settings), Duration::from_secs(15));
+
+        assert_eq!(
+            duration_from_script_timeout_ms(crate::generate::DEFAULT_SCRIPT_TIMEOUT_MS),
+            Duration::from_secs(5)
+        );
+    }
+
+    #[test]
+    fn dynamic_hook_timeout_clamps_negative_settings_to_zero() {
+        let settings =
+            fig_settings::settings::Settings::from_slice(&[("autocomplete.scriptTimeout", serde_json::json!(-1))]);
+        assert_eq!(dynamic_hook_timeout_from_settings(&settings), Duration::ZERO);
+        assert_eq!(duration_from_script_timeout_ms(-1), Duration::ZERO);
+        assert_eq!(duration_from_script_timeout_ms(i64::MIN), Duration::ZERO);
     }
 
     fn load_option_chain_spec() -> (tempfile::TempDir, Registry) {

@@ -6,13 +6,17 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+#[cfg(any(debug_assertions, test))]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use rquickjs::{Context, Ctx, Function, Object, Runtime, Value as JsValue};
+use rquickjs::{Context, Ctx, Function, Object, Persistent, Runtime, Value as JsValue};
 use serde_json::Value as JsonValue;
+use sha2::{Digest, Sha256};
 
 use crate::generate::DEFAULT_SCRIPT_TIMEOUT_MS;
 use crate::ir::{
@@ -21,10 +25,15 @@ use crate::ir::{
 };
 use crate::process::{self, CommandError};
 use crate::runtime::Suggestion;
+use crate::snapshot::DirectorySnapshot;
 
 const MEMORY_LIMIT: usize = 16 * 1024 * 1024;
 const STACK_LIMIT: usize = 512 * 1024;
 const MAX_JOBS: usize = 10_000;
+/// Keep one table per generated source module, but bound this in case a
+/// development bundle or a replaced specs directory contains many modules.
+const MAX_MODULE_TABLES: usize = 64;
+const MODULE_MANIFEST_KIND: &str = "closure-preserving-hook-modules";
 
 /// Slack added to a hook's script budget before the interpreter is interrupted.
 /// A generator whose final `executeCommand` finishes right on its own timeout
@@ -39,6 +48,63 @@ thread_local! {
     /// scheduling promise jobs) is aborted instead of wedging the completion
     /// attempt until the 30s supervisor watchdog abandons the whole thread.
     static HOOK_DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
+    #[cfg(any(debug_assertions, test))]
+    static LAST_HOOK_DIAGNOSTIC: RefCell<Option<DiagnosticEntry>> = const { RefCell::new(None) };
+}
+
+#[cfg(any(debug_assertions, test))]
+static NEXT_DIAGNOSTIC_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Non-sensitive outcome information for one hook invocation.
+///
+/// The normal hook APIs deliberately keep their historical `Option` return
+/// values.  This status is a development/test diagnostic side channel so a
+/// missing source, a JavaScript failure, and a valid empty result do not look
+/// identical while investigating the native migration.  It intentionally
+/// carries no hook input, cwd, shell, environment, command, or error text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookDiagnostic {
+    /// The hook produced a valid non-empty value accepted by its caller.
+    Success,
+    /// The hook produced no value, or a valid empty collection.
+    EmptyResult,
+    /// The extracted hook source was not available on disk.
+    SourceMissing,
+    /// The thread-local QuickJS runtime or context could not be created.
+    RuntimeUnavailable,
+    /// The hook source could not be evaluated as a function.
+    EvalError,
+    /// The evaluated function or a helper invoked by it failed.
+    InvokeError,
+    /// A returned Promise rejected.
+    PromiseRejected,
+    /// Promise setup or job execution failed before a rejection could be
+    /// observed.
+    PromiseError,
+    /// A returned Promise was still pending when its jobs were drained.
+    PromisePending,
+    /// The hook or one of its commands exceeded its time budget.
+    Timeout,
+    /// The JavaScript value could not be serialized to JSON.
+    JsonConversionError,
+    /// JSON was valid, but did not match the requested native result shape.
+    ResultConversionError,
+}
+
+/// A diagnostic paired with the hook that produced it. The hook id is the
+/// extracted asset name, not shell input; no cwd, command, environment, or
+/// JavaScript error text is retained.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookDiagnosticRecord {
+    pub hook_id: String,
+    pub outcome: HookDiagnostic,
+}
+
+#[cfg(any(debug_assertions, test))]
+#[allow(dead_code)]
+struct DiagnosticEntry {
+    host_id: u64,
+    record: HookDiagnosticRecord,
 }
 
 #[derive(Clone, Copy)]
@@ -64,7 +130,12 @@ fn empty_shell_context() -> &'static ShellContext {
 
 pub struct JsHost {
     hooks_dir: PathBuf,
+    /// When present, all generated hook assets are checked against this
+    /// captured `specs-ir` generation. The legacy path constructor remains
+    /// for tests and standalone callers that do not have a Registry snapshot.
+    snapshot: Option<DirectorySnapshot>,
     sources: Mutex<HashMap<String, String>>,
+    module_manifest: Mutex<ModuleManifestState>,
     /// `custom` generator results, keyed like Fig's `generatorCache`.
     suggestion_cache: Mutex<HashMap<String, CacheEntry<Vec<Suggestion>>>>,
     /// Script generator stdout. Fig caches the `executeCommand` output and
@@ -72,11 +143,98 @@ pub struct JsHost {
     /// sees the current tokens; caching rows here would freeze them.
     script_output_cache: Mutex<HashMap<String, CacheEntry<String>>>,
     spec_cache: Mutex<HashMap<String, Spec>>,
+    /// Kept out of release builds: production callers continue to observe
+    /// only the existing `Option` result semantics.
+    #[cfg(any(debug_assertions, test))]
+    diagnostic_id: u64,
 }
 
 struct Inner {
+    /// Shared module evaluations are kept alive by QuickJS persistent handles.
+    /// This cache is thread-local with the runtime, so it never crosses a
+    /// QuickJS context and is bounded independently of the hook source cache.
+    /// It is declared first so handles are released before the context/runtime
+    /// during thread-local teardown.
+    module_tables: RefCell<HashMap<String, Persistent<Object<'static>>>>,
     runtime: Runtime,
     context: Context,
+}
+
+#[derive(Clone)]
+struct ModuleRef {
+    file: String,
+    sha256: String,
+}
+
+enum ModuleManifestState {
+    Unloaded,
+    Absent,
+    Invalid(Option<String>),
+    Valid {
+        sha256: String,
+        entries: HashMap<String, ModuleRef>,
+    },
+}
+
+enum HookAsset {
+    Legacy(String),
+    Module(ModuleRef),
+    Missing,
+}
+
+enum ModuleManifestLookup {
+    Absent,
+    Invalid,
+    Valid(Option<ModuleRef>),
+}
+
+fn parse_module_manifest(value: JsonValue) -> Option<HashMap<String, ModuleRef>> {
+    let object = value.as_object()?;
+    if object.get("version").and_then(JsonValue::as_u64) != Some(1) {
+        return None;
+    }
+    if object.get("kind").and_then(JsonValue::as_str) != Some(MODULE_MANIFEST_KIND) {
+        return None;
+    }
+    let hooks = object.get("hooks")?.as_object()?;
+    // `modules` carries provenance validated by the build-time audit. It is
+    // not needed for lookup, but its absence means this is not manifest v1.
+    object.get("modules")?.as_object()?;
+    let mut entries = HashMap::with_capacity(hooks.len());
+    for (hook_id, value) in hooks {
+        if hook_id.is_empty() {
+            return None;
+        }
+        let entry = value.as_object()?;
+        let file = entry.get("module")?.as_str()?;
+        let sha256 = entry.get("moduleSha256")?.as_str()?;
+        if !valid_module_file(file) || !valid_sha256(sha256) {
+            return None;
+        }
+        entries.insert(
+            hook_id.clone(),
+            ModuleRef {
+                file: file.to_owned(),
+                sha256: sha256.to_owned(),
+            },
+        );
+    }
+    Some(entries)
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_module_file(value: &str) -> bool {
+    let path = Path::new(value);
+    !value.is_empty()
+        && path.extension().and_then(|extension| extension.to_str()) == Some("js")
+        && path.components().count() == 1
+        && matches!(path.components().next(), Some(Component::Normal(_)))
 }
 
 #[derive(Clone)]
@@ -98,15 +256,33 @@ impl JsHost {
     pub fn new(hooks_dir: PathBuf) -> Self {
         Self {
             hooks_dir,
+            snapshot: None,
             sources: Mutex::new(HashMap::new()),
+            module_manifest: Mutex::new(ModuleManifestState::Unloaded),
             suggestion_cache: Mutex::new(HashMap::new()),
             script_output_cache: Mutex::new(HashMap::new()),
             spec_cache: Mutex::new(HashMap::new()),
+            #[cfg(any(debug_assertions, test))]
+            diagnostic_id: NEXT_DIAGNOSTIC_ID.fetch_add(1, Ordering::Relaxed),
         }
     }
 
     pub fn from_specs_dir(specs_dir: &Path) -> Self {
         Self::new(specs_dir.join("hooks"))
+    }
+
+    pub(crate) fn from_snapshot(snapshot: DirectorySnapshot) -> Self {
+        Self {
+            hooks_dir: snapshot.display_path().join("hooks"),
+            snapshot: Some(snapshot),
+            sources: Mutex::new(HashMap::new()),
+            module_manifest: Mutex::new(ModuleManifestState::Unloaded),
+            suggestion_cache: Mutex::new(HashMap::new()),
+            script_output_cache: Mutex::new(HashMap::new()),
+            spec_cache: Mutex::new(HashMap::new()),
+            #[cfg(any(debug_assertions, test))]
+            diagnostic_id: NEXT_DIAGNOSTIC_ID.fetch_add(1, Ordering::Relaxed),
+        }
     }
 
     /// Bind this host for the duration of a completion attempt so generators
@@ -131,6 +307,38 @@ impl JsHost {
             cell.set(previous);
             result
         })
+    }
+
+    /// Return the latest non-sensitive hook outcome in development/test
+    /// builds. A missing value means that no hook method has run on this host.
+    #[cfg(any(debug_assertions, test))]
+    #[allow(dead_code)]
+    pub fn last_hook_diagnostic(&self) -> Option<HookDiagnosticRecord> {
+        LAST_HOOK_DIAGNOSTIC.with(|cell| {
+            cell.borrow()
+                .as_ref()
+                .filter(|entry| entry.host_id == self.diagnostic_id)
+                .map(|entry| entry.record.clone())
+        })
+    }
+
+    fn record_hook_diagnostic(&self, hook_id: &str, outcome: HookDiagnostic) {
+        #[cfg(any(debug_assertions, test))]
+        {
+            LAST_HOOK_DIAGNOSTIC.with(|cell| {
+                *cell.borrow_mut() = Some(DiagnosticEntry {
+                    host_id: self.diagnostic_id,
+                    record: HookDiagnosticRecord {
+                        hook_id: hook_id.to_string(),
+                        outcome,
+                    },
+                });
+            });
+        }
+        #[cfg(not(any(debug_assertions, test)))]
+        {
+            let _ = (hook_id, outcome);
+        }
     }
 }
 
@@ -178,13 +386,35 @@ globalThis.console = {
                 {
                     return None;
                 }
-                *slot = Some(Inner { runtime, context });
+                *slot = Some(Inner {
+                    runtime,
+                    context,
+                    module_tables: RefCell::new(HashMap::new()),
+                });
             }
             Some(f(slot.as_ref()?))
         })
     }
 
-    fn hook_source(&self, id: &str) -> Option<String> {
+    fn hook_asset(&self, id: &str) -> HookAsset {
+        match self.module_manifest_entry(id) {
+            ModuleManifestLookup::Absent => self
+                .legacy_hook_source(id)
+                .map_or(HookAsset::Missing, HookAsset::Legacy),
+            ModuleManifestLookup::Valid(entry) => entry.map_or(HookAsset::Missing, HookAsset::Module),
+            ModuleManifestLookup::Invalid => HookAsset::Missing,
+        }
+    }
+
+    fn legacy_hook_source(&self, id: &str) -> Option<String> {
+        if let Some(snapshot) = self.snapshot.as_ref() {
+            // Do not let the legacy source cache bypass the generation check:
+            // a hook can be the first asset touched after publication. The
+            // snapshot read is still cheap for the handful of hooks a
+            // session normally invokes and fails closed on a changed file.
+            let relative = Path::new("hooks").join(hook_file_name(id));
+            return snapshot.read_to_string(&relative).ok();
+        }
         {
             let sources = self.sources.lock().unwrap_or_else(|err| err.into_inner());
             if let Some(source) = sources.get(id) {
@@ -198,12 +428,86 @@ globalThis.console = {
         Some(source)
     }
 
+    fn module_manifest_entry(&self, id: &str) -> ModuleManifestLookup {
+        let mut manifest = self.module_manifest.lock().unwrap_or_else(|err| err.into_inner());
+        let bytes = match self.read_module_manifest() {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let legacy_fallback = matches!(&*manifest, ModuleManifestState::Unloaded | ModuleManifestState::Absent);
+                if legacy_fallback {
+                    *manifest = ModuleManifestState::Absent;
+                    return ModuleManifestLookup::Absent;
+                }
+                *manifest = ModuleManifestState::Invalid(None);
+                return ModuleManifestLookup::Invalid;
+            },
+            Err(_) => {
+                *manifest = ModuleManifestState::Invalid(None);
+                return ModuleManifestLookup::Invalid;
+            },
+        };
+        let sha256 = sha256_hex(&bytes);
+        let unchanged = match &*manifest {
+            ModuleManifestState::Valid { sha256: current, .. } => current == &sha256,
+            ModuleManifestState::Invalid(Some(current)) => current == &sha256,
+            ModuleManifestState::Unloaded | ModuleManifestState::Absent | ModuleManifestState::Invalid(None) => false,
+        };
+        if !unchanged {
+            *manifest = match serde_json::from_slice::<JsonValue>(&bytes)
+                .ok()
+                .and_then(parse_module_manifest)
+            {
+                Some(entries) => ModuleManifestState::Valid { sha256, entries },
+                None => ModuleManifestState::Invalid(Some(sha256)),
+            };
+        }
+        match &*manifest {
+            ModuleManifestState::Unloaded => unreachable!("module manifest is loaded before lookup"),
+            ModuleManifestState::Absent => ModuleManifestLookup::Absent,
+            ModuleManifestState::Invalid(_) => ModuleManifestLookup::Invalid,
+            ModuleManifestState::Valid { entries, .. } => ModuleManifestLookup::Valid(entries.get(id).cloned()),
+        }
+    }
+
+    fn module_manifest_path(&self) -> PathBuf {
+        self.hooks_dir
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join("hook-modules.json")
+    }
+
+    fn read_module_manifest(&self) -> std::io::Result<Vec<u8>> {
+        if let Some(snapshot) = self.snapshot.as_ref() {
+            snapshot
+                .read_optional_file(Path::new("hook-modules.json"))?
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "hook-modules.json"))
+        } else {
+            fs::read(self.module_manifest_path())
+        }
+    }
+
+    fn source_modules_path(&self, file: &str) -> PathBuf {
+        self.hooks_dir
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join("source-modules")
+            .join(file)
+    }
+
+    fn read_source_module(&self, file: &str) -> std::io::Result<Vec<u8>> {
+        if let Some(snapshot) = self.snapshot.as_ref() {
+            snapshot.read_file(&Path::new("source-modules").join(file))
+        } else {
+            fs::read(self.source_modules_path(file))
+        }
+    }
+
     pub fn post_process(&self, hook_id: &str, stdout: &str, tokens: &[String]) -> Option<Vec<Suggestion>> {
-        let json = self.call_hook(hook_id, default_hook_budget(), |ctx, hook| {
+        let result = self.call_hook(hook_id, default_hook_budget(), |ctx, hook| {
             let tokens = tokens_value(ctx, tokens)?;
             call_hook(ctx, hook, (stdout, tokens))
-        })?;
-        suggestions_from_json(&json, false)
+        });
+        self.suggestions_result(hook_id, result, false)
     }
 
     /// `search_term` is Fig `context.searchTerm`: the parser's current token
@@ -217,125 +521,292 @@ globalThis.console = {
         timeout: Duration,
         is_dangerous: bool,
     ) -> Option<Vec<Suggestion>> {
-        let json = self.call_hook(hook_id, timeout, |ctx, hook| {
+        let result = self.call_hook(hook_id, timeout, |ctx, hook| {
             let tokens_js = tokens_value(ctx, tokens)?;
             let exec = execute_command_fn(ctx, cwd, timeout)?;
             let context = custom_context(ctx, cwd, search_term, is_dangerous)?;
             call_hook(ctx, hook, (tokens_js, exec, context))
-        })?;
-        suggestions_from_json(&json, is_dangerous)
+        });
+        self.suggestions_result(hook_id, result, is_dangerous)
     }
 
     pub fn script_command(&self, hook_id: &str, tokens: &[String]) -> Option<ScriptCommand> {
-        let json = self.call_hook(hook_id, default_hook_budget(), |ctx, hook| {
+        let result = self.call_hook(hook_id, default_hook_budget(), |ctx, hook| {
             let tokens_js = tokens_value(ctx, tokens)?;
             call_hook(ctx, hook, (tokens_js,))
-        })?;
-        script_command_from_json(&json)
+        });
+        let json = match result {
+            Ok(json) => json,
+            Err(diagnostic) => {
+                self.record_hook_diagnostic(hook_id, diagnostic);
+                return None;
+            },
+        };
+        match script_command_from_json(&json) {
+            Some(command) => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::Success);
+                Some(command)
+            },
+            None if script_json_is_empty(&json) => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::EmptyResult);
+                None
+            },
+            None => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::ResultConversionError);
+                None
+            },
+        }
     }
 
     pub fn generate_spec(&self, hook_id: &str, tokens: &[String], cwd: &str, timeout: Duration) -> Option<Spec> {
-        let json = self.call_hook_rewrite(hook_id, timeout, |ctx, hook| {
+        let result = self.call_hook_rewrite(hook_id, timeout, |ctx, hook| {
             let tokens_js = tokens_value(ctx, tokens)?;
             let exec = execute_command_fn(ctx, cwd, timeout)?;
             call_hook(ctx, hook, (tokens_js, exec))
-        })?;
-        spec_from_fig_json(&json)
+        });
+        self.spec_result(hook_id, result)
     }
 
     /// Fig `parserDirectives.alias` as a function: `(token, execute) => string`.
     pub fn alias(&self, hook_id: &str, token: &str, cwd: &str, timeout: Duration) -> Option<String> {
-        let json = self.call_hook(hook_id, timeout, |ctx, hook| {
+        let result = self.call_hook(hook_id, timeout, |ctx, hook| {
             let exec = execute_command_fn(ctx, cwd, timeout)?;
             call_hook(ctx, hook, (token, exec))
-        })?;
-        json_as_string(&json)
+        });
+        self.string_result(hook_id, result)
     }
 
     /// Function-form `getQueryTerm(searchTerm)`. Failure returns `None` so the
     /// caller can keep the whole search term, matching the WebView try/catch.
     pub fn get_query_term(&self, hook_id: &str, search_term: &str) -> Option<String> {
-        let json = self.call_hook(hook_id, default_hook_budget(), |ctx, hook| {
+        let result = self.call_hook(hook_id, default_hook_budget(), |ctx, hook| {
             call_hook(ctx, hook, (search_term,))
-        })?;
-        json_as_string(&json)
+        });
+        self.string_result(hook_id, result)
     }
 
     /// Function-form generator `trigger(searchTerm, previousSearchTerm)`.
     pub fn trigger(&self, hook_id: &str, search_term: &str, previous: &str) -> Option<bool> {
-        let json = self.call_hook(hook_id, default_hook_budget(), |ctx, hook| {
+        let result = self.call_hook(hook_id, default_hook_budget(), |ctx, hook| {
             call_hook(ctx, hook, (search_term, previous))
-        })?;
-        json.as_bool()
+        });
+        let json = match result {
+            Ok(json) => json,
+            Err(diagnostic) => {
+                self.record_hook_diagnostic(hook_id, diagnostic);
+                return None;
+            },
+        };
+        match json.as_bool() {
+            Some(value) => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::Success);
+                Some(value)
+            },
+            None if json.is_null() => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::EmptyResult);
+                None
+            },
+            None => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::ResultConversionError);
+                None
+            },
+        }
     }
 
     /// Function-form `loadSpec(token, execute) => spec`.
     pub fn load_spec(&self, hook_id: &str, token: &str, cwd: &str, timeout: Duration) -> Option<Spec> {
-        let json = self.call_hook_rewrite(hook_id, timeout, |ctx, hook| {
+        let result = self.call_hook_rewrite(hook_id, timeout, |ctx, hook| {
             let exec = execute_command_fn(ctx, cwd, timeout)?;
             call_hook(ctx, hook, (token, exec))
-        })?;
-        spec_from_fig_json(&json)
+        });
+        self.spec_result(hook_id, result)
     }
 
     /// `filterTemplateSuggestions(suggestions) => suggestions`.
     pub fn filter_template_suggestions(&self, hook_id: &str, suggestions: &[Suggestion]) -> Option<Vec<Suggestion>> {
         let payload = template_suggestions_json(suggestions);
-        let json = self.call_hook(hook_id, default_hook_budget(), |ctx, hook| {
+        let result = self.call_hook(hook_id, default_hook_budget(), |ctx, hook| {
             let value = json_to_js(ctx, &payload)?;
             call_hook(ctx, hook, (value,))
-        })?;
-        suggestions_from_json(&json, false)
+        });
+        self.suggestions_result(hook_id, result, false)
     }
 
-    fn call_hook<F>(&self, hook_id: &str, budget: Duration, invoke: F) -> Option<JsonValue>
+    fn suggestions_result(
+        &self,
+        hook_id: &str,
+        result: Result<JsonValue, HookDiagnostic>,
+        is_dangerous: bool,
+    ) -> Option<Vec<Suggestion>> {
+        let json = match result {
+            Ok(json) => json,
+            Err(diagnostic) => {
+                self.record_hook_diagnostic(hook_id, diagnostic);
+                return None;
+            },
+        };
+        match suggestions_from_json(&json, is_dangerous) {
+            Some(suggestions) if suggestions.is_empty() && !json_is_empty_result(&json) => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::ResultConversionError);
+                Some(suggestions)
+            },
+            Some(suggestions) if suggestions.is_empty() => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::EmptyResult);
+                Some(suggestions)
+            },
+            Some(suggestions) => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::Success);
+                Some(suggestions)
+            },
+            None if json_is_empty_result(&json) => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::EmptyResult);
+                None
+            },
+            None => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::ResultConversionError);
+                None
+            },
+        }
+    }
+
+    fn spec_result(&self, hook_id: &str, result: Result<JsonValue, HookDiagnostic>) -> Option<Spec> {
+        let json = match result {
+            Ok(json) => json,
+            Err(diagnostic) => {
+                self.record_hook_diagnostic(hook_id, diagnostic);
+                return None;
+            },
+        };
+        match spec_from_fig_json(&json) {
+            Some(spec) => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::Success);
+                Some(spec)
+            },
+            None if json.is_null() => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::EmptyResult);
+                None
+            },
+            None => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::ResultConversionError);
+                None
+            },
+        }
+    }
+
+    fn string_result(&self, hook_id: &str, result: Result<JsonValue, HookDiagnostic>) -> Option<String> {
+        let json = match result {
+            Ok(json) => json,
+            Err(diagnostic) => {
+                self.record_hook_diagnostic(hook_id, diagnostic);
+                return None;
+            },
+        };
+        match json_as_string(&json) {
+            Some(value) => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::Success);
+                Some(value)
+            },
+            None if json.is_null() => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::EmptyResult);
+                None
+            },
+            None => {
+                self.record_hook_diagnostic(hook_id, HookDiagnostic::ResultConversionError);
+                None
+            },
+        }
+    }
+
+    fn call_hook<F>(&self, hook_id: &str, budget: Duration, invoke: F) -> Result<JsonValue, HookDiagnostic>
     where
         F: for<'js> FnOnce(&Ctx<'js>, Function<'js>) -> rquickjs::Result<JsValue<'js>>,
     {
         self.call_hook_inner(hook_id, budget, false, invoke)
     }
 
-    fn call_hook_rewrite<F>(&self, hook_id: &str, budget: Duration, invoke: F) -> Option<JsonValue>
+    fn call_hook_rewrite<F>(&self, hook_id: &str, budget: Duration, invoke: F) -> Result<JsonValue, HookDiagnostic>
     where
         F: for<'js> FnOnce(&Ctx<'js>, Function<'js>) -> rquickjs::Result<JsValue<'js>>,
     {
         self.call_hook_inner(hook_id, budget, true, invoke)
     }
 
-    fn call_hook_inner<F>(&self, hook_id: &str, budget: Duration, rewrite_helpers: bool, invoke: F) -> Option<JsonValue>
+    fn call_hook_inner<F>(
+        &self,
+        hook_id: &str,
+        budget: Duration,
+        rewrite_helpers: bool,
+        invoke: F,
+    ) -> Result<JsonValue, HookDiagnostic>
     where
         F: for<'js> FnOnce(&Ctx<'js>, Function<'js>) -> rquickjs::Result<JsValue<'js>>,
     {
-        let source = self.hook_source(hook_id)?;
+        let asset = match self.hook_asset(hook_id) {
+            HookAsset::Legacy(source) => HookAsset::Legacy(source),
+            HookAsset::Module(module) => HookAsset::Module(module),
+            HookAsset::Missing => return Err(HookDiagnostic::SourceMissing),
+        };
         let _deadline = HookDeadlineGuard::arm(budget.saturating_add(HOOK_DEADLINE_MARGIN));
-        Self::with_inner(|inner| {
+        let result = Self::with_inner(|inner| {
             let pending = inner.context.with(|ctx| {
-                let hook = eval_hook(&ctx, &source).ok()?;
-                let mut value = invoke(&ctx, hook).ok()?;
+                let hook = match &asset {
+                    HookAsset::Legacy(source) => eval_hook(&ctx, source).map_err(|_error| HookDiagnostic::EvalError),
+                    HookAsset::Module(module) => module_hook(self, inner, &ctx, hook_id, module),
+                    HookAsset::Missing => unreachable!("missing hook asset returned before evaluation"),
+                };
+                let hook = match hook {
+                    Ok(hook) => hook,
+                    Err(diagnostic) => return Err(hook_error(diagnostic)),
+                };
+                let mut value = match invoke(&ctx, hook) {
+                    Ok(value) => value,
+                    Err(_) => return Err(hook_error(HookDiagnostic::InvokeError)),
+                };
                 if rewrite_helpers {
-                    value = rewrite_filepaths_helpers(&ctx, value).ok()?;
+                    value = match rewrite_filepaths_helpers(&ctx, value) {
+                        Ok(value) => value,
+                        Err(_) => return Err(hook_error(HookDiagnostic::InvokeError)),
+                    };
                 }
                 if !is_thenable(&value) {
-                    return Some(HookOutcome::Done(js_to_json(&ctx, value).ok()?));
+                    return js_to_json(&ctx, value)
+                        .map(HookOutcome::Done)
+                        .map_err(|_error| hook_error(HookDiagnostic::JsonConversionError));
                 }
-                start_await(&ctx, value).ok()?;
-                Some(HookOutcome::Pending)
+                start_await(&ctx, value).map_err(|_error| hook_error(HookDiagnostic::PromiseError))?;
+                Ok(HookOutcome::Pending)
             })?;
             match pending {
-                HookOutcome::Done(json) => Some(json),
+                HookOutcome::Done(json) => Ok(json),
                 HookOutcome::Pending => {
                     for _ in 0..MAX_JOBS {
                         match inner.runtime.execute_pending_job() {
                             Ok(true) => {},
                             Ok(false) => break,
-                            Err(_) => return None,
+                            Err(_) => return Err(hook_error(HookDiagnostic::PromiseError)),
                         }
                     }
-                    inner.context.with(|ctx| finish_await(&ctx).ok())
+                    match inner.context.with(|ctx| finish_await(&ctx)) {
+                        Ok(AwaitOutcome::Resolved(json)) => Ok(json),
+                        Ok(AwaitOutcome::Rejected) => Err(hook_error(HookDiagnostic::PromiseRejected)),
+                        Ok(AwaitOutcome::Pending) => Err(if hook_deadline_expired() {
+                            HookDiagnostic::Timeout
+                        } else {
+                            HookDiagnostic::PromisePending
+                        }),
+                        Err(AwaitError::Promise) => Err(hook_error(HookDiagnostic::PromiseError)),
+                        Err(AwaitError::JsonConversion) => Err(hook_error(HookDiagnostic::JsonConversionError)),
+                    }
                 },
             }
+        });
+        result.unwrap_or_else(|| {
+            Err(if hook_deadline_expired() {
+                HookDiagnostic::Timeout
+            } else {
+                HookDiagnostic::RuntimeUnavailable
+            })
         })
-        .flatten()
     }
 }
 
@@ -377,6 +848,18 @@ fn hook_time_remaining() -> Option<Duration> {
     })
 }
 
+fn hook_deadline_expired() -> bool {
+    HOOK_DEADLINE.with(|cell| cell.get().is_some_and(|deadline| Instant::now() >= deadline))
+}
+
+fn hook_error(fallback: HookDiagnostic) -> HookDiagnostic {
+    if hook_deadline_expired() {
+        HookDiagnostic::Timeout
+    } else {
+        fallback
+    }
+}
+
 enum HookOutcome {
     Done(JsonValue),
     Pending,
@@ -403,6 +886,10 @@ pub fn current_shell() -> &'static ShellContext {
 }
 
 pub fn hook_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(hook_file_name(id))
+}
+
+fn hook_file_name(id: &str) -> String {
     let safe: String = id
         .chars()
         .map(|ch| {
@@ -413,7 +900,7 @@ pub fn hook_path(dir: &Path, id: &str) -> PathBuf {
             }
         })
         .collect();
-    dir.join(format!("{safe}.js"))
+    format!("{safe}.js")
 }
 
 /// Fig `runCachedGenerator`: `[cacheByDirectory ? cwd : undefined, cacheKey ||
@@ -596,6 +1083,20 @@ pub fn clear_caches(host: &JsHost) {
         .clear();
     host.spec_cache.lock().unwrap_or_else(|err| err.into_inner()).clear();
     host.sources.lock().unwrap_or_else(|err| err.into_inner()).clear();
+    let mut manifest = host.module_manifest.lock().unwrap_or_else(|err| err.into_inner());
+    let legacy_fallback = matches!(&*manifest, ModuleManifestState::Unloaded | ModuleManifestState::Absent);
+    *manifest = if legacy_fallback {
+        ModuleManifestState::Unloaded
+    } else {
+        // Once this host has observed a manifest, its disappearance must
+        // never re-enable standalone hook fallback after a cache clear.
+        ModuleManifestState::Invalid(None)
+    };
+    INNER.with(|cell| {
+        if let Some(inner) = cell.borrow_mut().as_mut() {
+            inner.module_tables.get_mut().clear();
+        }
+    });
 }
 
 #[derive(Debug, Clone)]
@@ -614,6 +1115,67 @@ fn eval_hook<'js>(ctx: &Ctx<'js>, source: &str) -> rquickjs::Result<Function<'js
         .trim_end_matches(';')
         .trim();
     ctx.eval::<Function<'_>, _>(format!("({body})"))
+}
+
+fn module_hook<'js>(
+    host: &JsHost,
+    inner: &Inner,
+    ctx: &Ctx<'js>,
+    hook_id: &str,
+    module: &ModuleRef,
+) -> Result<Function<'js>, HookDiagnostic> {
+    // The app bundle is replaced in place during installation. Revalidate the
+    // on-disk module even when its evaluated table is cached so a live process
+    // cannot silently keep serving a tree whose manifest/module pair has
+    // changed or disappeared underneath it.
+    let bytes = host.read_source_module(&module.file).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            HookDiagnostic::SourceMissing
+        } else {
+            HookDiagnostic::EvalError
+        }
+    })?;
+    if sha256_hex(&bytes) != module.sha256 {
+        return Err(HookDiagnostic::EvalError);
+    }
+    let cached_table = {
+        let tables = inner.module_tables.borrow();
+        tables.get(&module.sha256).cloned()
+    };
+    let table = if let Some(cached) = cached_table {
+        cached.restore(ctx).map_err(|_error| HookDiagnostic::EvalError)?
+    } else {
+        let source = std::str::from_utf8(&bytes).map_err(|_error| HookDiagnostic::EvalError)?;
+        let table = eval_module(ctx, source).map_err(|_error| HookDiagnostic::EvalError)?;
+        let persistent = Persistent::save(ctx, table.clone());
+        let mut tables = inner.module_tables.borrow_mut();
+        if tables.len() >= MAX_MODULE_TABLES && !tables.contains_key(&module.sha256) {
+            tables.clear();
+        }
+        tables.insert(module.sha256.clone(), persistent);
+        table
+    };
+    table.get(hook_id).map_err(|_error| HookDiagnostic::EvalError)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        write!(&mut hex, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    hex
+}
+
+fn eval_module<'js>(ctx: &Ctx<'js>, source: &str) -> rquickjs::Result<Object<'js>> {
+    let trimmed = source.trim();
+    let body = trimmed
+        .strip_prefix("export default")
+        .ok_or(rquickjs::Error::Unknown)?
+        .trim()
+        .trim_end_matches(';')
+        .trim();
+    ctx.eval::<Object<'_>, _>(format!("({body})"))
 }
 
 fn call_hook<'js, A>(ctx: &Ctx<'js>, hook: Function<'js>, args: A) -> rquickjs::Result<JsValue<'js>>
@@ -641,10 +1203,9 @@ fn start_await<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> rquickjs::Result<()>
   var box = { done: false, ok: true, value: undefined, error: undefined };
   Promise.resolve(value).then(
     function (resolved) { box.done = true; box.ok = true; box.value = resolved; },
-    function (err) {
+    function () {
       box.done = true;
       box.ok = false;
-      box.error = (err && err.message) ? String(err.message) : String(err);
     }
   );
   return box;
@@ -655,15 +1216,34 @@ fn start_await<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> rquickjs::Result<()>
     Ok(())
 }
 
-fn finish_await(ctx: &Ctx<'_>) -> rquickjs::Result<JsonValue> {
-    let box_value: Object<'_> = ctx.globals().get("__ec_await_box")?;
-    let done: bool = box_value.get("done")?;
-    let ok: bool = box_value.get("ok")?;
-    if !done || !ok {
-        return Err(rquickjs::Error::Unknown);
+enum AwaitOutcome {
+    Resolved(JsonValue),
+    Rejected,
+    Pending,
+}
+
+enum AwaitError {
+    Promise,
+    JsonConversion,
+}
+
+fn finish_await(ctx: &Ctx<'_>) -> Result<AwaitOutcome, AwaitError> {
+    let box_value: Object<'_> = ctx
+        .globals()
+        .get("__ec_await_box")
+        .map_err(|_error| AwaitError::Promise)?;
+    let done: bool = box_value.get("done").map_err(|_error| AwaitError::Promise)?;
+    let ok: bool = box_value.get("ok").map_err(|_error| AwaitError::Promise)?;
+    if !done {
+        return Ok(AwaitOutcome::Pending);
     }
-    let value: JsValue<'_> = box_value.get("value")?;
+    if !ok {
+        return Ok(AwaitOutcome::Rejected);
+    }
+    let value: JsValue<'_> = box_value.get("value").map_err(|_error| AwaitError::Promise)?;
     js_to_json(ctx, value)
+        .map(AwaitOutcome::Resolved)
+        .map_err(|_error| AwaitError::JsonConversion)
 }
 
 fn tokens_value<'js>(ctx: &Ctx<'js>, tokens: &[String]) -> rquickjs::Result<rquickjs::Array<'js>> {
@@ -822,6 +1402,14 @@ fn json_as_string(value: &JsonValue) -> Option<String> {
         JsonValue::Bool(flag) => Some(flag.to_string()),
         _ => None,
     }
+}
+
+fn json_is_empty_result(value: &JsonValue) -> bool {
+    value.is_null() || value.as_array().is_some_and(Vec::is_empty)
+}
+
+fn script_json_is_empty(value: &JsonValue) -> bool {
+    json_is_empty_result(value) || value.as_str().is_some_and(|command| command.trim().is_empty())
 }
 
 fn json_to_js<'js>(ctx: &Ctx<'js>, value: &JsonValue) -> rquickjs::Result<JsValue<'js>> {
@@ -1541,6 +2129,61 @@ mod tests {
     use std::fs;
     use std::time::Duration;
 
+    #[derive(Clone, Copy)]
+    enum MatrixEntry {
+        PostProcess,
+        ScriptCommand,
+        GenerateSpec,
+        Alias,
+        QueryTerm,
+        Trigger,
+        LoadSpec,
+        FilterTemplateSuggestions,
+    }
+
+    fn matrix_success_source(entry: MatrixEntry) -> &'static str {
+        match entry {
+            MatrixEntry::PostProcess | MatrixEntry::FilterTemplateSuggestions => {
+                "export default function() { return [{ name: 'ok' }]; }\n"
+            },
+            MatrixEntry::ScriptCommand => "export default function() { return ['printf', 'ok']; }\n",
+            MatrixEntry::GenerateSpec | MatrixEntry::LoadSpec => {
+                "export default function() { return { name: 'ok' }; }\n"
+            },
+            MatrixEntry::Alias | MatrixEntry::QueryTerm => "export default function() { return 'ok'; }\n",
+            MatrixEntry::Trigger => "export default function() { return true; }\n",
+        }
+    }
+
+    fn run_matrix_entry(host: &JsHost, entry: MatrixEntry, hook_id: &str) {
+        match entry {
+            MatrixEntry::PostProcess => {
+                let _ = host.post_process(hook_id, "stdout", &[]);
+            },
+            MatrixEntry::ScriptCommand => {
+                let _ = host.script_command(hook_id, &[]);
+            },
+            MatrixEntry::GenerateSpec => {
+                let _ = host.generate_spec(hook_id, &[], "/", Duration::from_millis(100));
+            },
+            MatrixEntry::Alias => {
+                let _ = host.alias(hook_id, "token", "/", Duration::from_millis(100));
+            },
+            MatrixEntry::QueryTerm => {
+                let _ = host.get_query_term(hook_id, "token");
+            },
+            MatrixEntry::Trigger => {
+                let _ = host.trigger(hook_id, "token", "previous");
+            },
+            MatrixEntry::LoadSpec => {
+                let _ = host.load_spec(hook_id, "token", "/", Duration::from_millis(100));
+            },
+            MatrixEntry::FilterTemplateSuggestions => {
+                let _ = host.filter_template_suggestions(hook_id, &[]);
+            },
+        }
+    }
+
     #[test]
     fn quickjs_can_eval_and_run_a_hook() {
         let runtime = Runtime::new().expect("runtime");
@@ -1563,6 +2206,575 @@ mod tests {
             rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
             vec!["ok-row"]
         );
+    }
+
+    #[test]
+    fn shared_hook_module_keeps_same_function_texts_in_distinct_closures() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("hooks");
+        let modules = dir.path().join("source-modules");
+        fs::create_dir(&hooks).unwrap();
+        fs::create_dir(&modules).unwrap();
+        let left = "left#custom#0";
+        let right = "right#custom#0";
+        let source = r#"export default (() => {
+  const make = (value) => function () { return [{ name: value }]; };
+  return {
+    "left#custom#0": make("left"),
+    "right#custom#0": make("right"),
+  };
+})();
+"#;
+        fs::write(modules.join("shared.js"), source).unwrap();
+        let sha256 = sha256_hex(source.as_bytes());
+        fs::write(
+            dir.path().join("hook-modules.json"),
+            serde_json::json!({
+                "version": 1,
+                "kind": MODULE_MANIFEST_KIND,
+                "hooks": {
+                    (left): { "module": "shared.js", "moduleSha256": sha256.clone() },
+                    (right): { "module": "shared.js", "moduleSha256": sha256 },
+                },
+                "modules": {},
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let host = JsHost::new(hooks);
+        let left_rows = host
+            .custom(left, &[], "/", "", Duration::from_secs(1), false)
+            .expect("left hook");
+        let right_rows = host
+            .custom(right, &[], "/", "", Duration::from_secs(1), false)
+            .expect("right hook");
+        assert_eq!(left_rows[0].name, "left");
+        assert_eq!(right_rows[0].name, "right");
+    }
+
+    #[test]
+    fn compiler_generated_hook_chain_runs_through_manifest_and_quickjs() {
+        let specs_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/compiler-hook-chain/specs-ir");
+        let ir: JsonValue =
+            serde_json::from_slice(&fs::read(specs_dir.join("chain.json")).expect("compiler-generated chain IR"))
+                .expect("valid chain IR");
+        let post_process_id = ir
+            .pointer("/args/0/generators/0/jsPostProcess")
+            .and_then(JsonValue::as_str)
+            .expect("postProcess id from generated IR");
+        let custom_id = ir
+            .pointer("/args/1/generators/0/jsCustom")
+            .and_then(JsonValue::as_str)
+            .expect("custom id from generated IR");
+
+        let manifest: JsonValue = serde_json::from_slice(
+            &fs::read(specs_dir.join("hook-modules.json")).expect("compiler-generated hook manifest"),
+        )
+        .expect("valid hook manifest");
+        let post_descriptor = &manifest["hooks"][post_process_id];
+        let custom_descriptor = &manifest["hooks"][custom_id];
+        assert_eq!(post_descriptor["sourceField"], "postProcess");
+        assert_eq!(custom_descriptor["sourceField"], "custom");
+        assert_eq!(post_descriptor["path"], "root.args[0].generators.postProcess");
+        assert_eq!(custom_descriptor["path"], "root.args[1].generators.custom");
+        assert_eq!(post_descriptor["module"], custom_descriptor["module"]);
+
+        let host = JsHost::from_specs_dir(&specs_dir);
+        assert!(matches!(host.hook_asset(post_process_id), HookAsset::Module(_)));
+        assert!(matches!(host.hook_asset(custom_id), HookAsset::Module(_)));
+
+        let post_rows = host
+            .post_process(post_process_id, "stdout", &["post".into()])
+            .expect("compiler-generated postProcess hook");
+        assert_eq!(post_rows[0].name, "compiled:post:stdout");
+        assert_eq!(
+            host.last_hook_diagnostic().expect("postProcess diagnostic").outcome,
+            HookDiagnostic::Success
+        );
+
+        let shell = ShellContext {
+            current_process: "/bin/zsh".into(),
+            environment_variables: Arc::new(vec![("EC_HOOK".into(), "on".into())]),
+        };
+        let custom_rows = host
+            .enter_with_context("/fixture/cwd", &shell, || {
+                host.custom(
+                    custom_id,
+                    &["custom-token".into()],
+                    "/fixture/cwd",
+                    "search-term",
+                    Duration::from_secs(1),
+                    false,
+                )
+            })
+            .expect("compiler-generated custom hook");
+        assert_eq!(
+            custom_rows[0].name,
+            "compiled:custom:custom-token:function:search-term:/fixture/cwd:/bin/zsh:on"
+        );
+        assert_eq!(
+            host.last_hook_diagnostic().expect("custom diagnostic").outcome,
+            HookDiagnostic::Success
+        );
+    }
+
+    #[test]
+    fn invalid_hook_manifest_does_not_fall_back_to_standalone_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("hooks");
+        fs::create_dir(&hooks).unwrap();
+        let hook_id = "demo#custom#0";
+        fs::write(
+            hook_path(&hooks, hook_id),
+            "export default function() { return [{ name: 'standalone' }]; }\n",
+        )
+        .unwrap();
+        fs::write(dir.path().join("hook-modules.json"), "{ definitely not json").unwrap();
+
+        let host = JsHost::new(hooks);
+        assert!(
+            host.custom(hook_id, &[], "/", "", Duration::from_secs(1), false)
+                .is_none(),
+            "a present but invalid manifest must fail closed"
+        );
+        assert_eq!(
+            host.last_hook_diagnostic().expect("hook diagnostic").outcome,
+            HookDiagnostic::SourceMissing
+        );
+    }
+
+    #[test]
+    fn manifest_missing_hook_does_not_fall_back_to_standalone_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("hooks");
+        fs::create_dir(&hooks).unwrap();
+        let hook_id = "demo#custom#0";
+        fs::write(
+            hook_path(&hooks, hook_id),
+            "export default function() { return [{ name: 'standalone' }]; }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("hook-modules.json"),
+            serde_json::json!({
+                "version": 1,
+                "kind": MODULE_MANIFEST_KIND,
+                "hooks": {},
+                "modules": {},
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let host = JsHost::new(hooks);
+        assert!(
+            host.custom(hook_id, &[], "/", "", Duration::from_secs(1), false)
+                .is_none(),
+            "a present manifest without this hook must fail closed"
+        );
+    }
+
+    #[test]
+    fn module_manifest_rejects_non_root_paths_and_non_lowercase_hashes() {
+        let valid_hash = "a".repeat(64);
+        let uppercase_hash = "A".repeat(64);
+        for (module, sha256) in [
+            ("nested/module.js", valid_hash.as_str()),
+            ("../module.js", valid_hash.as_str()),
+            ("module.js", uppercase_hash.as_str()),
+        ] {
+            assert!(
+                parse_module_manifest(serde_json::json!({
+                    "version": 1,
+                    "kind": MODULE_MANIFEST_KIND,
+                    "hooks": {
+                        "demo#custom#0": {
+                            "module": module,
+                            "moduleSha256": sha256,
+                        },
+                    },
+                    "modules": {},
+                }))
+                .is_none(),
+                "manifest unexpectedly accepted {module} / {sha256}"
+            );
+        }
+    }
+
+    #[test]
+    fn module_hash_mismatch_does_not_evaluate_or_fall_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("hooks");
+        let modules = dir.path().join("source-modules");
+        fs::create_dir(&hooks).unwrap();
+        fs::create_dir(&modules).unwrap();
+        let hook_id = "demo#custom#0";
+        fs::write(
+            hook_path(&hooks, hook_id),
+            "export default function() { return [{ name: 'standalone' }]; }\n",
+        )
+        .unwrap();
+        let source = "export default (() => ({\n  'demo#custom#0': () => [{ name: 'module' }],\n}))();\n";
+        fs::write(modules.join("demo.js"), source).unwrap();
+        fs::write(
+            dir.path().join("hook-modules.json"),
+            serde_json::json!({
+                "version": 1,
+                "kind": MODULE_MANIFEST_KIND,
+                "hooks": {
+                    (hook_id): { "module": "demo.js", "moduleSha256": "0".repeat(64) },
+                },
+                "modules": {},
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let host = JsHost::new(hooks);
+        assert!(
+            host.custom(hook_id, &[], "/", "", Duration::from_secs(1), false)
+                .is_none(),
+            "a module whose bytes do not match the manifest must fail closed"
+        );
+        assert_eq!(
+            host.last_hook_diagnostic().expect("hook diagnostic").outcome,
+            HookDiagnostic::EvalError
+        );
+    }
+
+    #[test]
+    fn cached_module_is_revalidated_after_its_file_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("hooks");
+        let modules = dir.path().join("source-modules");
+        fs::create_dir(&hooks).unwrap();
+        fs::create_dir(&modules).unwrap();
+        let hook_id = "demo#custom#0";
+        let source = "export default ({ 'demo#custom#0': () => [{ name: 'original' }] });\n";
+        fs::write(modules.join("demo.js"), source).unwrap();
+        fs::write(
+            dir.path().join("hook-modules.json"),
+            serde_json::json!({
+                "version": 1,
+                "kind": MODULE_MANIFEST_KIND,
+                "hooks": {
+                    (hook_id): {
+                        "module": "demo.js",
+                        "moduleSha256": sha256_hex(source.as_bytes()),
+                    },
+                },
+                "modules": {},
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let host = JsHost::new(hooks);
+        let first = host
+            .custom(hook_id, &[], "/", "", Duration::from_secs(1), false)
+            .expect("initial verified module");
+        assert_eq!(first[0].name, "original");
+
+        fs::write(
+            modules.join("demo.js"),
+            "export default ({ 'demo#custom#0': () => [{ name: 'changed' }] });\n",
+        )
+        .unwrap();
+        assert!(
+            host.custom(hook_id, &[], "/", "", Duration::from_secs(1), false)
+                .is_none(),
+            "a cached table must not bypass the current module hash check",
+        );
+        assert_eq!(
+            host.last_hook_diagnostic().expect("hook diagnostic").outcome,
+            HookDiagnostic::EvalError,
+        );
+    }
+
+    #[test]
+    fn cached_module_does_not_hide_a_changed_or_removed_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("hooks");
+        let modules = dir.path().join("source-modules");
+        fs::create_dir(&hooks).unwrap();
+        fs::create_dir(&modules).unwrap();
+        let hook_id = "demo#custom#0";
+        let source = "export default ({ 'demo#custom#0': () => [{ name: 'verified' }] });\n";
+        fs::write(modules.join("demo.js"), source).unwrap();
+        let manifest_path = dir.path().join("hook-modules.json");
+        let manifest = serde_json::json!({
+            "version": 1,
+            "kind": MODULE_MANIFEST_KIND,
+            "hooks": {
+                (hook_id): {
+                    "module": "demo.js",
+                    "moduleSha256": sha256_hex(source.as_bytes()),
+                },
+            },
+            "modules": {},
+        });
+        fs::write(&manifest_path, manifest.to_string()).unwrap();
+
+        let host = JsHost::new(hooks.clone());
+        let first = host
+            .custom(hook_id, &[], "/", "", Duration::from_secs(1), false)
+            .expect("initial verified manifest");
+        assert_eq!(first[0].name, "verified");
+
+        fs::write(
+            &manifest_path,
+            serde_json::json!({
+                "version": 1,
+                "kind": MODULE_MANIFEST_KIND,
+                "hooks": {},
+                "modules": {},
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(
+            host.custom(hook_id, &[], "/", "", Duration::from_secs(1), false)
+                .is_none(),
+            "a cached table must not hide a changed manifest",
+        );
+
+        // A cache clear after a manifest has existed must not make the legacy
+        // standalone hook eligible if the manifest disappears.
+        fs::write(
+            hook_path(&hooks, hook_id),
+            "export default function() { return [{ name: 'legacy' }]; }\n",
+        )
+        .unwrap();
+        fs::remove_file(&manifest_path).unwrap();
+        clear_caches(&host);
+        assert!(
+            host.custom(hook_id, &[], "/", "", Duration::from_secs(1), false)
+                .is_none(),
+            "a removed manifest must fail closed instead of enabling legacy fallback",
+        );
+    }
+
+    #[test]
+    fn hook_diagnostics_cover_all_non_custom_entrypoints() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = JsHost::new(dir.path().to_path_buf());
+        let entries = [
+            (MatrixEntry::PostProcess, "post", "postProcess"),
+            (MatrixEntry::ScriptCommand, "script", "script"),
+            (MatrixEntry::GenerateSpec, "generate", "generateSpec"),
+            (MatrixEntry::Alias, "alias", "alias"),
+            (MatrixEntry::QueryTerm, "query", "getQueryTerm"),
+            (MatrixEntry::Trigger, "trigger", "trigger"),
+            (MatrixEntry::LoadSpec, "load", "loadSpec"),
+            (
+                MatrixEntry::FilterTemplateSuggestions,
+                "filter",
+                "filterTemplateSuggestions",
+            ),
+        ];
+        let cases = [
+            ("success", HookDiagnostic::Success),
+            ("empty", HookDiagnostic::EmptyResult),
+            ("shape", HookDiagnostic::ResultConversionError),
+            ("error", HookDiagnostic::InvokeError),
+        ];
+
+        for (entry, name, hook_kind) in entries {
+            for (case, expected) in cases {
+                let hook_id = format!("matrix_{name}_{case}#{hook_kind}#0");
+                let source = match case {
+                    "success" => matrix_success_source(entry),
+                    "empty" => "export default function() { return null; }\n",
+                    "shape" => "export default function() { return {}; }\n",
+                    "error" => "export default function() { throw new Error('diagnostic secret'); }\n",
+                    _ => unreachable!("matrix case is fixed above"),
+                };
+                fs::write(hook_path(dir.path(), &hook_id), source).unwrap();
+                run_matrix_entry(&host, entry, &hook_id);
+                let diagnostic = host.last_hook_diagnostic().expect("hook diagnostic");
+                assert_eq!(diagnostic.hook_id, hook_id);
+                assert_eq!(diagnostic.outcome, expected, "entry={name}, case={case}");
+            }
+        }
+    }
+
+    #[test]
+    fn hook_diagnostics_distinguish_empty_results_and_failure_phases() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("empty_custom_0.js"),
+            "export default function() { return []; }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("invoke_custom_0.js"),
+            "export default function() { throw new Error('shell secret'); }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("promise_custom_0.js"),
+            "export default async function() { throw new Error('env secret'); }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("pending_custom_0.js"),
+            "export default function() { return new Promise(() => {}); }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("promise_error_custom_0.js"),
+            "export default function() {\n  const resolve = Promise.resolve;\n  Promise.resolve = function(value) { Promise.resolve = resolve; throw new Error('promise secret'); };\n  return { then() {} };\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("json_custom_0.js"),
+            "export default function() { const value = {}; value.self = value; return value; }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("shape_custom_0.js"),
+            "export default function() { return { not: 'suggestions' }; }\n",
+        )
+        .unwrap();
+        fs::write(dir.path().join("eval_custom_0.js"), "export default function(\n").unwrap();
+
+        let host = JsHost::new(dir.path().to_path_buf());
+        let call = |hook_id: &str| host.custom(hook_id, &[], "/", "", Duration::from_millis(100), false);
+        let outcome = |hook_id: &str| {
+            let record = host.last_hook_diagnostic().expect("hook diagnostic");
+            assert_eq!(record.hook_id, hook_id);
+            record.outcome
+        };
+
+        assert!(call("empty#custom#0").is_some_and(|rows| rows.is_empty()));
+        assert_eq!(outcome("empty#custom#0"), HookDiagnostic::EmptyResult);
+
+        assert!(call("invoke#custom#0").is_none());
+        assert_eq!(outcome("invoke#custom#0"), HookDiagnostic::InvokeError);
+
+        assert!(call("promise#custom#0").is_none());
+        assert_eq!(outcome("promise#custom#0"), HookDiagnostic::PromiseRejected);
+
+        assert!(call("pending#custom#0").is_none());
+        assert_eq!(outcome("pending#custom#0"), HookDiagnostic::PromisePending);
+
+        assert!(call("promise_error#custom#0").is_none());
+        assert_eq!(outcome("promise_error#custom#0"), HookDiagnostic::PromiseError);
+
+        assert!(call("json#custom#0").is_none());
+        assert_eq!(outcome("json#custom#0"), HookDiagnostic::JsonConversionError);
+
+        assert!(call("shape#custom#0").is_none());
+        assert_eq!(outcome("shape#custom#0"), HookDiagnostic::ResultConversionError);
+
+        assert!(call("eval#custom#0").is_none());
+        assert_eq!(outcome("eval#custom#0"), HookDiagnostic::EvalError);
+
+        assert!(call("missing#custom#0").is_none());
+        assert_eq!(outcome("missing#custom#0"), HookDiagnostic::SourceMissing);
+
+        let rendered = format!("{:?}", host.last_hook_diagnostic().unwrap());
+        assert!(!rendered.contains("shell secret"));
+        assert!(!rendered.contains("env secret"));
+    }
+
+    #[test]
+    fn hook_diagnostics_mark_a_valid_non_empty_result_as_success() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("ok_custom_0.js"),
+            "export default function() { return [{ name: 'ok' }]; }\n",
+        )
+        .unwrap();
+        let host = JsHost::new(dir.path().to_path_buf());
+        let rows = host
+            .custom("ok#custom#0", &[], "/", "", Duration::from_secs(1), false)
+            .expect("hook result");
+        assert_eq!(rows[0].name, "ok");
+        let record = host.last_hook_diagnostic().expect("hook diagnostic");
+        assert_eq!(record.hook_id, "ok#custom#0");
+        assert_eq!(record.outcome, HookDiagnostic::Success);
+    }
+
+    #[test]
+    fn hook_diagnostics_are_isolated_by_host_and_attempt_thread() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("ok_custom_0.js"),
+            "export default function() { return [{ name: 'ok' }]; }\n",
+        )
+        .unwrap();
+        let host = Arc::new(JsHost::new(dir.path().to_path_buf()));
+        let success_host = host.clone();
+        let success = std::thread::spawn(move || {
+            success_host
+                .custom("ok#custom#0", &[], "/", "", Duration::from_secs(1), false)
+                .expect("hook result");
+            success_host.last_hook_diagnostic().expect("thread diagnostic")
+        });
+        let missing_host = host.clone();
+        let missing = std::thread::spawn(move || {
+            assert!(
+                missing_host
+                    .custom("missing#custom#0", &[], "/", "", Duration::from_secs(1), false)
+                    .is_none()
+            );
+            missing_host.last_hook_diagnostic().expect("thread diagnostic")
+        });
+
+        let success = success.join().expect("success thread");
+        let missing = missing.join().expect("missing thread");
+        assert_eq!(success.hook_id, "ok#custom#0");
+        assert_eq!(success.outcome, HookDiagnostic::Success);
+        assert_eq!(missing.hook_id, "missing#custom#0");
+        assert_eq!(missing.outcome, HookDiagnostic::SourceMissing);
+        assert!(
+            host.last_hook_diagnostic().is_none(),
+            "the caller thread did not run a hook"
+        );
+    }
+
+    #[test]
+    fn hook_diagnostics_do_not_cross_hosts_on_the_same_thread() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("one_custom_0.js"),
+            "export default function() { return [{ name: 'one' }]; }\n",
+        )
+        .unwrap();
+        let first = JsHost::new(dir.path().to_path_buf());
+        let second = JsHost::new(dir.path().to_path_buf());
+
+        first
+            .custom("one#custom#0", &[], "/", "", Duration::from_secs(1), false)
+            .expect("first hook result");
+        assert_eq!(
+            first.last_hook_diagnostic().expect("first diagnostic").outcome,
+            HookDiagnostic::Success
+        );
+
+        assert!(
+            second
+                .custom("missing#custom#0", &[], "/", "", Duration::from_secs(1), false)
+                .is_none()
+        );
+        let second_diagnostic = second.last_hook_diagnostic().expect("second diagnostic");
+        assert_eq!(second_diagnostic.hook_id, "missing#custom#0");
+        assert_eq!(second_diagnostic.outcome, HookDiagnostic::SourceMissing);
+        assert!(
+            first.last_hook_diagnostic().is_none(),
+            "a different host must not be reported as the first host's result"
+        );
+
+        first
+            .custom("one#custom#0", &[], "/", "", Duration::from_secs(1), false)
+            .expect("first hook result after the second host");
+        assert_eq!(
+            first.last_hook_diagnostic().expect("first diagnostic").hook_id,
+            "one#custom#0"
+        );
+        assert!(second.last_hook_diagnostic().is_none());
     }
 
     #[test]
@@ -1732,6 +2944,9 @@ mod tests {
             false,
         );
         assert!(rows.is_none(), "the spinning hook must fail, not hang");
+        let diagnostic = host.last_hook_diagnostic().expect("hook diagnostic");
+        assert_eq!(diagnostic.hook_id, "demo#custom#0");
+        assert_eq!(diagnostic.outcome, HookDiagnostic::Timeout);
         assert!(
             started.elapsed() < Duration::from_secs(10),
             "interrupted after {:?}, expected roughly budget + margin",

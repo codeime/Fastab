@@ -366,11 +366,21 @@ impl Engine {
     /// Index the specs directory without parsing any spec: `Registry` resolves
     /// files lazily, so this is only `index.json` plus a directory walk.
     pub(crate) fn load_registry(specs_dir: &Path) -> anyhow::Result<Registry> {
-        let mut registry = if specs_dir.is_dir() {
-            Registry::load(specs_dir)?
-        } else {
-            Registry::new()
-        };
+        // A generated IR directory is published by renaming the old tree out
+        // of the way and then renaming the validated tree into place. There is
+        // necessarily a very small interval in which `specs_dir` does not
+        // exist. Treating that interval as a valid empty registry is unsafe:
+        // the worker would cache it as its pristine template and keep serving
+        // no completions after the new tree appears. Existing directories are
+        // still allowed to be handwritten/legacy fixtures; that compatibility
+        // path is important for headless tests and local overlays.
+        let metadata = std::fs::metadata(specs_dir)
+            .map_err(|error| anyhow::anyhow!("specs IR directory is unavailable: {}: {error}", specs_dir.display()))?;
+        if !metadata.is_dir() {
+            anyhow::bail!("specs IR path is not a directory: {}", specs_dir.display());
+        }
+
+        let mut registry = Registry::load(specs_dir)?;
         overlay_local_spec_dirs(&mut registry);
         Ok(registry)
     }
@@ -382,10 +392,14 @@ impl Engine {
         registry: Registry,
         acceptance: Arc<Mutex<rank::AcceptanceIndex>>,
     ) -> Self {
+        let js_host = registry.snapshot().map_or_else(
+            || crate::js_host::JsHost::from_specs_dir(specs_dir),
+            crate::js_host::JsHost::from_snapshot,
+        );
         Self {
             specs_dir: specs_dir.to_path_buf(),
             registry,
-            js_host: crate::js_host::JsHost::from_specs_dir(specs_dir),
+            js_host,
             frecency: Frecency::default(),
             acceptance,
             frecency_loaded: false,
@@ -411,13 +425,11 @@ impl Engine {
         frecency: Frecency,
         acceptance: Arc<Mutex<rank::AcceptanceIndex>>,
     ) -> anyhow::Result<Self> {
-        let js_host = crate::js_host::JsHost::from_specs_dir(&specs_dir);
-        let mut registry = if specs_dir.is_dir() {
-            Registry::load(&specs_dir)?
-        } else {
-            Registry::new()
-        };
-        overlay_local_spec_dirs(&mut registry);
+        let registry = Self::load_registry(&specs_dir)?;
+        let js_host = registry.snapshot().map_or_else(
+            || crate::js_host::JsHost::from_specs_dir(&specs_dir),
+            crate::js_host::JsHost::from_snapshot,
+        );
         Ok(Self {
             specs_dir,
             registry,
@@ -451,12 +463,59 @@ impl Engine {
     /// result, the debounce session and the history argument index built on
     /// the old specs.
     pub fn clear_caches(&mut self) {
+        let _ = self.clear_caches_and_report();
+    }
+
+    /// Same reset as [`Self::clear_caches`], with an indication that the
+    /// canonical directory was successfully reopened. The worker uses this
+    /// to avoid discarding its last good registry during an install rename
+    /// window.
+    pub(crate) fn clear_caches_and_report(&mut self) -> bool {
         crate::js_host::clear_caches(&self.js_host);
         self.generator_session = crate::generate::GeneratorSession::default();
         self.history = Arc::default();
         match Self::load_registry(&self.specs_dir) {
-            Ok(registry) => self.registry = registry,
-            Err(err) => tracing::warn!(%err, "clear-cache: specs directory could not be re-indexed"),
+            Ok(registry) => {
+                // A successful reload is a new generation. Rebind the host
+                // together with the Registry so hooks and lazy specs cannot
+                // observe different trees.
+                self.js_host = registry.snapshot().map_or_else(
+                    || crate::js_host::JsHost::from_specs_dir(&self.specs_dir),
+                    crate::js_host::JsHost::from_snapshot,
+                );
+                self.registry = registry;
+                true
+            },
+            Err(err) => {
+                tracing::warn!(%err, "clear-cache: specs directory could not be re-indexed");
+                false
+            },
+        }
+    }
+
+    fn refresh_specs_generation(&mut self) {
+        if !self.registry.needs_refresh() {
+            return;
+        }
+        match Self::load_registry(&self.specs_dir) {
+            Ok(registry) => {
+                let js_host = registry.snapshot().map_or_else(
+                    || crate::js_host::JsHost::from_specs_dir(&self.specs_dir),
+                    crate::js_host::JsHost::from_snapshot,
+                );
+                self.registry = registry;
+                self.js_host = js_host;
+                // GeneratorSession lives outside the Registry/JsHost and can
+                // otherwise replay a custom result from the prior generation.
+                self.generator_session = crate::generate::GeneratorSession::default();
+                self.history = Arc::default();
+            },
+            Err(error) => {
+                // The publisher may currently have the canonical path
+                // absent. Keep the last generation for this request; the next
+                // request retries the complete Registry+JsHost rebuild.
+                tracing::debug!(%error, "spec generation refresh deferred");
+            },
         }
     }
 
@@ -502,6 +561,7 @@ impl Engine {
     }
 
     pub fn complete(&mut self, request: CompleteRequest) -> anyhow::Result<CompleteResult> {
+        self.refresh_specs_generation();
         crate::generate::install_session(std::mem::take(&mut self.generator_session));
         let result = self.complete_with_thread_session(request);
         self.generator_session = crate::generate::take_session();
@@ -637,10 +697,251 @@ fn overlay_local_spec_dirs(registry: &mut Registry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
     use std::fs;
+
+    #[derive(Debug, Deserialize)]
+    struct Phase1Golden {
+        cases: Vec<Phase1GoldenCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Phase1GoldenCase {
+        name: String,
+        request: CompleteRequest,
+        result: serde_json::Value,
+    }
 
     fn write_spec(dir: &std::path::Path, name: &str, body: &str) {
         fs::write(dir.join(format!("{name}.json")), body).unwrap();
+    }
+
+    #[test]
+    fn missing_specs_directory_fails_closed_instead_of_becoming_empty_registry() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("specs-ir");
+
+        let error = Engine::load_registry(&missing).expect_err("missing IR must not load as empty");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("specs IR directory is unavailable"), "{rendered}");
+        assert!(rendered.contains("specs-ir"), "{rendered}");
+    }
+
+    #[test]
+    fn existing_empty_directory_remains_a_legacy_fixture() {
+        let root = tempfile::tempdir().unwrap();
+
+        let registry = Engine::load_registry(root.path()).expect("an existing fixture directory is valid");
+        assert!(registry.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn engine_rejects_cross_generation_lazy_reads_and_rebinds_after_publish() {
+        use sha2::{Digest, Sha256};
+
+        fn module_manifest(hook_id: &str, module: &str, source: &[u8]) -> String {
+            let digest = Sha256::digest(source);
+            let digest = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+            serde_json::json!({
+                "version": 1,
+                "kind": "closure-preserving-hook-modules",
+                "hooks": {
+                    hook_id: {
+                        "module": module,
+                        "moduleSha256": digest,
+                    }
+                },
+                "modules": {}
+            })
+            .to_string()
+        }
+
+        fn write_generation(dir: &std::path::Path, child_description: &str, hook_name: &str) {
+            fs::create_dir_all(dir.join("source-modules")).unwrap();
+            write_spec(
+                dir,
+                "demo",
+                &serde_json::json!({
+                    "names": ["demo"],
+                    "description": child_description,
+                    "subcommands": [{"names": ["child"], "loadSpec": "nested"}],
+                    "args": [{"jsCustom": "demo#custom#0"}]
+                })
+                .to_string(),
+            );
+            write_spec(
+                dir,
+                "nested",
+                &serde_json::json!({
+                    "names": ["nested"],
+                    "description": child_description
+                })
+                .to_string(),
+            );
+            fs::write(dir.join("index.json"), r#"{"files":{"demo":"demo.json"}}"#).unwrap();
+            let source = format!(
+                "export default {{ 'demo#custom#0': function() {{ return [{{ name: '{hook_name}' }}]; }} }};\n"
+            );
+            fs::write(dir.join("source-modules/module.js"), source.as_bytes()).unwrap();
+            fs::write(
+                dir.join("hook-modules.json"),
+                module_manifest("demo#custom#0", "module.js", source.as_bytes()),
+            )
+            .unwrap();
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let generation_a = root.path().join("generation-a");
+        let generation_b = root.path().join("generation-b");
+        write_generation(&generation_a, "from generation A", "from-A");
+        write_generation(&generation_b, "from generation B", "from-B");
+
+        let canonical = root.path().join("specs-ir");
+        let backup = root.path().join("specs-ir.backup");
+        fs::rename(&generation_a, &canonical).unwrap();
+        let mut engine = Engine::new(canonical.clone()).expect("generation A engine");
+
+        // Publish B. A lazy read from the old snapshot must reject B's
+        // different bytes instead of returning a mixed generation.
+        fs::rename(&canonical, &backup).unwrap();
+        fs::rename(&generation_b, &canonical).unwrap();
+
+        assert!(engine.registry.get_arc("demo").is_none());
+        let hook = engine.js_host.enter("/tmp", || {
+            engine.js_host.custom(
+                "demo#custom#0",
+                &[],
+                "/tmp",
+                "",
+                std::time::Duration::from_secs(1),
+                false,
+            )
+        });
+        assert!(hook.is_none(), "a stale module must not return generation B");
+
+        // Removing A after the failed read is the cleanup step used by the
+        // publisher. The old engine still fails closed, and does not turn
+        // that cleanup into a read of B.
+        fs::remove_dir_all(&backup).unwrap();
+        assert!(engine.registry.get_arc("demo").is_none());
+
+        // At the next request boundary the stale snapshot is replaced as one
+        // unit: Registry and JsHost now both read B.
+        let result = engine
+            .complete(CompleteRequest {
+                buffer: "demo ".into(),
+                cwd: "/tmp".into(),
+                include_history: false,
+                ..CompleteRequest::default()
+            })
+            .expect("stable generation B");
+        assert!(
+            result.suggestions.iter().any(|suggestion| suggestion.name == "from-B"),
+            "{result:?}"
+        );
+
+        // A publication gap is recoverable. The old B generation may serve
+        // already-loaded data during the gap, while the following request
+        // retries and binds the newly published C generation.
+        let generation_c = root.path().join("generation-c");
+        write_generation(&generation_c, "from generation C", "from-C");
+        let backup_b = root.path().join("specs-ir.backup-b");
+        fs::rename(&canonical, &backup_b).unwrap();
+        let during_gap = engine
+            .complete(CompleteRequest {
+                buffer: "demo ".into(),
+                cwd: "/tmp".into(),
+                include_history: false,
+                ..CompleteRequest::default()
+            })
+            .expect("gap should not poison the old engine");
+        assert!(
+            during_gap
+                .suggestions
+                .iter()
+                .any(|suggestion| suggestion.name == "from-B"),
+            "{during_gap:?}"
+        );
+        fs::rename(&generation_c, &canonical).unwrap();
+        fs::remove_dir_all(&backup_b).unwrap();
+        let recovered = engine
+            .complete(CompleteRequest {
+                buffer: "demo ".into(),
+                cwd: "/tmp".into(),
+                include_history: false,
+                ..CompleteRequest::default()
+            })
+            .expect("generation C should be retried");
+        assert!(
+            recovered
+                .suggestions
+                .iter()
+                .any(|suggestion| suggestion.name == "from-C"),
+            "{recovered:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn identical_file_content_can_be_read_across_a_generation_replacement() {
+        use sha2::{Digest, Sha256};
+
+        fn module_manifest(hook_id: &str, module: &str, source: &[u8]) -> String {
+            let digest = Sha256::digest(source);
+            let digest = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+            serde_json::json!({
+                "version": 1,
+                "kind": "closure-preserving-hook-modules",
+                "hooks": { hook_id: { "module": module, "moduleSha256": digest } },
+                "modules": {}
+            })
+            .to_string()
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let a = root.path().join("a");
+        let b = root.path().join("b");
+        for dir in [&a, &b] {
+            fs::create_dir_all(dir.join("source-modules")).unwrap();
+            write_spec(
+                dir,
+                "demo",
+                r#"{"names":["demo"],"args":[{"jsCustom":"demo#custom#0"}]}"#,
+            );
+            fs::write(dir.join("index.json"), r#"{"files":{"demo":"demo.json"}}"#).unwrap();
+            let source = b"export default { 'demo#custom#0': function() { return [{ name: 'same' }]; } };\n";
+            fs::write(dir.join("source-modules/module.js"), source).unwrap();
+            fs::write(
+                dir.join("hook-modules.json"),
+                module_manifest("demo#custom#0", "module.js", source),
+            )
+            .unwrap();
+        }
+        let canonical = root.path().join("specs-ir");
+        let backup = root.path().join("backup");
+        fs::rename(&a, &canonical).unwrap();
+        let mut engine = Engine::new(canonical.clone()).unwrap();
+        fs::rename(&canonical, &backup).unwrap();
+        fs::rename(&b, &canonical).unwrap();
+
+        // The bytes are unchanged, so the old snapshot can safely consume
+        // them even though the root identity changed. The next complete call
+        // still refreshes the generation at its boundary.
+        let demo = engine.registry.get_arc("demo").expect("same spec bytes");
+        assert_eq!(demo.names, vec!["demo"]);
+        let hook = engine.js_host.enter("/tmp", || {
+            engine.js_host.custom(
+                "demo#custom#0",
+                &[],
+                "/tmp",
+                "",
+                std::time::Duration::from_secs(1),
+                false,
+            )
+        });
+        assert_eq!(hook.expect("same module bytes")[0].name, "same");
+        fs::remove_dir_all(backup).unwrap();
     }
 
     #[test]
@@ -720,6 +1021,38 @@ mod tests {
     fn engine_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         LOCK.lock().unwrap_or_else(|err| err.into_inner())
+    }
+
+    #[test]
+    fn phase1_static_ir_complete_result_golden() {
+        let _lock = engine_lock();
+        let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/phase1");
+        let golden: Phase1Golden = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/testdata/phase1/expected.json"
+        )))
+        .expect("phase1 golden JSON");
+        assert!(!golden.cases.is_empty(), "phase1 golden must contain cases");
+        let settings = fig_settings::settings::Settings::from_slice(&[
+            ("autocomplete.disableForCommands", serde_json::json!([])),
+            ("autocomplete.hideAutoExecuteSuggestion", serde_json::json!(true)),
+        ]);
+        let mut registry = Registry::load(&fixture_dir).expect("phase1 static IR");
+
+        for case in golden.cases {
+            let mut result = lookup::complete_with_settings(&mut registry, &case.request, &settings);
+            let (tokens, _) = lookup::tokenize(lookup::completion_buffer(&case.request.buffer, case.request.cursor));
+            rank::apply_with_acceptance(
+                &mut result,
+                &tokens,
+                &Frecency::default(),
+                &rank::AcceptanceIndex::default(),
+                &ranking_root_command(&case.request.buffer, case.request.cursor),
+                false,
+            );
+            let actual = serde_json::to_value(&result).expect("serialize phase1 result");
+            assert_eq!(actual, case.result, "phase1 golden case {:?}", case.name);
+        }
     }
 
     #[test]

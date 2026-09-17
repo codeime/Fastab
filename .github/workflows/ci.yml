@@ -34,6 +34,30 @@ jobs:
           HUSKY: 0
         run: pnpm install --frozen-lockfile
 
+      - name: Verify bundled specs source
+        run: |
+          node scripts/sync-bundled-specs.mjs
+          git ls-files --error-unmatch bundle/specs/.source-manifest.json >/dev/null
+          git diff --exit-code -- bundle/specs
+          node scripts/sync-bundled-specs.mjs --check
+
+      - name: Test spec IR compiler
+        run: |
+          node --check scripts/build-spec-inputs.mjs
+          node --check scripts/publish-app-bundle.mjs
+          bash -n scripts/build-app.sh
+          node --test --test-concurrency=1 scripts/compile-spec-ir.test.mjs scripts/audit-spec-hooks.test.mjs scripts/compiler-hook-chain.test.mjs scripts/spec-pair.test.mjs scripts/sync-bundled-specs.test.mjs scripts/typed-hook-ir.test.mjs scripts/build-spec-inputs.test.mjs scripts/publish-app-bundle.test.mjs
+
+      - name: Compile and audit bundled spec IR
+        run: |
+          node scripts/compile-spec-ir.mjs
+          node scripts/audit-spec-hooks.mjs
+          node scripts/spec-pair.mjs
+          node scripts/capture-typed-trigger-reference.mjs --check
+
+      - name: Test native inventory and test-only source reference
+        run: node --test --test-concurrency=1 scripts/classify-native-hooks.test.mjs scripts/reference-audit-worker.test.mjs scripts/capture-hook-reference.test.mjs scripts/capture-hook-reference-batch.test.mjs scripts/capture-typed-trigger-reference.test.mjs
+
       - name: Build packages
         run: pnpm build
 
@@ -75,6 +99,30 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --check
+
+      - name: Test atomic app bundle swap helper
+        run: |
+          swap_root="$(mktemp -d "$RUNNER_TEMP/easy-complete-atomic-swap.XXXXXX")"
+          mkdir "$swap_root/left" "$swap_root/right"
+          touch "$swap_root/left/from-left" "$swap_root/right/from-right"
+          /usr/bin/xcrun clang -Os -Wall -Wextra -Werror -mmacosx-version-min=12.0 scripts/atomic-swap-darwin.c -o "$swap_root/atomic-swap-darwin"
+          "$swap_root/atomic-swap-darwin" swap "$swap_root/left" "$swap_root/right"
+          test -f "$swap_root/left/from-right"
+          test -f "$swap_root/right/from-left"
+          test ! -e "$swap_root/left/from-left"
+          test ! -e "$swap_root/right/from-right"
+          mkdir "$swap_root/exclusive-source"
+          touch "$swap_root/exclusive-source/published"
+          "$swap_root/atomic-swap-darwin" exclusive "$swap_root/exclusive-source" "$swap_root/exclusive-final"
+          test -f "$swap_root/exclusive-final/published"
+          mkdir "$swap_root/exclusive-collision"
+          mkdir "$swap_root/exclusive-existing"
+          if "$swap_root/atomic-swap-darwin" exclusive "$swap_root/exclusive-collision" "$swap_root/exclusive-existing"; then
+            echo "RENAME_EXCL unexpectedly replaced an existing directory" >&2
+            exit 1
+          fi
+          test -d "$swap_root/exclusive-collision"
+          test -d "$swap_root/exclusive-existing"
 
       - name: Clippy
         run: cargo clippy --locked --workspace --color always -- -D warnings

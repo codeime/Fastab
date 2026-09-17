@@ -1,0 +1,67 @@
+{
+  "format": 1,
+  "source": {
+    "mode": "dependency",
+    "package": "@chen86860/autocomplete-specs",
+    "version": "3.1.0",
+    "packageJsonSha256": "ba8019f957ddb60d77620464f0ed57ee4a2ef9420f6dadab481f9682db87c765"
+  },
+  "inputs": {
+    "packageJsonSha256": "f73db2a3acdbc1f8ed9f1ee94cf278652e34c860bc27dfd8b7e3fb27cc77733d",
+    "pnpmLockSha256": "46c51b37864d8ca14766393f70c038d560ba11c71b9062e8d18db46f2d4c17fd",
+    "specsConfigSha256": "b9cdfa6e450f596c832855c7840213cbeb4b8cf83aca6597e3c359b7b1732fea",
+    "dependency": {
+      "specifier": "3.1.0",
+      "lockVersion": "3.1.0"
+    },
+    "exclude": [
+      "aws",
+      "az"
+    ],
+    "icons": [
+      "alert",
+      "android",
+      "apple",
+      "asterisk",
+      "aws",
+      "azure",
+      "box",
+      "carrot",
+      "characters",
+      "command",
+      "commandkey",
+      "commit",
+      "cpu",
+      "database",
+      "discord",
+      "docker",
+      "firebase",
+      "flag",
+      "gcloud",
+      "gear",
+      "git",
+      "github",
+      "gitlab",
+      "gradle",
+      "heroku",
+      "invite",
+      "kubernetes",
+      "netlify",
+      "node",
+      "npm",
+      "okteto",
+      "option",
+      "package",
+      "slack",
+      "string",
+      "template",
+      "twitter",
+      "vercel",
+      "yarn"
+    ]
+  },
+  "sourceTreeSha256": "69d4bdd9fa05ee698c4e72ea677dabb6db0623fccc89e844509cf55ca69501a7",
+  "sourceFileCount": 910,
+  "bundleTreeSha256": "69d4bdd9fa05ee698c4e72ea677dabb6db0623fccc89e844509cf55ca69501a7",
+  "bundleFileCount": 910
+}

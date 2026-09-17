@@ -1,0 +1,109 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+
+import { auditSpecsHooks } from "./audit-spec-hooks.mjs";
+import { compileSpecsIr } from "./compile-spec-ir.mjs";
+
+const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+const fixtureRoot = join(
+  repoDir,
+  "crates",
+  "ec_engine",
+  "testdata",
+  "compiler-hook-chain",
+);
+const sourceRoot = join(fixtureRoot, "source");
+const committedIrRoot = join(fixtureRoot, "specs-ir");
+
+async function filesBelow(root, current = root) {
+  const entries = await readdir(current, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries.sort((left, right) =>
+    left.name.localeCompare(right.name),
+  )) {
+    const path = join(current, entry.name);
+    if (entry.isDirectory()) files.push(...(await filesBelow(root, path)));
+    else if (entry.isFile()) files.push(relative(root, path));
+  }
+  return files.sort((left, right) => left.localeCompare(right));
+}
+
+async function assertTreesEqual(actualRoot, expectedRoot) {
+  const actualFiles = await filesBelow(actualRoot);
+  const expectedFiles = await filesBelow(expectedRoot);
+  assert.deepEqual(
+    actualFiles,
+    expectedFiles,
+    "checked-in compiler fixture has a different file set",
+  );
+  for (const file of expectedFiles) {
+    assert.deepEqual(
+      await readFile(join(actualRoot, file)),
+      await readFile(join(expectedRoot, file)),
+      `checked-in compiler fixture drifted at ${file}`,
+    );
+  }
+}
+
+test("checked-in QuickJS chain fixture is exact current compiler output", async () => {
+  const generatedIrRoot = await mkdtemp(
+    join(tmpdir(), "easy-complete-compiler-hook-chain-"),
+  );
+  try {
+    await compileSpecsIr({ srcDir: sourceRoot, outDir: generatedIrRoot });
+    await assertTreesEqual(committedIrRoot, generatedIrRoot);
+
+    for (const irRoot of [committedIrRoot, generatedIrRoot]) {
+      const audit = await auditSpecsHooks({ sourceRoot, irRoot });
+      assert.equal(audit.ok, true, JSON.stringify(audit.errors, null, 2));
+    }
+
+    const ir = JSON.parse(
+      await readFile(join(committedIrRoot, "chain.json"), "utf8"),
+    );
+    const postProcessId = ir.args[0].generators[0].jsPostProcess;
+    const customId = ir.args[1].generators[0].jsCustom;
+    assert.equal(typeof postProcessId, "string");
+    assert.equal(typeof customId, "string");
+
+    const manifest = JSON.parse(
+      await readFile(join(committedIrRoot, "hook-modules.json"), "utf8"),
+    );
+    assert.deepEqual(
+      {
+        path: manifest.hooks[postProcessId].path,
+        sourceField: manifest.hooks[postProcessId].sourceField,
+      },
+      {
+        path: "root.args[0].generators.postProcess",
+        sourceField: "postProcess",
+      },
+    );
+    assert.deepEqual(
+      {
+        path: manifest.hooks[customId].path,
+        sourceField: manifest.hooks[customId].sourceField,
+      },
+      {
+        path: "root.args[1].generators.custom",
+        sourceField: "custom",
+      },
+    );
+    assert.match(
+      manifest.hooks[postProcessId].functionBodySha256,
+      /^[a-f0-9]{64}$/,
+    );
+    assert.match(manifest.hooks[customId].functionBodySha256, /^[a-f0-9]{64}$/);
+    assert.equal(
+      manifest.hooks[postProcessId].module,
+      manifest.hooks[customId].module,
+      "both hooks must exercise one shared compiler-generated module table",
+    );
+  } finally {
+    await rm(generatedIrRoot, { recursive: true, force: true });
+  }
+});

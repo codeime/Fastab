@@ -3,22 +3,74 @@
  * Option literals in the spec source are authoritative. The live helper is
  * only probed for values the source cannot name (priority, exec cwd).
  */
+import { Script } from "node:vm";
+
+function parsesAsExpression(src) {
+  try {
+    new Script(`(${src})`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function methodArgumentsStart(src) {
+  let brackets = 0;
+  for (let index = 0; index < src.length; index += 1) {
+    const char = src[index];
+    if (char === "/" && src[index + 1] === "*") {
+      const end = src.indexOf("*/", index + 2);
+      if (end < 0) return -1;
+      index = end + 1;
+      continue;
+    }
+    if (char === "/" && src[index + 1] === "/") {
+      const end = src.indexOf("\n", index + 2);
+      if (end < 0) return -1;
+      index = end;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      const quote = char;
+      for (index += 1; index < src.length; index += 1) {
+        if (src[index] === "\\") {
+          index += 1;
+        } else if (src[index] === quote) {
+          break;
+        }
+      }
+      continue;
+    }
+    if (char === "[") brackets += 1;
+    else if (char === "]") brackets -= 1;
+    else if (char === "(" && brackets === 0) return index;
+  }
+  return -1;
+}
 
 export function functionSource(fn) {
   if (typeof fn !== "function") return null;
-  let src = Function.prototype.toString.call(fn);
+  const src = Function.prototype.toString.call(fn);
   if (!src || src.includes("[native code]")) return null;
-  if (
-    !src.startsWith("function") &&
-    !src.startsWith("async function") &&
-    !src.includes("=>")
-  ) {
-    src = src.replace(
-      /^(async\s+)?[A-Za-z_$][\w$]*/,
-      (_, asyncKw) => `${asyncKw || ""}function`,
-    );
+  if (parsesAsExpression(src)) return src;
+  // Function#toString on an object method is valid only inside `{ ... }`.
+  // Normalize its header to an anonymous function; this also handles keyword,
+  // quoted, computed, async and generator names without inspecting arrow
+  // functions nested in the body.
+  try {
+    new Script(`({${src}})`);
+  } catch {
+    return src;
   }
-  return src;
+  const argsStart = methodArgumentsStart(src);
+  if (argsStart < 0) return src;
+  const header = src
+    .slice(0, argsStart)
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+  const asyncMethod = /^\s*async(?:\s+\S|\s*\*)/.test(header);
+  const generatorMethod = /^\s*(?:async\s*)?\*/.test(header);
+  const prefix = `${asyncMethod ? "async " : ""}function${generatorMethod ? "*" : ""}`;
+  return `${prefix}${src.slice(argsStart)}`;
 }
 
 export function isFilepathsHelper(gen) {

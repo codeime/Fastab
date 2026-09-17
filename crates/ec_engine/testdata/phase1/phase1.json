@@ -1,0 +1,60 @@
+{
+  "names": ["phase1"],
+  "description": "Phase 1 command",
+  "subcommands": [
+    {
+      "names": ["config"],
+      "description": "Read configuration",
+      "priority": 90
+    },
+    {
+      "names": ["clone"],
+      "description": "Clone source",
+      "priority": 60
+    },
+    {
+      "names": ["clean"],
+      "description": "Clean outputs",
+      "priority": 60
+    },
+    {
+      "names": ["publish", "pub"],
+      "description": "Publish package",
+      "insertValue": "phase1 publish",
+      "displayName": "publish package",
+      "priority": 70,
+      "args": [{"name": "target"}]
+    }
+  ],
+  "additionalSuggestions": [
+    {
+      "names": ["context"],
+      "description": "Show context",
+      "type": "arg",
+      "insertValue": "phase1 context",
+      "displayName": "context info",
+      "shouldAddSpace": true,
+      "priority": 55
+    }
+  ],
+  "options": [
+    {
+      "names": ["--verbose", "-v"],
+      "description": "Enable verbose output",
+      "requiresEquals": true,
+      "args": [{"name": "level"}],
+      "insertValue": "--verbose",
+      "displayName": "verbosity",
+      "icon": "fig://icon?type=gear",
+      "priority": 65
+    },
+    {
+      "names": ["--output", "-o"],
+      "description": "Write output path",
+      "requiresSeparator": ":",
+      "args": [{"name": "path"}],
+      "shouldAddSpace": false,
+      "priority": 40
+    }
+  ]
+}

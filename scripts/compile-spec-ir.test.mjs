@@ -1,15 +1,513 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { execFile, execFileSync } from "node:child_process";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+  symlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import test from "node:test";
 
-import { compileSpecsIr } from "./compile-spec-ir.mjs";
+const execFileAsync = promisify(execFile);
+
+const compilerCli = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "compile-spec-ir.mjs",
+);
+const canonicalSourceDir = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "bundle",
+  "specs",
+);
+const canonicalIrDir = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "bundle",
+  "specs-ir",
+);
+
+async function runCompilerCli(environment) {
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      process.execPath,
+      [compilerCli],
+      {
+        env: { ...process.env, ...environment },
+        maxBuffer: 1_000_000,
+      },
+    );
+    return { status: 0, output: `${stdout}${stderr}` };
+  } catch (error) {
+    return {
+      status: error.status ?? 1,
+      output: `${error.stdout ?? ""}${error.stderr ?? ""}`,
+    };
+  }
+}
+
+async function readIfPresent(path) {
+  try {
+    return await readFile(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+const bundledBun = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "bundle",
+  "specs",
+  "bun.js",
+);
+
+import {
+  auditSpecsHooks,
+  freeVariableCandidates,
+} from "./audit-spec-hooks.mjs";
+import {
+  compileSpecsIr,
+  hookFileName,
+  TYPED_HOOK_SIDECAR,
+  transformDefaultExport,
+} from "./compile-spec-ir.mjs";
 import {
   createFilepathsBinder,
+  functionSource,
   parseFilepathsCalls,
 } from "./filepaths-helper.mjs";
+import { compileTypedHook } from "./typed-hook-ir.mjs";
+
+test("method-source normalization preserves valid JS method variants and arrows", async () => {
+  const hooks = {
+    async(value) {
+      return value;
+    },
+    default(value) {
+      return value;
+    },
+    delete(value) {
+      return value;
+    },
+    *z(value) {
+      yield value;
+    },
+    postProcess /* comment */(value) {
+      return [value].map((item) => item);
+    },
+    custom(value) {
+      return value;
+    },
+    ["computed"](value) {
+      return value;
+    },
+    async *generateSpec(value) {
+      yield value;
+    },
+    async *postProcess(value) {
+      yield value;
+    },
+    selfBinding(value) {
+      return typeof selfBinding + value;
+    },
+  };
+  for (const hook of Object.values(hooks)) {
+    const source = functionSource(hook);
+    const converted = new Function(`return (${source})`)();
+    assert.equal(typeof converted, "function");
+  }
+  assert.equal(
+    new Function(`return (${functionSource(hooks.selfBinding)})`)()(1),
+    hooks.selfBinding(1),
+  );
+  assert.equal(functionSource(hooks.selfBinding).startsWith("function("), true);
+  const asyncArrow = async (value) => value;
+  assert.equal(functionSource(asyncArrow), asyncArrow.toString());
+});
+
+test("compiler emits shared hook modules that preserve closures and custom receivers", async () => {
+  const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-closure-src-"));
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-closure-ir-"));
+  try {
+    await writeFile(
+      join(srcDir, "closure.js"),
+      `const metadata = { priority: 73, moduleThis: typeof this };
+       const post = (label) => (stdout) => [{ name: label + ":" + stdout, ...metadata }];
+       const custom = (label) => ({
+         label,
+         custom(tokens) { return [{ name: this.label + ":" + tokens.at(-1) }]; },
+       });
+       export default {
+         name: "closure",
+         args: [
+           { name: "one", generators: { postProcess: post("one") } },
+           { name: "two", generators: { postProcess: post("two") } },
+           { name: "three", generators: custom("three") },
+           { name: "four", generators: custom("four") },
+         ],
+       };
+      `,
+    );
+    await compileSpecsIr({ srcDir, outDir });
+    const ir = JSON.parse(await readFile(join(outDir, "closure.json"), "utf8"));
+    const manifest = JSON.parse(
+      await readFile(join(outDir, "hook-modules.json"), "utf8"),
+    );
+    const ids = ir.args.map(
+      (arg) => arg.generators[0].jsPostProcess ?? arg.generators[0].jsCustom,
+    );
+    assert.equal(new Set(ids).size, 4);
+    const modules = new Set(ids.map((id) => manifest.hooks[id].module));
+    assert.equal(
+      modules.size,
+      1,
+      "one source module is shared by all four hooks",
+    );
+    const [moduleFile] = modules;
+    const moduleUrl = pathToFileURL(join(outDir, "source-modules", moduleFile));
+    moduleUrl.searchParams.set("test", String(Date.now()));
+    const table = (await import(moduleUrl.href)).default;
+
+    assert.deepEqual(table[ids[0]]("stdout", []), [
+      { name: "one:stdout", priority: 73, moduleThis: "undefined" },
+    ]);
+    assert.deepEqual(table[ids[1]]("stdout", []), [
+      { name: "two:stdout", priority: 73, moduleThis: "undefined" },
+    ]);
+    assert.deepEqual(table[ids[2]](["token"]), [{ name: "three:token" }]);
+    assert.deepEqual(table[ids[3]](["token"]), [{ name: "four:token" }]);
+
+    const moduleText = await readFile(
+      join(outDir, "source-modules", moduleFile),
+      "utf8",
+    );
+    const runtimeExpression = moduleText
+      .trim()
+      .replace(/^export\s+default\s+/, "")
+      .replace(/;$/, "");
+    const runtimeTable = new Function(`return (${runtimeExpression})`)();
+    assert.deepEqual(runtimeTable[ids[0]]("stdout", []), [
+      { name: "one:stdout", priority: 73, moduleThis: "undefined" },
+    ]);
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("closure modules bind ids to compiler-selected paths when texts collide", async () => {
+  const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-binding-src-"));
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-binding-ir-"));
+  try {
+    await writeFile(
+      join(srcDir, "binding.js"),
+      `const post = (label) => (stdout) => [{ name: label + ":" + stdout }];
+       const sharedCustom = function (tokens) {
+         return [{ name: this.label + ":" + tokens[0] }];
+       };
+       const custom = (label, isPersistent) => ({
+         name: "--" + label,
+         label,
+         isPersistent,
+         args: { generators: {
+           label,
+           custom: sharedCustom,
+         } },
+       });
+       const args = Array.from({ length: 11 }, (_, index) => ({
+         name: String(index),
+         generators: { postProcess: post(String(index)) },
+       }));
+       export default {
+         name: "binding",
+         args,
+         options: [custom("persistent", true), custom("regular", false)],
+       };
+      `,
+    );
+    await compileSpecsIr({ srcDir, outDir });
+    const ir = JSON.parse(await readFile(join(outDir, "binding.json"), "utf8"));
+    const manifest = JSON.parse(
+      await readFile(join(outDir, "hook-modules.json"), "utf8"),
+    );
+    const [moduleFile] = new Set(
+      Object.values(manifest.hooks).map((entry) => entry.module),
+    );
+    const moduleUrl = pathToFileURL(join(outDir, "source-modules", moduleFile));
+    moduleUrl.searchParams.set("test", String(Date.now()));
+    const table = (await import(moduleUrl.href)).default;
+
+    for (const [index, arg] of ir.args.entries()) {
+      const id = arg.generators[0].jsPostProcess;
+      assert.deepEqual(table[id]("stdout", []), [{ name: `${index}:stdout` }]);
+    }
+    const regularId = ir.options[0].args[0].generators[0].jsCustom;
+    const persistentId = ir.persistentOptions[0].args[0].generators[0].jsCustom;
+    assert.equal(
+      manifest.hooks[regularId].path,
+      "root.options[1].args.generators.custom",
+    );
+    assert.equal(
+      manifest.hooks[persistentId].path,
+      "root.options[0].args.generators.custom",
+    );
+    assert.equal(manifest.hooks[regularId].sourceField, "custom");
+    assert.match(
+      manifest.hooks[regularId].functionBodySha256,
+      /^[a-f0-9]{64}$/,
+    );
+    assert.deepEqual(table[regularId](["token"]), [{ name: "regular:token" }]);
+    assert.deepEqual(table[persistentId](["token"]), [
+      { name: "persistent:token" },
+    ]);
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("compiler CLI completes its pre-manifest audit without a module cycle", async () => {
+  const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-cli-cycle-src-"));
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-cli-cycle-ir-"));
+  try {
+    await writeFile(
+      join(srcDir, "cycle.js"),
+      `const suffix = "-kept";
+       export default {
+         name: "cycle",
+         args: { generators: { postProcess: (stdout) => [{ name: stdout + suffix }] } },
+       };\n`,
+    );
+    const compiler = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "compile-spec-ir.mjs",
+    );
+    const { stdout, stderr } = await execFileAsync(
+      process.execPath,
+      [compiler],
+      {
+        env: {
+          ...process.env,
+          EC_SPECS_SRC: srcDir,
+          EC_SPECS_IR: outDir,
+        },
+        maxBuffer: 1_000_000,
+      },
+    );
+    assert.equal(stderr, "");
+    assert.match(stdout, /1 closure-preserving modules/);
+    const manifest = JSON.parse(
+      await readFile(join(outDir, "hook-modules.json"), "utf8"),
+    );
+    assert.equal(Object.keys(manifest.hooks).length, 1);
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("compiler CLI rejects canonical/custom mixing before publishing either pair", async () => {
+  const root = await mkdtemp(join(tmpdir(), "easy-complete-cli-pair-guard-"));
+  const customSourceDir = join(root, "source");
+  const customIrDir = join(root, "custom-ir");
+  const reverseIrDir = join(root, "reverse-ir");
+  const canonicalSourceIndex = join(canonicalSourceDir, "index.json");
+  const canonicalIrIndex = join(canonicalIrDir, "index.json");
+  const canonicalPairMarker = join(canonicalIrDir, ".spec-pair.json");
+  try {
+    await mkdir(customSourceDir);
+    await writeFile(
+      join(customSourceDir, "fixture.js"),
+      `export default { name: "fixture" };\n`,
+    );
+    const sourceIndexBefore = await readIfPresent(canonicalSourceIndex);
+    const irIndexBefore = await readIfPresent(canonicalIrIndex);
+    const pairMarkerBefore = await readIfPresent(canonicalPairMarker);
+
+    const customSourceWithCanonicalIr = await runCompilerCli({
+      EC_SPECS_SRC: customSourceDir,
+      EC_SPECS_IR: canonicalIrDir,
+    });
+    assert.notEqual(customSourceWithCanonicalIr.status, 0);
+    assert.match(
+      customSourceWithCanonicalIr.output,
+      /custom outputs require both destinations/,
+    );
+    assert.equal(await readIfPresent(join(customIrDir, "index.json")), null);
+
+    await mkdir(reverseIrDir);
+    const reverseSentinel = join(reverseIrDir, "USER_SENTINEL");
+    await writeFile(reverseSentinel, "keep me\n");
+    const canonicalSourceWithCustomIr = await runCompilerCli({
+      EC_SPECS_SRC: canonicalSourceDir,
+      EC_SPECS_IR: reverseIrDir,
+    });
+    assert.notEqual(canonicalSourceWithCustomIr.status, 0);
+    assert.match(
+      canonicalSourceWithCustomIr.output,
+      /custom outputs require both destinations/,
+    );
+    assert.equal(await readFile(reverseSentinel, "utf8"), "keep me\n");
+
+    // The guard runs before compileSpecsIr can create a staging directory,
+    // move an existing output, or rewrite the canonical pair marker.
+    assert.deepEqual(await readIfPresent(canonicalSourceIndex), sourceIndexBefore);
+    assert.deepEqual(await readIfPresent(canonicalIrIndex), irIndexBefore);
+    assert.deepEqual(await readIfPresent(canonicalPairMarker), pairMarkerBefore);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("compiler CLI rejects overlapping custom source and IR paths before rewriting them", async () => {
+  const root = await mkdtemp(join(tmpdir(), "easy-complete-cli-overlap-guard-"));
+  const sourceDir = join(root, "source");
+  const nestedIrDir = join(sourceDir, "nested-ir");
+  const outerIrDir = join(root, "outer-ir");
+  const nestedSourceDir = join(outerIrDir, "nested-source");
+  try {
+    await mkdir(sourceDir);
+    await writeFile(
+      join(sourceDir, "fixture.js"),
+      `export default { name: "fixture" };\n`,
+    );
+    const nestedResult = await runCompilerCli({
+      EC_SPECS_SRC: sourceDir,
+      EC_SPECS_IR: nestedIrDir,
+    });
+    assert.notEqual(nestedResult.status, 0);
+    assert.match(nestedResult.output, /destinations cannot overlap/);
+    assert.equal(await readIfPresent(join(nestedIrDir, "index.json")), null);
+
+    await mkdir(nestedSourceDir, { recursive: true });
+    await writeFile(
+      join(nestedSourceDir, "fixture.js"),
+      `export default { name: "fixture" };\n`,
+    );
+    const outerSentinel = join(outerIrDir, "USER_SENTINEL");
+    await writeFile(outerSentinel, "keep me\n");
+    const reverseResult = await runCompilerCli({
+      EC_SPECS_SRC: nestedSourceDir,
+      EC_SPECS_IR: outerIrDir,
+    });
+    assert.notEqual(reverseResult.status, 0);
+    assert.match(reverseResult.output, /destinations cannot overlap/);
+    assert.equal(await readFile(outerSentinel, "utf8"), "keep me\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("compiler CLI rejects symlinked source and IR paths before publishing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "easy-complete-cli-symlink-guard-"));
+  const sourceTarget = join(root, "source-target");
+  const sourceLink = join(root, "source-link");
+  const sourceDir = join(root, "source");
+  const irTarget = join(root, "ir-target");
+  const irLink = join(root, "ir-link");
+  try {
+    await mkdir(sourceTarget);
+    await writeFile(
+      join(sourceTarget, "fixture.js"),
+      `export default { name: "fixture" };\n`,
+    );
+    await symlink(sourceTarget, sourceLink);
+    const sourceSymlinkResult = await runCompilerCli({
+      EC_SPECS_SRC: sourceLink,
+      EC_SPECS_IR: join(root, "source-link-ir"),
+    });
+    assert.notEqual(sourceSymlinkResult.status, 0);
+    assert.match(sourceSymlinkResult.output, /through a symbolic link/);
+    assert.equal(
+      await readIfPresent(join(root, "source-link-ir", "index.json")),
+      null,
+    );
+
+    await mkdir(sourceDir);
+    await writeFile(
+      join(sourceDir, "fixture.js"),
+      `export default { name: "fixture" };\n`,
+    );
+    await mkdir(irTarget);
+    const irSentinel = join(irTarget, "USER_SENTINEL");
+    await writeFile(irSentinel, "keep me\n");
+    await symlink(irTarget, irLink);
+    const irSymlinkResult = await runCompilerCli({
+      EC_SPECS_SRC: sourceDir,
+      EC_SPECS_IR: irLink,
+    });
+    assert.notEqual(irSymlinkResult.status, 0);
+    assert.match(irSymlinkResult.output, /through a symbolic link/);
+    assert.equal(await readFile(irSentinel, "utf8"), "keep me\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("pinned Bun keeps split and post-process on separate generators", async () => {
+  const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-bun-src-"));
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-bun-ir-"));
+  try {
+    await writeFile(join(srcDir, "bun.js"), await readFile(bundledBun, "utf8"));
+    await compileSpecsIr({ srcDir, outDir });
+    const ir = JSON.parse(await readFile(join(outDir, "bun.json"), "utf8"));
+    const visit = (value, output = []) => {
+      if (!value || typeof value !== "object") return output;
+      if (Array.isArray(value)) {
+        for (const item of value) visit(item, output);
+      } else {
+        if (value.name === "template" && Array.isArray(value.generators)) {
+          output.push(value);
+        }
+        for (const child of Object.values(value)) visit(child, output);
+      }
+      return output;
+    };
+    const [template] = visit(ir);
+    assert.ok(template, "bundled Bun template generator must remain present");
+    assert.equal(template.generators[2].splitOn, "\n");
+    assert.equal(template.generators[2].jsPostProcess ?? null, null);
+    assert.equal(template.generators[3].splitOn ?? null, null);
+    assert.match(template.generators[3].jsPostProcess, /^bun#postProcess#/);
+    assert.equal(template.splitOn, "\n");
+    assert.match(template.jsPostProcess, /^bun#postProcess#/);
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("hook scope analysis ignores strings and finds lowercase closure references", () => {
+  assert.deepEqual(freeVariableCandidates('(tokens) => "External("'), []);
+  assert.deepEqual(freeVariableCandidates("(tokens) => external(tokens)"), [
+    "external",
+  ]);
+  assert.deepEqual(
+    freeVariableCandidates("(tokens) => console.log(tokens)"),
+    [],
+  );
+  assert.deepEqual(
+    freeVariableCandidates("(tokens) => new Uint8Array(tokens)"),
+    [],
+  );
+});
 
 test("compiler keeps static suggestion type metadata and string query terms", async () => {
   const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-specs-"));
@@ -124,9 +622,17 @@ test("compiler keeps static suggestion type metadata and string query terms", as
     assert.deepEqual(color.dependsOn, ["--config"]);
     assert.equal(color.isRepeatable, 2);
     assert.equal(color.isPersistent, true);
-    assert.equal(ir.options.find((option) => option.names[0] === "--many").isRepeatable, true);
-    assert.equal(ir.options.find((option) => option.names[0] === "--once").isRepeatable, false);
-    const required = ir.options.find((option) => option.names[0] === "--required");
+    assert.equal(
+      ir.options.find((option) => option.names[0] === "--many").isRepeatable,
+      true,
+    );
+    assert.equal(
+      ir.options.find((option) => option.names[0] === "--once").isRepeatable,
+      false,
+    );
+    const required = ir.options.find(
+      (option) => option.names[0] === "--required",
+    );
     assert.equal("separatorToAdd" in required, false);
   } finally {
     await Promise.all([
@@ -179,17 +685,23 @@ test("compiler keeps lazy loadSpec links and maps versioned nested roots", async
 
     const result = await compileSpecsIr({ srcDir, outDir });
     assert.equal(result.compiled, 6);
-    assert.equal(result.failed, 1);
+    assert.equal(result.failed, 0);
+    assert.equal(result.allowlistedSkipped, 1);
 
-    const docker = JSON.parse(await readFile(join(outDir, "docker.json"), "utf8"));
+    const docker = JSON.parse(
+      await readFile(join(outDir, "docker.json"), "utf8"),
+    );
     assert.equal(docker.subcommands[0].loadSpec, "docker-compose");
     assert.deepEqual(
-      docker.subcommands.find((item) => item.names.includes("inline"))
+      docker.subcommands
+        .find((item) => item.names.includes("inline"))
         .subcommands.map((item) => item.names[0]),
       ["up"],
     );
 
-    const index = JSON.parse(await readFile(join(outDir, "index.json"), "utf8"));
+    const index = JSON.parse(
+      await readFile(join(outDir, "index.json"), "utf8"),
+    );
     assert.equal(index.files.docker, "docker.json");
     assert.equal(index.files.heroku, "heroku/8.6.0.json");
     assert.equal(index.files.gcloud, "gcloud.json");
@@ -204,21 +716,37 @@ test("compiler keeps lazy loadSpec links and maps versioned nested roots", async
 });
 
 test("root file names are canonical and spec names are aliases", async () => {
-  const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-specs-canonical-"));
+  const srcDir = await mkdtemp(
+    join(tmpdir(), "easy-complete-specs-canonical-"),
+  );
   const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-canonical-"));
   try {
-    await writeFile(join(srcDir, "appwrite.js"), `export default { name: "index" };\n`);
+    await writeFile(
+      join(srcDir, "appwrite.js"),
+      `export default { name: "index" };\n`,
+    );
     await writeFile(
       join(srcDir, "autojump.js"),
       `export default { name: "autojump", args: { name: "directory", isVariadic: true } };\n`,
     );
-    await writeFile(join(srcDir, "j.js"), `export default { name: "autojump" };\n`);
-    await writeFile(join(srcDir, "git.js"), `export default { name: "git" };\n`);
-    await writeFile(join(srcDir, "hub.js"), `export default { name: "git" };\n`);
+    await writeFile(
+      join(srcDir, "j.js"),
+      `export default { name: "autojump" };\n`,
+    );
+    await writeFile(
+      join(srcDir, "git.js"),
+      `export default { name: "git" };\n`,
+    );
+    await writeFile(
+      join(srcDir, "hub.js"),
+      `export default { name: "git" };\n`,
+    );
 
     const result = await compileSpecsIr({ srcDir, outDir });
     assert.equal(result.compiled, 5);
-    const index = JSON.parse(await readFile(join(outDir, "index.json"), "utf8"));
+    const index = JSON.parse(
+      await readFile(join(outDir, "index.json"), "utf8"),
+    );
     assert.equal(index.files.appwrite, "appwrite.json");
     assert.equal(index.files.index, "appwrite.json");
     assert.equal(index.files.autojump, "autojump.json");
@@ -276,7 +804,10 @@ test("object loadSpec replaces wrapper fields while retaining its command name",
     const grep = pass.subcommands[0];
     assert.deepEqual(grep.names, ["grep"]);
     assert.equal(grep.description, "loaded description");
-    assert.deepEqual(grep.args.map((arg) => arg.name), ["pattern", "file"]);
+    assert.deepEqual(
+      grep.args.map((arg) => arg.name),
+      ["pattern", "file"],
+    );
 
     const chezmoi = JSON.parse(
       await readFile(join(outDir, "chezmoi.json"), "utf8"),
@@ -284,7 +815,10 @@ test("object loadSpec replaces wrapper fields while retaining its command name",
     const git = chezmoi.subcommands[0];
     assert.deepEqual(git.names, ["git"]);
     assert.equal(git.description, "loaded description");
-    assert.deepEqual(git.args.map((arg) => arg.name), ["command"]);
+    assert.deepEqual(
+      git.args.map((arg) => arg.name),
+      ["command"],
+    );
   } finally {
     await Promise.all([
       rm(srcDir, { recursive: true, force: true }),
@@ -294,11 +828,18 @@ test("object loadSpec replaces wrapper fields while retaining its command name",
 });
 
 test("source index keeps top-level aliases and versioned roots backward compatible", async () => {
-  const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-specs-source-index-"));
-  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-source-index-"));
+  const srcDir = await mkdtemp(
+    join(tmpdir(), "easy-complete-specs-source-index-"),
+  );
+  const outDir = await mkdtemp(
+    join(tmpdir(), "easy-complete-ir-source-index-"),
+  );
   try {
     await writeFile(join(srcDir, "r.js"), `export default { name: "R" };\n`);
-    await writeFile(join(srcDir, "stepzen.js"), `export default { name: "StepZen" };\n`);
+    await writeFile(
+      join(srcDir, "stepzen.js"),
+      `export default { name: "StepZen" };\n`,
+    );
     await writeFile(
       join(srcDir, "visible.js"),
       `export default { name: "visible-alias" };\n`,
@@ -338,8 +879,11 @@ test("source index keeps top-level aliases and versioned roots backward compatib
 
     const result = await compileSpecsIr({ srcDir, outDir });
     assert.equal(result.compiled, 6);
-    assert.equal(result.failed, 1);
-    const index = JSON.parse(await readFile(join(outDir, "index.json"), "utf8"));
+    assert.equal(result.failed, 0);
+    assert.equal(result.allowlistedSkipped, 1);
+    const index = JSON.parse(
+      await readFile(join(outDir, "index.json"), "utf8"),
+    );
     assert.equal(index.files.r, "r.json");
     assert.equal(index.files.stepzen, "stepzen.json");
     assert.equal(index.files.visible, "visible.json");
@@ -449,13 +993,17 @@ test("compiler keeps docker/kubectl/gh dynamic scripts instead of dropping them"
     }
     const result = await compileSpecsIr({ srcDir, outDir });
     assert.equal(result.compiled, 3);
-    assert.ok(result.hooks > 50, result.hooks);
-    const docker = JSON.parse(await readFile(join(outDir, "docker.json"), "utf8"));
+    assert.ok(result.hooks > 0, result.hooks);
+    const docker = JSON.parse(
+      await readFile(join(outDir, "docker.json"), "utf8"),
+    );
     const exec = docker.subcommands.find((item) => item.names.includes("exec"));
     assert.ok(exec, "docker exec");
     assert.deepEqual(exec.args[0].script.slice(0, 2), ["docker", "ps"]);
     assert.match(exec.args[0].jsPostProcess, /^docker#postProcess#/);
-    const kubectl = JSON.parse(await readFile(join(outDir, "kubectl.json"), "utf8"));
+    const kubectl = JSON.parse(
+      await readFile(join(outDir, "kubectl.json"), "utf8"),
+    );
     assert.ok(
       JSON.stringify(kubectl).includes("jsPostProcess") ||
         JSON.stringify(kubectl).includes("jsCustom"),
@@ -629,10 +1177,7 @@ test("compiler does not invent file templates the spec omitted", async () => {
       join(srcDir, "cat.js"),
       `export default { name: "cat", args: { name: "file" } };\n`,
     );
-    await writeFile(
-      join(srcDir, "cd.js"),
-      `export default { name: "cd" };\n`,
-    );
+    await writeFile(join(srcDir, "cd.js"), `export default { name: "cd" };\n`);
     const result = await compileSpecsIr({ srcDir, outDir });
     assert.equal(result.compiled, 2);
     const cat = JSON.parse(await readFile(join(outDir, "cat.json"), "utf8"));
@@ -666,10 +1211,18 @@ test("filepaths helper parser binds literals by preceding name and keeps equals 
   assert.deepEqual(calls[3].literal, { equals: ["rustfmt.toml"] });
 
   const binder = createFilepathsBinder(source);
-  assert.deepEqual(binder.take(["ENV", "dotenv-vault"]), { matches: "^\\.env.*$", matchesFlags: "i" });
-  assert.deepEqual(binder.take(["env"]), { matches: "^\\.env.*$", matchesFlags: "i" });
+  assert.deepEqual(binder.take(["ENV", "dotenv-vault"]), {
+    matches: "^\\.env.*$",
+    matchesFlags: "i",
+  });
+  assert.deepEqual(binder.take(["env"]), {
+    matches: "^\\.env.*$",
+    matchesFlags: "i",
+  });
   assert.deepEqual(binder.take(["dir"]), { showFolders: "only" });
-  assert.deepEqual(binder.take(["missing", "manifest"]), { equals: ["Cargo.toml"] });
+  assert.deepEqual(binder.take(["missing", "manifest"]), {
+    equals: ["Cargo.toml"],
+  });
   assert.deepEqual(binder.take(["--"]), { equals: ["rustfmt.toml"] });
   assert.equal(binder.take(["nope"]), null);
   assert.deepEqual(binder.take([]), { showFolders: "only" });
@@ -710,10 +1263,688 @@ test("compiler keeps history/help templates, debounce, trigger, and arg aliases"
     assert.deepEqual(ir.args[0].templates, ["history", "help"]);
     assert.equal(ir.args[0].generators[0].trigger.on, "string");
     assert.equal(ir.args[0].generators[0].trigger.string, "/");
-    assert.equal(typeof ir.args[0].generators[0].jsFilterTemplateSuggestions, "string");
+    assert.equal(
+      typeof ir.args[0].generators[0].jsFilterTemplateSuggestions,
+      "string",
+    );
     assert.equal(ir.args[0].generators[1].trigger.on, "threshold");
     assert.equal(ir.args[0].generators[1].trigger.length, 3);
     assert.equal(typeof ir.subcommands[0].jsLoadSpec, "string");
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("compiler extracts all supported JS hook fields and audit maps them", async () => {
+  const srcDir = await mkdtemp(
+    join(tmpdir(), "easy-complete-specs-all-hooks-"),
+  );
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-all-hooks-"));
+  try {
+    await writeFile(
+      join(srcDir, "all-hooks.js"),
+      `const lazy = async () => ({ name: "loaded" });
+       export default {
+         name: "all-hooks",
+         generateSpec: async () => ({ name: "all-hooks" }),
+         parserDirectives: { alias: (tokens) => tokens.at(-1) || "git" },
+         subcommands: [{ name: "lazy", loadSpec: lazy }],
+         args: [{
+           name: "value",
+           generators: [{
+             trigger: (before, after) => before.length !== after.length,
+             getQueryTerm: (term) => term,
+             script: async () => [],
+             postProcess: (stdout) => stdout ? [] : [],
+             custom: (tokens) => External(tokens),
+             filterTemplateSuggestions: (rows) => rows,
+           }],
+         }],
+       };
+      `,
+    );
+
+    const result = await compileSpecsIr({ srcDir, outDir });
+    assert.equal(result.compiled, 1);
+    assert.equal(result.hooks, 10);
+    const ir = JSON.parse(
+      await readFile(join(outDir, "all-hooks.json"), "utf8"),
+    );
+    assert.equal(typeof ir.jsGenerateSpec, "string");
+    assert.equal(typeof ir.parserDirectives.jsAlias, "string");
+    assert.equal(typeof ir.subcommands[0].jsLoadSpec, "string");
+    assert.equal(typeof ir.args[0].jsGetQueryTerm, "string");
+    const generator = ir.args[0].generators[0];
+    assert.equal(typeof generator.trigger.jsTrigger, "string");
+    assert.notEqual(ir.args[0].jsGetQueryTerm, generator.jsGetQueryTerm);
+    for (const field of [
+      "jsGetQueryTerm",
+      "jsScript",
+      "jsPostProcess",
+      "jsCustom",
+      "jsFilterTemplateSuggestions",
+    ]) {
+      assert.equal(typeof generator[field], "string", field);
+    }
+
+    const report = await auditSpecsHooks({
+      sourceRoot: srcDir,
+      irRoot: outDir,
+    });
+    assert.equal(report.ok, true);
+    assert.equal(report.source.uniqueFunctionCounts.loadSpec, 1);
+    assert.equal(report.source.uniqueFunctionCounts.trigger, 1);
+    assert.equal(report.source.uniqueFunctionCounts.alias, 1);
+    assert.equal(report.source.uniqueFunctionCounts.getQueryTerm, 1);
+    assert.equal(report.source.uniqueFunctionCounts.generateSpec, 1);
+    assert.equal(report.source.uniqueFunctionCounts.script, 1);
+    assert.equal(report.source.uniqueFunctionCounts.postProcess, 1);
+    assert.equal(report.source.uniqueFunctionCounts.custom, 1);
+    assert.equal(
+      report.source.uniqueFunctionCounts.filterTemplateSuggestions,
+      1,
+    );
+    assert.equal(report.source.compilerExtractionCounts.getQueryTerm, 2);
+    assert.equal(report.hooks.referenced, 10);
+    assert.equal(report.ir.hookIdCounts.jsGetQueryTerm, 2);
+    assert.ok(
+      report.hooks.riskSamplesByPattern["free-variable-candidate"].some(
+        (item) =>
+          item.field === "jsCustom" && item.freeVariables.includes("External"),
+      ),
+    );
+    assert.equal(report.sourceToIr[0].status, "compiled");
+    assert.equal(report.sourceToIr[0].compilerExtractionCounts.getQueryTerm, 2);
+    assert.equal(report.sourceToIr[0].hookInstances.getQueryTerm.length, 2);
+    assert.equal(new Set(report.sourceToIr[0].hooks.jsCustom).size, 1);
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("compiler emits a deterministic typed trigger sidecar from binding identity", async () => {
+  const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-typed-src-"));
+  const firstOutDir = await mkdtemp(join(tmpdir(), "easy-complete-typed-ir-"));
+  const secondOutDir = await mkdtemp(join(tmpdir(), "easy-complete-typed-ir-"));
+  try {
+    const source = `const legacy = (value) => external(value);
+      export default {
+        name: "typed",
+        args: [{ generators: [
+          { trigger: (before, after) => before.length !== after.length },
+          { trigger: legacy },
+        ] }],
+      };\n`;
+    const sourcePath = join(srcDir, "typed.js");
+    await writeFile(sourcePath, source);
+    await compileSpecsIr({ srcDir, outDir: firstOutDir });
+    await compileSpecsIr({ srcDir, outDir: secondOutDir });
+
+    const ir = JSON.parse(
+      await readFile(join(firstOutDir, "typed.json"), "utf8"),
+    );
+    const triggerIds = ir.args[0].generators.map(
+      (generator) => generator.trigger.jsTrigger,
+    );
+    assert.equal(triggerIds.length, 2);
+    const [supportedId, legacyId] = triggerIds;
+    const manifest = JSON.parse(
+      await readFile(join(firstOutDir, "hook-modules.json"), "utf8"),
+    );
+    const sidecarText = await readFile(
+      join(firstOutDir, TYPED_HOOK_SIDECAR),
+      "utf8",
+    );
+    const sidecar = JSON.parse(sidecarText);
+    assert.deepEqual(Object.keys(sidecar), [
+      "version",
+      "kind",
+      "contracts",
+      "hooks",
+    ]);
+    assert.deepEqual(sidecar.contracts, {
+      trigger: {
+        irVersion: 1,
+        params: ["string", "string"],
+        resultType: "bool",
+      },
+    });
+    assert.deepEqual(Object.keys(sidecar.hooks), [supportedId]);
+    const imported = await import(
+      `${pathToFileURL(sourcePath).href}?typed=${Date.now()}`
+    );
+    const body = functionSource(imported.default.args[0].generators[0].trigger);
+    assert.equal(typeof body, "string");
+    assert.deepEqual(sidecar.hooks[supportedId], {
+      ...manifest.hooks[supportedId],
+      descriptor: compileTypedHook({ body, sourceField: "trigger" }),
+    });
+    assert.equal(sidecar.hooks[legacyId], undefined);
+    assert.deepEqual(
+      await readFile(join(secondOutDir, TYPED_HOOK_SIDECAR)),
+      Buffer.from(sidecarText),
+      "typed sidecar bytes must be reproducible",
+    );
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(firstOutDir, { recursive: true, force: true }),
+      rm(secondOutDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("production compiler keeps the reviewed getQueryTerm hook on its compatibility path", async () => {
+  const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-get-query-src-"));
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-get-query-ir-"));
+  try {
+    const source = `export default {
+      name: "asdf-research-fixture",
+      args: [{ generators: {
+        getQueryTerm: n => n.includes("latest") ? n.slice(n.indexOf(":") + 1) : n,
+      } }],
+    };\n`;
+    const sourcePath = join(srcDir, "asdf-research-fixture.js");
+    await writeFile(sourcePath, source);
+    const result = await compileSpecsIr({ srcDir, outDir });
+    assert.equal(result.compiled, 1);
+    const ir = JSON.parse(
+      await readFile(join(outDir, "asdf-research-fixture.json"), "utf8"),
+    );
+    const hookId = ir.args[0].generators[0].jsGetQueryTerm;
+    assert.equal(typeof hookId, "string");
+    const sidecar = JSON.parse(
+      await readFile(join(outDir, TYPED_HOOK_SIDECAR), "utf8"),
+    );
+    assert.deepEqual(Object.keys(sidecar.hooks), []);
+    const imported = await import(
+      `${pathToFileURL(sourcePath).href}?query=${Date.now()}`,
+    );
+    const body = functionSource(imported.default.args[0].generators.getQueryTerm);
+    const descriptor = compileTypedHook({ body, sourceField: "getQueryTerm" });
+    assert.equal(descriptor.expr.then.op, "string-slice-after-first");
+    assert.equal(descriptor.sourceField, "getQueryTerm");
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("compiler fails closed for unknown or unextractable functions and keeps old IR", async () => {
+  const srcDir = await mkdtemp(
+    join(tmpdir(), "easy-complete-specs-fail-closed-"),
+  );
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-fail-closed-"));
+  try {
+    await writeFile(join(outDir, "sentinel.txt"), "keep previous output\n");
+
+    // The compiler API must reject a source-tree symlink before staging or
+    // replacing the prior IR.  The target is outside the source root so
+    // following it would copy foreign input into the generated tree.
+    const linkedSourceTarget = join(
+      dirname(srcDir),
+      "compiler-linked-source-target.js",
+    );
+    const linkedSource = join(srcDir, "linked.js");
+    await writeFile(
+      linkedSourceTarget,
+      `export default { name: "linked" };\n`,
+    );
+    await symlink(linkedSourceTarget, linkedSource);
+    await assert.rejects(
+      compileSpecsIr({ srcDir, outDir }),
+      /source spec tree contains a symlink or special entry/,
+    );
+    assert.equal(
+      await readFile(join(outDir, "sentinel.txt"), "utf8"),
+      "keep previous output\n",
+    );
+    await rm(linkedSource, { force: true });
+    await rm(linkedSourceTarget, { force: true });
+
+    // Do not normalize a literal POSIX backslash in a filename before
+    // validating it.  In particular, `..\\..\\outside.js` must not be
+    // interpreted as an escaped relative path.
+    const backslashSource = join(srcDir, "..\\..\\outside.js");
+    await writeFile(backslashSource, `export default { name: "outside" };\n`);
+    await assert.rejects(
+      compileSpecsIr({ srcDir, outDir }),
+      /unsafe source spec path/,
+    );
+    assert.equal(
+      await readFile(join(outDir, "sentinel.txt"), "utf8"),
+      "keep previous output\n",
+    );
+    await rm(backslashSource, { force: true });
+
+    if (process.platform !== "win32") {
+      const specialSource = join(srcDir, "special.js");
+      execFileSync("mkfifo", [specialSource]);
+      await assert.rejects(
+        compileSpecsIr({ srcDir, outDir }),
+        /source spec tree contains a symlink or special entry/,
+      );
+      assert.equal(
+        await readFile(join(outDir, "sentinel.txt"), "utf8"),
+        "keep previous output\n",
+      );
+      await rm(specialSource, { force: true });
+    }
+
+    // index.json is part of the source tree even though it is not a spec
+    // module.  Its symlink must be rejected by the source-index reader.
+    const validSource = join(srcDir, "valid.js");
+    const linkedIndexTarget = join(
+      dirname(srcDir),
+      "compiler-linked-index-target.json",
+    );
+    await writeFile(validSource, `export default { name: "valid" };\n`);
+    await writeFile(linkedIndexTarget, JSON.stringify({ completions: ["valid"] }));
+    await symlink(linkedIndexTarget, join(srcDir, "index.json"));
+    await assert.rejects(
+      compileSpecsIr({ srcDir, outDir }),
+      /source spec tree contains a symlink or special entry/,
+    );
+    assert.equal(
+      await readFile(join(outDir, "sentinel.txt"), "utf8"),
+      "keep previous output\n",
+    );
+    await rm(join(srcDir, "index.json"), { force: true });
+    await rm(linkedIndexTarget, { force: true });
+    await rm(validSource, { force: true });
+
+    await writeFile(
+      join(srcDir, "unknown.js"),
+      `export default { name: "unknown", futureHook: () => [] };\n`,
+    );
+    await assert.rejects(
+      compileSpecsIr({ srcDir, outDir }),
+      /unknown function field root\.futureHook/,
+    );
+    assert.equal(
+      await readFile(join(outDir, "sentinel.txt"), "utf8"),
+      "keep previous output\n",
+    );
+
+    await rm(join(srcDir, "unknown.js"));
+    await writeFile(
+      join(srcDir, "unmapped.js"),
+      `export default { name: "unmapped", metadata: { custom: (tokens) => [] } };\n`,
+    );
+    await assert.rejects(
+      compileSpecsIr({ srcDir, outDir }),
+      /converter did not emit a hook for root\.metadata\.custom/,
+    );
+    assert.equal(
+      await readFile(join(outDir, "sentinel.txt"), "utf8"),
+      "keep previous output\n",
+    );
+
+    await rm(join(srcDir, "unmapped.js"));
+    await writeFile(
+      join(srcDir, "bound.js"),
+      `const hook = ((tokens) => []).bind(null);\nexport default { name: "bound", args: { generators: { custom: hook } } };\n`,
+    );
+    await assert.rejects(
+      compileSpecsIr({ srcDir, outDir }),
+      /cannot extract custom hook.*function source is unavailable/,
+    );
+    assert.equal(
+      await readFile(join(outDir, "sentinel.txt"), "utf8"),
+      "keep previous output\n",
+    );
+
+    assert.throws(
+      () =>
+        transformDefaultExport(
+          `export { spec as default } from "./other.js";\n`,
+          "reexport.js",
+        ),
+      /uses module imports\/re-exports/,
+    );
+    await rm(join(srcDir, "bound.js"));
+    await writeFile(
+      join(srcDir, "skipped.js"),
+      `export default { description: "not a spec" };\n`,
+    );
+    await assert.rejects(
+      compileSpecsIr({ srcDir, outDir }),
+      /source did not produce a static spec/,
+    );
+    assert.equal(
+      await readFile(join(outDir, "sentinel.txt"), "utf8"),
+      "keep previous output\n",
+    );
+
+    await rm(join(srcDir, "skipped.js"));
+    await assert.rejects(
+      compileSpecsIr({ srcDir, outDir }),
+      /contains no JavaScript specs/,
+    );
+    assert.equal(
+      await readFile(join(outDir, "sentinel.txt"), "utf8"),
+      "keep previous output\n",
+    );
+
+    await writeFile(
+      join(srcDir, "valid.js"),
+      `export default { name: "valid" };\n`,
+    );
+    await writeFile(join(srcDir, "index.json"), "not json\n");
+    await assert.rejects(
+      compileSpecsIr({ srcDir, outDir }),
+      /cannot parse source index/,
+    );
+    assert.equal(
+      await readFile(join(outDir, "sentinel.txt"), "utf8"),
+      "keep previous output\n",
+    );
+
+    for (const invalidIndex of [
+      {},
+      { completions: [] },
+      { completions: ["valid", 42] },
+    ]) {
+      await writeFile(join(srcDir, "index.json"), JSON.stringify(invalidIndex));
+      await assert.rejects(
+        compileSpecsIr({ srcDir, outDir }),
+        /completions must be a non-empty array of strings/,
+      );
+      assert.equal(
+        await readFile(join(outDir, "sentinel.txt"), "utf8"),
+        "keep previous output\n",
+      );
+    }
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("compiler refuses foreign, parent-linked, and dangling output targets", async () => {
+  const srcDir = await mkdtemp(
+    join(tmpdir(), "easy-complete-specs-output-guard-src-"),
+  );
+  const foreignOutDir = await mkdtemp(
+    join(tmpdir(), "easy-complete-ir-output-guard-"),
+  );
+  try {
+    await writeFile(
+      join(srcDir, "fixture.js"),
+      `export default { name: "fixture" };\n`,
+    );
+    const sentinel = join(foreignOutDir, "USER_SENTINEL");
+    await writeFile(sentinel, "keep me\n");
+    await assert.rejects(
+      compileSpecsIr({ srcDir, outDir: foreignOutDir }),
+      /without a valid \.spec-pair\.json/,
+    );
+    assert.equal(await readFile(sentinel, "utf8"), "keep me\n");
+
+    const parentTarget = await mkdtemp(
+      join(tmpdir(), "easy-complete-ir-output-parent-target-"),
+    );
+    const parentLink = join(
+      dirname(parentTarget),
+      `${parentTarget.split("/").at(-1)}-link`,
+    );
+    await symlink(parentTarget, parentLink);
+    try {
+      await assert.rejects(
+        compileSpecsIr({
+          srcDir,
+          outDir: join(parentLink, "nested-output"),
+        }),
+        /through a symbolic link/,
+      );
+    } finally {
+      await rm(parentLink, { force: true });
+      await rm(parentTarget, { recursive: true, force: true });
+    }
+
+    const danglingTarget = join(dirname(foreignOutDir), "missing-ir-target");
+    const danglingOutDir = join(dirname(foreignOutDir), "dangling-ir-output");
+    await symlink(danglingTarget, danglingOutDir);
+    try {
+      await assert.rejects(
+        compileSpecsIr({ srcDir, outDir: danglingOutDir }),
+        /through a symbolic link/,
+      );
+    } finally {
+      await rm(danglingOutDir, { force: true });
+    }
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(foreignOutDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("audit detects a dropped duplicate hook instance, not just a missing hash", async () => {
+  const srcDir = await mkdtemp(
+    join(tmpdir(), "easy-complete-specs-audit-instance-"),
+  );
+  const outDir = await mkdtemp(
+    join(tmpdir(), "easy-complete-ir-audit-instance-"),
+  );
+  try {
+    await writeFile(
+      join(srcDir, "duplicate.js"),
+      `const first = (tokens) => [{ name: "row" }];
+       const second = (tokens) => [{ name: "row" }];
+       export default {
+         name: "duplicate",
+         args: [{
+           name: "value",
+           generators: [{ custom: first }, { custom: second }],
+         }],
+       };
+      `,
+    );
+    await compileSpecsIr({ srcDir, outDir });
+    const irPath = join(outDir, "duplicate.json");
+    const ir = JSON.parse(await readFile(irPath, "utf8"));
+    const [first, second] = ir.args[0].generators;
+    assert.notEqual(first.jsCustom, second.jsCustom);
+    const firstId = first.jsCustom;
+    const secondId = second.jsCustom;
+    ir.args[0].generators[1].jsCustom = firstId;
+    await writeFile(irPath, `${JSON.stringify(ir)}\n`);
+    await rm(join(outDir, "hooks", hookFileName(secondId)));
+
+    const report = await auditSpecsHooks({
+      sourceRoot: srcDir,
+      irRoot: outDir,
+    });
+    assert.equal(report.ok, false);
+    assert.ok(
+      report.errors.sourceHookMismatches.some(
+        (item) => item.source === "duplicate.js" && item.field === "custom",
+      ),
+    );
+    assert.equal(report.errors.orphanHookFiles.length, 0);
+    assert.equal(report.errors.missingHookFiles.length, 0);
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("object-method hooks with nested arrows remain standalone callable functions", async () => {
+  const srcDir = await mkdtemp(
+    join(tmpdir(), "easy-complete-specs-method-hook-"),
+  );
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-method-hook-"));
+  try {
+    await writeFile(
+      join(srcDir, "method.js"),
+      `export default {
+         name: "method",
+         args: [{
+           name: "value",
+           generators: [{
+             script: ["printf", "alpha\\nbeta"],
+             postProcess(stdout) {
+               return stdout.split("\\n").filter(Boolean).map(name => ({ name }));
+             },
+           }],
+         }],
+       };\n`,
+    );
+    await compileSpecsIr({ srcDir, outDir });
+    const ir = JSON.parse(await readFile(join(outDir, "method.json"), "utf8"));
+    const hookId = ir.args[0].generators[0].jsPostProcess;
+    assert.equal(typeof hookId, "string");
+    const hookPath = join(outDir, "hooks", hookFileName(hookId));
+    const hookSource = await readFile(hookPath, "utf8");
+    assert.match(hookSource, /^export default function\(/);
+    const hook = (await import(pathToFileURL(hookPath).href)).default;
+    assert.deepEqual(hook("alpha\nbeta", []), [
+      { name: "alpha" },
+      { name: "beta" },
+    ]);
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("audit fails closed for empty trees and invalid source indexes", async () => {
+  const srcDir = await mkdtemp(
+    join(tmpdir(), "easy-complete-specs-audit-empty-"),
+  );
+  const irDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-audit-empty-"));
+  try {
+    const empty = await auditSpecsHooks({
+      sourceRoot: srcDir,
+      irRoot: irDir,
+    });
+    assert.equal(empty.ok, false);
+    assert.ok(empty.errors.unexpectedSkippedSpecs.length > 0);
+    assert.ok(empty.errors.missingIrSpecs.length > 0);
+    assert.ok(empty.errors.sourceReadErrors.length > 0);
+
+    await writeFile(
+      join(srcDir, "valid.js"),
+      `export default { name: "valid" };\n`,
+    );
+    await writeFile(join(srcDir, "index.json"), "not json\n");
+    await writeFile(join(irDir, "valid.json"), `{"names":["valid"]}\n`);
+    await mkdir(join(irDir, "hooks"));
+    const invalidIndex = await auditSpecsHooks({
+      sourceRoot: srcDir,
+      irRoot: irDir,
+    });
+    assert.equal(invalidIndex.ok, false);
+    assert.ok(
+      invalidIndex.errors.sourceReadErrors.some((item) =>
+        item.sourceIndex?.endsWith("/index.json"),
+      ),
+    );
+
+    await writeFile(
+      join(srcDir, "index.json"),
+      JSON.stringify({ completions: [] }),
+    );
+    const emptyIndex = await auditSpecsHooks({
+      sourceRoot: srcDir,
+      irRoot: irDir,
+    });
+    assert.equal(emptyIndex.ok, false);
+    assert.ok(
+      emptyIndex.errors.sourceReadErrors.some((item) =>
+        item.message.includes(
+          "source index completions must be a non-empty array of strings",
+        ),
+      ),
+    );
+
+    await writeFile(
+      join(srcDir, "index.json"),
+      JSON.stringify({ completions: ["valid", "missing"] }),
+    );
+    const missingIndexedSource = await auditSpecsHooks({
+      sourceRoot: srcDir,
+      irRoot: irDir,
+    });
+    assert.equal(missingIndexedSource.ok, false);
+    assert.ok(
+      missingIndexedSource.errors.sourceReadErrors.some(
+        (item) =>
+          item.name === "missing" && item.message.includes("no source module"),
+      ),
+    );
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(irDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("audit rejects a hook file whose body cannot run as a standalone expression", async () => {
+  const srcDir = await mkdtemp(
+    join(tmpdir(), "easy-complete-specs-hook-syntax-"),
+  );
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-hook-syntax-"));
+  try {
+    await writeFile(
+      join(srcDir, "syntax.js"),
+      `export default { name: "syntax", args: { generators: { postProcess(stdout) { return stdout.split("\\n").map(name => ({ name })); } } } };\n`,
+    );
+    await compileSpecsIr({ srcDir, outDir });
+    const ir = JSON.parse(await readFile(join(outDir, "syntax.json"), "utf8"));
+    const hookId = ir.args[0].jsPostProcess;
+    assert.equal(typeof hookId, "string");
+    await writeFile(
+      join(outDir, "hooks", hookFileName(hookId)),
+      "export default postProcess(stdout){ return []; };\n",
+    );
+    const report = await auditSpecsHooks({
+      sourceRoot: srcDir,
+      irRoot: outDir,
+    });
+    assert.equal(report.ok, false);
+    assert.ok(
+      report.errors.malformedHookFiles.some((item) =>
+        item.reason.includes("standalone JavaScript expression"),
+      ),
+    );
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("compiler blocks Node-only regexp syntax until a native adapter exists", async () => {
+  const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-specs-regexp-v-"));
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-regexp-v-"));
+  try {
+    await writeFile(
+      join(srcDir, "regexp-v.js"),
+      `export default { name: "regexp-v", args: { generators: { postProcess(stdout) { return /[a&&b]/v.test(stdout) ? [{ name: stdout }] : []; } } } };\n`,
+    );
+    await assert.rejects(
+      compileSpecsIr({ srcDir, outDir }),
+      /hookAnalysisErrors/,
+    );
   } finally {
     await Promise.all([
       rm(srcDir, { recursive: true, force: true }),

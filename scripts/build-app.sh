@@ -19,12 +19,34 @@ DEFAULT_SPARKLE_APPCAST_URL="https://github.com/codeime/easy-complete/releases/l
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Rust embeds the icons from the repository bundle and the IR compiler below
+# reads that same directory. Refuse a redirected source tree before doing any
+# build work; custom source/output directories are still supported by the
+# standalone scripts, but cannot produce a coherent app through this entrypoint.
+CANONICAL_SPECS_DIR="${REPO_DIR}/bundle/specs"
+CANONICAL_SPECS_IR="${REPO_DIR}/bundle/specs-ir"
+if [ -n "${BUNDLED_SPECS_DIR:-}" ] && [ "$BUNDLED_SPECS_DIR" != "$CANONICAL_SPECS_DIR" ]; then
+  echo "error: build-app.sh requires BUNDLED_SPECS_DIR to be unset or exactly ${CANONICAL_SPECS_DIR}; unset it or use the standalone sync script for a custom output directory" >&2
+  exit 1
+fi
+if [ -n "${EC_SPECS_SRC:-}" ] && [ "$EC_SPECS_SRC" != "$CANONICAL_SPECS_DIR" ]; then
+  echo "error: build-app.sh requires EC_SPECS_SRC to be unset or exactly ${CANONICAL_SPECS_DIR}; unset it or run the standalone compiler for a custom source directory" >&2
+  exit 1
+fi
+if [ -n "${EC_SPECS_IR:-}" ] && [ "$EC_SPECS_IR" != "$CANONICAL_SPECS_IR" ]; then
+  echo "error: build-app.sh requires EC_SPECS_IR to be unset or exactly ${CANONICAL_SPECS_IR}; unset it or run the standalone compiler for a custom IR directory" >&2
+  exit 1
+fi
+
+if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
+  echo "error: Easy Complete release bundles must be built on Apple Silicon macOS" >&2
+  exit 1
+fi
+
 VERSION=$(cargo metadata --no-deps --format-version 1 | python3 -c "import sys,json; print(next(pkg['version'] for pkg in json.load(sys.stdin)['packages'] if pkg['name'] == 'fig_desktop'))")
 
-STAGING_BUNDLE="${REPO_DIR}/build/${APP_DISPLAY}.app"
-MACOS_DIR="${STAGING_BUNDLE}/Contents/MacOS"
-RESOURCES_DIR="${STAGING_BUNDLE}/Contents/Resources"
-FRAMEWORKS_DIR="${STAGING_BUNDLE}/Contents/Frameworks"
+FINAL_BUNDLE="${REPO_DIR}/build/${APP_DISPLAY}.app"
 SPARKLE_APPCAST_URL="${SPARKLE_APPCAST_URL:-$DEFAULT_SPARKLE_APPCAST_URL}"
 SPARKLE_AUTOMATIC_CHECKS="${SPARKLE_AUTOMATIC_CHECKS:-}"
 if [ -z "$SPARKLE_AUTOMATIC_CHECKS" ]; then
@@ -48,48 +70,108 @@ info() { echo -e "${GREEN}==>${NC} $*"; }
 
 cd "$REPO_DIR"
 
-if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
-  echo "error: Easy Complete release bundles must be built on Apple Silicon macOS" >&2
-  exit 1
-fi
+mkdir -p "${REPO_DIR}/build"
+BUILD_WORK_ROOT="$(mktemp -d "${REPO_DIR}/build/.specs-inputs.XXXXXX")"
+STAGING_BUNDLE="${BUILD_WORK_ROOT}/${APP_DISPLAY}.app"
+MACOS_DIR="${STAGING_BUNDLE}/Contents/MacOS"
+RESOURCES_DIR="${STAGING_BUNDLE}/Contents/Resources"
+FRAMEWORKS_DIR="${STAGING_BUNDLE}/Contents/Frameworks"
+SPECS_IR_BUILD_SNAPSHOT="${BUILD_WORK_ROOT}/specs-ir"
+BIN_BUILD_SNAPSHOT="${BUILD_WORK_ROOT}/bin"
+BUILD_HELPER_PID=""
+STOPPING_BUILD=0
+PUBLISHING_BUILD=0
+PRESERVE_BUILD_WORK=0
+BUILD_COMPLETED=0
+BUILD_WORK_IDENTITY="$(/usr/bin/stat -f '%d:%i' "$BUILD_WORK_ROOT")"
 
-# ── 1. Build ──────────────────────────────────────────────────────────────────
-# Distribution build profile (size/perf-optimized). Override with CARGO_PROFILE=release
-# for a faster local iteration build. cargo writes `dist` output to target/dist/ and
-# `release` to target/release/.
-CARGO_PROFILE="${CARGO_PROFILE:-dist}"
-# Honour CARGO_TARGET_DIR; some editors and CI runners redirect it, and reading from
-# ./target would then bundle whatever stale binaries happen to sit there.
-CARGO_OUT_DIR="${CARGO_TARGET_DIR:-target}"
-if [ "$CARGO_PROFILE" = "dev" ]; then
-  TARGET_DIR="${CARGO_OUT_DIR}/debug"
+cleanup_build_work() {
+  if [ "$PRESERVE_BUILD_WORK" -eq 1 ] || [ "$BUILD_COMPLETED" -eq 0 ]; then
+    echo "warning: preserving build work directory after failed or interrupted build: $BUILD_WORK_ROOT" >&2
+    return
+  fi
+  local current_identity
+  current_identity="$(/usr/bin/stat -f '%d:%i' "$BUILD_WORK_ROOT" 2>/dev/null || true)"
+  if [ "$current_identity" != "$BUILD_WORK_IDENTITY" ]; then
+    echo "warning: refusing to remove replaced build work directory: $BUILD_WORK_ROOT" >&2
+    return
+  fi
+  rm -rf -- "$BUILD_WORK_ROOT"
+}
+
+stop_build_work() {
+  local signal="$1"
+  local status="$2"
+  local helper_pid="$BUILD_HELPER_PID"
+  # Bash does not recursively run the same signal trap while it is waiting
+  # inside that trap. Ignore subsequent INT/TERM immediately; the Node helper
+  # arms its own five-second process-group SIGKILL fallback on the first one.
+  trap '' INT TERM
+  if [ "$STOPPING_BUILD" -eq 1 ]; then
+    return
+  fi
+  STOPPING_BUILD=1
+  if [ -z "$helper_pid" ]; then
+    # Close the tiny `command &` -> `$!` assignment window. This script runs
+    # only one background helper at a time, so the final active job is ours.
+    local running_jobs
+    running_jobs="$(jobs -pr)"
+    if [ -n "$running_jobs" ]; then
+      helper_pid="${running_jobs##*$'\n'}"
+    fi
+  fi
+  if [ "$PUBLISHING_BUILD" -eq 1 ] || [ -n "$helper_pid" ]; then
+    PRESERVE_BUILD_WORK=1
+  fi
+  if [ -n "$helper_pid" ]; then
+    if kill -0 "$helper_pid" 2>/dev/null; then
+      kill -s "$signal" "$helper_pid" 2>/dev/null || true
+    fi
+    wait "$helper_pid" 2>/dev/null || true
+    BUILD_HELPER_PID=""
+  fi
+  cleanup_build_work
+  trap - EXIT INT TERM
+  exit "$status"
+}
+
+trap cleanup_build_work EXIT
+trap 'stop_build_work INT 130' INT
+trap 'stop_build_work TERM 143' TERM
+# BUILD_COMPLETED stays zero until publication succeeds. Therefore every
+# foreground helper/assembly error reaches EXIT with the work root preserved,
+# including failures that happen after the background helper has been reaped.
+
+# ── 0. Verify bundled specs ───────────────────────────────────────────────────
+# Keep the source bundle and the native binary's embedded icons in lockstep.
+# The default dependency path is checked without rewriting the tracked bundle;
+# a missing/stale manifest or changed source/config causes a deterministic
+# resync before cargo can embed stale icons. Explicit npm/CDN source overrides
+# retain their historical sync behavior.
+SPECS_IR_PUBLISHED_BY_SYNC=0
+if [ "${BUNDLED_SPECS_SOURCE:-dependency}" = "dependency" ]; then
+  if node "${REPO_DIR}/scripts/sync-bundled-specs.mjs" --check; then
+    info "Bundled specs are fresh."
+  else
+    info "Bundled specs are missing or stale; syncing them now..."
+    node "${REPO_DIR}/scripts/sync-bundled-specs.mjs"
+    SPECS_IR_PUBLISHED_BY_SYNC=1
+  fi
 else
-  TARGET_DIR="${CARGO_OUT_DIR}/${CARGO_PROFILE}"
-fi
-
-info "Building Rust binaries (profile: ${CARGO_PROFILE})..."
-# POSTHOG_ENDPOINT and POSTHOG_API_KEY are baked in at compile time via option_env!().
-# Set both before running this script to enable telemetry, e.g.:
-#   POSTHOG_ENDPOINT=https://analytics.example.com/capture/ \
-#   POSTHOG_API_KEY=phc_xxx \
-#   ./scripts/build-app.sh
-# Either being unset disables telemetry silently.
-POSTHOG_ENDPOINT="${POSTHOG_ENDPOINT:-}" \
-POSTHOG_API_KEY="${POSTHOG_API_KEY:-}" \
-cargo build --profile "$CARGO_PROFILE" -p fig_desktop -p figterm -p ec_cli -p fig_input_method
-
-info "Assembling '${APP_DISPLAY}.app'..."
-rm -rf "$STAGING_BUNDLE"
-mkdir -p "$MACOS_DIR"
-mkdir -p "${RESOURCES_DIR}/themes"
-
-if [ ! -f "${REPO_DIR}/bundle/specs/index.json" ]; then
-  info "Bundled specs are missing; syncing them now..."
+  info "Syncing bundled specs from BUNDLED_SPECS_SOURCE=${BUNDLED_SPECS_SOURCE}..."
   node "${REPO_DIR}/scripts/sync-bundled-specs.mjs"
+  SPECS_IR_PUBLISHED_BY_SYNC=1
 fi
 
-info "Compiling spec IR and JS hooks..."
-node "${REPO_DIR}/scripts/compile-spec-ir.mjs"
+# Compile the runtime IR before Rust so the publication lock below can pin one
+# source/IR generation across rustc's include_bytes! reads and the resource
+# snapshot copied into the final app.
+if [ "$SPECS_IR_PUBLISHED_BY_SYNC" = "0" ]; then
+  info "Compiling spec IR and JS hooks..."
+  node "${REPO_DIR}/scripts/compile-spec-ir.mjs"
+else
+  info "Using the source/IR pair published together by the spec sync..."
+fi
 if [ ! -f "${REPO_DIR}/bundle/specs-ir/index.json" ]; then
   echo "error: spec IR compile did not write index.json" >&2
   exit 1
@@ -98,6 +180,46 @@ if ! find "${REPO_DIR}/bundle/specs-ir/hooks" -name '*.js' -print -quit | grep -
   echo "error: spec IR hooks directory is missing or empty" >&2
   exit 1
 fi
+
+# ── 1. Build ──────────────────────────────────────────────────────────────────
+# Distribution build profile (size/perf-optimized). Override with
+# CARGO_PROFILE=release for a faster local iteration build. The helper reads
+# Cargo's JSON artifact messages and copies this invocation's exact binaries
+# into BIN_BUILD_SNAPSHOT, so target-dir and build-target overrides cannot make
+# the bundle pick up an old path.
+CARGO_PROFILE="${CARGO_PROFILE:-dist}"
+
+info "Auditing and building Rust binaries from one locked spec generation (profile: ${CARGO_PROFILE})..."
+# POSTHOG_ENDPOINT and POSTHOG_API_KEY are baked in at compile time via option_env!().
+# Set both before running this script to enable telemetry, e.g.:
+#   POSTHOG_ENDPOINT=https://analytics.example.com/capture/ \
+#   POSTHOG_API_KEY=phc_xxx \
+#   ./scripts/build-app.sh
+# Either being unset disables telemetry silently.
+POSTHOG_ENDPOINT="${POSTHOG_ENDPOINT:-}" \
+POSTHOG_API_KEY="${POSTHOG_API_KEY:-}" \
+node "${REPO_DIR}/scripts/build-spec-inputs.mjs" \
+  --profile "$CARGO_PROFILE" \
+  --snapshot "$SPECS_IR_BUILD_SNAPSHOT" &
+BUILD_HELPER_PID=$!
+set +e
+wait "$BUILD_HELPER_PID"
+BUILD_HELPER_STATUS=$?
+if [ "$BUILD_HELPER_STATUS" -ne 0 ]; then
+  # The helper refuses to clean a snapshot whose inode changed. Preserve the
+  # outer work root too, otherwise recursive shell cleanup would undo that
+  # fail-safe decision and could delete a raced-in directory.
+  PRESERVE_BUILD_WORK=1
+fi
+BUILD_HELPER_PID=""
+set -e
+if [ "$BUILD_HELPER_STATUS" -ne 0 ]; then
+  exit "$BUILD_HELPER_STATUS"
+fi
+
+info "Assembling '${APP_DISPLAY}.app'..."
+mkdir -p "$MACOS_DIR"
+mkdir -p "${RESOURCES_DIR}/themes"
 
 info "Embedding Sparkle.framework..."
 SPARKLE_FRAMEWORK="${SPARKLE_FRAMEWORK:-$("${REPO_DIR}/scripts/fetch-sparkle.sh")}"
@@ -149,20 +271,26 @@ ${SPARKLE_PUBLIC_KEY_ENTRY}    <key>SUEnableInstallerLauncherService</key>
     ${SPARKLE_INSTALLER_LAUNCHER}
 PLIST
 
-cp "${TARGET_DIR}/${APP_NAME}" "$MACOS_DIR/"
-cp "${TARGET_DIR}/ec"          "$MACOS_DIR/"
-cp "${TARGET_DIR}/ecterm"      "$MACOS_DIR/"
+node "${REPO_DIR}/scripts/build-spec-inputs.mjs" \
+  --verify-snapshot "$SPECS_IR_BUILD_SNAPSHOT"
+cp "${BIN_BUILD_SNAPSHOT}/${APP_NAME}" "$MACOS_DIR/"
+cp "${BIN_BUILD_SNAPSHOT}/ec"          "$MACOS_DIR/"
+cp "${BIN_BUILD_SNAPSHOT}/ecterm"      "$MACOS_DIR/"
 
 cp themes/*.json                       "${RESOURCES_DIR}/themes/"
 # Only specs-ir ships. bundle/specs is build-time input: it feeds the IR compiler
 # above, and ec_gpui embeds its icons with include_bytes!. The .app never reads it.
-if [ -d "${REPO_DIR}/bundle/specs-ir" ]; then
-  cp -R bundle/specs-ir                "${RESOURCES_DIR}/specs-ir"
+node "${REPO_DIR}/scripts/build-spec-inputs.mjs" \
+  --verify-snapshot "$SPECS_IR_BUILD_SNAPSHOT"
+if [ -d "$SPECS_IR_BUILD_SNAPSHOT" ]; then
+  cp -R "$SPECS_IR_BUILD_SNAPSHOT"    "${RESOURCES_DIR}/specs-ir"
 fi
 if ! find "${RESOURCES_DIR}/specs-ir/hooks" -name '*.js' -print -quit | grep -q .; then
   echo "error: app bundle is missing specs-ir/hooks" >&2
   exit 1
 fi
+EC_SPECS_IR="${RESOURCES_DIR}/specs-ir" \
+  node "${REPO_DIR}/scripts/spec-pair.mjs" --ir-only
 
 LICENSES_DIR="${RESOURCES_DIR}/Licenses"
 mkdir -p "$LICENSES_DIR"
@@ -174,9 +302,13 @@ cp LICENSE NOTICE THIRD_PARTY_NOTICES.txt "$LICENSES_DIR/"
 IM_APP="${STAGING_BUNDLE}/Contents/Helpers/EasyCompleteInputMethod.app"
 mkdir -p "${IM_APP}/Contents/MacOS"
 mkdir -p "${IM_APP}/Contents/Resources"
-cp "${TARGET_DIR}/fig_input_method"   "${IM_APP}/Contents/MacOS/"
+node "${REPO_DIR}/scripts/build-spec-inputs.mjs" \
+  --verify-snapshot "$SPECS_IR_BUILD_SNAPSHOT"
+cp "${BIN_BUILD_SNAPSHOT}/fig_input_method" "${IM_APP}/Contents/MacOS/"
 cp "crates/fig_input_method/Info.plist" "${IM_APP}/Contents/"
 cp crates/fig_input_method/resources/*  "${IM_APP}/Contents/Resources/" 2>/dev/null || true
+node "${REPO_DIR}/scripts/build-spec-inputs.mjs" \
+  --verify-snapshot "$SPECS_IR_BUILD_SNAPSHOT"
 
 while IFS= read -r -d '' binary; do
   if file -b "$binary" | grep -q "Mach-O"; then
@@ -255,4 +387,33 @@ codesign --force --deep --sign - "${FRAMEWORKS_DIR}/Sparkle.framework" 2>/dev/nu
 codesign --force --deep --sign - "${IM_APP}" 2>/dev/null || true
 codesign --force --deep --sign - "${STAGING_BUNDLE}" 2>/dev/null || true
 
-info "Built: ${STAGING_BUNDLE}"
+ATOMIC_SWAP_HELPER="${BUILD_WORK_ROOT}/atomic-swap-darwin"
+/usr/bin/xcrun clang \
+  -Os -Wall -Wextra -Werror \
+  -mmacosx-version-min=12.0 \
+  "${REPO_DIR}/scripts/atomic-swap-darwin.c" \
+  -o "$ATOMIC_SWAP_HELPER"
+
+PUBLISHING_BUILD=1
+node "${REPO_DIR}/scripts/publish-app-bundle.mjs" \
+  --staging "$STAGING_BUNDLE" \
+  --final "$FINAL_BUNDLE" \
+  --swap-helper "$ATOMIC_SWAP_HELPER" &
+BUILD_HELPER_PID=$!
+set +e
+wait "$BUILD_HELPER_PID"
+PUBLISH_HELPER_STATUS=$?
+if [ "$PUBLISH_HELPER_STATUS" -ne 0 ]; then
+  # Publication failures are fail-safe: a non-cooperating process may have
+  # raced a pathname into the work root. Never recursively clean that tree.
+  PRESERVE_BUILD_WORK=1
+fi
+BUILD_HELPER_PID=""
+set -e
+if [ "$PUBLISH_HELPER_STATUS" -ne 0 ]; then
+  exit "$PUBLISH_HELPER_STATUS"
+fi
+PUBLISHING_BUILD=0
+BUILD_COMPLETED=1
+
+info "Built: ${FINAL_BUNDLE}"

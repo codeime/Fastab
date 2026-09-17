@@ -1,0 +1,194 @@
+{
+  "cases": [
+    {
+      "name": "all-candidates",
+      "request": {
+        "buffer": "phase1 "
+      },
+      "result": {
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "alias_names": ["config"],
+            "args_hint": "",
+            "description": "Read configuration",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "config",
+            "priority": 90,
+            "should_add_space": false
+          },
+          {
+            "alias_names": ["publish", "pub"],
+            "args_hint": "<target>",
+            "description": "Publish package",
+            "display_name": "publish package",
+            "hidden": false,
+            "insert_value": "phase1 publish",
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "publish",
+            "priority": 70,
+            "requires_arg": true,
+            "should_add_space": true
+          },
+          {
+            "alias_names": ["--verbose", "-v"],
+            "args_hint": "<level>",
+            "description": "Enable verbose output",
+            "display_name": "verbosity",
+            "hidden": false,
+            "icon": "fig://icon?type=gear",
+            "insert_value": "--verbose",
+            "is_dangerous": false,
+            "kind": "option",
+            "name": "--verbose",
+            "priority": 65,
+            "requires_arg": true,
+            "separator_to_add": "=",
+            "should_add_space": true
+          },
+          {
+            "alias_names": ["clean"],
+            "args_hint": "",
+            "description": "Clean outputs",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "clean",
+            "priority": 60,
+            "should_add_space": false
+          },
+          {
+            "alias_names": ["clone"],
+            "args_hint": "",
+            "description": "Clone source",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "clone",
+            "priority": 60,
+            "should_add_space": false
+          },
+          {
+            "alias_names": ["context"],
+            "args_hint": "",
+            "description": "Show context",
+            "display_name": "context info",
+            "hidden": false,
+            "insert_value": "phase1 context",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "context",
+            "priority": 55,
+            "should_add_space": true
+          },
+          {
+            "alias_names": ["--output", "-o"],
+            "args_hint": "<path>",
+            "description": "Write output path",
+            "display_name": "--output, -o",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "option",
+            "name": "--output",
+            "priority": 40,
+            "requires_arg": true,
+            "separator_to_add": ":",
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "prefix-search-and-priority-sort",
+      "request": {
+        "buffer": "phase1 c"
+      },
+      "result": {
+        "fuzzy": false,
+        "match_term": "c",
+        "search_term": "c",
+        "suggestions": [
+          {
+            "alias_names": ["config"],
+            "args_hint": "",
+            "description": "Read configuration",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "config",
+            "priority": 90,
+            "should_add_space": false
+          },
+          {
+            "alias_names": ["clean"],
+            "args_hint": "",
+            "description": "Clean outputs",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "clean",
+            "priority": 60,
+            "should_add_space": false
+          },
+          {
+            "alias_names": ["clone"],
+            "args_hint": "",
+            "description": "Clone source",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "clone",
+            "priority": 60,
+            "should_add_space": false
+          },
+          {
+            "alias_names": ["context"],
+            "args_hint": "",
+            "description": "Show context",
+            "display_name": "context info",
+            "hidden": false,
+            "insert_value": "phase1 context",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "context",
+            "priority": 55,
+            "should_add_space": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "option-insertion-metadata",
+      "request": {
+        "buffer": "phase1 --v"
+      },
+      "result": {
+        "fuzzy": false,
+        "match_term": "--v",
+        "search_term": "--v",
+        "suggestions": [
+          {
+            "alias_names": ["--verbose", "-v"],
+            "args_hint": "<level>",
+            "description": "Enable verbose output",
+            "display_name": "verbosity",
+            "hidden": false,
+            "icon": "fig://icon?type=gear",
+            "insert_value": "--verbose",
+            "is_dangerous": false,
+            "kind": "option",
+            "name": "--verbose",
+            "priority": 65,
+            "requires_arg": true,
+            "separator_to_add": "=",
+            "should_add_space": true
+          }
+        ]
+      }
+    }
+  ]
+}

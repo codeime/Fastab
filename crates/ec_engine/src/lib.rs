@@ -14,6 +14,13 @@ mod process;
 mod query;
 mod rank;
 mod runtime;
+mod snapshot;
+mod spec_pair;
+// Native sidecar loading will consume this API in the next migration slice.
+// Keep the not-yet-wired parser/evaluator test-only until that production path
+// is reviewed and connected.
+#[cfg(test)]
+mod typed_hook;
 mod worker;
 
 pub use ir::{ArgSpec, Builtin, OptionSpec, Registry, Spec, Template};
