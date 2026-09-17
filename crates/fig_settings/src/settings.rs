@@ -21,8 +21,33 @@ mod inner {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static OVERRIDE: std::cell::RefCell<Option<Settings>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub struct SettingsOverrideGuard;
+
+#[cfg(test)]
+impl Drop for SettingsOverrideGuard {
+    fn drop(&mut self) {
+        OVERRIDE.with(|cell| *cell.borrow_mut() = None);
+    }
+}
+
+#[cfg(test)]
+pub fn install_override(settings: Settings) -> SettingsOverrideGuard {
+    OVERRIDE.with(|cell| *cell.borrow_mut() = Some(settings));
+    SettingsOverrideGuard
+}
+
 impl Settings {
     pub fn new() -> Self {
+        #[cfg(test)]
+        if let Some(settings) = OVERRIDE.with(|cell| cell.borrow().clone()) {
+            return settings;
+        }
         Self(inner::Inner::Real)
     }
 
