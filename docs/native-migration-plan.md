@@ -8,7 +8,7 @@
 2. **仅在 dev/test 双路径比较。** 正式运行路径在全部 bundled hook 达标前不切换。
 3. **发布门槛是依赖树 + 包内容 + 回归测试**，不是“代码删掉了”。
 
-进度、数字与 gate 的单一事实来源是 `crates/ec_engine/testdata/native-hooks/inventory.json`（`node scripts/classify-native-hooks.mjs --check|--update`，CI 校验）。下面所有数字均来自 `@chen86860/autocomplete-specs@3.1.0` 的这份清单。
+逐任务的执行说明（改哪些文件、验收命令）在 `docs/native-migration-tasks.md`。进度、数字与 gate 的单一事实来源是 `crates/ec_engine/testdata/native-hooks/inventory.json`（`node scripts/classify-native-hooks.mjs --check|--update`，CI 校验）。下面所有数字均来自 `@chen86860/autocomplete-specs@3.1.0` 的这份清单。
 
 ## 0. 现状快照（v3.0.0-beta.14）
 
