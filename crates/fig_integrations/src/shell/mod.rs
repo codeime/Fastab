@@ -633,10 +633,10 @@ impl DotfileShellIntegration {
             .join("|");
         let eval_line = match self.shell {
             Shell::Fish => format!(
-                r"(?:command -qv {cli}; and |command -v {cli} >/dev/null 2>&1; and |test -x ~/\\.local/bin/{cli}; and )?eval \((?:~/\\.local/bin/)?{cli} init {shell} {when_s}(?: --rcfile \S+)? \| string split0\)"
+                r"(?:command -qv {cli}; and |command -v {cli} >/dev/null 2>&1; and |test -x ~/\.local/bin/{cli}; and )?eval \((?:~/\.local/bin/)?{cli} init {shell} {when_s}(?: --rcfile \S+)? \| string split0\)"
             ),
             _ => format!(
-                r#"(?:\[ -n "\$BASH_VERSION" \] && )?(?:command -v {cli} >/dev/null 2>&1 && |\[ -x ~/\\.local/bin/{cli} \] && )?eval "\$\((?:~/\\.local/bin/)?{cli} init {shell} {when_s}(?: --rcfile \S+)?\)""#
+                r#"(?:\[ -n "\$BASH_VERSION" \] && )?(?:command -v {cli} >/dev/null 2>&1 && |\[ -x ~/\.local/bin/{cli} \] && )?eval "\$\((?:~/\.local/bin/)?{cli} init {shell} {when_s}(?: --rcfile \S+)?\)""#
             ),
         };
         let path_prefix = match when {
