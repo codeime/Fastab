@@ -29,6 +29,7 @@ import { comparePath, verifyPair } from "./spec-pair.mjs";
 import { writeReferenceFile } from "./reference-safe-io.mjs";
 import {
   HOOK_MODULE_MANIFEST,
+  SUPPORTED_HOOK_FIELDS,
   TYPED_HOOK_DESCRIPTOR_MAX_BYTES,
   TYPED_HOOK_ID_MAX_BYTES,
   TYPED_HOOK_MODULE_MAX_BYTES,
@@ -39,7 +40,13 @@ import {
   hookFileName,
   utf8ByteLength,
 } from "./spec-hook-contract.mjs";
-import { compileTypedHook, validateTypedHookIr } from "./typed-hook-ir.mjs";
+import {
+  TYPED_HOOK_SIDECAR_FIELDS,
+  compileTypedHook,
+  evaluateTypedHookJson,
+  typedHookSidecarContracts,
+  validateTypedHookIr,
+} from "./typed-hook-ir.mjs";
 
 const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultSourceRoot = join(repoDir, "bundle", "specs");
@@ -101,6 +108,60 @@ export const GET_QUERY_TERM_INPUT_CORPUS = Object.freeze([
 export const GET_QUERY_TERM_REFERENCE_BASELINE_VERSION = 1;
 export const GET_QUERY_TERM_REFERENCE_BASELINE_KIND =
   "typed-get-query-term-reference";
+export const FIELD_REFERENCE_BASELINE_VERSION = 1;
+export const FIELD_REFERENCE_BASELINE_KIND = "typed-field-reference";
+
+export const SCRIPT_INPUT_CORPUS = Object.freeze([
+  Object.freeze({ id: "root-only", args: [Object.freeze(["git"])] }),
+  Object.freeze({
+    id: "with-subcommand",
+    args: [Object.freeze(["git", "checkout"])],
+  }),
+  Object.freeze({
+    id: "with-flag",
+    args: [Object.freeze(["git", "log", "--oneline"])],
+  }),
+]);
+export const POST_PROCESS_INPUT_CORPUS = Object.freeze([
+  Object.freeze({ id: "empty", args: ["", Object.freeze(["git"])] }),
+  Object.freeze({
+    id: "malformed",
+    args: ["not json\n{{{", Object.freeze(["git"])],
+  }),
+  Object.freeze({
+    id: "lines",
+    args: ["main\nfeature\n", Object.freeze(["git", "checkout"])],
+  }),
+]);
+export const FILTER_INPUT_CORPUS = Object.freeze([
+  Object.freeze({
+    id: "mixed",
+    args: [
+      Object.freeze([
+        Object.freeze({ name: "src", type: "folder" }),
+        Object.freeze({ name: "src/main.rs", type: "file" }),
+        Object.freeze({ name: "README.md", type: "file" }),
+        Object.freeze({ name: "node_modules", type: "folder" }),
+        Object.freeze({ name: ".gitignore", type: "file" }),
+        Object.freeze({ name: "dist", type: "folder" }),
+        Object.freeze({ name: "package.json", type: "file" }),
+        Object.freeze({ name: ".env", type: "file" }),
+      ]),
+    ],
+  }),
+]);
+
+export function defaultFieldBaselinePath(field) {
+  if (field === "trigger") return defaultBaseline;
+  return join(
+    repoDir,
+    "crates",
+    "ec_engine",
+    "testdata",
+    "typed-hooks",
+    `${field}-reference.json`,
+  );
+}
 
 // Keep these cases deliberately independent of today's command/spec list. The
 // trigger contract is [search, previous], and every value is a plain string.
@@ -127,9 +188,18 @@ export const INPUT_CORPUS = Object.freeze([
   Object.freeze({ id: "decomposed-unicode", args: ["café/", "café/"] }),
 ]);
 
+export const FIELD_REFERENCE_CORPORA = Object.freeze({
+  trigger: INPUT_CORPUS,
+  getQueryTerm: GET_QUERY_TERM_INPUT_CORPUS,
+  script: SCRIPT_INPUT_CORPUS,
+  postProcess: POST_PROCESS_INPUT_CORPUS,
+  filterTemplateSuggestions: FILTER_INPUT_CORPUS,
+});
+
 const HARNESS_FILES = Object.freeze([
   "scripts/audit-spec-hooks.mjs",
   "scripts/capture-hook-reference.mjs",
+  "scripts/capture-typed-reference.mjs",
   "scripts/capture-typed-trigger-reference.mjs",
   "scripts/filepaths-helper.mjs",
   "scripts/reference-audit-worker.mjs",
@@ -625,23 +695,34 @@ function auditedSourceInstance(audit, hookId) {
   return null;
 }
 
-function auditedTypedIds(audit, sidecar, hookManifest) {
+function sidecarHooksForField(sidecar, field) {
+  return Object.fromEntries(
+    Object.entries(sidecar.hooks).filter(
+      ([, entry]) => isRecord(entry) && entry.sourceField === field,
+    ),
+  );
+}
+
+function auditedTypedIds(audit, sidecar, hookManifest, field = "trigger") {
   const auditManifest = new Map(
     (audit.hookManifest ?? []).map((entry) => [entry.id, entry]),
   );
   const closureManifest = new Map(Object.entries(hookManifest.hooks));
-  const ids = sortedIds(Object.keys(sidecar.hooks));
-  if (ids.length === 0) throw new Error("typed hook sidecar has no hooks");
+  const ids = sortedIds(Object.keys(sidecarHooksForField(sidecar, field)));
+  if (ids.length === 0) {
+    throw new Error(`typed hook sidecar has no ${field} hooks`);
+  }
+  const irField = SUPPORTED_HOOK_FIELDS[field];
   for (const id of ids) {
     const entry = sidecar.hooks[id];
-    if (!isRecord(entry) || entry.sourceField !== "trigger") {
-      throw new Error(`typed hook ${id} has an invalid trigger entry`);
+    if (!isRecord(entry) || entry.sourceField !== field) {
+      throw new Error(`typed hook ${id} has an invalid ${field} entry`);
     }
     const audited = auditManifest.get(id);
     const descriptor = closureManifest.get(id);
     const source = auditedSourceInstance(audit, id);
-    if (!audited || audited.field !== "jsTrigger" || !source) {
-      throw new Error(`typed hook ${id} is not a strict audited trigger`);
+    if (!audited || audited.field !== irField || !source) {
+      throw new Error(`typed hook ${id} is not a strict audited ${field}`);
     }
     if (!descriptor) {
       throw new Error(`typed hook ${id} is missing from the closure manifest`);
@@ -651,7 +732,7 @@ function auditedTypedIds(audit, sidecar, hookManifest) {
       audited.file !== hookFileName(id) ||
       audited.ir !== source.record.ir ||
       !/^[a-f0-9]{64}$/.test(audited.sha256) ||
-      source.sourceField !== "trigger" ||
+      source.sourceField !== field ||
       descriptor.path !== source.instance.path ||
       descriptor.sourceField !== source.sourceField ||
       descriptor.functionBodySha256 !== source.instance.sha256 ||
@@ -979,7 +1060,12 @@ export async function buildTypedTriggerReference(options = {}) {
       hookManifestSha256: evidence.hookManifestSha256,
       sidecarSha256: evidence.sidecarSha256,
       cases: clone(cases),
-      catalog: clone(evidence.sidecar),
+      catalog: {
+        version: evidence.sidecar.version,
+        kind: evidence.sidecar.kind,
+        contracts: clone(evidence.sidecar.contracts),
+        hooks: sidecarHooksForField(evidence.sidecar, "trigger"),
+      },
       expected,
     };
     validateReferenceBaseline(baseline);
@@ -1405,19 +1491,16 @@ function validateReferenceBaseline(value) {
   ) {
     throw new Error("baseline catalog schema is invalid");
   }
-  assertKnownFields(value.catalog.contracts, ["trigger"], "baseline contracts");
   assertKnownFields(
-    value.catalog.contracts.trigger,
-    ["irVersion", "params", "resultType"],
-    "baseline trigger contract",
+    value.catalog.contracts,
+    [...TYPED_HOOK_SIDECAR_FIELDS],
+    "baseline contracts",
   );
   if (
-    value.catalog.contracts.trigger.irVersion !== 1 ||
-    stableJson(value.catalog.contracts.trigger.params) !==
-      stableJson(["string", "string"]) ||
-    value.catalog.contracts.trigger.resultType !== "bool"
+    stableJson(value.catalog.contracts) !==
+    stableJson(typedHookSidecarContracts())
   ) {
-    throw new Error("baseline trigger contract is invalid");
+    throw new Error("baseline contracts do not match the sidecar contracts");
   }
   for (const [id, entry] of Object.entries(value.catalog.hooks)) {
     if (
@@ -1587,49 +1670,358 @@ export async function updateTypedTriggerReference(options = {}) {
   };
 }
 
-const isMain =
-  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+function assertFieldCorpus(field, cases) {
+  if (!TYPED_HOOK_SIDECAR_FIELDS.includes(field) || field === "trigger") {
+    throw new Error(`typed field reference does not cover ${field}`);
+  }
+  if (!Array.isArray(cases) || cases.length === 0) {
+    throw new Error(`typed ${field} reference corpus must be non-empty`);
+  }
+  if (cases.length > MAX_CORPUS_CASES) {
+    throw new Error(`typed ${field} reference corpus exceeds ${MAX_CORPUS_CASES}`);
+  }
+  const ids = new Set();
+  for (const item of cases) {
+    assertKnownFields(item, ["id", "args"], `${field} reference corpus case`);
+    if (
+      typeof item.id !== "string" ||
+      !item.id ||
+      ids.has(item.id) ||
+      utf8ByteLength(item.id) > TYPED_HOOK_ID_MAX_BYTES ||
+      !isSafeCorpusText(item.id, { caseId: true })
+    ) {
+      throw new Error(`${field} reference corpus case ids must be unique safe strings`);
+    }
+    if (!Array.isArray(item.args) || JSON.stringify(item).includes("$referenceExec")) {
+      throw new Error(`${field} reference corpus must not contain an executor marker`);
+    }
+    ids.add(item.id);
+  }
+}
 
-if (isMain) {
-  const update = process.argv.includes("--update");
-  const check = process.argv.includes("--check");
-  const getQueryTerm = process.argv.includes("--get-query-term");
+function typedEvalError(error) {
+  return {
+    kind: "error",
+    name: error instanceof Error ? error.name : "Error",
+    message: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function typedEvalExpected(sidecar, field, cases) {
+  const hooks = sidecarHooksForField(sidecar, field);
+  const expected = {};
+  for (const [id, entry] of Object.entries(hooks)) {
+    expected[id] = cases.map((item) => {
+      try {
+        return evaluateTypedHookJson(entry.descriptor, item.args);
+      } catch (error) {
+        // These hooks compile, but this synthetic corpus can hit a runtime
+        // TypeError (null.includes, etc.). Record the throw instead of
+        // returning an empty result; empty is only valid when the hook
+        // itself produced it.
+        return typedEvalError(error);
+      }
+    });
+  }
+  return expected;
+}
+
+function validateFieldReferenceBaseline(value, field) {
+  assertKnownFields(
+    value,
+    [
+      "version",
+      "kind",
+      "field",
+      "generatorSha256",
+      "harnessSha256",
+      "pairSha256",
+      "hookManifestSha256",
+      "sidecarSha256",
+      "cases",
+      "catalog",
+      "expected",
+    ],
+    `typed ${field} reference baseline`,
+  );
+  if (
+    value.version !== FIELD_REFERENCE_BASELINE_VERSION ||
+    value.kind !== FIELD_REFERENCE_BASELINE_KIND ||
+    value.field !== field
+  ) {
+    throw new Error(`typed ${field} reference baseline version, kind, or field is invalid`);
+  }
+  for (const name of [
+    "generatorSha256",
+    "harnessSha256",
+    "pairSha256",
+    "hookManifestSha256",
+    "sidecarSha256",
+  ]) {
+    assertSha(value[name], `${field} baseline ${name}`);
+  }
+  assertFieldCorpus(field, value.cases);
+  assertKnownFields(
+    value.catalog,
+    ["version", "kind", "contracts", "hooks"],
+    `${field} baseline catalog`,
+  );
+  if (
+    value.catalog.version !== TYPED_HOOK_SIDECAR_VERSION ||
+    value.catalog.kind !== TYPED_HOOK_SIDECAR_KIND ||
+    stableJson(value.catalog.contracts) !== stableJson(typedHookSidecarContracts())
+  ) {
+    throw new Error(`${field} baseline catalog schema is invalid`);
+  }
+  for (const [id, entry] of Object.entries(value.catalog.hooks)) {
+    if (entry.sourceField !== field) {
+      throw new Error(`${field} baseline catalog hook ${id} has the wrong sourceField`);
+    }
+    validateTypedHookIr(entry.descriptor);
+  }
+  const catalogIds = sortedIds(Object.keys(value.catalog.hooks));
+  const expectedIds = sortedIds(Object.keys(value.expected));
+  if (
+    catalogIds.length !== expectedIds.length ||
+    catalogIds.some((id, index) => id !== expectedIds[index])
+  ) {
+    throw new Error(`${field} baseline expected ids do not match catalog ids`);
+  }
+  for (const id of expectedIds) {
+    const values = value.expected[id];
+    if (!Array.isArray(values) || values.length !== value.cases.length) {
+      throw new Error(`${field} baseline expected values for ${id} are incomplete`);
+    }
+  }
+  if (utf8ByteLength(JSON.stringify(value)) > MAX_BASELINE_BYTES) {
+    throw new Error(`typed ${field} reference baseline exceeds ${MAX_BASELINE_BYTES}`);
+  }
+  return value;
+}
+
+export async function buildTypedFieldReference(options = {}) {
+  rejectPublicAuditOption(options, "buildTypedFieldReference", [
+    "sourceRoot",
+    "irRoot",
+    "field",
+    "cases",
+  ]);
+  const {
+    sourceRoot = defaultSourceRoot,
+    irRoot = defaultIrRoot,
+    field,
+    cases = FIELD_REFERENCE_CORPORA[field],
+  } = options;
+  if (!TYPED_HOOK_SIDECAR_FIELDS.includes(field) || field === "trigger") {
+    throw new Error("buildTypedFieldReference requires a non-trigger sidecar field");
+  }
+  assertFieldCorpus(field, cases);
+  return withReferenceAudit({ sourceRoot, irRoot }, async (audit) => {
+    const evidence = await loadEvidence({ sourceRoot, irRoot, audit });
+    const ids = auditedTypedIds(
+      evidence.audit,
+      evidence.sidecar,
+      evidence.hookManifest,
+      field,
+    );
+    const catalog = {
+      version: evidence.sidecar.version,
+      kind: evidence.sidecar.kind,
+      contracts: clone(evidence.sidecar.contracts),
+      hooks: sidecarHooksForField(evidence.sidecar, field),
+    };
+    if (stableJson(sortedIds(Object.keys(catalog.hooks))) !== stableJson(ids)) {
+      throw new Error(`typed ${field} catalog ids do not match audited sidecar hooks`);
+    }
+    const expected = typedEvalExpected(evidence.sidecar, field, cases);
+    const afterPair = await verifyPair({ sourceRoot, irRoot });
+    if (afterPair.pairSha256 !== evidence.pair.pairSha256) {
+      throw new Error(`source/IR pair changed while evaluating typed ${field}`);
+    }
+    const generatorSha256 = sha256(
+      await readRegular(
+        repoDir,
+        "scripts/compile-spec-ir.mjs",
+        "compiler generator",
+      ),
+    );
+    const harnessSha256 = await hashFiles(HARNESS_FILES);
+    const baseline = {
+      version: FIELD_REFERENCE_BASELINE_VERSION,
+      kind: FIELD_REFERENCE_BASELINE_KIND,
+      field,
+      generatorSha256,
+      harnessSha256,
+      pairSha256: evidence.pair.pairSha256,
+      hookManifestSha256: evidence.hookManifestSha256,
+      sidecarSha256: evidence.sidecarSha256,
+      cases: clone(cases),
+      catalog,
+      expected,
+    };
+    validateFieldReferenceBaseline(baseline, field);
+    return baseline;
+  });
+}
+
+export async function checkTypedFieldReference(options = {}) {
+  rejectPublicAuditOption(options, "checkTypedFieldReference", [
+    "sourceRoot",
+    "irRoot",
+    "field",
+    "baselinePath",
+    "cases",
+  ]);
+  const {
+    sourceRoot = defaultSourceRoot,
+    irRoot = defaultIrRoot,
+    field,
+    baselinePath = defaultFieldBaselinePath(field),
+    cases = FIELD_REFERENCE_CORPORA[field],
+  } = options;
+  const baselineText = await readSafeAbsolute(
+    baselinePath,
+    `typed ${field} reference baseline`,
+  );
+  if (utf8ByteLength(baselineText) > MAX_BASELINE_BYTES) {
+    throw new Error(`typed ${field} reference baseline is too large`);
+  }
+  let baseline;
+  try {
+    baseline = JSON.parse(baselineText);
+  } catch (error) {
+    throw new Error(`typed ${field} reference baseline is invalid JSON`, {
+      cause: error,
+    });
+  }
+  validateFieldReferenceBaseline(baseline, field);
+  const actual = await buildTypedFieldReference({
+    sourceRoot,
+    irRoot,
+    field,
+    cases,
+  });
+  if (baselineText !== `${JSON.stringify(actual)}\n`) {
+    throw new Error(
+      `typed ${field} reference baseline is stale or differs from the current typed evaluation`,
+    );
+  }
+  return {
+    baseline,
+    hooks: Object.keys(actual.expected).length,
+    cases: actual.cases.length,
+  };
+}
+
+export async function updateTypedFieldReference(options = {}) {
+  rejectPublicAuditOption(options, "updateTypedFieldReference", [
+    "sourceRoot",
+    "irRoot",
+    "field",
+    "baselinePath",
+    "cases",
+  ]);
+  const {
+    sourceRoot = defaultSourceRoot,
+    irRoot = defaultIrRoot,
+    field,
+    baselinePath = defaultFieldBaselinePath(field),
+    cases = FIELD_REFERENCE_CORPORA[field],
+  } = options;
+  const baseline = await buildTypedFieldReference({
+    sourceRoot,
+    irRoot,
+    field,
+    cases,
+  });
+  const text = `${JSON.stringify(baseline)}\n`;
+  await writeSafeAbsolute(baselinePath, text, `typed ${field} reference baseline`);
+  return {
+    baseline,
+    hooks: Object.keys(baseline.expected).length,
+    cases: baseline.cases.length,
+    bytes: utf8ByteLength(text),
+  };
+}
+
+export async function runCaptureCli(argv = process.argv) {
+  const update = argv.includes("--update");
+  const check = argv.includes("--check");
+  const getQueryTerm = argv.includes("--get-query-term");
   const modeCount = Number(update) + Number(check);
   const getOption = (name, fallback) => {
     const prefix = `${name}=`;
-    const value = process.argv.find((arg) => arg.startsWith(prefix));
-    return value ? value.slice(prefix.length) : fallback;
+    const inline = argv.find((arg) => arg.startsWith(prefix));
+    if (inline) return inline.slice(prefix.length);
+    const index = argv.indexOf(name);
+    if (index >= 0 && argv[index + 1] && !argv[index + 1].startsWith("-")) {
+      return argv[index + 1];
+    }
+    return fallback;
   };
+  const field = getOption("--field", getQueryTerm ? null : "trigger");
   if (modeCount !== 1) {
     process.stderr.write(
       "error: choose exactly one of --update or --check; baseline is never changed by default\n",
     );
     process.exitCode = 2;
-  } else {
-    try {
-      const options = {
-        sourceRoot: getOption("--source-root", defaultSourceRoot),
-        irRoot: getOption("--ir-root", defaultIrRoot),
-        baselinePath: getOption(
-          "--baseline",
-          getQueryTerm ? defaultGetQueryTermBaseline : defaultBaseline,
-        ),
-      };
-      const result = getQueryTerm
-        ? update
-          ? await updateTypedGetQueryTermReference(options)
-          : await checkTypedGetQueryTermReference(options)
-        : update
-          ? await updateTypedTriggerReference(options)
-          : await checkTypedTriggerReference(options);
-      process.stdout.write(
-        `${update ? "Updated" : "Verified"} ${getQueryTerm ? "typed getQueryTerm" : "typed trigger"} reference: ${result.hooks} hooks x ${result.cases} cases${result.bytes ? ` (${result.bytes} bytes)` : ""}\n`,
-      );
-    } catch (error) {
-      process.stderr.write(
-        `typed trigger reference ${update ? "update" : "check"} failed: ${error instanceof Error ? error.message : error}\n`,
-      );
-      process.exitCode = 1;
-    }
+    return;
   }
+  if (getQueryTerm && field && field !== "getQueryTerm") {
+    process.stderr.write(
+      "error: --get-query-term cannot be combined with a different --field\n",
+    );
+    process.exitCode = 2;
+    return;
+  }
+  if (field && !TYPED_HOOK_SIDECAR_FIELDS.includes(field) && !getQueryTerm) {
+    process.stderr.write(
+      `error: --field must be one of ${TYPED_HOOK_SIDECAR_FIELDS.join(", ")}\n`,
+    );
+    process.exitCode = 2;
+    return;
+  }
+  try {
+    const options = {
+      sourceRoot: getOption("--source-root", defaultSourceRoot),
+      irRoot: getOption("--ir-root", defaultIrRoot),
+    };
+    let result;
+    let label;
+    if (getQueryTerm) {
+      options.baselinePath = getOption("--baseline", defaultGetQueryTermBaseline);
+      result = update
+        ? await updateTypedGetQueryTermReference(options)
+        : await checkTypedGetQueryTermReference(options);
+      label = "typed getQueryTerm";
+    } else if (field === "trigger") {
+      options.baselinePath = getOption("--baseline", defaultBaseline);
+      result = update
+        ? await updateTypedTriggerReference(options)
+        : await checkTypedTriggerReference(options);
+      label = "typed trigger";
+    } else {
+      options.field = field;
+      options.baselinePath = getOption("--baseline", defaultFieldBaselinePath(field));
+      result = update
+        ? await updateTypedFieldReference(options)
+        : await checkTypedFieldReference(options);
+      label = `typed ${field}`;
+    }
+    process.stdout.write(
+      `${update ? "Updated" : "Verified"} ${label} reference: ${result.hooks} hooks x ${result.cases} cases${result.bytes ? ` (${result.bytes} bytes)` : ""}\n`,
+    );
+  } catch (error) {
+    process.stderr.write(
+      `typed reference ${update ? "update" : "check"} failed: ${error instanceof Error ? error.message : error}\n`,
+    );
+    process.exitCode = 1;
+  }
+}
+
+const isMain =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isMain) {
+  await runCaptureCli(process.argv);
 }

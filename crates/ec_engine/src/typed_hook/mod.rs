@@ -3,11 +3,11 @@
 //! The JavaScript compiler emits this descriptor at build time.  This module
 //! deliberately does not know a command name or a hook id: it accepts the
 //! versioned field contracts and evaluates the expression supplied by that
-//! contract.  Production sidecars still emit `trigger` only; the other field
-//! contracts exist so research descriptors and T2.1 goldens share one parser.
-//! Keeping the JSON boundary strict is important here.  A new operation or a
-//! field with a different meaning must be rejected until both the compiler and
-//! this evaluator have been updated.
+//! contract.  Production sidecars emit every side-effect-free field that
+//! compiles; this evaluator stays `#[cfg(test)]` until T3.1 wires it into the
+//! completion path.  Keeping the JSON boundary strict is important here.  A
+//! new operation or a field with a different meaning must be rejected until
+//! both the compiler and this evaluator have been updated.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -16,10 +16,23 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 
+use crate::js_host::ScriptCommand;
+use crate::runtime::Suggestion;
+
 const IR_VERSION: u64 = 1;
 const IR_KIND: &str = "typed-hook-expression";
 const SOURCE_FIELD: &str = "trigger";
 const GET_QUERY_TERM_SOURCE_FIELD: &str = "getQueryTerm";
+const POST_PROCESS_SOURCE_FIELD: &str = "postProcess";
+const SCRIPT_SOURCE_FIELD: &str = "script";
+const FILTER_TEMPLATE_SUGGESTIONS_SOURCE_FIELD: &str = "filterTemplateSuggestions";
+const SIDECAR_SOURCE_FIELDS: [&str; 5] = [
+    SOURCE_FIELD,
+    GET_QUERY_TERM_SOURCE_FIELD,
+    POST_PROCESS_SOURCE_FIELD,
+    SCRIPT_SOURCE_FIELD,
+    FILTER_TEMPLATE_SUGGESTIONS_SOURCE_FIELD,
+];
 const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 const MAX_STRING_LITERAL_UNITS: usize = 32_768;
 const MAX_SERIALIZED_DESCRIPTOR_BYTES: usize = 256 * 1024;
@@ -36,6 +49,7 @@ const MAX_MODULE_BASENAME_BYTES: usize = 255;
 const REFERENCE_BASELINE_VERSION: u64 = 1;
 const REFERENCE_BASELINE_KIND: &str = "typed-trigger-reference";
 const GET_QUERY_TERM_REFERENCE_BASELINE_KIND: &str = "typed-get-query-term-reference";
+const FIELD_REFERENCE_BASELINE_KIND: &str = "typed-field-reference";
 const MAX_REFERENCE_BASELINE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_REFERENCE_CASES: usize = 256;
 const MAX_REFERENCE_CORPUS_BYTES: usize = 1_000_000;
@@ -554,8 +568,13 @@ struct TypedHookContract {
 #[serde(deny_unknown_fields)]
 struct TypedHookContracts {
     trigger: TypedHookContract,
-    #[serde(default, rename = "getQueryTerm", skip_serializing_if = "Option::is_none")]
-    get_query_term: Option<TypedHookContract>,
+    #[serde(rename = "getQueryTerm")]
+    get_query_term: TypedHookContract,
+    #[serde(rename = "postProcess")]
+    post_process: TypedHookContract,
+    script: TypedHookContract,
+    #[serde(rename = "filterTemplateSuggestions")]
+    filter_template_suggestions: TypedHookContract,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -637,6 +656,34 @@ struct TypedGetQueryTermReferenceCandidate {
     #[serde(rename = "functionBodySha256")]
     function_body_sha256: String,
     descriptor: TypedHookIr,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct TypedFieldReferenceCase {
+    id: String,
+    args: Vec<JsonValue>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TypedFieldReferenceBaseline {
+    version: u64,
+    kind: String,
+    field: String,
+    #[serde(rename = "generatorSha256")]
+    generator_sha256: String,
+    #[serde(rename = "harnessSha256")]
+    harness_sha256: String,
+    #[serde(rename = "pairSha256")]
+    pair_sha256: String,
+    #[serde(rename = "hookManifestSha256")]
+    hook_manifest_sha256: String,
+    #[serde(rename = "sidecarSha256")]
+    sidecar_sha256: String,
+    cases: Vec<TypedFieldReferenceCase>,
+    catalog: TypedHookCatalog,
+    expected: BTreeMap<String, Vec<JsonValue>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -831,6 +878,28 @@ pub(crate) fn parse_typed_get_query_term_reference_bytes(
     Ok(baseline)
 }
 
+/// Parse a per-field typed-eval reference captured from sidecar descriptors.
+pub(crate) fn parse_typed_field_reference(value: &JsonValue) -> TypedHookResult<TypedFieldReferenceBaseline> {
+    ensure_reference_baseline_size(value)?;
+    let baseline = serde_json::from_value::<TypedFieldReferenceBaseline>(value.clone())
+        .map_err(|error| TypedHookError::new(format!("typed field reference schema: {error}")))?;
+    validate_typed_field_reference(&baseline)?;
+    Ok(baseline)
+}
+
+/// Parse checked-in per-field typed-eval reference bytes.
+pub(crate) fn parse_typed_field_reference_bytes(bytes: &[u8]) -> TypedHookResult<TypedFieldReferenceBaseline> {
+    if bytes.len() > MAX_REFERENCE_BASELINE_BYTES {
+        return Err(TypedHookError::new(format!(
+            "typed field reference exceeds {MAX_REFERENCE_BASELINE_BYTES} bytes"
+        )));
+    }
+    let baseline = serde_json::from_slice::<TypedFieldReferenceBaseline>(bytes)
+        .map_err(|error| TypedHookError::new(format!("typed field reference schema: {error}")))?;
+    validate_typed_field_reference(&baseline)?;
+    Ok(baseline)
+}
+
 fn ensure_catalog_size(value: &JsonValue) -> TypedHookResult<()> {
     let bytes = serde_json::to_vec(value)
         .map_err(|error| TypedHookError::new(format!("typed hook catalog schema: {error}")))?;
@@ -883,6 +952,13 @@ fn validate_typed_trigger_reference(baseline: &TypedTriggerReferenceBaseline) ->
             "typed trigger reference catalog must contain at least one hook",
         ));
     }
+    for (id, entry) in &baseline.catalog.hooks {
+        if entry.source_field != SOURCE_FIELD {
+            return Err(TypedHookError::new(format!(
+                "typed trigger reference hook {id:?} sourceField must be {SOURCE_FIELD:?}"
+            )));
+        }
+    }
 
     let catalog_ids: BTreeSet<_> = baseline.catalog.hooks.keys().collect();
     let expected_ids: BTreeSet<_> = baseline.expected.keys().collect();
@@ -905,19 +981,10 @@ fn validate_typed_trigger_reference(baseline: &TypedTriggerReferenceBaseline) ->
         }
     }
 
-    // The baseline embeds the exact sidecar catalog.  Re-serializing it with
-    // the Rust schema must reproduce the compact JSON sidecar plus its final
-    // newline; otherwise the provenance digest could describe a different
-    // artifact than the evaluator is testing.
-    let mut catalog_bytes = serde_json::to_vec(&baseline.catalog)
-        .map_err(|error| TypedHookError::new(format!("typed trigger reference catalog serialization: {error}")))?;
-    catalog_bytes.push(b'\n');
-    let digest = sha256_hex(&catalog_bytes);
-    if digest != baseline.sidecar_sha256 {
-        return Err(TypedHookError::new(
-            "typed trigger reference sidecarSha256 does not match the embedded catalog",
-        ));
-    }
+    // sidecarSha256 is the full production sidecar file, which now contains
+    // every side-effect-free field. The embedded catalog is the trigger-only
+    // projection used by this baseline, so the digest must not be compared to
+    // a re-serialization of that subset.
     Ok(())
 }
 
@@ -1043,6 +1110,106 @@ fn validate_typed_get_query_term_reference(baseline: &TypedGetQueryTermReference
     Ok(())
 }
 
+fn validate_typed_field_reference(baseline: &TypedFieldReferenceBaseline) -> TypedHookResult<()> {
+    if baseline.version != REFERENCE_BASELINE_VERSION {
+        return Err(TypedHookError::new(format!(
+            "typed field reference version {} is unsupported",
+            baseline.version
+        )));
+    }
+    if baseline.kind != FIELD_REFERENCE_BASELINE_KIND {
+        return Err(TypedHookError::new(format!(
+            "typed field reference kind {:?} is unsupported",
+            baseline.kind
+        )));
+    }
+    if typed_hook_contract(&baseline.field).is_none() {
+        return Err(TypedHookError::new(format!(
+            "typed field reference field {:?} is not a sidecar contract",
+            baseline.field
+        )));
+    }
+    for (name, value) in [
+        ("generatorSha256", &baseline.generator_sha256),
+        ("harnessSha256", &baseline.harness_sha256),
+        ("pairSha256", &baseline.pair_sha256),
+        ("hookManifestSha256", &baseline.hook_manifest_sha256),
+        ("sidecarSha256", &baseline.sidecar_sha256),
+    ] {
+        validate_sha256(value, name)?;
+    }
+    if baseline.cases.is_empty() {
+        return Err(TypedHookError::new("typed field reference corpus must not be empty"));
+    }
+    if baseline.cases.len() > MAX_REFERENCE_CASES {
+        return Err(TypedHookError::new(format!(
+            "typed field reference corpus exceeds {MAX_REFERENCE_CASES} cases"
+        )));
+    }
+    let mut ids = BTreeSet::new();
+    for case in &baseline.cases {
+        validate_reference_case_id(&case.id)?;
+        if !ids.insert(case.id.as_str()) {
+            return Err(TypedHookError::new(format!(
+                "typed field reference case id {:?} is duplicated",
+                case.id
+            )));
+        }
+        if case.args.iter().any(|value| value_contains_exec_marker(value)) {
+            return Err(TypedHookError::new(format!(
+                "typed field reference case {:?} contains an executor marker",
+                case.id
+            )));
+        }
+    }
+    validate_typed_hook_catalog(&baseline.catalog)?;
+    if baseline.catalog.hooks.is_empty() {
+        return Err(TypedHookError::new(
+            "typed field reference catalog must contain at least one hook",
+        ));
+    }
+    for (id, entry) in &baseline.catalog.hooks {
+        if entry.source_field != baseline.field {
+            return Err(TypedHookError::new(format!(
+                "typed field reference hook {id:?} sourceField must be {:?}",
+                baseline.field
+            )));
+        }
+    }
+    let catalog_ids: BTreeSet<_> = baseline.catalog.hooks.keys().collect();
+    let expected_ids: BTreeSet<_> = baseline.expected.keys().collect();
+    if catalog_ids != expected_ids {
+        return Err(TypedHookError::new(
+            "typed field reference expected ids do not match catalog ids",
+        ));
+    }
+    for id in &expected_ids {
+        let expected = baseline
+            .expected
+            .get(*id)
+            .ok_or_else(|| TypedHookError::new("typed field reference expected id is missing"))?;
+        if expected.len() != baseline.cases.len() {
+            return Err(TypedHookError::new(format!(
+                "typed field reference expected values for {id:?} have length {}, expected {}",
+                expected.len(),
+                baseline.cases.len()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn value_contains_exec_marker(value: &JsonValue) -> bool {
+    match value {
+        JsonValue::String(text) => text.contains(REFERENCE_EXEC_MARKER),
+        JsonValue::Array(items) => items.iter().any(value_contains_exec_marker),
+        JsonValue::Object(fields) => fields
+            .iter()
+            .any(|(key, child)| key.contains(REFERENCE_EXEC_MARKER) || value_contains_exec_marker(child)),
+        _ => false,
+    }
+}
+
 fn validate_reference_cases(cases: &[TypedTriggerReferenceCase]) -> TypedHookResult<()> {
     if cases.is_empty() {
         return Err(TypedHookError::new("typed trigger reference corpus must not be empty"));
@@ -1112,6 +1279,20 @@ fn validate_reference_case_id(id: &str) -> TypedHookResult<()> {
     Ok(())
 }
 
+fn validate_sidecar_contract(
+    contract: &TypedHookContract,
+    params: &[TypedValueType],
+    result_type: TypedValueType,
+    field: &str,
+) -> TypedHookResult<()> {
+    if contract.ir_version != IR_VERSION || contract.params != params || contract.result_type != result_type {
+        return Err(TypedHookError::new(format!(
+            "typed hook catalog {field} contract does not match the native contract"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_typed_hook_catalog(catalog: &TypedHookCatalog) -> TypedHookResult<()> {
     if catalog.version != IR_VERSION {
         return Err(TypedHookError::new(format!(
@@ -1126,24 +1307,36 @@ fn validate_typed_hook_catalog(catalog: &TypedHookCatalog) -> TypedHookResult<()
         )));
     }
 
-    let contract = &catalog.contracts.trigger;
-    if contract.ir_version != IR_VERSION
-        || contract.params != [TypedValueType::String, TypedValueType::String]
-        || contract.result_type != TypedValueType::Bool
-    {
-        return Err(TypedHookError::new(
-            "typed hook catalog trigger contract does not match the native contract",
-        ));
-    }
-    if let Some(contract) = &catalog.contracts.get_query_term
-        && (contract.ir_version != IR_VERSION
-            || contract.params != [TypedValueType::String]
-            || contract.result_type != TypedValueType::String)
-    {
-        return Err(TypedHookError::new(
-            "typed hook catalog getQueryTerm contract does not match the research contract",
-        ));
-    }
+    validate_sidecar_contract(
+        &catalog.contracts.trigger,
+        &[TypedValueType::String, TypedValueType::String],
+        TypedValueType::Bool,
+        "trigger",
+    )?;
+    validate_sidecar_contract(
+        &catalog.contracts.get_query_term,
+        &[TypedValueType::String],
+        TypedValueType::String,
+        "getQueryTerm",
+    )?;
+    validate_sidecar_contract(
+        &catalog.contracts.post_process,
+        &[TypedValueType::String, TypedValueType::StringArray],
+        TypedValueType::SuggestionArray,
+        "postProcess",
+    )?;
+    validate_sidecar_contract(
+        &catalog.contracts.script,
+        &[TypedValueType::StringArray],
+        TypedValueType::StringArray,
+        "script",
+    )?;
+    validate_sidecar_contract(
+        &catalog.contracts.filter_template_suggestions,
+        &[TypedValueType::SuggestionArray],
+        TypedValueType::SuggestionArray,
+        "filterTemplateSuggestions",
+    )?;
     if catalog.hooks.len() > MAX_CATALOG_HOOKS {
         return Err(TypedHookError::new(format!(
             "typed hook catalog contains more than {MAX_CATALOG_HOOKS} hooks"
@@ -1156,9 +1349,9 @@ fn validate_typed_hook_catalog(catalog: &TypedHookCatalog) -> TypedHookResult<()
         validate_source_hook_path(&entry.path)?;
         validate_sha256(&entry.module_sha256, "moduleSha256")?;
         validate_sha256(&entry.function_body_sha256, "functionBodySha256")?;
-        if entry.source_field != SOURCE_FIELD {
+        if !SIDECAR_SOURCE_FIELDS.contains(&entry.source_field.as_str()) {
             return Err(TypedHookError::new(format!(
-                "typed hook {id:?} sourceField must be {SOURCE_FIELD:?}"
+                "typed hook {id:?} sourceField must be one of the sidecar contracts"
             )));
         }
         validate_typed_hook_ir(&entry.descriptor)?;
@@ -1307,6 +1500,11 @@ pub(crate) fn evaluate_typed_hook_by_id(
 ) -> TypedHookResult<bool> {
     let entry = lookup_typed_hook(catalog, hook_id)
         .ok_or_else(|| TypedHookError::new(format!("typed hook id {hook_id:?} is missing")))?;
+    if entry.source_field != SOURCE_FIELD {
+        return Err(TypedHookError::new(format!(
+            "typed hook {hook_id:?} is not a trigger catalog entry"
+        )));
+    }
     evaluate_typed_trigger(&entry.descriptor, search_term, previous_search_term)
 }
 
@@ -1998,7 +2196,7 @@ pub(crate) fn evaluate_typed_trigger(
 pub(crate) fn evaluate_typed_get_query_term(descriptor: &TypedHookIr, search_term: &str) -> TypedHookResult<String> {
     validate_typed_hook_ir(descriptor)?;
     if descriptor.source_field != GET_QUERY_TERM_SOURCE_FIELD {
-        return Err(TypedHookError::new("descriptor is not a getQueryTerm research hook"));
+        return Err(TypedHookError::new("descriptor is not a getQueryTerm hook"));
     }
     let arguments = [TypedValue::String(Utf16String::from_str(search_term))];
     let value = evaluate_expr(&descriptor.expr, &arguments)?;
@@ -2009,6 +2207,224 @@ pub(crate) fn evaluate_typed_get_query_term(descriptor: &TypedHookIr, search_ter
     };
     String::from_utf16(&value.0)
         .map_err(|error| TypedHookError::new(format!("getQueryTerm returned invalid UTF-16: {error}")))
+}
+
+/// Evaluate a postProcess descriptor. Test-only until T3.1; production still
+/// uses QuickJS.
+pub(crate) fn evaluate_typed_post_process(
+    descriptor: &TypedHookIr,
+    stdout: &str,
+    tokens: &[String],
+) -> TypedHookResult<Vec<Suggestion>> {
+    validate_typed_hook_ir(descriptor)?;
+    if descriptor.source_field != POST_PROCESS_SOURCE_FIELD {
+        return Err(TypedHookError::new("descriptor is not a postProcess hook"));
+    }
+    let json = evaluate_typed_hook_json(
+        descriptor,
+        &[
+            JsonValue::String(stdout.to_owned()),
+            JsonValue::Array(tokens.iter().map(|token| JsonValue::String(token.clone())).collect()),
+        ],
+    )?;
+    suggestions_from_typed_json(&json)
+}
+
+/// Evaluate a script descriptor to the same `ScriptCommand` shape `JsHost`
+/// returns. Test-only until T3.1.
+pub(crate) fn evaluate_typed_script(descriptor: &TypedHookIr, tokens: &[String]) -> TypedHookResult<ScriptCommand> {
+    validate_typed_hook_ir(descriptor)?;
+    if descriptor.source_field != SCRIPT_SOURCE_FIELD {
+        return Err(TypedHookError::new("descriptor is not a script hook"));
+    }
+    let json = evaluate_typed_hook_json(
+        descriptor,
+        &[JsonValue::Array(
+            tokens.iter().map(|token| JsonValue::String(token.clone())).collect(),
+        )],
+    )?;
+    script_command_from_typed_json(&json)
+}
+
+/// Evaluate a filterTemplateSuggestions descriptor. Test-only until T3.1.
+pub(crate) fn evaluate_typed_filter_template_suggestions(
+    descriptor: &TypedHookIr,
+    suggestions: &[Suggestion],
+) -> TypedHookResult<Vec<Suggestion>> {
+    validate_typed_hook_ir(descriptor)?;
+    if descriptor.source_field != FILTER_TEMPLATE_SUGGESTIONS_SOURCE_FIELD {
+        return Err(TypedHookError::new(
+            "descriptor is not a filterTemplateSuggestions hook",
+        ));
+    }
+    let json = evaluate_typed_hook_json(descriptor, &[suggestions_to_typed_json(suggestions)])?;
+    suggestions_from_typed_json(&json)
+}
+
+fn suggestions_to_typed_json(suggestions: &[Suggestion]) -> JsonValue {
+    JsonValue::Array(
+        suggestions
+            .iter()
+            .map(|suggestion| {
+                let mut object = serde_json::Map::new();
+                object.insert("name".into(), JsonValue::String(suggestion.name.clone()));
+                object.insert("type".into(), JsonValue::String(suggestion.kind.clone()));
+                if !suggestion.description.is_empty() {
+                    object.insert("description".into(), JsonValue::String(suggestion.description.clone()));
+                }
+                if let Some(insert) = suggestion.insert_value.clone() {
+                    object.insert("insertValue".into(), JsonValue::String(insert));
+                }
+                if let Some(display) = suggestion.display_name.clone() {
+                    object.insert("displayName".into(), JsonValue::String(display));
+                }
+                if let Some(icon) = suggestion.icon.clone() {
+                    object.insert("icon".into(), JsonValue::String(icon));
+                }
+                if suggestion.hidden {
+                    object.insert("hidden".into(), JsonValue::Bool(true));
+                }
+                if suggestion.is_dangerous {
+                    object.insert("isDangerous".into(), JsonValue::Bool(true));
+                }
+                if suggestion.priority != 50 {
+                    object.insert("priority".into(), JsonValue::Number(suggestion.priority.into()));
+                }
+                JsonValue::Object(object)
+            })
+            .collect(),
+    )
+}
+
+fn suggestions_from_typed_json(value: &JsonValue) -> TypedHookResult<Vec<Suggestion>> {
+    let Some(items) = value.as_array() else {
+        return Err(TypedHookError::new("typed suggestion result must be an array"));
+    };
+    let mut out = Vec::new();
+    for item in items {
+        if let Some(suggestion) = suggestion_from_typed_json(item) {
+            out.push(suggestion);
+        }
+    }
+    Ok(out)
+}
+
+fn suggestion_from_typed_json(item: &JsonValue) -> Option<Suggestion> {
+    if let Some(name) = item.as_str() {
+        if name.is_empty() {
+            return None;
+        }
+        return Some(Suggestion::new(name, "", "arg").with_insert_value(name));
+    }
+    let object = item.as_object()?;
+    let name = typed_json_name(object.get("name")?)?;
+    if name.is_empty() {
+        return None;
+    }
+    let description = object
+        .get("description")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("")
+        .to_string();
+    let kind = object
+        .get("type")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("arg")
+        .to_string();
+    let insert = object
+        .get("insertValue")
+        .and_then(JsonValue::as_str)
+        .map(ToOwned::to_owned);
+    let display = object
+        .get("displayName")
+        .and_then(JsonValue::as_str)
+        .map(ToOwned::to_owned);
+    let icon = object.get("icon").and_then(JsonValue::as_str).map(ToOwned::to_owned);
+    let hidden = object.get("hidden").and_then(JsonValue::as_bool).unwrap_or(false);
+    let dangerous = object.get("isDangerous").and_then(JsonValue::as_bool).unwrap_or(false);
+    let priority = object.get("priority").and_then(JsonValue::as_i64);
+    let mut suggestion = Suggestion::new(name.clone(), description, kind)
+        .with_dangerous(dangerous)
+        .with_meta(
+            insert,
+            display,
+            None,
+            object
+                .get("shouldAddSpace")
+                .and_then(JsonValue::as_bool)
+                .unwrap_or(false),
+            hidden,
+            priority,
+            icon,
+        );
+    if suggestion.insert_value.is_none() {
+        suggestion.insert_value = Some(name);
+    }
+    Some(suggestion)
+}
+
+fn typed_json_name(value: &JsonValue) -> Option<String> {
+    match value {
+        JsonValue::String(name) if !name.is_empty() => Some(name.clone()),
+        JsonValue::Array(names) => names.iter().find_map(|item| item.as_str().map(ToOwned::to_owned)),
+        _ => None,
+    }
+}
+
+fn script_command_from_typed_json(value: &JsonValue) -> TypedHookResult<ScriptCommand> {
+    if let Some(command) = value.as_str() {
+        if command.trim().is_empty() {
+            return Err(TypedHookError::new("typed script result is an empty command"));
+        }
+        return Ok(ScriptCommand {
+            command: "sh".into(),
+            args: vec!["-c".into(), command.to_string()],
+            timeout_ms: None,
+        });
+    }
+    if let Some(parts) = value.as_array() {
+        let strings: Vec<String> = parts
+            .iter()
+            .filter_map(|item| item.as_str().map(ToOwned::to_owned))
+            .collect();
+        let (command, args) = strings
+            .split_first()
+            .ok_or_else(|| TypedHookError::new("typed script result is an empty argv"))?;
+        if command.is_empty() {
+            return Err(TypedHookError::new("typed script result has an empty command"));
+        }
+        return Ok(ScriptCommand {
+            command: command.clone(),
+            args: args.to_vec(),
+            timeout_ms: None,
+        });
+    }
+    let object = value
+        .as_object()
+        .ok_or_else(|| TypedHookError::new("typed script result is not a command"))?;
+    let command = object
+        .get("command")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| TypedHookError::new("typed script result is missing command"))?
+        .to_string();
+    if command.is_empty() {
+        return Err(TypedHookError::new("typed script result has an empty command"));
+    }
+    let args = object
+        .get("args")
+        .and_then(JsonValue::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(ToOwned::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(ScriptCommand {
+        command,
+        args,
+        timeout_ms: object.get("timeout").and_then(JsonValue::as_i64),
+    })
 }
 
 fn evaluate_expr(expression: &TypedExpr, arguments: &[TypedValue]) -> TypedHookResult<TypedValue> {
@@ -2607,6 +3023,7 @@ mod tests {
     const ASDF_REFERENCE_HARNESS_FILES: &[&str] = &[
         "scripts/audit-spec-hooks.mjs",
         "scripts/capture-hook-reference.mjs",
+        "scripts/capture-typed-reference.mjs",
         "scripts/capture-typed-trigger-reference.mjs",
         "scripts/filepaths-helper.mjs",
         "scripts/reference-audit-worker.mjs",
@@ -3285,19 +3702,73 @@ mod tests {
         })
     }
 
+    fn sidecar_contracts_json() -> JsonValue {
+        json!({
+            "trigger": {
+                "irVersion": IR_VERSION,
+                "params": ["string", "string"],
+                "resultType": "bool",
+            },
+            "getQueryTerm": {
+                "irVersion": IR_VERSION,
+                "params": ["string"],
+                "resultType": "string",
+            },
+            "postProcess": {
+                "irVersion": IR_VERSION,
+                "params": ["string", "string-array"],
+                "resultType": "suggestion-array",
+            },
+            "script": {
+                "irVersion": IR_VERSION,
+                "params": ["string-array"],
+                "resultType": "string-array",
+            },
+            "filterTemplateSuggestions": {
+                "irVersion": IR_VERSION,
+                "params": ["suggestion-array"],
+                "resultType": "suggestion-array",
+            },
+        })
+    }
+
     fn catalog_value(hooks: serde_json::Map<String, JsonValue>) -> JsonValue {
         json!({
             "version": IR_VERSION,
             "kind": CATALOG_KIND,
-            "contracts": {
-                "trigger": {
-                    "irVersion": IR_VERSION,
-                    "params": ["string", "string"],
-                    "resultType": "bool",
-                }
-            },
+            "contracts": sidecar_contracts_json(),
             "hooks": hooks,
         })
+    }
+
+    fn sidecar_contracts() -> TypedHookContracts {
+        TypedHookContracts {
+            trigger: TypedHookContract {
+                ir_version: IR_VERSION,
+                params: vec![TypedValueType::String, TypedValueType::String],
+                result_type: TypedValueType::Bool,
+            },
+            get_query_term: TypedHookContract {
+                ir_version: IR_VERSION,
+                params: vec![TypedValueType::String],
+                result_type: TypedValueType::String,
+            },
+            post_process: TypedHookContract {
+                ir_version: IR_VERSION,
+                params: vec![TypedValueType::String, TypedValueType::StringArray],
+                result_type: TypedValueType::SuggestionArray,
+            },
+            script: TypedHookContract {
+                ir_version: IR_VERSION,
+                params: vec![TypedValueType::StringArray],
+                result_type: TypedValueType::StringArray,
+            },
+            filter_template_suggestions: TypedHookContract {
+                ir_version: IR_VERSION,
+                params: vec![TypedValueType::SuggestionArray],
+                result_type: TypedValueType::SuggestionArray,
+            },
+        }
     }
 
     #[test]
@@ -3321,6 +3792,17 @@ mod tests {
         assert!(evaluate_typed_hook_by_id(&catalog, "z/hooks#two", "", "").expect("evaluate"));
         assert!(lookup_typed_hook(&catalog, "missing").is_none());
         assert!(evaluate_typed_hook_by_id(&catalog, "missing", "", "").is_err());
+
+        let mut mixed = catalog_value(serde_json::Map::new());
+        mixed["hooks"]["hook#query"] = json!({
+            "module": "typed-hooks.js",
+            "moduleSha256": "a".repeat(64),
+            "path": "root.args[0].generators[0].getQueryTerm",
+            "sourceField": GET_QUERY_TERM_SOURCE_FIELD,
+            "functionBodySha256": "b".repeat(64),
+            "descriptor": get_query_term_descriptor(),
+        });
+        assert!(parse_typed_hook_catalog(&mixed).is_ok());
 
         let bytes = serde_json::to_vec(&value).expect("catalog JSON");
         let from_bytes = parse_typed_hook_catalog_bytes(&bytes).expect("catalog bytes");
@@ -3459,14 +3941,7 @@ mod tests {
         let catalog = TypedHookCatalog {
             version: IR_VERSION,
             kind: CATALOG_KIND.to_owned(),
-            contracts: TypedHookContracts {
-                trigger: TypedHookContract {
-                    ir_version: IR_VERSION,
-                    params: vec![TypedValueType::String, TypedValueType::String],
-                    result_type: TypedValueType::Bool,
-                },
-                get_query_term: None,
-            },
+            contracts: sidecar_contracts(),
             hooks: too_many,
         };
         assert!(validate_typed_hook_catalog(&catalog).is_err());
@@ -3520,7 +3995,10 @@ mod tests {
 
         let mut wrong_sidecar_digest = typed_trigger_reference_value();
         wrong_sidecar_digest["sidecarSha256"] = json!("0".repeat(64));
-        assert!(parse_typed_trigger_reference(&wrong_sidecar_digest).is_err());
+        assert!(
+            parse_typed_trigger_reference(&wrong_sidecar_digest).is_ok(),
+            "sidecarSha256 is the full sidecar file hash, not a digest of the trigger-only catalog"
+        );
 
         let mut wrong_case_field = typed_trigger_reference_value();
         wrong_case_field["cases"][0]["extra"] = json!(true);
@@ -4046,6 +4524,124 @@ mod tests {
             .expect("filter eval"),
             json!([{"name": "a"}])
         );
+
+        let command = evaluate_typed_script(&descriptor, &[]).expect("typed script command");
+        assert_eq!(command.command, "echo");
+        assert_eq!(command.args, vec!["-n"]);
+
+        let rows = evaluate_typed_filter_template_suggestions(
+            &parse_typed_hook_ir(&filter).expect("filter"),
+            &[Suggestion::new("a", "", "arg")],
+        )
+        .expect("typed filter");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "a");
+    }
+
+    fn typed_eval_error_shape(value: &JsonValue) -> bool {
+        value.get("kind").and_then(JsonValue::as_str) == Some("error")
+            && value.get("name").and_then(JsonValue::as_str).is_some()
+            && value.get("message").and_then(JsonValue::as_str).is_some()
+    }
+
+    fn load_typed_field_reference(field: &str) -> TypedFieldReferenceBaseline {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata/typed-hooks")
+            .join(format!("{field}-reference.json"));
+        let bytes = fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        parse_typed_field_reference_bytes(&bytes).unwrap_or_else(|error| panic!("parse {field} reference: {error}"))
+    }
+
+    fn assert_field_reference_matches_evaluator(field: &str) {
+        let baseline = load_typed_field_reference(field);
+        assert_eq!(baseline.field, field);
+        assert!(!baseline.cases.is_empty());
+        assert_eq!(baseline.catalog.hooks.len(), baseline.expected.len());
+        let mut compared = 0usize;
+        let mut errors = 0usize;
+        for (hook_id, expected_values) in &baseline.expected {
+            let entry = baseline.catalog.hooks.get(hook_id).expect("catalog hook");
+            assert_eq!(entry.source_field, field);
+            assert_eq!(expected_values.len(), baseline.cases.len());
+            for (index, case) in baseline.cases.iter().enumerate() {
+                let expected = &expected_values[index];
+                match evaluate_typed_hook_json(&entry.descriptor, &case.args) {
+                    Ok(actual) => {
+                        assert!(
+                            !typed_eval_error_shape(expected),
+                            "hook {hook_id} case {} succeeded in Rust but the JS typed eval recorded an error: {expected}",
+                            case.id
+                        );
+                        assert_eq!(actual, *expected, "hook {hook_id}, case {}", case.id);
+                        compared += 1;
+                    },
+                    Err(error) => {
+                        assert!(
+                            typed_eval_error_shape(expected),
+                            "hook {hook_id} case {} failed in Rust ({error}) but JS typed eval succeeded: {expected}",
+                            case.id
+                        );
+                        errors += 1;
+                    },
+                }
+            }
+        }
+        assert!(compared > 0, "{field} reference compared no successful rows");
+        let _ = errors;
+    }
+
+    #[test]
+    fn checked_in_typed_field_references_match_native_evaluator() {
+        for field in ["getQueryTerm", "script", "postProcess", "filterTemplateSuggestions"] {
+            assert_field_reference_matches_evaluator(field);
+        }
+    }
+
+    #[test]
+    fn typed_field_reference_schema_rejects_unknown_fields() {
+        let mut value = serde_json::from_slice::<JsonValue>(
+            &fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/typed-hooks/getQueryTerm-reference.json"),
+            )
+            .expect("getQueryTerm field reference"),
+        )
+        .expect("json");
+        value["unexpected"] = json!(true);
+        assert!(parse_typed_field_reference(&value).is_err());
+        value.as_object_mut().expect("object").remove("unexpected");
+        value["field"] = json!("custom");
+        assert!(parse_typed_field_reference(&value).is_err());
+    }
+
+    #[test]
+    fn typed_post_process_evaluator_matches_js_host_suggestion_shape() {
+        let descriptor = parse_typed_hook_ir(&json!({
+            "version": IR_VERSION,
+            "kind": IR_KIND,
+            "sourceField": "postProcess",
+            "resultType": "suggestion-array",
+            "params": [
+                {"index": 0, "type": "string"},
+                {"index": 1, "type": "string-array"}
+            ],
+            "expr": {
+                "op": "array",
+                "items": [
+                    {
+                        "op": "object",
+                        "fields": [
+                            {"key": "name", "value": {"op": "arg", "index": 0}},
+                            {"key": "type", "value": {"op": "string", "value": "arg"}}
+                        ]
+                    }
+                ]
+            }
+        }))
+        .expect("postProcess descriptor");
+        let rows = evaluate_typed_post_process(&descriptor, "main", &["git".into()]).expect("postProcess");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "main");
+        assert_eq!(rows[0].kind, "arg");
     }
 
     #[derive(Debug, Deserialize)]

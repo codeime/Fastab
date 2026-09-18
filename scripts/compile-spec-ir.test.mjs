@@ -1414,6 +1414,26 @@ test("compiler emits a deterministic typed trigger sidecar from binding identity
         params: ["string", "string"],
         resultType: "bool",
       },
+      getQueryTerm: {
+        irVersion: 1,
+        params: ["string"],
+        resultType: "string",
+      },
+      postProcess: {
+        irVersion: 1,
+        params: ["string", "string-array"],
+        resultType: "suggestion-array",
+      },
+      script: {
+        irVersion: 1,
+        params: ["string-array"],
+        resultType: "string-array",
+      },
+      filterTemplateSuggestions: {
+        irVersion: 1,
+        params: ["suggestion-array"],
+        resultType: "suggestion-array",
+      },
     });
     assert.deepEqual(Object.keys(sidecar.hooks), [supportedId]);
     const imported = await import(
@@ -1440,7 +1460,7 @@ test("compiler emits a deterministic typed trigger sidecar from binding identity
   }
 });
 
-test("production compiler keeps the reviewed getQueryTerm hook on its compatibility path", async () => {
+test("production compiler writes a reviewed getQueryTerm hook into the sidecar", async () => {
   const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-get-query-src-"));
   const outDir = await mkdtemp(join(tmpdir(), "easy-complete-get-query-ir-"));
   try {
@@ -1462,7 +1482,10 @@ test("production compiler keeps the reviewed getQueryTerm hook on its compatibil
     const sidecar = JSON.parse(
       await readFile(join(outDir, TYPED_HOOK_SIDECAR), "utf8"),
     );
-    assert.deepEqual(Object.keys(sidecar.hooks), []);
+    assert.ok(Object.keys(sidecar.hooks).includes(hookId));
+    assert.ok(
+      Object.keys(sidecar.hooks).every((id) => id.includes("#getQueryTerm#")),
+    );
     const imported = await import(
       `${pathToFileURL(sourcePath).href}?query=${Date.now()}`,
     );
@@ -1471,6 +1494,9 @@ test("production compiler keeps the reviewed getQueryTerm hook on its compatibil
     assert.equal(descriptor.expr.then.op, "string-slice");
     assert.equal(descriptor.expr.then.start.op, "add");
     assert.equal(descriptor.sourceField, "getQueryTerm");
+    for (const entry of Object.values(sidecar.hooks)) {
+      assert.deepEqual(entry.descriptor, descriptor);
+    }
   } finally {
     await Promise.all([
       rm(srcDir, { recursive: true, force: true }),

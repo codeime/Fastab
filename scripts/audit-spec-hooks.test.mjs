@@ -27,6 +27,10 @@ import {
 import { auditSpecsHooks, safeWriteAuditReport } from "./audit-spec-hooks.mjs";
 import { functionSource } from "./filepaths-helper.mjs";
 import { createPairMarker, writePairMarker } from "./spec-pair.mjs";
+import {
+  compileTypedHook,
+  typedHookSidecarContracts,
+} from "./typed-hook-ir.mjs";
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const execFileAsync = promisify(execFile);
@@ -95,19 +99,26 @@ async function createFixture() {
   };
   const manifestPath = join(irRoot, HOOK_MODULE_MANIFEST);
   await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`);
+  const descriptor = compileTypedHook({
+    body: hookBody,
+    sourceField: "postProcess",
+  });
   await writeFile(
     join(irRoot, TYPED_HOOK_SIDECAR),
     `${JSON.stringify({
       version: 1,
       kind: "typed-hook-expressions",
-      contracts: {
-        trigger: {
-          irVersion: 1,
-          params: ["string", "string"],
-          resultType: "bool",
+      contracts: typedHookSidecarContracts(),
+      hooks: {
+        [id]: {
+          module: moduleFile,
+          moduleSha256,
+          path: "root.args[0].generators.postProcess",
+          sourceField: "postProcess",
+          functionBodySha256: sha256(hookBody),
+          descriptor,
         },
       },
-      hooks: {},
     })}\n`,
   );
   await writePairMarker(irRoot, await createPairMarker({ sourceRoot, irRoot }));

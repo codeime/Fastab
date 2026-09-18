@@ -43,10 +43,6 @@ export const TYPED_VALUE_TYPES = Object.freeze([
   "null",
 ]);
 
-// Trigger remains the production sidecar field.  The other contracts are the
-// T2.1/T2.3 typed-hook shapes: `compileTypedHook` accepts them so research
-// and tests can compile those fields, but the production sidecar writer still
-// emits trigger only until T2.3.
 export const TYPED_HOOK_CONTRACTS = Object.freeze({
   trigger: Object.freeze({
     params: Object.freeze(["string", "string"]),
@@ -69,6 +65,34 @@ export const TYPED_HOOK_CONTRACTS = Object.freeze({
     resultType: "suggestion-array",
   }),
 });
+
+export const TYPED_HOOK_SIDECAR_FIELDS = Object.freeze(
+  Object.keys(TYPED_HOOK_CONTRACTS),
+);
+
+/** Sidecar `contracts` block: every T2.3 side-effect-free field. */
+export function typedHookSidecarContracts() {
+  return Object.fromEntries(
+    Object.entries(TYPED_HOOK_CONTRACTS).map(([field, contract]) => [
+      field,
+      {
+        irVersion: TYPED_HOOK_IR_VERSION,
+        params: [...contract.params],
+        resultType: contract.resultType,
+      },
+    ]),
+  );
+}
+
+/** Compile or return `null` when the body is outside the typed language. */
+export function tryCompileTypedHook(options) {
+  try {
+    return compileTypedHook(options);
+  } catch (error) {
+    if (error instanceof TypedHookCompileError) return null;
+    throw error;
+  }
+}
 
 export const TYPED_EXPRESSION_OPERATIONS = Object.freeze([
   "arg",
@@ -4331,8 +4355,16 @@ function evaluateExpression(node, args, locals = new Map()) {
       }
       return locals.get(node.name);
     case "let": {
-      locals.set(node.name, ev(node.value));
-      return ev(node.body);
+      const value = ev(node.value);
+      const had = locals.has(node.name);
+      const previous = locals.get(node.name);
+      locals.set(node.name, value);
+      try {
+        return ev(node.body);
+      } finally {
+        if (had) locals.set(node.name, previous);
+        else locals.delete(node.name);
+      }
     }
     case "block":
     case "seq": {
@@ -4711,4 +4743,43 @@ export function evaluateTypedHook(descriptor, args) {
     }
     throw error;
   }
+}
+
+function normalizeSuggestionValueJson(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  const out = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (child == null) continue;
+    if (key === "priority" && typeof child !== "number") continue;
+    if (Array.isArray(child) && child.length === 0) continue;
+    if (key !== "name" && typeof child === "string" && child === "") continue;
+    out[key] = child;
+  }
+  return out;
+}
+
+function normalizeSuggestionArrayJson(value) {
+  if (!Array.isArray(value)) return value;
+  return value.map(normalizeSuggestionValueJson).filter((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const name = item.name;
+    if (typeof name === "string") return name !== "undefined";
+    if (Array.isArray(name)) return name.length > 0;
+    return name != null;
+  });
+}
+
+/** JSON shape `evaluate_typed_hook_json` compares against on the Rust side. */
+export function evaluateTypedHookJson(descriptor, args) {
+  const value = evaluateTypedHook(descriptor, args);
+  const cloned = JSON.parse(JSON.stringify(value));
+  if (descriptor.resultType === "suggestion-array") {
+    return normalizeSuggestionArrayJson(cloned);
+  }
+  if (descriptor.resultType === "suggestion") {
+    return normalizeSuggestionValueJson(cloned);
+  }
+  return cloned;
 }

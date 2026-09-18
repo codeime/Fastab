@@ -3,11 +3,10 @@
  * Classify extracted Fig hook bodies for the native migration.
  *
  * This is a build-time inventory only. It never evaluates hook JavaScript and
- * it does not select a runtime implementation. A small, deliberately closed
- * AST subset is reported as a typed-IR research candidate; all other valid
- * hooks remain adapter work until a typed IR/native adapter proves the
- * semantics. The report is deterministic so it can be used as an input to
- * that work.
+ * it does not select a runtime implementation. A body is `typed-ir` only when
+ * `compileTypedHook` succeeds for its field contract; every other valid body
+ * stays `requires-native-adapter` until a named adapter exists. The report is
+ * deterministic so it can be used as an input to that work.
  */
 import { createHash } from "node:crypto";
 import { lstat, readdir, readFile, writeFile } from "node:fs/promises";
@@ -65,7 +64,7 @@ export const INVENTORY_KIND = "native-hook-inventory";
 const VERSIONED_SPEC_BLOCKER = "versioned-spec-behaviour-unadapted";
 
 export const CLASSIFICATION_STATUSES = Object.freeze([
-  "typed-ir-research-candidate",
+  "typed-ir",
   "native-filepaths-rewrite",
   "requires-native-adapter",
   "syntax-or-analysis-failure",
@@ -75,7 +74,7 @@ export const CLASSIFICATION_STATUSES = Object.freeze([
 const STATUS_ORDER = new Map(
   CLASSIFICATION_STATUSES.map((status, index) => [status, index]),
 );
-const CANDIDATE_STATUS = CLASSIFICATION_STATUSES[0];
+const TYPED_IR_STATUS = CLASSIFICATION_STATUSES[0];
 const NATIVE_FILEPATHS_STATUS = CLASSIFICATION_STATUSES[1];
 const ADAPTER_STATUS = CLASSIFICATION_STATUSES[2];
 const FAILURE_STATUS = CLASSIFICATION_STATUSES[3];
@@ -89,7 +88,7 @@ const COMMAND_PARAMETER_FIELDS = new Set(["custom", "alias", "generateSpec"]);
 const ENVIRONMENT_PARAMETER_FIELDS = new Set(["custom"]);
 
 // Calls in this set are deterministic string/array reads. This is a syntax
-// gate for research candidates, not a claim that the native engine already
+// gate for the typed-IR compiler, not a claim that the native engine already
 // implements these methods.
 const PURE_METHODS = new Set([
   "at",
@@ -622,8 +621,8 @@ function analyzeAst(ast, field, body) {
     sortedFreeVariables.length === 0;
   dependencies.buildTimePureStatic = buildTimePureStatic;
   return {
-    status: candidate ? CANDIDATE_STATUS : ADAPTER_STATUS,
-    researchCandidate: candidate,
+    status: ADAPTER_STATUS,
+    researchCandidate: false,
     nativeExecutable: false,
     buildTimePureStatic,
     freeVariables: sortedFreeVariables,
@@ -703,11 +702,10 @@ function upgradeWithTypedCompile(analysis, body, field, moduleSource) {
   } catch {
     return analysis;
   }
-  if (analysis.status === CANDIDATE_STATUS) return analysis;
   return {
     ...analysis,
-    status: CANDIDATE_STATUS,
-    researchCandidate: true,
+    status: TYPED_IR_STATUS,
+    researchCandidate: false,
   };
 }
 
@@ -1199,9 +1197,6 @@ export async function classifyNativeHooks({
   if (counts.extractedHooks[FAILURE_STATUS] > 0)
     gateBlockers.push(FAILURE_STATUS);
   if (unclassifiedCount > 0) gateBlockers.push(UNCLASSIFIED_STATUS);
-  if (counts.uniqueBodies[CANDIDATE_STATUS] > 0) {
-    gateBlockers.push(CANDIDATE_STATUS);
-  }
   const coveredUniqueBodies = groups.filter((group) => group.baselineCovered).length;
   const outputBaseline = outputBaselineFromCoverage(
     coveredUniqueBodies,
@@ -1217,7 +1212,7 @@ export async function classifyNativeHooks({
     kind: "native-hook-readiness",
     contract: {
       statuses: CLASSIFICATION_STATUSES,
-      researchOnlyStatuses: [CANDIDATE_STATUS],
+      researchOnlyStatuses: [],
       nativeExecutableStatuses: [NATIVE_FILEPATHS_STATUS],
       failClosedStatuses: [FAILURE_STATUS, UNCLASSIFIED_STATUS],
       outputBaselineRequired: true,
@@ -1258,10 +1253,9 @@ export async function classifyNativeHooks({
         counts.extractedHooks[FAILURE_STATUS] === 0 &&
         counts.uniqueBodies[ADAPTER_STATUS] === 0 &&
         counts.uniqueBodies[FAILURE_STATUS] === 0 &&
-        counts.uniqueBodies[CANDIDATE_STATUS] === 0 &&
         versionedSpecs.status === "none" &&
         outputBaseline.status === "established",
-      researchOnlyStatuses: [CANDIDATE_STATUS],
+      researchOnlyStatuses: [],
       blockers: sortStrings(gateBlockers),
       allBundledHooksMustPass: true,
       outputBaselineRequired: true,

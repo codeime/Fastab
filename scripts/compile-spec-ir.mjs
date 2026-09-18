@@ -75,9 +75,10 @@ import {
 } from "./spec-pair.mjs";
 import {
   compileTypedHook,
-  TypedHookCompileError,
   TYPED_HOOK_CONTRACTS,
-  TYPED_HOOK_IR_VERSION,
+  TYPED_HOOK_SIDECAR_FIELDS,
+  tryCompileTypedHook,
+  typedHookSidecarContracts,
 } from "./typed-hook-ir.mjs";
 
 export {
@@ -382,14 +383,7 @@ export function closurePreservingHookModule(source, sourcePath, instances) {
 }
 
 function typedHookContracts() {
-  const contract = TYPED_HOOK_CONTRACTS.trigger;
-  return {
-    trigger: {
-      irVersion: TYPED_HOOK_IR_VERSION,
-      params: [...contract.params],
-      resultType: contract.resultType,
-    },
-  };
+  return typedHookSidecarContracts();
 }
 
 function assertTypedHookCatalogString(value, label, maxBytes) {
@@ -437,8 +431,10 @@ function assertTypedHookCatalogEntry(id, entry) {
       throw new Error(`typed hook ${id} ${field} must be a lowercase SHA-256`);
     }
   }
-  if (entry.sourceField !== "trigger") {
-    throw new Error(`typed hook ${id} sourceField must be trigger`);
+  if (!TYPED_HOOK_SIDECAR_FIELDS.includes(entry.sourceField)) {
+    throw new Error(
+      `typed hook ${id} sourceField must be one of ${TYPED_HOOK_SIDECAR_FIELDS.join(", ")}`,
+    );
   }
   if (!entry.descriptor || typeof entry.descriptor !== "object") {
     throw new Error(`typed hook ${id} descriptor must be an object`);
@@ -457,45 +453,43 @@ async function writeTypedHookSidecar({
   stagedOutDir,
   compilerBindings,
   manifestHooks,
+  moduleSources,
 }) {
   const typedHooks = new Map();
-  const triggerBindings = compilerBindings
-    .filter((binding) => binding.field === "trigger")
+  const fields = new Set(TYPED_HOOK_SIDECAR_FIELDS);
+  const bindings = compilerBindings
+    .filter((binding) => fields.has(binding.field))
     .sort((left, right) => comparePath(left.id, right.id));
 
-  for (const binding of triggerBindings) {
+  for (const binding of bindings) {
     const body = functionSource(binding.fn);
     if (!body) {
       throw new Error(
-        `cannot compile typed trigger ${binding.id}: source function body is unavailable`,
+        `cannot compile typed ${binding.field} ${binding.id}: source function body is unavailable`,
       );
     }
-    let descriptor;
-    try {
-      descriptor = compileTypedHook({ body, sourceField: "trigger" });
-    } catch (error) {
-      if (error instanceof TypedHookCompileError) continue;
-      throw new Error(
-        `typed trigger compilation failed for ${binding.id}: ${error.message}`,
-        { cause: error },
-      );
-    }
-
     const manifestEntry = manifestHooks.get(binding.id);
     if (!manifestEntry) {
       throw new Error(
-        `typed trigger ${binding.id} has no closure module manifest entry`,
+        `typed ${binding.field} ${binding.id} has no closure module manifest entry`,
       );
     }
     if (
       manifestEntry.path !== binding.path ||
-      manifestEntry.sourceField !== "trigger" ||
+      manifestEntry.sourceField !== binding.field ||
       manifestEntry.functionBodySha256 !== binding.functionBodySha256
     ) {
       throw new Error(
-        `typed trigger ${binding.id} does not match the compiler identity binding and closure manifest`,
+        `typed ${binding.field} ${binding.id} does not match the compiler identity binding and closure manifest`,
       );
     }
+    const moduleSource = moduleSources.get(manifestEntry.module) ?? "";
+    const descriptor = tryCompileTypedHook({
+      body,
+      sourceField: binding.field,
+      moduleSource,
+    });
+    if (!descriptor) continue;
     const entry = {
       module: manifestEntry.module,
       moduleSha256: manifestEntry.moduleSha256,
@@ -1599,6 +1593,7 @@ async function writeClosurePreservingHookModules({
   await assertNoSymlinkInPath(modulesDir);
   const manifestHooks = new Map();
   const manifestModules = new Map();
+  const moduleSources = new Map();
   let moduleCount = 0;
   let hookCount = 0;
 
@@ -1661,6 +1656,7 @@ async function writeClosurePreservingHookModules({
       );
     }
     const moduleSha256 = sha256(moduleSource);
+    moduleSources.set(moduleFile, moduleSource);
     await writeOutputFile(
       stagedOutDir,
       `${HOOK_MODULES_DIR}/${moduleFile}`,
@@ -1717,6 +1713,7 @@ async function writeClosurePreservingHookModules({
     stagedOutDir,
     compilerBindings,
     manifestHooks,
+    moduleSources,
   });
   return { modules: moduleCount, hooks: hookCount, typedHooks };
 }
@@ -2153,7 +2150,7 @@ async function compileSpecsIrUnlocked({
     await publishDirectory(stagedOutDir, outDir);
     published = true;
     process.stdout.write(
-      `Wrote ${compiled} IR specs (${unique.length} names, ${hooksWritten} hooks in ${hookModules.modules} closure-preserving modules, ${hookModules.typedHooks} typed trigger hooks; ${skipped} allowlisted skipped) to ${outDir}\n`,
+      `Wrote ${compiled} IR specs (${unique.length} names, ${hooksWritten} hooks in ${hookModules.modules} closure-preserving modules, ${hookModules.typedHooks} typed hooks; ${skipped} allowlisted skipped) to ${outDir}\n`,
     );
     if (unappliedVersionDiffs.length) {
       const diffCount = unappliedVersionDiffs.reduce(

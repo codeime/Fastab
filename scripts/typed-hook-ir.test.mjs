@@ -16,6 +16,7 @@ import {
   compileTypedGetQueryTerm,
   compileTypedHook,
   evaluateTypedHook,
+  evaluateTypedHookJson,
   validateTypedHookIr,
 } from "./typed-hook-ir.mjs";
 import { factoryStringCandidates } from "./typed-hook-inline.mjs";
@@ -1225,7 +1226,7 @@ test("array filter callbacks receive the element index", () => {
   assert.deepEqual(evaluateTypedHook(hook, ["main,feature", []]), [{ name: "main" }]);
 });
 
-test("mixed factory extras prefer the explicit object over an omitted call", () => {
+test("mixed factory extras fail closed when call sites disagree", () => {
   const body = "rows => rows.map(row => ({...row, ...extra}))";
   const moduleSource = `
 export default (function () {
@@ -1235,14 +1236,14 @@ export default (function () {
   return { a: wrap(), b: wrap({extra: {isDangerous: true}}) };
 })();
 `;
-  const descriptor = compileTypedHook({
-    body,
-    sourceField: "filterTemplateSuggestions",
-    moduleSource,
-  });
-  assert.deepEqual(
-    evaluateTypedHook(descriptor, [[{ name: "src/", type: "folder" }]]),
-    [{ name: "src/", type: "folder", isDangerous: true }],
+  assert.throws(
+    () =>
+      compileTypedHook({
+        body,
+        sourceField: "filterTemplateSuggestions",
+        moduleSource,
+      }),
+    /disagreeing call-site values/,
   );
 });
 
@@ -1268,7 +1269,7 @@ export default (function () {
   );
 });
 
-test("mixed factory booleans prefer the omitted default", () => {
+test("mixed factory booleans fail closed when call sites disagree", () => {
   const body =
     't=>{let n=t.split("\\n").map(e=>e.split(" ")[0]),s=[];return o||(s=n.map(e=>e.split("-")[0]),s=s.filter((e,r)=>s.indexOf(e)===r)),s.concat(n).map(e=>({name:e}))}';
   const moduleSource = `
@@ -1279,15 +1280,85 @@ export default (function () {
   return { a: i(), b: i({excludeShort:true}) };
 })();
 `;
+  assert.throws(
+    () =>
+      compileTypedHook({
+        body,
+        sourceField: "postProcess",
+        moduleSource,
+      }),
+    /disagreeing call-site values/,
+  );
+});
+
+test("factory aliases through bundler assignments bind the call-site separator", () => {
+  const body = "(l,a)=>{let p=L(l,e,t),f=L(a,e,t);return p!==f}";
+  const moduleSource = `
+export default (function () {
+  function L(e,...t){return Math.max(...t.map(i=>e.lastIndexOf(i)))}
+  function ue({separator:e="=",delimiter:t=","}={}) {
+    return { trigger: ${body} };
+  }
+  var k = {};
+  k.keyValueList = ue;
+  var $ = { keyValueList: k.keyValueList };
+  return { hook: (0,$.keyValueList)({separator:":",keys:["user"]}) };
+})();
+`;
   const descriptor = compileTypedHook({
     body,
-    sourceField: "postProcess",
+    sourceField: "trigger",
     moduleSource,
   });
-  assert.deepEqual(evaluateTypedHook(descriptor, ["not json\n{{{", ["apt"]]), [
-    { name: "not" },
-    { name: "{{{" },
-    { name: "not" },
-    { name: "{{{" },
+  assert.equal(evaluateTypedHook(descriptor, ["scope:item", "scope"]), true);
+  assert.equal(evaluateTypedHook(descriptor, ["scope=item", "scope"]), false);
+});
+
+test("factory parameter without a visible call site fails closed", () => {
+  const body = "s => s.slice(s.indexOf(e)+1)";
+  const moduleSource = `
+export default (function () {
+  function fe({separator:e="="}={}) {
+    return { getQueryTerm: ${body} };
+  }
+  return { a: fe };
+})();
+`;
+  assert.throws(
+    () =>
+      compileTypedHook({
+        body,
+        sourceField: "getQueryTerm",
+        moduleSource,
+      }),
+    /no statically visible call-site/,
+  );
+});
+
+test("let bindings restore the outer name after an inner helper reuses it", () => {
+  const descriptor = compileTypedHook({
+    body: `tokens => {
+      let n = tokens[0] === "docker" ? ["docker", "compose"] : ["docker-compose"];
+      let t = (() => {
+        let n = [];
+        return n;
+      })();
+      return n.concat(t).concat(["config"]);
+    }`,
+    sourceField: "script",
+  });
+  assert.deepEqual(evaluateTypedHook(descriptor, [["git"]]), [
+    "docker-compose",
+    "config",
+  ]);
+});
+
+test("evaluateTypedHookJson drops empty suggestion fields like Rust", () => {
+  const descriptor = compileTypedHook({
+    body: '(out) => out.split("\\n").filter(Boolean).map((name) => ({ name, description: "", type: "arg" }))',
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHookJson(descriptor, ["main\n", ["git"]]), [
+    { name: "main", type: "arg" },
   ]);
 });

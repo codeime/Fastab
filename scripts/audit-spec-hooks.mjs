@@ -57,10 +57,9 @@ import {
   withPairLock,
 } from "./spec-pair.mjs";
 import {
-  compileTypedHook,
-  TypedHookCompileError,
-  TYPED_HOOK_CONTRACTS,
-  TYPED_HOOK_IR_VERSION,
+  TYPED_HOOK_SIDECAR_FIELDS,
+  tryCompileTypedHook,
+  typedHookSidecarContracts,
   validateTypedHookIr,
 } from "./typed-hook-ir.mjs";
 
@@ -593,14 +592,7 @@ function isSha256(value) {
 }
 
 function typedHookContracts() {
-  const contract = TYPED_HOOK_CONTRACTS.trigger;
-  return {
-    trigger: {
-      irVersion: TYPED_HOOK_IR_VERSION,
-      params: [...contract.params],
-      resultType: contract.resultType,
-    },
-  };
+  return typedHookSidecarContracts();
 }
 
 function canonicalJson(value) {
@@ -695,10 +687,10 @@ function validateTypedHookEntryShape(id, entry, errors) {
         pathError ?? "path must be a normalized source object property path",
     });
   }
-  if (entry.sourceField !== "trigger") {
+  if (!TYPED_HOOK_SIDECAR_FIELDS.includes(entry.sourceField)) {
     errors.invalidTypedHookSidecar.push({
       field: `hooks.${id}.sourceField`,
-      reason: "sourceField must be trigger",
+      reason: `sourceField must be one of ${TYPED_HOOK_SIDECAR_FIELDS.join(", ")}`,
     });
   }
   if (!isRecord(entry.descriptor)) {
@@ -856,17 +848,19 @@ async function validateTypedHookSidecar({
       errors,
       "typed hook sidecar.contracts",
       contracts,
-      ["trigger"],
+      [...TYPED_HOOK_SIDECAR_FIELDS],
       "invalidTypedHookSidecar",
     );
-    if (isRecord(contracts.trigger)) {
-      rejectUnknownFields(
-        errors,
-        "typed hook sidecar.contracts.trigger",
-        contracts.trigger,
-        ["irVersion", "params", "resultType"],
-        "invalidTypedHookSidecar",
-      );
+    for (const field of TYPED_HOOK_SIDECAR_FIELDS) {
+      if (isRecord(contracts[field])) {
+        rejectUnknownFields(
+          errors,
+          `typed hook sidecar.contracts.${field}`,
+          contracts[field],
+          ["irVersion", "params", "resultType"],
+          "invalidTypedHookSidecar",
+        );
+      }
     }
     if (canonicalJson(contracts) !== canonicalJson(typedHookContracts())) {
       errors.invalidTypedHookSidecar.push({
@@ -897,34 +891,56 @@ async function validateTypedHookSidecar({
 
   const expected = new Map();
   let unsupportedHooks = 0;
+  const moduleSources = new Map();
   if (manifestHooks) {
-    const triggerField = SUPPORTED_HOOK_FIELDS.trigger;
+    const sidecarIrFields = new Set(
+      TYPED_HOOK_SIDECAR_FIELDS.map((field) => SUPPORTED_HOOK_FIELDS[field]),
+    );
     for (const [id, ref] of refsById) {
-      if (ref.field !== triggerField) continue;
+      if (!sidecarIrFields.has(ref.field)) continue;
       const manifestEntry = Object.hasOwn(manifestHooks, id)
         ? manifestHooks[id]
         : undefined;
       if (!isRecord(manifestEntry)) continue;
+      const sourceField =
+        Object.entries(SUPPORTED_HOOK_FIELDS).find(
+          ([, irField]) => irField === ref.field,
+        )?.[0] ?? null;
+      if (!TYPED_HOOK_SIDECAR_FIELDS.includes(sourceField)) continue;
       const source = ref.ir.replace(/\.json$/, ".js");
       const sourceRecord = sourceRecords.get(source);
-      const sourceFunction = sourceRecord?.functions?.trigger?.find(
+      const sourceFunction = sourceRecord?.functions?.[sourceField]?.find(
         (candidate) => candidate.path === manifestEntry.path,
       );
       if (!sourceFunction) continue;
       const body = functionSource(sourceFunction.identity);
       if (!body) continue;
-      let descriptor;
-      try {
-        descriptor = compileTypedHook({ body, sourceField: "trigger" });
-      } catch (error) {
-        if (error instanceof TypedHookCompileError) {
-          unsupportedHooks += 1;
-          continue;
+      let moduleSource = "";
+      if (isSafeModuleFile(manifestEntry.module)) {
+        if (!moduleSources.has(manifestEntry.module)) {
+          try {
+            moduleSources.set(
+              manifestEntry.module,
+              await safeReadRegularFile(
+                join(irRoot, HOOK_MODULES_DIR, manifestEntry.module),
+                `closure-preserving hook module ${manifestEntry.module}`,
+                { root: irRoot },
+              ),
+            );
+          } catch {
+            moduleSources.set(manifestEntry.module, "");
+          }
         }
-        throw new Error(
-          `typed trigger audit compilation failed for ${id}: ${error.message}`,
-          { cause: error },
-        );
+        moduleSource = moduleSources.get(manifestEntry.module) ?? "";
+      }
+      const descriptor = tryCompileTypedHook({
+        body,
+        sourceField,
+        moduleSource,
+      });
+      if (!descriptor) {
+        unsupportedHooks += 1;
+        continue;
       }
       expected.set(id, {
         module: manifestEntry.module,
@@ -952,7 +968,7 @@ async function validateTypedHookSidecar({
     if (!expected.has(id)) {
       errors.orphanTypedHooks.push({
         id,
-        reason: "sidecar hook is not an eligible audited trigger binding",
+        reason: "sidecar hook is not an eligible audited typed binding",
       });
     }
   }

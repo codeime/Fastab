@@ -243,29 +243,66 @@ function definitionInit(def) {
   return null;
 }
 
+function assignedBindingName(node) {
+  if (!node) return null;
+  if (node.type === "Identifier") return node.name;
+  if (
+    node.type === "MemberExpression" &&
+    !node.computed &&
+    node.property.type === "Identifier"
+  ) {
+    return node.property.name;
+  }
+  return null;
+}
+
 function functionBindingNames(moduleAst, fn) {
   const names = new Set();
   if (fn.id?.name) names.add(fn.id.name);
-  walkAst(moduleAst, (node) => {
-    if (
-      node.type === "VariableDeclarator" &&
-      node.init === fn &&
-      node.id.type === "Identifier"
-    ) {
-      names.add(node.id.name);
+
+  const consider = (init, left) => {
+    if (init === fn) {
+      const name = assignedBindingName(left);
+      if (name) names.add(name);
+      return;
     }
-    if (node.type === "AssignmentExpression" && node.right === fn) {
-      if (node.left.type === "Identifier") names.add(node.left.name);
-      if (
-        node.left.type === "MemberExpression" &&
-        !node.left.computed &&
-        node.left.property.type === "Identifier"
-      ) {
-        names.add(node.left.property.name);
+    if (init?.type === "Identifier" && names.has(init.name)) {
+      const name = assignedBindingName(left);
+      if (name) names.add(name);
+    }
+  };
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const size = names.size;
+    walkAst(moduleAst, (node) => {
+      if (node.type === "VariableDeclarator") {
+        consider(node.init, node.id);
       }
-    }
-  });
+      if (node.type === "AssignmentExpression") {
+        consider(node.right, node.left);
+      }
+    });
+    if (names.size > size) changed = true;
+  }
   return names;
+}
+
+function callCalleeTarget(callee) {
+  if (
+    callee?.type === "SequenceExpression" &&
+    callee.expressions.length > 0
+  ) {
+    return callCalleeTarget(callee.expressions[callee.expressions.length - 1]);
+  }
+  return callee;
+}
+
+function callAppliesToFunction(call, fn, names) {
+  const callee = callCalleeTarget(call.callee);
+  if (callee === fn) return true;
+  return calleeNames(callee).some((name) => names.has(name));
 }
 
 function calleeNames(node) {
@@ -324,40 +361,6 @@ function astNodesAgree(left, right) {
   return false;
 }
 
-function agreeObjectLiterals(objects) {
-  if (!Array.isArray(objects) || objects.length === 0) return emptyObjectExpression();
-  if (objects.length === 1) return objects[0];
-  const keys = [];
-  for (const property of objects[0].properties) {
-    const key = objectPropertyKey(property);
-    if (key == null || keys.includes(key)) continue;
-    keys.push(key);
-  }
-  const properties = [];
-  for (const key of keys) {
-    const values = objects.map((object) => objectPropertyValue(object, key));
-    if (values.some((value) => !value)) continue;
-    if (!values.every((value) => astNodesAgree(value, values[0]))) continue;
-    properties.push({
-      type: "Property",
-      start: 0,
-      end: 0,
-      method: false,
-      shorthand: false,
-      computed: false,
-      kind: "init",
-      key: { type: "Identifier", start: 0, end: 0, name: String(key) },
-      value: values[0],
-    });
-  }
-  return {
-    type: "ObjectExpression",
-    start: 0,
-    end: 0,
-    properties,
-  };
-}
-
 function argumentForParam(fn, call, name) {
   if (!fn?.params) return null;
   for (let index = 0; index < fn.params.length; index += 1) {
@@ -402,10 +405,6 @@ function objectPatternKey(pattern, name) {
   return name;
 }
 
-function emptyObjectExpression() {
-  return { type: "ObjectExpression", properties: [], start: 0, end: 2 };
-}
-
 function undefinedLiteral() {
   return { type: "Literal", start: 0, end: 4, value: null, raw: "null" };
 }
@@ -417,32 +416,33 @@ function resolveFactoryArgument(moduleAst, def, name) {
   const calls = [];
   walkAst(moduleAst, (node) => {
     if (node.type !== "CallExpression") return;
-    const called = calleeNames(node.callee);
-    if (called.some((callee) => names.has(callee))) calls.push(node);
+    if (callAppliesToFunction(node, fn, names)) calls.push(node);
   });
-  const fromDefault = parameterDefault(fn, name) ?? undefinedLiteral();
   if (calls.length === 0) {
-    return fromDefault;
+    // A missing call site is not the parameter default. Bundlers export
+    // `k.keyValueList = ue` and invoke `(0, $.keyValueList)({separator:":"})`;
+    // treating that as `separator = "="` compiled a hook whose typed
+    // result disagreed with the closed-over source.
+    fail(
+      `factory argument ${name} has no statically visible call-site`,
+      "helper-inline",
+    );
   }
   const values = calls.map((call) => {
     const argument = argumentForParam(fn, call, name);
     if (!argument || argument.type === "SpreadElement") return undefinedLiteral();
     return argument;
   });
-  if (values.every((value) => value.type === "ObjectExpression")) {
-    return agreeObjectLiterals(values);
-  }
-  const objectValues = values.filter((value) => value.type === "ObjectExpression");
-  if (
-    objectValues.length > 0 &&
-    values.every((value) => value.type === "ObjectExpression" || isNullishAst(value))
-  ) {
-    return agreeObjectLiterals(objectValues);
-  }
   if (values.every((value) => astNodesAgree(value, values[0]))) {
     return values[0];
   }
-  return fromDefault;
+  // A shared factory body with per-call literals (separator ":" vs "=")
+  // must not collapse to the parameter default. That would compile a hook
+  // whose typed result disagrees with the closed-over source.
+  fail(
+    `factory argument ${name} has disagreeing call-site values`,
+    "helper-inline",
+  );
 }
 
 function isNullishAst(node) {
@@ -790,8 +790,7 @@ function collectFactoryLiterals(moduleAst, fn, name) {
   if (fn) {
     walkAst(moduleAst, (node) => {
       if (node.type !== "CallExpression") return;
-      const called = calleeNames(node.callee);
-      if (!called.some((callee) => bindingNames.has(callee))) return;
+      if (!callAppliesToFunction(node, fn, bindingNames)) return;
       const argument = argumentForParam(fn, node, name);
       const value = literalFactoryValue(argument);
       if (value !== undefined) values.push(value);

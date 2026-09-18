@@ -55,6 +55,10 @@ jobs:
           node scripts/spec-pair.mjs
           node scripts/capture-typed-trigger-reference.mjs --check
           node scripts/capture-typed-trigger-reference.mjs --get-query-term --check
+          node scripts/capture-typed-reference.mjs --field getQueryTerm --check
+          node scripts/capture-typed-reference.mjs --field postProcess --check
+          node scripts/capture-typed-reference.mjs --field script --check
+          node scripts/capture-typed-reference.mjs --field filterTemplateSuggestions --check
 
       - name: Verify native hook inventory
         run: node scripts/classify-native-hooks.mjs --check

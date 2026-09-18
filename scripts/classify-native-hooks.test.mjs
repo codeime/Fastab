@@ -22,7 +22,7 @@ import {
 
 test("classifies pure, input, command, closure, complex, and gated syntax bodies", () => {
   const pure = classifyHookBody({ field: "jsTrigger", body: "() => !0" });
-  assert.equal(pure.status, "typed-ir-research-candidate");
+  assert.equal(pure.status, "typed-ir");
   assert.equal(pure.buildTimePureStatic, true);
   assert.equal(pure.nativeExecutable, false);
   assert.deepEqual(pure.freeVariables, []);
@@ -37,7 +37,7 @@ test("classifies pure, input, command, closure, complex, and gated syntax bodies
     field: "jsGetQueryTerm",
     body: '(term) => term.slice(term.indexOf(":" ) + 1)',
   });
-  assert.equal(input.status, "typed-ir-research-candidate");
+  assert.equal(input.status, "typed-ir");
   assert.equal(input.buildTimePureStatic, false);
   assert.equal(input.dependencies.input, true);
   assert.equal(input.dependencies.command, false);
@@ -99,7 +99,7 @@ test("classifies pure, input, command, closure, complex, and gated syntax bodies
     field: "jsTrigger",
     body: '(a, b) => a.trim().toLowerCase().startsWith(b) && a.trimEnd().length > 0',
   });
-  assert.equal(compileUpgrade.status, "typed-ir-research-candidate");
+  assert.equal(compileUpgrade.status, "typed-ir");
   assert.ok(compileUpgrade.risks.includes("complexity"));
 });
 
@@ -156,12 +156,12 @@ test("compiles a real helper fixture and reports deterministic native readiness"
     assert.equal(first.gate.classificationComplete, true);
     assert.equal(first.gate.pathSwitchAllowed, false);
     assert.ok(first.gate.blockers.includes("requires-native-adapter"));
-    assert.ok(first.gate.blockers.includes("typed-ir-research-candidate"));
+    assert.equal(first.gate.blockers.includes("typed-ir"), false);
     assert.equal(first.nativeFilepathsRewrites.byField.trigger, 1);
     assert.equal(first.nativeFilepathsRewrites.byField.getQueryTerm, 1);
     assert.equal(first.nativeFilepathsRewrites.byField.custom, 1);
-    assert.equal(first.counts.extractedHooks["typed-ir-research-candidate"], 4);
-    assert.equal(first.counts.extractedHooks["requires-native-adapter"], 1);
+    assert.equal(first.counts.extractedHooks["typed-ir"], 3);
+    assert.equal(first.counts.extractedHooks["requires-native-adapter"], 2);
 
     // The versioned-spec allowlist describes the bundled tree, so a fixture
     // tree reports every entry as absent but still lists it: the gap is a
@@ -295,15 +295,12 @@ test("full pinned bundle is covered and remains gated", async () => {
     report.gate.blockers.includes("output-baseline-not-established"),
     false,
   );
-  for (const status of [
-    "requires-native-adapter",
-    "typed-ir-research-candidate",
-  ]) {
-    assert.equal(
-      report.gate.blockers.includes(status),
-      report.counts.uniqueBodies[status] > 0,
-    );
-  }
+  assert.equal(
+    report.gate.blockers.includes("requires-native-adapter"),
+    report.counts.uniqueBodies["requires-native-adapter"] > 0,
+  );
+  assert.equal(report.gate.blockers.includes("typed-ir"), false);
+  assert.ok(report.counts.uniqueBodies["typed-ir"] > 0);
   assert.equal(report.hooks.length, report.coverage.extractedHooks);
   assert.equal(report.bodyGroups.length, report.coverage.uniqueBodies);
   assert.equal(
