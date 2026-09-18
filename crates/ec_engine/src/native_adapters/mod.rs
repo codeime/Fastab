@@ -824,26 +824,32 @@ mod git_config_keys;
 mod post_process;
 mod turbo_icon;
 
-pub(crate) use effect::{AdapterExecRequest, AdapterExecResult};
+pub(crate) use effect::{AdapterExecRequest, AdapterExecResult, HookSite};
 pub(crate) use eval::{AdapterError, throw as adapter_throw};
 
 pub(crate) fn evaluate_post_process(
     body_sha256: &str,
     stdout: &str,
-    tokens: &[String],
+    site: HookSite<'_>,
 ) -> Option<Result<serde_json::Value, String>> {
     let function = post_process_fn(body_sha256)?;
-    Some(adapter_json_result(function(stdout, tokens)))
+    Some(adapter_json_result(function(stdout, site)))
 }
 
 pub(crate) fn evaluate_filter(
     body_sha256: &str,
     suggestions: &[serde_json::Value],
+    site: HookSite<'_>,
 ) -> Option<Result<serde_json::Value, String>> {
-    if body_sha256 != "16eb363f9957097622cbe2ed626cfc4859c24b797e5e2acff58cf40f4f9fbbad" {
-        return None;
-    }
-    Some(adapter_json_result(filter::direnv_envrc(suggestions)))
+    let function = filter_fn(body_sha256)?;
+    Some(adapter_json_result(function(suggestions, site)))
+}
+
+fn filter_fn(body_sha256: &str) -> Option<fn(&[serde_json::Value], HookSite<'_>) -> eval::AdapterResult> {
+    Some(match body_sha256 {
+        "16eb363f9957097622cbe2ed626cfc4859c24b797e5e2acff58cf40f4f9fbbad" => filter::direnv_envrc,
+        _ => return None,
+    })
 }
 
 pub(crate) fn evaluate_custom(
@@ -878,7 +884,7 @@ fn adapter_json_result(result: eval::AdapterResult) -> Result<serde_json::Value,
     result.map_err(|error| error.js_class.unwrap_or("Error").to_string())
 }
 
-fn post_process_fn(body_sha256: &str) -> Option<fn(&str, &[String]) -> eval::AdapterResult> {
+fn post_process_fn(body_sha256: &str) -> Option<fn(&str, HookSite<'_>) -> eval::AdapterResult> {
     Some(match body_sha256 {
         "06cf60a4db4009e789aa2efbfd2e826a8fc7be284a20bc56a257ff0ba2524a33" => {
             |stdout, _| post_process::bunx_npx(stdout)
@@ -892,18 +898,14 @@ fn post_process_fn(body_sha256: &str) -> Option<fn(&str, &[String]) -> eval::Ada
         "20afa25251f32cd950d69142214fb6b725cca32e75676c486610ddabb6200d58" => {
             |stdout, _| post_process::dcli_devices(stdout)
         },
-        "40446df6c189303738556d8b980c04a816d639d9ed1576c2f1eee6df70b1ff3d" => {
-            |stdout, _| post_process::limactl_instances(stdout)
-        },
+        "40446df6c189303738556d8b980c04a816d639d9ed1576c2f1eee6df70b1ff3d" => post_process::limactl_instances,
         "40f323a2aaed65f89013fd38fc15cd73181b00b577418036d25981f47b98ebb8" => {
             |stdout, _| post_process::git_remotes(stdout)
         },
         "46cfb8ef98d11e187a3fb9a8756cf911956bd5f5bc48d22ce938faee7860f35b" => {
             |stdout, _| post_process::react_native_devices(stdout)
         },
-        "47dd9ebffc5ba15a140bafd0c09167f71b38de57bb8782036e4edd0ba8049e89" => {
-            |stdout, _| post_process::asdf_plugins(stdout)
-        },
+        "47dd9ebffc5ba15a140bafd0c09167f71b38de57bb8782036e4edd0ba8049e89" => post_process::asdf_plugins,
         "566065d403b4e22dba74ec84e8e64ef2c541ce984fef4051e41baaf5a8941120" => {
             |stdout, _| post_process::cargo_deps(stdout)
         },
@@ -919,31 +921,25 @@ fn post_process_fn(body_sha256: &str) -> Option<fn(&str, &[String]) -> eval::Ada
         "5b988a428bdc5060c8f035d9d480ea81be6e411de28351871118d9e8bc7d4978" => {
             |stdout, _| post_process::tldr_pages(stdout)
         },
-        "5cde47b72c7c8040bea8146f4c5bd7267bb7f07bb53b84964901d097f94b2d37" => {
-            |stdout, _| post_process::rustup_targets(stdout)
-        },
-        "61d0b086797b88cb187f1bcc5b3a82c66b081a9756fde0e10cfde9fb90f5eabf" => {
-            |stdout, _| post_process::rustup_installed(stdout)
-        },
+        "5cde47b72c7c8040bea8146f4c5bd7267bb7f07bb53b84964901d097f94b2d37" => post_process::rustup_toolchains,
+        "61d0b086797b88cb187f1bcc5b3a82c66b081a9756fde0e10cfde9fb90f5eabf" => post_process::rustup_targets,
         "66349787d8ae1c1f6b8b895a43758316cff3ef10d8f8c70a9eaace0b079c937c" => {
             |stdout, _| post_process::precommit_hooks(stdout)
         },
-        "7684a7c68524c7c00f9309417061576eb590152382aea725b4687ea6824cfe6c" => {
-            |stdout, _| post_process::brew_packages(stdout)
-        },
+        "7684a7c68524c7c00f9309417061576eb590152382aea725b4687ea6824cfe6c" => post_process::brew_services,
         "775c0c96e9204671a2a03e3ec4839bfd73f1e9fdec79ce11f7d2b1abf9120c67" => {
             |stdout, _| post_process::deno_url(stdout)
         },
-        "83c37762b8e6a3fb3dfef347ac4d34f35174c2ae0483908a2101a1c521a2ef1f" => post_process::yarn_deps,
+        "83c37762b8e6a3fb3dfef347ac4d34f35174c2ae0483908a2101a1c521a2ef1f" => {
+            |stdout, site| post_process::yarn_deps(stdout, site.tokens)
+        },
         "86847ea037183bc60ece6f12b5dc2764beb807a76a4930c2a28412a63d96e174" => {
             |stdout, _| post_process::yo_generators(stdout)
         },
         "86e2f49405e79a81d3c4fd402009b27d5e352d1e80d69ee496dda22abc8c65b2" => {
             |stdout, _| post_process::taskwarrior_a(stdout)
         },
-        "97aa92d325bb5a2273a65c8204a97bbe4be8598b9d41cf129d8fa554d510fbf3" => {
-            |stdout, _| post_process::asdf_versions(stdout)
-        },
+        "97aa92d325bb5a2273a65c8204a97bbe4be8598b9d41cf129d8fa554d510fbf3" => post_process::asdf_versions,
         "9e08e5a9bac41e7def677da3f7fc812fc90377d437d8121a05c1f661fecfb32a" => {
             |stdout, _| post_process::open_apps(stdout)
         },
@@ -956,13 +952,13 @@ fn post_process_fn(body_sha256: &str) -> Option<fn(&str, &[String]) -> eval::Ada
         "a8bce6f4bcf79ed952f5325ec0b5c7f1041eb0e10320fbd9beb629efb4071bbe" => {
             |stdout, _| post_process::taskwarrior_b(stdout)
         },
-        "b0575d96c049ffec2de9ce491f5319e3ad61c3c908d0dec5554aeda00ed971c7" => {
-            |stdout, _| post_process::tailscale_peers(stdout)
-        },
+        "b0575d96c049ffec2de9ce491f5319e3ad61c3c908d0dec5554aeda00ed971c7" => post_process::tailscale_peers,
         "b3739a280026f1e961efaf2ded7bf918e22c909af433ec86f2eec02c6aadeca1" => {
             |stdout, _| post_process::snaplet_backups(stdout)
         },
-        "b3b72135b863b89e29cf44274d5e381daf51d9c53c3313cc68096fc1f2af8177" => post_process::pnpm_deps,
+        "b3b72135b863b89e29cf44274d5e381daf51d9c53c3313cc68096fc1f2af8177" => {
+            |stdout, site| post_process::pnpm_deps(stdout, site.tokens)
+        },
         "baa2ab8ac2cd27aaf62bd6b24ddd1734a395dcbab0dfed6ad6ddf108d19ac709" => {
             |stdout, _| post_process::tccutil_services(stdout)
         },
@@ -978,7 +974,9 @@ fn post_process_fn(body_sha256: &str) -> Option<fn(&str, &[String]) -> eval::Ada
         "d060a61ead077da1a1b2a779f8670f87f55010a22a34bdd3f8b8545378d0833e" => {
             |stdout, _| post_process::git_remotes(stdout)
         },
-        "d3e93ba8a10aa6f82f74dd3df6cc51e81d815eb8e36072ed084d9a2dddcd6f61" => post_process::just_recipes_arity,
+        "d3e93ba8a10aa6f82f74dd3df6cc51e81d815eb8e36072ed084d9a2dddcd6f61" => {
+            |stdout, site| post_process::just_recipes_arity(stdout, site.tokens)
+        },
         "de5329d88e6a3667531eace7c10a57034bb8ec9e643f910095a0baa80235de20" => {
             |stdout, _| post_process::git_config(stdout)
         },
@@ -991,13 +989,13 @@ fn post_process_fn(body_sha256: &str) -> Option<fn(&str, &[String]) -> eval::Ada
         "e66f8b0736bf23a063bda8970e1de8b9ac8f72328a53ac15671982af49b7f468" => {
             |stdout, _| post_process::snaplet_status(stdout)
         },
-        "e8289375fc0901b1f363b7525760614e99748125598c35e172710d7446292842" => post_process::deno_docs,
+        "e8289375fc0901b1f363b7525760614e99748125598c35e172710d7446292842" => {
+            |stdout, site| post_process::deno_docs(stdout, site.tokens)
+        },
         "e8a02695049c0e386fb7345f0e54d5bd2d2ce1c04481e228e5e9f2bf4f583c14" => {
             |stdout, _| post_process::gource_displays(stdout)
         },
-        "f04211ce9cc3b53755c0429dfc0fcaac7b07fe7d4a7d9021fc2c3c11cf5f6adb" => {
-            |stdout, _| post_process::cf_lines(stdout)
-        },
+        "f04211ce9cc3b53755c0429dfc0fcaac7b07fe7d4a7d9021fc2c3c11cf5f6adb" => post_process::cf_lines,
         _ => return None,
     })
 }
@@ -1013,8 +1011,8 @@ mod tests {
 
     #[derive(Clone, Copy)]
     enum AdapterFn {
-        PostProcess(fn(&str, &[String]) -> AdapterResult),
-        Filter(fn(&[JsonValue]) -> AdapterResult),
+        PostProcess(fn(&str, HookSite<'_>) -> AdapterResult),
+        Filter(fn(&[JsonValue], HookSite<'_>) -> AdapterResult),
         Custom,
         GenerateSpec,
     }
@@ -1038,7 +1036,7 @@ mod tests {
                 AdapterFn::PostProcess(|stdout, _| post_process::dcli_devices(stdout))
             },
             ("postProcess", "40446df6c189303738556d8b980c04a816d639d9ed1576c2f1eee6df70b1ff3d") => {
-                AdapterFn::PostProcess(|stdout, _| post_process::limactl_instances(stdout))
+                AdapterFn::PostProcess(post_process::limactl_instances)
             },
             ("postProcess", "40f323a2aaed65f89013fd38fc15cd73181b00b577418036d25981f47b98ebb8") => {
                 AdapterFn::PostProcess(|stdout, _| post_process::git_remotes(stdout))
@@ -1047,7 +1045,7 @@ mod tests {
                 AdapterFn::PostProcess(|stdout, _| post_process::react_native_devices(stdout))
             },
             ("postProcess", "47dd9ebffc5ba15a140bafd0c09167f71b38de57bb8782036e4edd0ba8049e89") => {
-                AdapterFn::PostProcess(|stdout, _| post_process::asdf_plugins(stdout))
+                AdapterFn::PostProcess(post_process::asdf_plugins)
             },
             ("postProcess", "566065d403b4e22dba74ec84e8e64ef2c541ce984fef4051e41baaf5a8941120") => {
                 AdapterFn::PostProcess(|stdout, _| post_process::cargo_deps(stdout))
@@ -1065,22 +1063,22 @@ mod tests {
                 AdapterFn::PostProcess(|stdout, _| post_process::tldr_pages(stdout))
             },
             ("postProcess", "5cde47b72c7c8040bea8146f4c5bd7267bb7f07bb53b84964901d097f94b2d37") => {
-                AdapterFn::PostProcess(|stdout, _| post_process::rustup_targets(stdout))
+                AdapterFn::PostProcess(post_process::rustup_toolchains)
             },
             ("postProcess", "61d0b086797b88cb187f1bcc5b3a82c66b081a9756fde0e10cfde9fb90f5eabf") => {
-                AdapterFn::PostProcess(|stdout, _| post_process::rustup_installed(stdout))
+                AdapterFn::PostProcess(post_process::rustup_targets)
             },
             ("postProcess", "66349787d8ae1c1f6b8b895a43758316cff3ef10d8f8c70a9eaace0b079c937c") => {
                 AdapterFn::PostProcess(|stdout, _| post_process::precommit_hooks(stdout))
             },
             ("postProcess", "7684a7c68524c7c00f9309417061576eb590152382aea725b4687ea6824cfe6c") => {
-                AdapterFn::PostProcess(|stdout, _| post_process::brew_packages(stdout))
+                AdapterFn::PostProcess(post_process::brew_services)
             },
             ("postProcess", "775c0c96e9204671a2a03e3ec4839bfd73f1e9fdec79ce11f7d2b1abf9120c67") => {
                 AdapterFn::PostProcess(|stdout, _| post_process::deno_url(stdout))
             },
             ("postProcess", "83c37762b8e6a3fb3dfef347ac4d34f35174c2ae0483908a2101a1c521a2ef1f") => {
-                AdapterFn::PostProcess(post_process::yarn_deps)
+                AdapterFn::PostProcess(|stdout, site| post_process::yarn_deps(stdout, site.tokens))
             },
             ("postProcess", "86847ea037183bc60ece6f12b5dc2764beb807a76a4930c2a28412a63d96e174") => {
                 AdapterFn::PostProcess(|stdout, _| post_process::yo_generators(stdout))
@@ -1089,7 +1087,7 @@ mod tests {
                 AdapterFn::PostProcess(|stdout, _| post_process::taskwarrior_a(stdout))
             },
             ("postProcess", "97aa92d325bb5a2273a65c8204a97bbe4be8598b9d41cf129d8fa554d510fbf3") => {
-                AdapterFn::PostProcess(|stdout, _| post_process::asdf_versions(stdout))
+                AdapterFn::PostProcess(post_process::asdf_versions)
             },
             ("postProcess", "9e08e5a9bac41e7def677da3f7fc812fc90377d437d8121a05c1f661fecfb32a") => {
                 AdapterFn::PostProcess(|stdout, _| post_process::open_apps(stdout))
@@ -1104,13 +1102,13 @@ mod tests {
                 AdapterFn::PostProcess(|stdout, _| post_process::taskwarrior_b(stdout))
             },
             ("postProcess", "b0575d96c049ffec2de9ce491f5319e3ad61c3c908d0dec5554aeda00ed971c7") => {
-                AdapterFn::PostProcess(|stdout, _| post_process::tailscale_peers(stdout))
+                AdapterFn::PostProcess(post_process::tailscale_peers)
             },
             ("postProcess", "b3739a280026f1e961efaf2ded7bf918e22c909af433ec86f2eec02c6aadeca1") => {
                 AdapterFn::PostProcess(|stdout, _| post_process::snaplet_backups(stdout))
             },
             ("postProcess", "b3b72135b863b89e29cf44274d5e381daf51d9c53c3313cc68096fc1f2af8177") => {
-                AdapterFn::PostProcess(post_process::pnpm_deps)
+                AdapterFn::PostProcess(|stdout, site| post_process::pnpm_deps(stdout, site.tokens))
             },
             ("postProcess", "baa2ab8ac2cd27aaf62bd6b24ddd1734a395dcbab0dfed6ad6ddf108d19ac709") => {
                 AdapterFn::PostProcess(|stdout, _| post_process::tccutil_services(stdout))
@@ -1128,7 +1126,7 @@ mod tests {
                 AdapterFn::PostProcess(|stdout, _| post_process::git_remotes(stdout))
             },
             ("postProcess", "d3e93ba8a10aa6f82f74dd3df6cc51e81d815eb8e36072ed084d9a2dddcd6f61") => {
-                AdapterFn::PostProcess(post_process::just_recipes_arity)
+                AdapterFn::PostProcess(|stdout, site| post_process::just_recipes_arity(stdout, site.tokens))
             },
             ("postProcess", "de5329d88e6a3667531eace7c10a57034bb8ec9e643f910095a0baa80235de20") => {
                 AdapterFn::PostProcess(|stdout, _| post_process::git_config(stdout))
@@ -1143,13 +1141,13 @@ mod tests {
                 AdapterFn::PostProcess(|stdout, _| post_process::snaplet_status(stdout))
             },
             ("postProcess", "e8289375fc0901b1f363b7525760614e99748125598c35e172710d7446292842") => {
-                AdapterFn::PostProcess(post_process::deno_docs)
+                AdapterFn::PostProcess(|stdout, site| post_process::deno_docs(stdout, site.tokens))
             },
             ("postProcess", "e8a02695049c0e386fb7345f0e54d5bd2d2ce1c04481e228e5e9f2bf4f583c14") => {
                 AdapterFn::PostProcess(|stdout, _| post_process::gource_displays(stdout))
             },
             ("postProcess", "f04211ce9cc3b53755c0429dfc0fcaac7b07fe7d4a7d9021fc2c3c11cf5f6adb") => {
-                AdapterFn::PostProcess(|stdout, _| post_process::cf_lines(stdout))
+                AdapterFn::PostProcess(post_process::cf_lines)
             },
             (field, sha)
                 if ADAPTERS
@@ -1183,7 +1181,9 @@ mod tests {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                function(stdout, &tokens)
+                // The T1.2 cases carry no generator script, so a
+                // script-keyed adapter sees its representative site.
+                function(stdout, HookSite::tokens(&tokens))
             },
             AdapterFn::Filter(function) => {
                 let suggestions = case
@@ -1192,7 +1192,7 @@ mod tests {
                     .and_then(JsonValue::as_array)
                     .cloned()
                     .unwrap_or_default();
-                function(&suggestions)
+                function(&suggestions, HookSite::default())
             },
             AdapterFn::Custom => {
                 let tokens = case

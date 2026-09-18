@@ -269,11 +269,18 @@ pub fn dispatch_get_query_term(hook_id: &str, search_term: &str) -> Option<Strin
     native_get_query_term(hook_id, search_term)
 }
 
-pub fn dispatch_post_process(hook_id: &str, stdout: &str, tokens: &[String]) -> Option<Vec<Suggestion>> {
+/// `script` is the generator's own command line — the one whose output
+/// `stdout` is — so a shared body can tell `cf orgs` from `cf spaces`.
+pub fn dispatch_post_process(
+    hook_id: &str,
+    stdout: &str,
+    tokens: &[String],
+    script: &[String],
+) -> Option<Vec<Suggestion>> {
     if hooks_skipped() {
         return None;
     }
-    native_post_process(hook_id, stdout, tokens)
+    native_post_process(hook_id, stdout, tokens, script)
 }
 
 pub fn dispatch_script_command(hook_id: &str, tokens: &[String]) -> Option<ScriptCommand> {
@@ -283,11 +290,15 @@ pub fn dispatch_script_command(hook_id: &str, tokens: &[String]) -> Option<Scrip
     native_script(hook_id, tokens)
 }
 
-pub fn dispatch_filter_template_suggestions(hook_id: &str, suggestions: &[Suggestion]) -> Option<Vec<Suggestion>> {
+pub fn dispatch_filter_template_suggestions(
+    hook_id: &str,
+    suggestions: &[Suggestion],
+    tokens: &[String],
+) -> Option<Vec<Suggestion>> {
     if hooks_skipped() {
         return None;
     }
-    native_filter(hook_id, suggestions)
+    native_filter(hook_id, suggestions, tokens)
 }
 
 pub fn dispatch_custom(
@@ -358,13 +369,17 @@ fn native_get_query_term(hook_id: &str, search_term: &str) -> Option<String> {
     None
 }
 
-fn native_post_process(hook_id: &str, stdout: &str, tokens: &[String]) -> Option<Vec<Suggestion>> {
+fn native_post_process(hook_id: &str, stdout: &str, tokens: &[String], script: &[String]) -> Option<Vec<Suggestion>> {
     let native = native()?;
     // Named adapters own their body SHA (T2.4). A typed compile of the same
     // body is a fallback, not a shadow — yarn's package.json parser is the
     // case that made this order load-bearing.
     if let Some(sha) = adapter_sha(&native, hook_id, "postProcess")
-        && let Some(json) = crate::native_adapters::evaluate_post_process(sha, stdout, tokens)
+        && let Some(json) = crate::native_adapters::evaluate_post_process(
+            sha,
+            stdout,
+            crate::native_adapters::HookSite { tokens, script },
+        )
     {
         return json_suggestions(hook_id, json, None);
     }
@@ -390,7 +405,7 @@ fn native_script(hook_id: &str, tokens: &[String]) -> Option<ScriptCommand> {
     None
 }
 
-fn native_filter(hook_id: &str, suggestions: &[Suggestion]) -> Option<Vec<Suggestion>> {
+fn native_filter(hook_id: &str, suggestions: &[Suggestion], tokens: &[String]) -> Option<Vec<Suggestion>> {
     let native = native()?;
     if let Some(sha) = adapter_sha(&native, hook_id, "filterTemplateSuggestions") {
         let payload: Vec<JsonValue> = suggestions
@@ -410,7 +425,9 @@ fn native_filter(hook_id: &str, suggestions: &[Suggestion]) -> Option<Vec<Sugges
                 })
             })
             .collect();
-        if let Some(json) = crate::native_adapters::evaluate_filter(sha, &payload) {
+        if let Some(json) =
+            crate::native_adapters::evaluate_filter(sha, &payload, crate::native_adapters::HookSite::tokens(tokens))
+        {
             return json_suggestions(hook_id, json, None);
         }
     }

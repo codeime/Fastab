@@ -783,7 +783,7 @@ fn generate_from_generator(
         template_rows.extend(history_template_suggestions(history_values, query, fuzzy));
     }
     if let Some(hook) = generator.js_filter_template_suggestions.as_deref()
-        && let Some(filtered) = crate::hook_backend::dispatch_filter_template_suggestions(hook, &template_rows)
+        && let Some(filtered) = crate::hook_backend::dispatch_filter_template_suggestions(hook, &template_rows, tokens)
     {
         template_rows = filtered;
     }
@@ -913,21 +913,24 @@ fn run_script_or_post_process(arg: &ArgSpec, tokens: &[String], cwd: &str, timeo
     }
     let fallback = crate::hook_cache::script_cache_fallback(&command, &args, cwd);
     let stdout = with_script_cache(arg, cwd, &fallback, || process::execute(&command, &args, cwd, timeout));
-    shape_script_output(arg, tokens, &stdout)
+    let mut script = Vec::with_capacity(args.len() + 1);
+    script.push(command);
+    script.extend(args);
+    shape_script_output(arg, tokens, &script, &stdout)
 }
 
 /// Fig's `getScriptSuggestions` branches on `splitOn` first and only falls
 /// back to `postProcess`. Specs that declare both rely on that order, so
 /// running the hook here would feed it output it never expects. With
 /// neither, the result stays `[]`.
-fn shape_script_output(arg: &ArgSpec, tokens: &[String], stdout: &str) -> Vec<Suggestion> {
+fn shape_script_output(arg: &ArgSpec, tokens: &[String], script: &[String], stdout: &str) -> Vec<Suggestion> {
     // `executeCommandTimeout` hands both branches `cleanOutput(stdout)`.
     let stdout = crate::hook_backend::clean_output(stdout);
     if let Some(separator) = arg.split_on.as_deref().filter(|value| !value.is_empty()) {
         return all_split(&stdout, separator);
     }
     if let Some(hook_id) = arg.js_post_process.as_deref() {
-        return crate::hook_backend::dispatch_post_process(hook_id, &stdout, tokens).unwrap_or_default();
+        return crate::hook_backend::dispatch_post_process(hook_id, &stdout, tokens, script).unwrap_or_default();
     }
     Vec::new()
 }

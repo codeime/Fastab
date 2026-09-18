@@ -29,6 +29,63 @@ pub(crate) struct AdapterExecResult {
 
 pub(crate) type AdapterExec<'a> = dyn Fn(AdapterExecRequest) -> Result<AdapterExecResult, AdapterError> + 'a;
 
+/// What tells a shared hook body which call site it is serving.
+///
+/// Adapters are bound by body hash, and a factory such as cf's
+/// `i("Org", 3)` or asdf's `a({isDangerous: true})` yields one hash across
+/// every site while each site closed over different literals. Nothing of
+/// that closure survives compilation, so the adapter reads the site from
+/// what the spec left in the IR: the shell tokens (which subcommand or
+/// option owns the argument — see `owning_option`) and, for `postProcess`,
+/// the generator's own `script`, the sibling literal the spec wrote next
+/// to the hook. Each adapter that branches on these pins the set of sites
+/// it knows against the compiled IR, so a spec update that binds the same
+/// body somewhere new fails a test instead of taking the wrong branch.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct HookSite<'a> {
+    pub tokens: &'a [String],
+    pub script: &'a [String],
+}
+
+impl<'a> HookSite<'a> {
+    pub(crate) fn tokens(tokens: &'a [String]) -> Self {
+        Self { tokens, script: &[] }
+    }
+
+    /// The option whose argument is being completed: the token before the
+    /// partial argument. Fig hands the shell tokens through unchanged, and
+    /// an option that does not declare `requiresSeparator` only reaches its
+    /// generator as `--opt value`, so the owner is always one token back.
+    pub(crate) fn owning_option(&self) -> Option<&'a str> {
+        owning_option(self.tokens)
+    }
+
+    /// The non-option words between the command and the partial argument:
+    /// the subcommand path plus any arguments already typed. `asdf plugin
+    /// remove <TAB>` gives `["plugin", "remove"]`; `limactl copy a <TAB>`
+    /// gives `["copy", "a"]`, so a site keyed on argument position reads
+    /// the length past its subcommand.
+    pub(crate) fn words(&self) -> Vec<&'a str> {
+        let end = self.tokens.len().saturating_sub(1);
+        self.tokens[..end]
+            .iter()
+            .skip(1)
+            .map(String::as_str)
+            .filter(|token| !token.starts_with('-'))
+            .collect()
+    }
+
+    /// The generator's `script` as `command args…`, for adapters whose
+    /// sites differ only by what they parse the output of.
+    pub(crate) fn script_line(&self) -> String {
+        self.script.join(" ")
+    }
+}
+
+pub(super) fn owning_option(tokens: &[String]) -> Option<&str> {
+    tokens.len().checked_sub(2).map(|index| tokens[index].as_str())
+}
+
 /// A JS `Map` with string keys. `Map.prototype.keys` / `values` enumerate
 /// in insertion order and `set` on an existing key keeps its position; a
 /// `HashMap` here would hand the ranker a different candidate order on

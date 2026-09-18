@@ -1,14 +1,17 @@
 //! Named postProcess adapters for leftover side-effect-free bodies.
 //!
-//! Each function is bound to one `bodySha256`. Closed-over factory values are
-//! the representative hook's bindings (the T1.2 baseline). Per-hook factory
-//! tables land when T3.1 wires adapters into the completion path.
+//! Each function is bound to one `bodySha256`. Where a factory body closed
+//! over per-site literals, the adapter takes a [`HookSite`] and reads the
+//! site from the tokens or the generator's script; a token list that names
+//! no known site (the T1.2 harness) falls back to the representative hook
+//! the baseline was captured against.
 
 use std::collections::HashSet;
 
 use serde_json::{Map, Value as JsonValue, json};
 
 use super::bunx_names::BUNX_EXCLUDE_NAMES;
+use super::effect::HookSite;
 use super::eval::{
     AdapterError, AdapterResult, js_index_of, js_slice, js_split_lines, js_to_string, json_parse, object_assign,
     suggestion_object, throw,
@@ -129,17 +132,19 @@ pub(super) fn dcli_devices(stdout: &str) -> AdapterResult {
     ))
 }
 
-/// `40446df6…` limactl instances. `ne=76`, `e={isDangerous:true}`.
-pub(super) fn limactl_instances(stdout: &str) -> AdapterResult {
-    lines_to_named(
-        stdout,
-        &[
-            ("description", json!("Instance name")),
-            ("priority", json!(76)),
-            ("isDangerous", json!(true)),
-        ],
-        |line| line.to_string(),
-    )
+/// `40446df6…` limactl instances, `A(e)` with `ne=76`. `e` is
+/// `{isDangerous: true}` under `copy`, `delete`, `shell` and `stop`;
+/// `show-ssh` and `start` pass nothing. `copy` declares a plain `A()` on
+/// its TARGET, but SOURCE is variadic and the walk never leaves a
+/// variadic positional (`positional_arg` keeps serving it), so the site
+/// that runs at every `copy` position is SOURCE's.
+pub(super) fn limactl_instances(stdout: &str, site: HookSite<'_>) -> AdapterResult {
+    let is_dangerous = !matches!(site.words().first(), Some(&"show-ssh" | &"start"));
+    let mut extras = vec![("description", json!("Instance name")), ("priority", json!(76))];
+    if is_dangerous {
+        extras.push(("isDangerous", json!(true)));
+    }
+    lines_to_named(stdout, &extras, |line| line.to_string())
 }
 
 fn remote_icon(url: &str) -> &'static str {
@@ -208,18 +213,27 @@ pub(super) fn react_native_devices(stdout: &str) -> AdapterResult {
     Ok(JsonValue::Array(out))
 }
 
-/// `47dd9ebf…` asdf plugins.
-pub(super) fn asdf_plugins(stdout: &str) -> AdapterResult {
-    lines_to_named(
-        stdout,
-        &[
-            ("description", json!("Plugin name")),
-            ("priority", json!(76)),
-            ("icon", json!("fig://icon?type=package")),
-            ("isDangerous", json!(true)),
-        ],
-        |line| line.to_string(),
-    )
+/// `47dd9ebf…` asdf plugins, `a(n)`. `n` is `{isDangerous: true}` under
+/// `plugin remove`, `plugin-remove` and `uninstall`; the other ten sites
+/// pass nothing.
+pub(super) fn asdf_plugins(stdout: &str, site: HookSite<'_>) -> AdapterResult {
+    let words = site.words();
+    let is_dangerous = match words.first() {
+        Some(&"plugin") => matches!(words.get(1), Some(&"remove")),
+        Some(&"plugin-remove" | &"uninstall") => true,
+        Some(_) => false,
+        // The representative `asdf#postProcess#1` is `plugin remove`.
+        None => true,
+    };
+    let mut extras = vec![
+        ("description", json!("Plugin name")),
+        ("priority", json!(76)),
+        ("icon", json!("fig://icon?type=package")),
+    ];
+    if is_dangerous {
+        extras.push(("isDangerous", json!(true)));
+    }
+    lines_to_named(stdout, &extras, |line| line.to_string())
 }
 
 fn cargo_workspace_packages(metadata: &JsonValue) -> Result<Vec<&JsonValue>, AdapterError> {
@@ -472,18 +486,26 @@ pub(super) fn tldr_pages(stdout: &str) -> AdapterResult {
     ))
 }
 
-/// `5cde47b7…` rustup targets. Representative `o` is falsy → unique prefixes.
-pub(super) fn rustup_targets(stdout: &str) -> AdapterResult {
+/// `5cde47b7…` rustup toolchains, `i({excludeShort})`. Nine sites list the
+/// channel prefixes (`stable`, `nightly`, …) ahead of the full names;
+/// `toolchain uninstall` passes `excludeShort: true` and lists only the
+/// full names — a bare channel there would remove whichever toolchain
+/// it currently resolves to.
+pub(super) fn rustup_toolchains(stdout: &str, site: HookSite<'_>) -> AdapterResult {
+    let words = site.words();
+    let exclude_short = words.first() == Some(&"toolchain") && words.get(1) == Some(&"uninstall");
     let names: Vec<String> = js_split_lines(stdout)
         .into_iter()
         .map(|line| line.split(' ').next().unwrap_or("").to_string())
         .collect();
     let mut prefixes = Vec::new();
-    let mut seen = HashSet::new();
-    for name in &names {
-        let prefix = name.split('-').next().unwrap_or("").to_string();
-        if seen.insert(prefix.clone()) {
-            prefixes.push(prefix);
+    if !exclude_short {
+        let mut seen = HashSet::new();
+        for name in &names {
+            let prefix = name.split('-').next().unwrap_or("").to_string();
+            if seen.insert(prefix.clone()) {
+                prefixes.push(prefix);
+            }
         }
     }
     Ok(JsonValue::Array(
@@ -495,12 +517,19 @@ pub(super) fn rustup_targets(stdout: &str) -> AdapterResult {
     ))
 }
 
-/// `61d0b086…` rustup installed toolchains. Representative `o` is falsy → keep all.
-pub(super) fn rustup_installed(stdout: &str) -> AdapterResult {
+/// `61d0b086…` rustup targets, `a({installed})`. `target remove` passes
+/// `installed: true` and keeps only lines carrying an `(installed)` word;
+/// `target add`, `toolchain install --target` and `set default-host`
+/// list every target.
+pub(super) fn rustup_targets(stdout: &str, site: HookSite<'_>) -> AdapterResult {
+    let words = site.words();
+    let installed_only = words.first() == Some(&"target") && words.get(1) == Some(&"remove");
     Ok(JsonValue::Array(
         js_split_lines(stdout)
             .into_iter()
-            .map(|line| suggestion_object(line.split(' ').next().unwrap_or(""), &[]))
+            .map(|line| line.split(' ').map(ToOwned::to_owned).collect::<Vec<String>>())
+            .filter(|parts| !installed_only || parts.iter().any(|part| part == "(installed)"))
+            .map(|parts| suggestion_object(parts.first().map_or("", String::as_str), &[]))
             .collect(),
     ))
 }
@@ -528,8 +557,19 @@ pub(super) fn precommit_hooks(stdout: &str) -> AdapterResult {
     Ok(JsonValue::Array(out))
 }
 
-/// `7684a7c6…` brew packages. Representative `i` is `"Cleanup"`.
-pub(super) fn brew_packages(stdout: &str) -> AdapterResult {
+/// `7684a7c6…` brew services, `o(i)`. `i` is the verb the description
+/// leads with: `Cleanup` under `cleanup`, and `Run` / `Start` / `Stop` /
+/// `Restart` under the matching `services` subcommand.
+pub(super) fn brew_services(stdout: &str, site: HookSite<'_>) -> AdapterResult {
+    let words = site.words();
+    let verb = match (words.first(), words.get(1)) {
+        (Some(&"services"), Some(&"run")) => "Run",
+        (Some(&"services"), Some(&"start")) => "Start",
+        (Some(&"services"), Some(&"stop")) => "Stop",
+        (Some(&"services"), Some(&"restart")) => "Restart",
+        // `cleanup`, also the representative `brew#postProcess#15`.
+        _ => "Cleanup",
+    };
     Ok(JsonValue::Array(
         js_split_lines(stdout)
             .into_iter()
@@ -539,7 +579,7 @@ pub(super) fn brew_packages(stdout: &str) -> AdapterResult {
                     &line,
                     &[
                         ("icon", json!("fig://icon?type=package")),
-                        ("description", json!(format!("Cleanup {line}"))),
+                        ("description", json!(format!("{verb} {line}"))),
                     ],
                 )
             })
@@ -925,23 +965,26 @@ pub(super) fn taskwarrior_a(stdout: &str) -> AdapterResult {
     Ok(JsonValue::Array(out))
 }
 
-/// `97aa92d3…` asdf versions (reversed).
-pub(super) fn asdf_versions(stdout: &str) -> AdapterResult {
+/// `97aa92d3…` asdf versions (reversed), the body `s(n)` and `v(n)` share.
+/// `n` is `{isDangerous: true}` under `uninstall` only; the other ten
+/// sites (`install`, `local`, `global`, `list all`, …) pass nothing.
+pub(super) fn asdf_versions(stdout: &str, site: HookSite<'_>) -> AdapterResult {
+    let words = site.words();
+    // The representative `asdf#postProcess#11` is `uninstall`.
+    let is_dangerous = matches!(words.first(), Some(&"uninstall") | None);
+    let mut extras = vec![
+        ("description", json!("Plugin version")),
+        ("priority", json!(76)),
+        ("icon", json!("fig://icon?type=commit")),
+    ];
+    if is_dangerous {
+        extras.push(("isDangerous", json!(true)));
+    }
     Ok(JsonValue::Array(
         js_split_lines(stdout)
             .into_iter()
             .rev()
-            .map(|line| {
-                suggestion_object(
-                    line.trim(),
-                    &[
-                        ("description", json!("Plugin version")),
-                        ("priority", json!(76)),
-                        ("icon", json!("fig://icon?type=commit")),
-                        ("isDangerous", json!(true)),
-                    ],
-                )
-            })
+            .map(|line| suggestion_object(line.trim(), &extras))
             .collect(),
     ))
 }
@@ -1104,8 +1147,11 @@ pub(super) fn taskwarrior_b(stdout: &str) -> AdapterResult {
     Ok(JsonValue::Array(out))
 }
 
-/// `b0575d96…` tailscale peers. Representative `s` is empty.
-pub(super) fn tailscale_peers(stdout: &str) -> AdapterResult {
+/// `b0575d96…` tailscale peers, `t({append})`. `file cp` passes
+/// `append: ":"` so the inserted host reads `host:`, the form the command
+/// requires; `ip` passes nothing.
+pub(super) fn tailscale_peers(stdout: &str, site: HookSite<'_>) -> AdapterResult {
+    let append = if site.words().first() == Some(&"file") { ":" } else { "" };
     let parsed = json_parse(stdout)?;
     let peers = parsed
         .get("Peer")
@@ -1116,9 +1162,9 @@ pub(super) fn tailscale_peers(stdout: &str) -> AdapterResult {
             .values()
             .map(|peer| {
                 let dns = js_to_string(peer.get("DNSName"));
-                let host = dns.split('.').next().unwrap_or(&dns);
+                let host = format!("{}{append}", dns.split('.').next().unwrap_or(&dns));
                 suggestion_object(
-                    host,
+                    &host,
                     &[
                         ("displayName", json!(js_to_string(peer.get("HostName")))),
                         ("description", json!(js_to_string(peer.get("OS")))),
@@ -1620,14 +1666,247 @@ pub(super) fn gource_displays(stdout: &str) -> AdapterResult {
     ))
 }
 
-/// `f04211ce…` cf table rows. Representative is `i("App name", 4)`.
-pub(super) fn cf_lines(stdout: &str) -> AdapterResult {
+/// `f04211ce…` cf table rows, `i(description, skip)`. Four generators share
+/// the body and differ only by what they parse, so the site is the
+/// generator's own script: `cf orgs` → `("Org", 3)`, `cf spaces` →
+/// `("Space", 3)`, `cf services | cut …` → `("Service", 4)`, and
+/// `cf apps | cut …` → `("App name", 4)`, also the representative.
+pub(super) fn cf_lines(stdout: &str, site: HookSite<'_>) -> AdapterResult {
+    let script = site.script_line();
+    let (description, skip) = if script == "cf orgs" {
+        ("Org", 3)
+    } else if script == "cf spaces" {
+        ("Space", 3)
+    } else if script.contains("cf services") {
+        ("Service", 4)
+    } else {
+        ("App name", 4)
+    };
     let lines = js_split_lines(stdout.trim());
-    let sliced = if lines.len() > 4 { &lines[4..] } else { &[] };
     Ok(JsonValue::Array(
-        sliced
+        lines
+            .get(skip..)
+            .unwrap_or(&[])
             .iter()
-            .map(|line| suggestion_object(line, &[("description", json!("App name"))]))
+            .map(|line| suggestion_object(line, &[("description", json!(description))]))
             .collect(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tokens(list: &[&str]) -> Vec<String> {
+        list.iter().map(|token| (*token).to_owned()).collect()
+    }
+
+    fn rows(result: AdapterResult) -> Vec<JsonValue> {
+        result.expect("adapter result").as_array().expect("array").clone()
+    }
+
+    fn names(rows: &[JsonValue]) -> Vec<&str> {
+        rows.iter().map(|row| row["name"].as_str().unwrap_or("")).collect()
+    }
+
+    fn all_dangerous(rows: &[JsonValue]) -> bool {
+        !rows.is_empty() && rows.iter().all(|row| row["isDangerous"] == json!(true))
+    }
+
+    fn none_dangerous(rows: &[JsonValue]) -> bool {
+        !rows.is_empty() && rows.iter().all(|row| row.get("isDangerous").is_none())
+    }
+
+    #[test]
+    fn limactl_marks_instances_dangerous_everywhere_but_start_and_show_ssh() {
+        let stdout = "default\nubuntu";
+        for site in [
+            &["limactl", "copy", ""][..],
+            &["limactl", "cp", "default:/tmp", ""],
+            &["limactl", "delete", ""],
+            &["limactl", "rm", ""],
+            &["limactl", "shell", ""],
+            &["limactl", "stop", ""],
+            &["limactl", ""],
+        ] {
+            let list = tokens(site);
+            let rows = rows(limactl_instances(stdout, HookSite::tokens(&list)));
+            assert!(all_dangerous(&rows), "{site:?} → {rows:?}");
+            assert_eq!(names(&rows), ["default", "ubuntu"]);
+            assert_eq!(rows[0]["priority"], json!(76));
+        }
+        for site in [&["limactl", "start", ""][..], &["limactl", "show-ssh", ""]] {
+            let list = tokens(site);
+            let rows = rows(limactl_instances(stdout, HookSite::tokens(&list)));
+            assert!(none_dangerous(&rows), "{site:?} → {rows:?}");
+        }
+    }
+
+    #[test]
+    fn asdf_plugins_are_dangerous_only_where_they_get_removed() {
+        let stdout = "nodejs\npython";
+        for site in [
+            &["asdf", "plugin", "remove", ""][..],
+            &["asdf", "plugin-remove", ""],
+            &["asdf", "uninstall", ""],
+            &["asdf", ""],
+        ] {
+            let list = tokens(site);
+            assert!(
+                all_dangerous(&rows(asdf_plugins(stdout, HookSite::tokens(&list)))),
+                "{site:?}"
+            );
+        }
+        for site in [
+            &["asdf", "plugin", "update", ""][..],
+            &["asdf", "install", ""],
+            &["asdf", "list", ""],
+            &["asdf", "local", ""],
+            &["asdf", "where", ""],
+        ] {
+            let list = tokens(site);
+            let rows = rows(asdf_plugins(stdout, HookSite::tokens(&list)));
+            assert!(none_dangerous(&rows), "{site:?} → {rows:?}");
+            assert_eq!(rows[0]["icon"], json!("fig://icon?type=package"));
+        }
+    }
+
+    #[test]
+    fn asdf_versions_are_dangerous_only_under_uninstall() {
+        let stdout = "  18.0.0\n  20.1.0";
+        let list = tokens(&["asdf", "uninstall", "nodejs", ""]);
+        let uninstall = rows(asdf_versions(stdout, HookSite::tokens(&list)));
+        assert!(all_dangerous(&uninstall));
+        assert_eq!(names(&uninstall), ["20.1.0", "18.0.0"], "reversed and trimmed");
+        for site in [
+            &["asdf", "install", "nodejs", ""][..],
+            &["asdf", "local", "nodejs", ""],
+            &["asdf", "list", "all", "nodejs", ""],
+            &["asdf", "list-all", "nodejs", ""],
+        ] {
+            let list = tokens(site);
+            assert!(
+                none_dangerous(&rows(asdf_versions(stdout, HookSite::tokens(&list)))),
+                "{site:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rustup_toolchain_uninstall_drops_the_channel_prefixes() {
+        let stdout = "stable-aarch64-apple-darwin (default)\nnightly-aarch64-apple-darwin\nnightly-x86_64-apple-darwin";
+        let list = tokens(&["rustup", "default", ""]);
+        assert_eq!(
+            names(&rows(rustup_toolchains(stdout, HookSite::tokens(&list)))),
+            [
+                "stable",
+                "nightly",
+                "stable-aarch64-apple-darwin",
+                "nightly-aarch64-apple-darwin",
+                "nightly-x86_64-apple-darwin"
+            ]
+        );
+        let list = tokens(&["rustup", "toolchain", "uninstall", ""]);
+        assert_eq!(
+            names(&rows(rustup_toolchains(stdout, HookSite::tokens(&list)))),
+            [
+                "stable-aarch64-apple-darwin",
+                "nightly-aarch64-apple-darwin",
+                "nightly-x86_64-apple-darwin"
+            ]
+        );
+        let list = tokens(&["rustup", "toolchain", "install", ""]);
+        assert_eq!(rows(rustup_toolchains(stdout, HookSite::tokens(&list))).len(), 5);
+    }
+
+    #[test]
+    fn rustup_target_remove_lists_only_installed_targets() {
+        let stdout = "aarch64-apple-darwin (installed)\nwasm32-unknown-unknown\nx86_64-apple-darwin (installed)";
+        let list = tokens(&["rustup", "target", "remove", ""]);
+        assert_eq!(
+            names(&rows(rustup_targets(stdout, HookSite::tokens(&list)))),
+            ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+        );
+        for site in [
+            &["rustup", "target", "add", ""][..],
+            &["rustup", "toolchain", "install", "--target", ""],
+            &["rustup", "set", "default-host", ""],
+        ] {
+            let list = tokens(site);
+            assert_eq!(
+                rows(rustup_targets(stdout, HookSite::tokens(&list))).len(),
+                3,
+                "{site:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn brew_services_lead_the_description_with_the_subcommand_verb() {
+        let stdout = "postgresql\nredis";
+        let cases = [
+            (&["brew", "services", "run", ""][..], "Run redis"),
+            (&["brew", "services", "start", ""], "Start redis"),
+            (&["brew", "services", "stop", ""], "Stop redis"),
+            (&["brew", "services", "restart", ""], "Restart redis"),
+            (&["brew", "cleanup", ""], "Cleanup redis"),
+            (&["brew", ""], "Cleanup redis"),
+        ];
+        for (site, description) in cases {
+            let list = tokens(site);
+            let rows = rows(brew_services(stdout, HookSite::tokens(&list)));
+            assert_eq!(rows[1]["description"], json!(description), "{site:?}");
+        }
+    }
+
+    #[test]
+    fn tailscale_file_cp_appends_the_host_colon() {
+        let stdout = r#"{"Peer":{"a":{"DNSName":"laptop.tail.ts.net.","HostName":"laptop","OS":"macOS"}}}"#;
+        let list = tokens(&["tailscale", "file", "cp", "notes.txt", ""]);
+        assert_eq!(
+            names(&rows(tailscale_peers(stdout, HookSite::tokens(&list)))),
+            ["laptop:"]
+        );
+        let list = tokens(&["tailscale", "ip", ""]);
+        assert_eq!(
+            names(&rows(tailscale_peers(stdout, HookSite::tokens(&list)))),
+            ["laptop"]
+        );
+    }
+
+    #[test]
+    fn cf_lines_pick_the_header_height_from_the_generator_script() {
+        let stdout = "Getting…\n\nname\nalpha\nbeta";
+        let list = tokens(&["cf", "target", "-o", ""]);
+        let cases: [(&[&str], &str, &[&str]); 4] = [
+            (&["cf", "orgs"], "Org", &["alpha", "beta"]),
+            (&["cf", "spaces"], "Space", &["alpha", "beta"]),
+            (&["bash", "-c", "cf services | cut -d \" \" -f1 "], "Service", &["beta"]),
+            (&["bash", "-c", "cf apps | cut -d \" \" -f1"], "App name", &["beta"]),
+        ];
+        for (script, description, expected) in cases {
+            let script = tokens(script);
+            let rows = rows(cf_lines(
+                stdout,
+                HookSite {
+                    tokens: &list,
+                    script: &script,
+                },
+            ));
+            assert_eq!(names(&rows), expected, "{script:?}");
+            assert!(rows.iter().all(|row| row["description"] == json!(description)));
+        }
+        // Fewer lines than the header: `slice(n)` past the end is `[]`.
+        let script = tokens(&["cf", "orgs"]);
+        assert!(
+            rows(cf_lines(
+                "one\ntwo",
+                HookSite {
+                    tokens: &list,
+                    script: &script,
+                },
+            ))
+            .is_empty()
+        );
+    }
 }

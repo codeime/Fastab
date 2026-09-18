@@ -9,7 +9,7 @@ use crate::hook_types::HookContext;
 
 use super::effect::{
     AdapterExec, AdapterExecRequest, JsMap, adapter_list, env_var, exec_object, key_value, key_value_list,
-    key_value_list_chooses_keys, last_token, parse_json, value_list,
+    key_value_list_chooses_keys, last_token, owning_option, parse_json, value_list,
 };
 use super::eval::{AdapterError, AdapterResult, js_split_lines, suggestion_object, throw};
 
@@ -1238,24 +1238,6 @@ fn man_apropos(tokens: &[String], exec: &AdapterExec<'_>) -> AdapterResult {
     }
     let key = token.chars().next().unwrap_or('a');
     Ok(JsonValue::Array(by_letter.remove(&key).unwrap_or_default()))
-}
-
-/// The option whose argument is being completed: the token before the
-/// partial argument. Fig hands the shell tokens through unchanged, and an
-/// option that does not declare `requiresSeparator` only reaches its
-/// generator as `--opt value`, so the owner is always one token back.
-///
-/// This is how a shared factory body learns which call site it is running
-/// for. The compiler binds adapters by body hash, and a body like cargo's
-/// `u({kind})` is one hash across every `--bin` / `--example` / `--test` /
-/// `--bench` site while each site closed over a different literal. The
-/// spec's own structure — which option owns the generator — is the only
-/// thing left at run time that tells them apart, and
-/// `shared_body_sites_are_owned_by_the_options_the_adapter_dispatches_on`
-/// pins that structure so a spec update that adds a site fails a test
-/// instead of silently taking the wrong branch.
-pub(super) fn owning_option(tokens: &[String]) -> Option<&str> {
-    tokens.len().checked_sub(2).map(|index| tokens[index].as_str())
 }
 
 /// cargo's `le`: the package whose `source` is the workspace `Cargo.toml`,
