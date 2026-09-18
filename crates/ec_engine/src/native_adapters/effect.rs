@@ -52,14 +52,6 @@ impl<'a> HookSite<'a> {
         Self { tokens, script: &[] }
     }
 
-    /// The option whose argument is being completed: the token before the
-    /// partial argument. Fig hands the shell tokens through unchanged, and
-    /// an option that does not declare `requiresSeparator` only reaches its
-    /// generator as `--opt value`, so the owner is always one token back.
-    pub(crate) fn owning_option(&self) -> Option<&'a str> {
-        owning_option(self.tokens)
-    }
-
     /// The non-option words between the command and the partial argument:
     /// the subcommand path plus any arguments already typed. `asdf plugin
     /// remove <TAB>` gives `["plugin", "remove"]`; `limactl copy a <TAB>`
@@ -84,6 +76,25 @@ impl<'a> HookSite<'a> {
 
 pub(super) fn owning_option(tokens: &[String]) -> Option<&str> {
     tokens.len().checked_sub(2).map(|index| tokens[index].as_str())
+}
+
+/// The option that owns the current argument, including the
+/// `requiresSeparator` form where the option and its value share one token
+/// (`--loader:.js=jsx`). `owning_option` only sees the previous token, which
+/// in that form is a sibling argument.
+pub(super) fn site_option(tokens: &[String]) -> Option<&str> {
+    tokens
+        .last()
+        .and_then(|token| option_name(token))
+        .or_else(|| owning_option(tokens).and_then(option_name))
+}
+
+fn option_name(token: &str) -> Option<&str> {
+    if !token.starts_with('-') || token == "-" || token == "--" {
+        return None;
+    }
+    let end = token.find([':', '=']).unwrap_or(token.len());
+    Some(&token[..end])
 }
 
 /// A JS `Map` with string keys. `Map.prototype.keys` / `values` enumerate

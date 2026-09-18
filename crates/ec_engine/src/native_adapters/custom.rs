@@ -8,8 +8,8 @@ use serde_json::{Value as JsonValue, json};
 use crate::hook_types::HookContext;
 
 use super::effect::{
-    AdapterExec, AdapterExecRequest, JsMap, adapter_list, env_var, exec_object, key_value, key_value_list,
-    key_value_list_chooses_keys, last_token, owning_option, parse_json, value_list,
+    AdapterExec, AdapterExecRequest, HookSite, JsMap, adapter_list, env_var, exec_object, key_value, key_value_list,
+    key_value_list_chooses_keys, last_token, named_strings, owning_option, parse_json, site_option, value_list,
 };
 use super::eval::{AdapterError, AdapterResult, js_split_lines, suggestion_object, throw};
 
@@ -58,27 +58,31 @@ pub(super) fn evaluate(
         "2ed14222e43605a4615b0d098db0dca8fb7016d90702476658c98a8d3397be57"
         | "353cc07bf9fb8f63179771f62005442bc7b3c5f0e22102ff5f567156226a0366"
         | "5395d7fb1d0b608ce456527e703936e65ead88c78e1d64d17e5223015e947473"
-        | "ad600744147080b3bbb0ee8363c354bcc1ec7198ac5a9b16ccbf6285f70b82eb"
         | "cd92b7bcc8f44295973c4b7bfc5a4851b633bff0e57f4ee98cfe91680c2b82ac"
         | "e299db05c81077e0ef9b1344daef841fa83f1849ad704e508af664ed388ce510"
         | "f6c6c160699c68fe7cf0500219e46b8c6c7b327c7db559d3632e1de31cf40fc4" => npms_search(tokens, exec, &[]),
-        "2fadd1a502cd5f4ba4a55f8bdc1ee236ea4d572c77e2188e7cdcb3c77856036d" => {
-            key_value(&last_token(tokens), "=", &adapter_list("file_custom_0.json"), &[], true)
+        "ad600744147080b3bbb0ee8363c354bcc1ec7198ac5a9b16ccbf6285f70b82eb" => {
+            npms_search(tokens, exec, &["magnolia-light-module"])
         },
+        "2fadd1a502cd5f4ba4a55f8bdc1ee236ea4d572c77e2188e7cdcb3c77856036d" => key_value(
+            &last_token(tokens),
+            "=",
+            &adapter_list("file_custom_0.json"),
+            &named_strings(&["1048576", "256", "2048", "65536", "50", "60", "8192"]),
+            true,
+        ),
         "4df08d834f2264ea2b300b6b8e847fe753da5c9a5ecfaebf87596a84d584625d" => spring_versions(exec, "javaVersion"),
         "4e14f9a18a339f1a0ff2799de460a98abbbd4f754e729069e600065d6b23bf9f" => dscacheutil_query(tokens, exec),
         "5104550a1de4f3c8210aefeca860ac9ba05a66d588d3940c98b15fb473090866" => tldr_pages(exec, context),
         "5693d96360a2e105298439a7a22abbde058eaa41e74ef120f1b1d722e2eedbf6"
-        | "faf81d363c15195974dc41b68bfaeb799bc2a67b0d6143555695df0e4bce9827" => fig_plugins(exec, false),
+        | "faf81d363c15195974dc41b68bfaeb799bc2a67b0d6143555695df0e4bce9827" => fig_plugins_for_site(tokens, exec),
         "5aa8d63e46c44f4cf86dbb62c9035c2a33506a4aa04da4b928adf5ef102b2a9a" => {
             value_list(&last_token(tokens), ",", &[], false, false)
         },
         "5c415cacc2e9cfe61ff86d5ec428d6b0089216ab3e13fd1acb53ed513b9e2606" => chezmoi_attrs(tokens),
         "63f4199d5d1d44c71d013364bf8dbb477411f11d776cde35821ca712569034c0" => scc_value_list(tokens, exec),
         "63f7ebc4331aeef1adf022c2217ba0c013735b99a32015c475374c61c076ff95" => oxlint_rules(tokens, exec),
-        "661801a6a065f6a47a99557d48b30b8ddaf73a2b08a407d4db2b1434196c8fc9" => {
-            key_value(&last_token(tokens), ":", &[], &[], true)
-        },
+        "661801a6a065f6a47a99557d48b30b8ddaf73a2b08a407d4db2b1434196c8fc9" => gh_port_key_value(tokens),
         "7118b51f5ab4abf816ec0fd32b660d4495361defafb617d48a91bab93e74d914" => {
             key_value(&last_token(tokens), "=", &[], &[], true)
         },
@@ -87,7 +91,7 @@ pub(super) fn evaluate(
             ":",
             ",",
             &adapter_list("airflow_custom_0.json"),
-            &[],
+            &named_strings(&["password"]),
             true,
             false,
             false,
@@ -97,17 +101,7 @@ pub(super) fn evaluate(
         "7d44d284dc19be5e46e12cea613a04edbc98e806a318d94d52a38b0c296c9927" => {
             Ok(JsonValue::Array(adapter_list("oxlint-categories.json")))
         },
-        "83fee23ebcadbf1d63827dd335c7cf0b8a40bbc3d7266022e9ad49e4e231e1ae" => key_value_list(
-            &last_token(tokens),
-            "=",
-            ",",
-            &adapter_list("esbuild-loaders.json"),
-            &[],
-            true,
-            false,
-            false,
-            true,
-        ),
+        "83fee23ebcadbf1d63827dd335c7cf0b8a40bbc3d7266022e9ad49e4e231e1ae" => esbuild_key_value_list(tokens, exec),
         "84025fe23bbe188d73039e3d402687d1f0b39418ad70f09a1e4e6ed495038bb3" => value_list(
             &last_token(tokens),
             ",",
@@ -138,7 +132,7 @@ pub(super) fn evaluate(
             "=",
             ",",
             &adapter_list("bun_custom_15.json"),
-            &[],
+            &named_strings(&["js", "jsx", "ts", "tsx", "json", "toml", "text", "file", "wasm", "napi"]),
             true,
             false,
             false,
@@ -149,13 +143,7 @@ pub(super) fn evaluate(
         "f4cb5caf468f2f8af4b0b33e6bb43d9ccf8af8bc4d230519b947b17cd7043111" => rich_box(tokens),
         "fb26b35043ba67c50e86361dc595f1ca096a2c9b46796349d8eafbee0939e4c7" => dscl_list(tokens, exec),
         "fde524eda218ac28c5bce41a27df6ac6bdc9254da9e25f8dcb5880c8b7026c18" => nx_run_configurations(tokens, exec),
-        "fde95bc4219fd9ff0a036e870a458c96dd54ba80ebe06fb725b1224fd0b51ebf" => key_value(
-            &last_token(tokens),
-            "=",
-            &adapter_list("cargo-config-keys.json"),
-            &[],
-            true,
-        ),
+        "fde95bc4219fd9ff0a036e870a458c96dd54ba80ebe06fb725b1224fd0b51ebf" => cargo_config(tokens),
         _ => return None,
     })
 }
@@ -471,10 +459,17 @@ fn nx_comma_targets(tokens: &[String], exec: &AdapterExec<'_>) -> AdapterResult 
     let graph = nx_graph(exec);
     let token = last_token(tokens);
     let used: HashSet<&str> = token.split(',').collect();
+    // `y(g)` under `--exclude` / `--projects` walks project names; `y(h)`
+    // under `--targets` walks target names. The representative
+    // `nx#custom#11` is `format:write --exclude`.
+    let names: Vec<&String> = if site_option(tokens) == Some("--targets") {
+        graph.targets.keys().collect()
+    } else {
+        graph.projects.keys().collect()
+    };
     Ok(JsonValue::Array(
-        graph
-            .targets
-            .keys()
+        names
+            .into_iter()
             .filter(|name| !used.contains(name.as_str()))
             .map(|name| json!({"name": name, "insertValue": format!("{name},")}))
             .collect(),
@@ -990,6 +985,14 @@ fn tldr_pages(exec: &AdapterExec<'_>, context: &HookContext) -> AdapterResult {
     ))
 }
 
+fn fig_plugins_for_site(tokens: &[String], exec: &AdapterExec<'_>) -> AdapterResult {
+    let words = HookSite::tokens(tokens).words();
+    // `plugins remove` passes `{installed: true}`; `plugins add` and a
+    // token list that names no subcommand (the representative add site)
+    // pass `{installed: false}`.
+    fig_plugins(exec, matches!(words.last(), Some(&"remove")))
+}
+
 fn fig_plugins(exec: &AdapterExec<'_>, installed: bool) -> AdapterResult {
     let args = if installed {
         vec!["plugins", "list", "--format", "json", "--installed"]
@@ -1014,6 +1017,218 @@ fn fig_plugins(exec: &AdapterExec<'_>, installed: bool) -> AdapterResult {
             })
             .collect(),
     ))
+}
+
+fn gh_port_key_value(tokens: &[String]) -> AdapterResult {
+    let words = HookSite::tokens(tokens).words();
+    // `codespace ports visibility` closed over the three visibilities;
+    // `ports forward` (the representative) has no values.
+    let values = if words.contains(&"visibility") {
+        named_strings(&["public", "private", "org"])
+    } else {
+        Vec::new()
+    };
+    key_value(&last_token(tokens), ":", &[], &values, true)
+}
+
+const ESBUILD_FIND: &str =
+    r"find . -depth 3 -type f -name '*.*' -not -path '*/node_modules/*' | sed 's/.*\.//' | sort -u";
+
+const ESBUILD_SKIP: &[&str] = &["", "sample", "env"];
+
+const ESBUILD_LOADERS: &[&str] = &[
+    "js", "jsx", "ts", "tsx", "css", "json", "text", "base64", "file", "dataurl", "binary", "copy",
+];
+
+const ESBUILD_LOG_KEYS: &[&str] = &[
+    "assign-to-constant",
+    "assign-to-import",
+    "call-import-namespace",
+    "commonjs-variable-in-esm",
+    "delete-super-property",
+    "direct-eval",
+    "duplicate-case",
+    "duplicate-object-key",
+    "empty-import-meta",
+    "equals-nan",
+    "equals-negative-zero",
+    "equals-new-object",
+    "html-comment-in-js",
+    "impossible-typeof",
+    "indirect-require",
+    "private-name-will-throw",
+    "semicolon-after-return",
+    "suspicious-boolean-not",
+    "this-is-undefined-in-esm",
+    "unsupported-dynamic-import",
+    "unsupported-jsx-comment",
+    "unsupported-regexp",
+    "unsupported-require-call",
+    "css-syntax-error",
+    "invalid-@charset",
+    "invalid-@import",
+    "invalid-@nest",
+    "invalid-@layer",
+    "invalid-calc",
+    "js-comment-in-css",
+    "unsupported-@charset",
+    "unsupported-@namespace",
+    "unsupported-css-property",
+    "ambiguous-reexport",
+    "different-path-case",
+    "ignored-bare-import",
+    "ignored-dynamic-import",
+    "import-is-undefined",
+    "require-resolve-not-external",
+    "invalid-source-mappings",
+    "sections-in-source-map",
+    "missing-source-map",
+    "unsupported-source-map-comment",
+];
+
+const ESBUILD_SUPPORTED_KEYS: &[&str] = &[
+    "arbitrary-module-namespace-names",
+    "array-spread",
+    "arrow",
+    "async-await",
+    "async-generator",
+    "bigint",
+    "class",
+    "class-field",
+    "class-private-accessor",
+    "class-private-brand-check",
+    "class-private-field",
+    "class-private-method",
+    "class-private-static-accessor",
+    "class-private-static-field",
+    "class-private-static-method",
+    "class-static-blocks",
+    "class-static-field",
+    "const-and-let",
+    "default-argument",
+    "destructuring",
+    "dynamic-import",
+    "exponent-operator",
+    "export-star-as",
+    "for-await",
+    "for-of",
+    "generator",
+    "hashbang",
+    "import-assertions",
+    "import-meta",
+    "logical-assignment",
+    "nested-rest-binding",
+    "new-target",
+    "node-colon-prefix-import",
+    "node-colon-prefix-require",
+    "nullish-coalescing",
+    "object-accessors",
+    "object-extensions",
+    "object-rest-spread",
+    "optional-catch-binding",
+    "optional-chain",
+    "regexp-dot-all-flag",
+    "regexp-lookbehind-assertions",
+    "regexp-match-indices",
+    "regexp-named-capture-groups",
+    "regexp-sticky-and-unicode-flags",
+    "regexp-unicode-property-escapes",
+    "rest-argument",
+    "template-literal",
+    "top-level-await",
+    "typeof-exotic-object-is-object",
+    "unicode-escapes",
+    "hex-rgba",
+    "rebecca-purple",
+    "modern-rgb-hsl",
+    "inset-property",
+    "nesting",
+];
+
+/// The `keyValueList` body esbuild shares across seven options. Each site
+/// closed over different `keys` / `values`; the option (including the
+/// `requiresSeparator` form `--loader:.js=`) picks them.
+fn esbuild_key_value_list(tokens: &[String], exec: &AdapterExec<'_>) -> AdapterResult {
+    let token = last_token(tokens);
+    let choosing_keys = key_value_list_chooses_keys(&token, "=", ",");
+    let (keys, values) = match site_option(tokens) {
+        Some("--footer") => (named_strings(&["css", "js"]), Vec::new()),
+        Some("--log-override") => {
+            if choosing_keys {
+                (named_strings(ESBUILD_LOG_KEYS), Vec::new())
+            } else {
+                (
+                    Vec::new(),
+                    named_strings(&["verbose", "debug", "info", "warning", "error", "silent"]),
+                )
+            }
+        },
+        Some("--supported") => {
+            if choosing_keys {
+                (named_strings(ESBUILD_SUPPORTED_KEYS), Vec::new())
+            } else {
+                (Vec::new(), named_strings(&["true", "false"]))
+            }
+        },
+        Some("--banner" | "--out-extension" | "--resolve-extensions") => {
+            if choosing_keys {
+                (esbuild_extensions(exec)?, Vec::new())
+            } else {
+                (Vec::new(), Vec::new())
+            }
+        },
+        // `--loader`, also the representative `esbuild#custom#0`.
+        _ => {
+            if choosing_keys {
+                (esbuild_extensions(exec)?, Vec::new())
+            } else {
+                (Vec::new(), named_strings(ESBUILD_LOADERS))
+            }
+        },
+    };
+    key_value_list(&token, "=", ",", &keys, &values, true, false, false, true)
+}
+
+fn esbuild_extensions(exec: &AdapterExec<'_>) -> Result<Vec<JsonValue>, AdapterError> {
+    let result = exec_object(exec, "bash", ["-c", ESBUILD_FIND])?;
+    Ok(js_split_lines(result.stdout.trim())
+        .into_iter()
+        .filter(|ext| !ESBUILD_SKIP.contains(&ext.as_str()))
+        .map(|ext| suggestion_object(format!(".{ext}"), &[]))
+        .collect())
+}
+
+fn cargo_config(tokens: &[String]) -> AdapterResult {
+    let token = last_token(tokens);
+    let keys = adapter_list("cargo-config-keys.json");
+    if !token.contains('=') {
+        return key_value(&token, "=", &keys, &[], true);
+    }
+    key_value(&token, "=", &keys, &cargo_config_values(cargo_config_key(&token)), true)
+}
+
+fn cargo_config_key(token: &str) -> &str {
+    let rest = token.strip_prefix("--config=").unwrap_or(token);
+    rest.split('=').next().unwrap_or(rest)
+}
+
+fn cargo_config_values(key: &str) -> Vec<JsonValue> {
+    match key {
+        "build.incremental"
+        | "http.debug"
+        | "http.check-revoke"
+        | "http.multiplexing"
+        | "net.git-fetch-with-cli"
+        | "net.offline" => named_strings(&["true", "false"]),
+        "cargo-new.vcs" => vec![
+            json!({"name": "git", "icon": "fig://icon?type=git", "description": "Initialize with Git"}),
+            json!({"name": "hg", "icon": "⚗️", "description": "Initialize with Mercurial"}),
+            json!({"name": "pijul", "icon": "🦚", "description": "Initialize with Pijul"}),
+            json!({"name": "fossil", "icon": "🦴", "description": "Initialize with Fossil"}),
+            json!({"name": "none", "icon": "🚫", "description": "Initialize with no VCS"}),
+        ],
+        _ => Vec::new(),
+    }
 }
 
 fn chezmoi_attrs(tokens: &[String]) -> AdapterResult {
@@ -1492,6 +1707,11 @@ mod tests {
     const CARGO_TARGETS_SHA: &str = "e0f755fcbcdd4aa9db41d69f013e92b961ad64f347b05a750718d30d8a851634";
     const SCC_KEY_VALUE_LIST_SHA: &str = "082bc08b4bdda4806561b75e8cc0731eebc9d4400f2113e5c7be189485a43558";
     const SCC_VALUE_LIST_SHA: &str = "63f4199d5d1d44c71d013364bf8dbb477411f11d776cde35821ca712569034c0";
+    const ESBUILD_KEY_VALUE_LIST_SHA: &str = "83fee23ebcadbf1d63827dd335c7cf0b8a40bbc3d7266022e9ad49e4e231e1ae";
+    const NX_COMMA_SHA: &str = "7cdfa0e8c803cb9e4c6176f51aa7730cdd864347528547cf8291722c94fd8784";
+    const FIG_PLUGINS_V1_SHA: &str = "5693d96360a2e105298439a7a22abbde058eaa41e74ef120f1b1d722e2eedbf6";
+    const FIG_PLUGINS_V2_SHA: &str = "faf81d363c15195974dc41b68bfaeb799bc2a67b0d6143555695df0e4bce9827";
+    const GH_PORTS_SHA: &str = "661801a6a065f6a47a99557d48b30b8ddaf73a2b08a407d4db2b1434196c8fc9";
 
     fn rule(command: &str, args: &[&str], stdout: &str) -> ExecRule {
         ExecRule {
@@ -1761,6 +1981,217 @@ mod tests {
     }
 
     #[test]
+    fn fig_plugins_remove_lists_only_installed() {
+        let store = r#"[{"name":"store-plugin","icon":"x","description":"store"}]"#;
+        let installed = r#"[{"name":"local-plugin","icon":"x","description":"local"}]"#;
+        let rules = [
+            rule("fig", &["plugins", "list", "--format", "json"], store),
+            rule(
+                "fig",
+                &["plugins", "list", "--format", "json", "--installed"],
+                installed,
+            ),
+        ];
+        let exec = mock_exec_from_rules(&rules);
+        assert_eq!(
+            names(&fig_plugins_for_site(&tokens(&["fig", "plugins", "add", ""]), &exec)),
+            ["store-plugin"]
+        );
+        assert_eq!(
+            names(&fig_plugins_for_site(&tokens(&["fig", "plugins", "remove", ""]), &exec)),
+            ["local-plugin"]
+        );
+        assert_eq!(
+            names(&fig_plugins_for_site(&tokens(&["fig", ""]), &exec)),
+            ["store-plugin"],
+            "no subcommand is the representative add site"
+        );
+    }
+
+    fn nx_graph_rules() -> [ExecRule; 4] {
+        [
+            rule("cat", &["nx.json"], "{}"),
+            rule(
+                "find",
+                &["apps", "libs", "-name", "project.json"],
+                "apps/web/project.json\nlibs/ui/project.json\n",
+            ),
+            rule(
+                "cat",
+                &["apps/web/project.json"],
+                r#"{"name":"web","targets":{"build":{},"serve":{}}}"#,
+            ),
+            rule(
+                "cat",
+                &["libs/ui/project.json"],
+                r#"{"name":"ui","targets":{"build":{},"lint":{}}}"#,
+            ),
+        ]
+    }
+
+    #[test]
+    fn nx_comma_lists_projects_except_under_targets() {
+        let rules = nx_graph_rules();
+        let exec = mock_exec_from_rules(&rules);
+        assert_eq!(
+            names(&nx_comma_targets(
+                &tokens(&["nx", "format:write", "--exclude", ""]),
+                &exec
+            )),
+            ["web", "ui"]
+        );
+        assert_eq!(
+            names(&nx_comma_targets(&tokens(&["nx", "run-many", "--projects", ""]), &exec)),
+            ["web", "ui"]
+        );
+        assert_eq!(
+            names(&nx_comma_targets(&tokens(&["nx", "graph", "--targets", ""]), &exec)),
+            ["build", "serve", "lint"]
+        );
+        assert_eq!(
+            names(&nx_comma_targets(&tokens(&["nx", ""]), &exec)),
+            ["web", "ui"],
+            "no option is the representative --exclude site"
+        );
+    }
+
+    fn esbuild_find_rule() -> ExecRule {
+        rule("bash", &["-c", ESBUILD_FIND], "js\ncss\nsample\n")
+    }
+
+    #[test]
+    fn esbuild_key_value_list_picks_keys_and_values_from_the_option() {
+        let rules = [esbuild_find_rule()];
+        let exec = mock_exec_from_rules(&rules);
+        assert_eq!(
+            names(&esbuild_key_value_list(&tokens(&["esbuild", "--loader", ""]), &exec)),
+            [".js", ".css"],
+            "Oe drops sample"
+        );
+        let rows = esbuild_key_value_list(&tokens(&["esbuild", "--loader", ".js="]), &exec).unwrap();
+        assert_eq!(rows[0]["name"], "js");
+        assert_eq!(
+            names(&esbuild_key_value_list(&tokens(&["esbuild", "--footer", ""]), &exec)),
+            ["css", "js"]
+        );
+        assert_eq!(
+            names(&esbuild_key_value_list(&tokens(&["esbuild", "--footer:"]), &exec)),
+            ["css", "js"],
+            "requiresSeparator keeps the option on the last token"
+        );
+        let rows =
+            esbuild_key_value_list(&tokens(&["esbuild", "--log-override", "assign-to-constant="]), &exec).unwrap();
+        assert_eq!(rows[0]["name"], "verbose");
+        let rows = esbuild_key_value_list(&tokens(&["esbuild", "--supported", "arrow="]), &exec).unwrap();
+        assert_eq!(names(&Ok(rows)), ["true", "false"]);
+        assert_eq!(
+            names(&esbuild_key_value_list(
+                &tokens(&["esbuild", "--banner", ".css="]),
+                &exec
+            ))
+            .len(),
+            0,
+            "banner has no values"
+        );
+    }
+
+    #[test]
+    fn gh_visibility_lists_the_three_port_visibilities() {
+        assert!(
+            names(&gh_port_key_value(&tokens(&[
+                "gh",
+                "codespace",
+                "ports",
+                "forward",
+                ""
+            ])))
+            .is_empty()
+        );
+        assert_eq!(
+            names(&gh_port_key_value(&tokens(&[
+                "gh",
+                "codespace",
+                "ports",
+                "visibility",
+                "3000:"
+            ]))),
+            ["public", "private", "org"]
+        );
+    }
+
+    #[test]
+    fn cargo_config_values_follow_the_key_being_completed() {
+        assert_eq!(
+            names(&cargo_config(&tokens(&["cargo", "--config", "build.incremental="]))),
+            ["true", "false"]
+        );
+        let rows = cargo_config(&tokens(&["cargo", "--config", "cargo-new.vcs="])).unwrap();
+        assert_eq!(names(&Ok(rows.clone())), ["git", "hg", "pijul", "fossil", "none"]);
+        assert_eq!(rows[0]["icon"], "fig://icon?type=git");
+        assert!(names(&cargo_config(&tokens(&["cargo", "--config", "build.jobs="]))).is_empty());
+        assert!(
+            !names(&cargo_config(&tokens(&["cargo", "--config", ""]))).is_empty(),
+            "keys still list when choosing keys"
+        );
+    }
+
+    #[test]
+    fn file_and_bun_and_airflow_keep_the_values_the_factory_closed_over() {
+        let file = key_value(
+            "bytes=",
+            "=",
+            &adapter_list("file_custom_0.json"),
+            &named_strings(&["1048576", "256", "2048", "65536", "50", "60", "8192"]),
+            true,
+        )
+        .unwrap();
+        assert_eq!(file[0]["name"], "1048576");
+        let bun = key_value_list(
+            ".js=",
+            "=",
+            ",",
+            &adapter_list("bun_custom_15.json"),
+            &named_strings(&["js", "jsx", "ts", "tsx", "json", "toml", "text", "file", "wasm", "napi"]),
+            true,
+            false,
+            false,
+            true,
+        )
+        .unwrap();
+        assert_eq!(bun[0]["name"], "js");
+        let airflow = key_value_list(
+            "user:",
+            ":",
+            ",",
+            &adapter_list("airflow_custom_0.json"),
+            &named_strings(&["password"]),
+            true,
+            false,
+            false,
+            true,
+        )
+        .unwrap();
+        assert_eq!(airflow[0]["name"], "password");
+    }
+
+    #[test]
+    fn magnolia_search_adds_the_light_module_keyword() {
+        let rules = [rule(
+            "curl",
+            &[
+                "-s",
+                "-H",
+                "Accept: application/json",
+                "https://api.npms.io/v2/search?size=20&q=foo+keywords:magnolia-light-module",
+            ],
+            r#"{"results":[{"package":{"name":"@magnolia/cli","description":"cli"}}]}"#,
+        )];
+        let exec = mock_exec_from_rules(&rules);
+        let rows = npms_search(&tokens(&["mgnl", "search", "foo"]), &exec, &["magnolia-light-module"]).unwrap();
+        assert_eq!(rows[0]["name"], "@magnolia/cli");
+    }
+
+    #[test]
     fn shared_body_sites_are_owned_by_the_options_the_adapter_dispatches_on() {
         // These adapters pick a call site's closed-over literals from the
         // option that owns the argument. A spec update that binds the same
@@ -1771,7 +2202,7 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(ir_root.join("typed-hooks.json")).expect("typed-hooks.json"))
                 .expect("typed-hooks.json parses");
         let adapters = sidecar["adapters"].as_object().expect("adapters map");
-        let expectations: [(&str, &str, &[&str]); 3] = [
+        let expectations: [(&str, &str, &[&str]); 8] = [
             (CARGO_TARGETS_SHA, "cargo", &["--bin", "--example", "--test", "--bench"]),
             (
                 SCC_KEY_VALUE_LIST_SHA,
@@ -1779,6 +2210,23 @@ mod tests {
                 &["--count-as", "--format-multi", "--remap-all", "--remap-unknown"],
             ),
             (SCC_VALUE_LIST_SHA, "scc", &["-i", "--include-ext"]),
+            (
+                ESBUILD_KEY_VALUE_LIST_SHA,
+                "esbuild",
+                &[
+                    "--loader",
+                    "--banner",
+                    "--footer",
+                    "--log-override",
+                    "--out-extension",
+                    "--resolve-extensions",
+                    "--supported",
+                ],
+            ),
+            (NX_COMMA_SHA, "nx", &["--exclude", "--projects", "--targets"]),
+            (FIG_PLUGINS_V1_SHA, "fig/1.0.0", &["add", "remove"]),
+            (FIG_PLUGINS_V2_SHA, "fig/2.0.0", &["add", "remove"]),
+            (GH_PORTS_SHA, "gh", &["forward", "visibility"]),
         ];
         for (sha, spec, allowed) in expectations {
             let ir: JsonValue = serde_json::from_str(
