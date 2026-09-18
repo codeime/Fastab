@@ -1,11 +1,13 @@
 //! Shared exec/context helpers for T2.5 leftover effect adapters.
 
-use serde_json::{Map, Value as JsonValue, json};
+use serde_json::{Map, Value as JsonValue};
 
 use crate::hook_types::HookContext;
 
 #[cfg(test)]
 use crate::hook_baseline::{ExecRule, Expected};
+#[cfg(test)]
+use serde_json::json;
 
 use super::eval::{AdapterError, AdapterResult, js_index_of, js_slice, js_to_string, throw};
 
@@ -74,6 +76,10 @@ impl<V> JsMap<V> {
 
     pub(super) fn keys(&self) -> impl Iterator<Item = &String> {
         self.entries.iter().map(|(key, _)| key)
+    }
+
+    pub(super) fn entries(&self) -> impl Iterator<Item = (&String, &V)> {
+        self.entries.iter().map(|(key, value)| (key, value))
     }
 
     pub(super) fn into_values(self) -> Vec<V> {
@@ -273,6 +279,17 @@ fn last_index_of_any(value: &str, needles: &[&str]) -> i64 {
         .unwrap_or(-1)
 }
 
+/// `keyValueList`'s side switch: keys unless the last separator-or-delimiter
+/// in the token is the separator. The factory only evaluates the side it
+/// chose, so callers with an effectful side compute this first.
+pub(super) fn key_value_list_chooses_keys(token: &str, separator: &str, delimiter: &str) -> bool {
+    let last = last_index_of_any(token, &[separator, delimiter]);
+    last < 0 || {
+        let start = utf16_slice_start(token, last);
+        !token[start..].starts_with(separator)
+    }
+}
+
 pub(super) fn key_value_list(
     token: &str,
     separator: &str,
@@ -284,11 +301,7 @@ pub(super) fn key_value_list(
     allow_repeated_keys: bool,
     allow_repeated_values: bool,
 ) -> AdapterResult {
-    let last = last_index_of_any(token, &[separator, delimiter]);
-    let choosing_keys = last < 0 || {
-        let start = utf16_slice_start(token, last);
-        !token[start..].starts_with(separator)
-    };
+    let choosing_keys = key_value_list_chooses_keys(token, separator, delimiter);
     let list = if choosing_keys { keys } else { values };
     let suffix = if choosing_keys {
         if insert_separator { separator } else { "" }
@@ -365,6 +378,7 @@ fn utf16_slice_start(value: &str, unit: i64) -> usize {
 /// keeps this table in step with it.
 macro_rules! adapter_lists {
     ($($file:literal),* $(,)?) => {
+        #[cfg(test)]
         pub(super) const ADAPTER_LIST_FILES: &[&str] = &[$($file),*];
 
         fn adapter_source(file: &str) -> &'static str {
@@ -422,13 +436,6 @@ pub(super) fn named_strings(names: &[&str]) -> Vec<JsonValue> {
     names.iter().map(|name| suggestion_from_name(*name)).collect()
 }
 
-pub(super) fn catch_empty(result: Result<JsonValue, AdapterError>) -> AdapterResult {
-    match result {
-        Ok(value) => Ok(value),
-        Err(_) => Ok(json!([])),
-    }
-}
-
 pub(super) fn parse_json(source: &str) -> Result<JsonValue, AdapterError> {
     serde_json::from_str(source).map_err(|_error| throw("SyntaxError"))
 }
@@ -442,8 +449,6 @@ pub(super) fn index_of_sep(value: &str, needle: &str) -> i64 {
 mod tests {
     use std::collections::BTreeSet;
     use std::path::PathBuf;
-
-    use serde_json::json;
 
     use super::*;
 

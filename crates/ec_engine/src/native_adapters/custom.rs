@@ -8,8 +8,8 @@ use serde_json::{Value as JsonValue, json};
 use crate::hook_types::HookContext;
 
 use super::effect::{
-    AdapterExec, AdapterExecRequest, JsMap, adapter_list, catch_empty, env_var, exec_object, key_value, key_value_list,
-    last_token, parse_json, value_list,
+    AdapterExec, AdapterExecRequest, JsMap, adapter_list, env_var, exec_object, key_value, key_value_list,
+    key_value_list_chooses_keys, last_token, parse_json, value_list,
 };
 use super::eval::{AdapterError, AdapterResult, js_split_lines, suggestion_object, throw};
 
@@ -247,31 +247,131 @@ fn make_targets(exec: &AdapterExec<'_>) -> AdapterResult {
     Ok(JsonValue::Array(targets.into_values()))
 }
 
+/// scc's `z`: `scc --language` prints one `Name (ext,ext,…)` per line. The
+/// languages keep print order; the extension map is a plain object written
+/// in print order, a later language taking over an extension in place.
+struct SccLanguages {
+    extensions: JsMap<String>,
+    languages: Vec<String>,
+}
+
+fn scc_languages(exec: &AdapterExec<'_>) -> Result<SccLanguages, AdapterError> {
+    let result = exec_object(exec, "scc", ["--language"])?;
+    let line = Regex::new(r"(?m)^(.*) \((.*)\)$").expect("scc language regex");
+    let mut extensions = JsMap::new();
+    let mut languages = Vec::new();
+    for caps in line.captures_iter(&result.stdout) {
+        let Ok(caps) = caps else { continue };
+        let language = caps.get(1).map_or("", |part| part.as_str());
+        languages.push(language.to_owned());
+        for extension in caps.get(2).map_or("", |part| part.as_str()).split(',') {
+            extensions.insert(extension.to_owned(), language.to_owned());
+        }
+    }
+    Ok(SccLanguages { extensions, languages })
+}
+
+/// scc's `N`: the language names as bare suggestions.
+fn scc_language_values(exec: &AdapterExec<'_>) -> Result<Vec<JsonValue>, AdapterError> {
+    Ok(scc_languages(exec)?
+        .languages
+        .into_iter()
+        .map(suggestion_from_name)
+        .collect())
+}
+
+/// `Object.entries(extensions)` shaped as suggestions; `--include-ext` adds
+/// the string icon, `--count-as` does not.
+fn scc_extension_rows(exec: &AdapterExec<'_>, icon: Option<&str>) -> Result<Vec<JsonValue>, AdapterError> {
+    Ok(scc_languages(exec)?
+        .extensions
+        .entries()
+        .map(|(extension, language)| {
+            let mut row = json!({ "name": extension, "description": language });
+            if let Some(icon) = icon {
+                row["icon"] = json!(icon);
+            }
+            row
+        })
+        .collect())
+}
+
+/// The ten `--format` names, each with the string icon (`Y` in the spec).
+fn scc_formats() -> Vec<JsonValue> {
+    [
+        "tabular",
+        "wide",
+        "json",
+        "csv",
+        "csv-stream",
+        "cloc-yaml",
+        "html",
+        "html-table",
+        "sql",
+        "sql-insert",
+    ]
+    .into_iter()
+    .map(|name| json!({ "name": name, "icon": "fig://icon?type=string" }))
+    .collect()
+}
+
+/// `--format-multi`'s value side: every line of `ls -lAF1` named by what
+/// follows its last `/`, then a `stdout` row at priority 75.
+fn scc_format_outputs(exec: &AdapterExec<'_>) -> Result<Vec<JsonValue>, AdapterError> {
+    let result = exec_object(exec, "ls", ["-lAF1"])?;
+    let mut rows: Vec<JsonValue> = result
+        .stdout
+        .split('\n')
+        .map(|line| {
+            let name = &line[line.rfind('/').map_or(0, |index| index + 1)..];
+            json!({ "name": name, "icon": format!("fig://path/{line}") })
+        })
+        .collect();
+    rows.push(json!({ "name": "stdout", "priority": 75 }));
+    Ok(rows)
+}
+
+/// The `keyValueList({separator: ":"})` body scc shares across four
+/// options. Each site closed over different `keys` / `values`, so the
+/// owning option picks them (see `owning_option`).
 fn scc_key_value_list(tokens: &[String], exec: &AdapterExec<'_>) -> AdapterResult {
-    let keys = catch_empty(scc_languages(exec))?;
-    let JsonValue::Array(keys) = keys else {
-        return Ok(json!([]));
+    let token = last_token(tokens);
+    // Only the side being completed is evaluated, as the factory's `E` does;
+    // `--format-multi` must not run `ls` while its keys are being chosen.
+    let choosing_keys = key_value_list_chooses_keys(&token, ":", ",");
+    let (keys, values) = match owning_option(tokens) {
+        Some("--format-multi") => {
+            if choosing_keys {
+                (scc_formats(), Vec::new())
+            } else {
+                (Vec::new(), scc_format_outputs(exec)?)
+            }
+        },
+        Some("--remap-all" | "--remap-unknown") => {
+            if choosing_keys {
+                (Vec::new(), Vec::new())
+            } else {
+                (Vec::new(), scc_language_values(exec)?)
+            }
+        },
+        // `--count-as`, the representative site the T1.2 baseline was
+        // captured against, doubles as the answer for a token list that
+        // names no option.
+        _ => {
+            if choosing_keys {
+                (scc_extension_rows(exec, None)?, Vec::new())
+            } else {
+                (Vec::new(), scc_language_values(exec)?)
+            }
+        },
     };
-    key_value_list(&last_token(tokens), "=", ",", &keys, &[], true, false, false, true)
+    key_value_list(&token, ":", ",", &keys, &values, true, false, false, true)
 }
 
+/// `-i` / `--include-ext`: `valueList` over the extension rows.
 fn scc_value_list(tokens: &[String], exec: &AdapterExec<'_>) -> AdapterResult {
-    let values = catch_empty(scc_languages(exec))?;
-    let JsonValue::Array(values) = values else {
-        return Ok(json!([]));
-    };
+    let values = scc_extension_rows(exec, Some("fig://icon?type=string"))?;
     value_list(&last_token(tokens), ",", &values, false, false)
-}
-
-fn scc_languages(exec: &AdapterExec<'_>) -> AdapterResult {
-    let result = exec_object(exec, "scc", ["--languages"])?;
-    Ok(JsonValue::Array(
-        js_split_lines(&result.stdout)
-            .into_iter()
-            .filter(|line| !line.is_empty())
-            .map(suggestion_from_name)
-            .collect(),
-    ))
 }
 
 fn pkgutil_files(tokens: &[String], exec: &AdapterExec<'_>) -> AdapterResult {
@@ -1140,28 +1240,105 @@ fn man_apropos(tokens: &[String], exec: &AdapterExec<'_>) -> AdapterResult {
     Ok(JsonValue::Array(by_letter.remove(&key).unwrap_or_default()))
 }
 
+/// The option whose argument is being completed: the token before the
+/// partial argument. Fig hands the shell tokens through unchanged, and an
+/// option that does not declare `requiresSeparator` only reaches its
+/// generator as `--opt value`, so the owner is always one token back.
+///
+/// This is how a shared factory body learns which call site it is running
+/// for. The compiler binds adapters by body hash, and a body like cargo's
+/// `u({kind})` is one hash across every `--bin` / `--example` / `--test` /
+/// `--bench` site while each site closed over a different literal. The
+/// spec's own structure — which option owns the generator — is the only
+/// thing left at run time that tells them apart, and
+/// `shared_body_sites_are_owned_by_the_options_the_adapter_dispatches_on`
+/// pins that structure so a spec update that adds a site fails a test
+/// instead of silently taking the wrong branch.
+pub(super) fn owning_option(tokens: &[String]) -> Option<&str> {
+    tokens.len().checked_sub(2).map(|index| tokens[index].as_str())
+}
+
+/// cargo's `le`: the package whose `source` is the workspace `Cargo.toml`,
+/// else every package without a `source` (the path members). `--no-deps`
+/// metadata only lists members, so in practice this is all of them, but a
+/// registry package would be dropped here exactly as the spec drops it.
+fn cargo_current_packages(metadata: &JsonValue) -> Vec<&JsonValue> {
+    let packages = metadata
+        .get("packages")
+        .and_then(JsonValue::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let manifest = format!(
+        "{}/Cargo.toml",
+        metadata
+            .get("workspace_root")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("undefined")
+    );
+    if let Some(found) = packages
+        .iter()
+        .find(|package| package.get("source").and_then(JsonValue::as_str) == Some(manifest.as_str()))
+    {
+        return vec![found];
+    }
+    packages
+        .iter()
+        .filter(|package| !package.get("source").is_some_and(json_truthy))
+        .collect()
+}
+
+/// JS truthiness of a JSON value (`!i.source`).
+fn json_truthy(value: &JsonValue) -> bool {
+    match value {
+        JsonValue::Null => false,
+        JsonValue::Bool(flag) => *flag,
+        JsonValue::Number(number) => number.as_f64().is_some_and(|number| number != 0.0),
+        JsonValue::String(text) => !text.is_empty(),
+        JsonValue::Array(_) | JsonValue::Object(_) => true,
+    }
+}
+
+/// cargo's `u({kind})`. Every one of its call sites passes a kind, and the
+/// option owning the argument names it one-to-one: `--bin` → `bin`,
+/// `--example` → `example`, `--test` → `test`, `--bench` → `bench`.
 fn cargo_targets(tokens: &[String], exec: &AdapterExec<'_>, context: &HookContext) -> AdapterResult {
-    let _ = tokens;
     let result = exec_object(exec, "cargo", ["metadata", "--format-version", "1", "--no-deps"])?;
     let parsed = parse_json(&result.stdout)?;
+    let kind = match owning_option(tokens) {
+        Some("--bin") => "bin",
+        Some("--example") => "example",
+        Some("--test") => "test",
+        Some("--bench") => "bench",
+        // No spec site reaches this body from any other option, so this
+        // only happens for synthetic token lists such as the T1.2 baseline's
+        // bare `["cargo"]`. Those were captured against the representative
+        // hook, `cargo#custom#1` = `bench --bin`, so behave as that site
+        // rather than return the unfiltered list no call site ever showed.
+        _ => "bin",
+    };
     let cwd = &context.current_working_directory;
     let mut rows = Vec::new();
-    if let Some(packages) = parsed.get("packages").and_then(JsonValue::as_array) {
-        for package in packages {
-            if let Some(targets) = package.get("targets").and_then(JsonValue::as_array) {
-                for target in targets {
-                    let path = target
-                        .get("src_path")
-                        .and_then(JsonValue::as_str)
-                        .unwrap_or("")
-                        .replacen(cwd, "", 1);
-                    rows.push(json!({
-                        "icon": "🎯",
-                        "name": target.get("name"),
-                        "description": path
-                    }));
-                }
+    for package in cargo_current_packages(&parsed) {
+        let Some(targets) = package.get("targets").and_then(JsonValue::as_array) else {
+            continue;
+        };
+        for target in targets {
+            let matches_kind = target
+                .get("kind")
+                .and_then(JsonValue::as_array)
+                .is_some_and(|kinds| kinds.iter().any(|entry| entry == kind));
+            if !matches_kind {
+                continue;
             }
+            let path = target
+                .get("src_path")
+                .and_then(JsonValue::as_str)
+                .unwrap_or("")
+                .replacen(cwd, "", 1);
+            rows.push(json!({
+                "icon": "🎯",
+                "name": target.get("name"),
+                "description": path
+            }));
         }
     }
     Ok(JsonValue::Array(rows))
@@ -1319,4 +1496,330 @@ fn dscl_list(tokens: &[String], exec: &AdapterExec<'_>) -> AdapterResult {
             })
             .collect(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::hook_baseline::ExecRule;
+    use crate::native_adapters::effect::mock_exec_from_rules;
+
+    const CARGO_TARGETS_SHA: &str = "e0f755fcbcdd4aa9db41d69f013e92b961ad64f347b05a750718d30d8a851634";
+    const SCC_KEY_VALUE_LIST_SHA: &str = "082bc08b4bdda4806561b75e8cc0731eebc9d4400f2113e5c7be189485a43558";
+    const SCC_VALUE_LIST_SHA: &str = "63f4199d5d1d44c71d013364bf8dbb477411f11d776cde35821ca712569034c0";
+
+    fn rule(command: &str, args: &[&str], stdout: &str) -> ExecRule {
+        ExecRule {
+            command: Some(command.into()),
+            args: Some(args.iter().map(|arg| (*arg).to_owned()).collect()),
+            stdout: Some(stdout.into()),
+            stderr: None,
+            status: Some(0),
+            delay_ms: None,
+        }
+    }
+
+    fn tokens(list: &[&str]) -> Vec<String> {
+        list.iter().map(|token| (*token).to_owned()).collect()
+    }
+
+    fn names(result: &AdapterResult) -> Vec<String> {
+        result
+            .as_ref()
+            .expect("adapter result")
+            .as_array()
+            .expect("array")
+            .iter()
+            .map(|row| row["name"].as_str().unwrap_or("").to_owned())
+            .collect()
+    }
+
+    fn context(cwd: &str) -> HookContext {
+        HookContext {
+            current_working_directory: cwd.into(),
+            current_process: "zsh".into(),
+            ssh_prefix: String::new(),
+            environment_variables: Default::default(),
+            search_term: String::new(),
+            is_dangerous: false,
+        }
+    }
+
+    const CARGO_METADATA: &str = r#"{
+      "workspace_root": "/ws",
+      "packages": [
+        {"name": "app", "source": null, "targets": [
+          {"name": "app", "kind": ["bin"], "src_path": "/ws/src/main.rs"},
+          {"name": "app", "kind": ["lib"], "src_path": "/ws/src/lib.rs"},
+          {"name": "demo", "kind": ["example"], "src_path": "/ws/examples/demo.rs"},
+          {"name": "smoke", "kind": ["test"], "src_path": "/ws/tests/smoke.rs"},
+          {"name": "speed", "kind": ["bench"], "src_path": "/ws/benches/speed.rs"}
+        ]},
+        {"name": "vendored", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [
+          {"name": "vendored", "kind": ["bin"], "src_path": "/reg/vendored/src/main.rs"}
+        ]}
+      ]
+    }"#;
+
+    #[test]
+    fn cargo_targets_filter_by_the_kind_the_owning_option_closed_over() {
+        let rules = [rule(
+            "cargo",
+            &["metadata", "--format-version", "1", "--no-deps"],
+            CARGO_METADATA,
+        )];
+        let exec = mock_exec_from_rules(&rules);
+        let ctx = context("/ws");
+        for (option, expected) in [
+            ("--bin", vec!["app"]),
+            ("--example", vec!["demo"]),
+            ("--test", vec!["smoke"]),
+            ("--bench", vec!["speed"]),
+        ] {
+            let result = cargo_targets(&tokens(&["cargo", "run", option, ""]), &exec, &ctx);
+            assert_eq!(names(&result), expected, "{option}");
+        }
+        // The description is the source path relative to the cwd, as
+        // `src_path.replace(currentWorkingDirectory, "")` made it.
+        let result = cargo_targets(&tokens(&["cargo", "run", "--bin", "a"]), &exec, &ctx).unwrap();
+        assert_eq!(result[0]["description"], "/src/main.rs");
+        assert_eq!(result[0]["icon"], "🎯");
+    }
+
+    #[test]
+    fn cargo_targets_skip_registry_packages_like_the_spec_does() {
+        // `le` keeps only packages without a `source`; the vendored crate's
+        // `bin` target must not appear under `--bin`.
+        let rules = [rule(
+            "cargo",
+            &["metadata", "--format-version", "1", "--no-deps"],
+            CARGO_METADATA,
+        )];
+        let exec = mock_exec_from_rules(&rules);
+        let result = cargo_targets(&tokens(&["cargo", "run", "--bin", ""]), &exec, &context("/ws"));
+        assert_eq!(names(&result), ["app"]);
+    }
+
+    #[test]
+    fn cargo_targets_without_an_owning_option_behave_as_the_representative_site() {
+        let rules = [rule(
+            "cargo",
+            &["metadata", "--format-version", "1", "--no-deps"],
+            CARGO_METADATA,
+        )];
+        let exec = mock_exec_from_rules(&rules);
+        let result = cargo_targets(&tokens(&["cargo"]), &exec, &context("/ws"));
+        assert_eq!(names(&result), ["app"], "cargo#custom#1 is `bench --bin`");
+    }
+
+    const SCC_LANGUAGES: &str = "C Header (h)\nC++ (cc,cpp,cxx,c++)\nRust (rs)\nZig (zig)\n";
+
+    #[test]
+    fn scc_languages_parse_the_language_listing() {
+        let rules = [rule("scc", &["--language"], SCC_LANGUAGES)];
+        let exec = mock_exec_from_rules(&rules);
+        let parsed = scc_languages(&exec).unwrap();
+        assert_eq!(parsed.languages, ["C Header", "C++", "Rust", "Zig"]);
+        let extensions: Vec<(&str, &str)> = parsed
+            .extensions
+            .entries()
+            .map(|(extension, language)| (extension.as_str(), language.as_str()))
+            .collect();
+        assert_eq!(
+            extensions,
+            [
+                ("h", "C Header"),
+                ("cc", "C++"),
+                ("cpp", "C++"),
+                ("cxx", "C++"),
+                ("c++", "C++"),
+                ("rs", "Rust"),
+                ("zig", "Zig")
+            ]
+        );
+    }
+
+    #[test]
+    fn scc_count_as_offers_extensions_then_languages() {
+        let rules = [rule("scc", &["--language"], SCC_LANGUAGES)];
+        let exec = mock_exec_from_rules(&rules);
+        let keys = scc_key_value_list(&tokens(&["scc", "--count-as", ""]), &exec).unwrap();
+        assert_eq!(keys[0]["name"], "h");
+        assert_eq!(keys[0]["description"], "C Header");
+        assert_eq!(keys[0]["insertValue"], "h:", "keys insert the `:` separator");
+        assert!(keys[0].get("icon").is_none(), "`--count-as` keys carry no icon");
+
+        let values = scc_key_value_list(&tokens(&["scc", "--count-as", "jst:"]), &exec).unwrap();
+        assert_eq!(
+            values
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["name"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["C Header", "C++", "Rust", "Zig"]
+        );
+    }
+
+    #[test]
+    fn scc_remap_options_have_no_keys_and_language_values() {
+        let rules = [rule("scc", &["--language"], SCC_LANGUAGES)];
+        let exec = mock_exec_from_rules(&rules);
+        for option in ["--remap-all", "--remap-unknown"] {
+            let keys = scc_key_value_list(&tokens(&["scc", option, ""]), &exec).unwrap();
+            assert_eq!(keys, json!([]), "{option} keys");
+            let values = scc_key_value_list(&tokens(&["scc", option, "-*- C++ -*-:"]), &exec).unwrap();
+            assert_eq!(values[1]["name"], "C++", "{option} values");
+        }
+    }
+
+    #[test]
+    fn scc_format_multi_lists_formats_then_files_and_only_runs_ls_for_values() {
+        // No `ls` rule: choosing a key must not need one.
+        let rules = [rule("scc", &["--language"], SCC_LANGUAGES)];
+        let exec = mock_exec_from_rules(&rules);
+        let keys = scc_key_value_list(&tokens(&["scc", "--format-multi", ""]), &exec).unwrap();
+        assert_eq!(keys[0]["name"], "tabular");
+        assert_eq!(keys[0]["icon"], "fig://icon?type=string");
+        assert_eq!(keys.as_array().unwrap().len(), 10);
+
+        let rules = [rule(
+            "ls",
+            &["-lAF1"],
+            "drwxr-xr-x  3 me  staff  96 Jan  1 00:00 src/\n-rw-r--r--  1 me  staff  12 Jan  1 00:00 a.rs",
+        )];
+        let exec = mock_exec_from_rules(&rules);
+        let values = scc_key_value_list(&tokens(&["scc", "--format-multi", "csv:"]), &exec).unwrap();
+        let rows = values.as_array().unwrap();
+        assert_eq!(rows.len(), 3);
+        // `-F` marks a directory with a trailing `/`, so its "name" is what
+        // follows that slash: nothing. Faithful to the spec, odd as it is.
+        assert_eq!(rows[0]["name"], "");
+        assert_eq!(rows[1]["name"], "-rw-r--r--  1 me  staff  12 Jan  1 00:00 a.rs");
+        assert_eq!(rows[2], json!({ "name": "stdout", "priority": 75 }));
+    }
+
+    #[test]
+    fn scc_include_ext_offers_extensions_with_the_string_icon() {
+        let rules = [rule("scc", &["--language"], SCC_LANGUAGES)];
+        let exec = mock_exec_from_rules(&rules);
+        let result = scc_value_list(&tokens(&["scc", "-i", "rs,"]), &exec).unwrap();
+        let rows = result.as_array().unwrap();
+        assert_eq!(rows[0]["name"], "h");
+        assert_eq!(rows[0]["description"], "C Header");
+        assert_eq!(rows[0]["icon"], "fig://icon?type=string");
+        assert!(
+            rows.iter().all(|row| row["name"] != "rs"),
+            "an extension already in the list is not offered again"
+        );
+    }
+
+    #[test]
+    fn scc_without_the_tool_installed_yields_nothing_rather_than_an_error() {
+        // The T1.2 baseline: exit 127 with empty stdout resolves (Fig's
+        // executeCommand does not reject on a non-zero status), and `z("")`
+        // finds no languages.
+        let rules = [ExecRule {
+            status: Some(127),
+            stderr: Some("command not found".into()),
+            ..rule("scc", &["--language"], "")
+        }];
+        let exec = mock_exec_from_rules(&rules);
+        assert_eq!(
+            scc_key_value_list(&tokens(&["scc", "--count-as", ""]), &exec).unwrap(),
+            json!([])
+        );
+        assert_eq!(scc_value_list(&tokens(&["scc", "-i", ""]), &exec).unwrap(), json!([]));
+    }
+
+    /// Collects, for every `jsCustom` hook id in a compiled spec, the names of
+    /// the option whose argument owns it.
+    fn custom_hook_owners(ir: &JsonValue) -> BTreeMap<String, BTreeSet<String>> {
+        fn hook_ids(node: &JsonValue, out: &mut BTreeSet<String>) {
+            match node {
+                JsonValue::Array(items) => items.iter().for_each(|item| hook_ids(item, out)),
+                JsonValue::Object(map) => {
+                    for (key, value) in map {
+                        if key == "jsCustom" {
+                            if let Some(id) = value.as_str() {
+                                out.insert(id.to_owned());
+                            }
+                        } else {
+                            hook_ids(value, out);
+                        }
+                    }
+                },
+                _ => {},
+            }
+        }
+        fn walk(node: &JsonValue, owners: &mut BTreeMap<String, BTreeSet<String>>) {
+            match node {
+                JsonValue::Array(items) => items.iter().for_each(|item| walk(item, owners)),
+                JsonValue::Object(map) => {
+                    if let (Some(names), Some(args)) = (map.get("names").and_then(JsonValue::as_array), map.get("args"))
+                    {
+                        let mut ids = BTreeSet::new();
+                        hook_ids(args, &mut ids);
+                        for id in ids {
+                            let entry = owners.entry(id).or_default();
+                            entry.extend(names.iter().filter_map(JsonValue::as_str).map(ToOwned::to_owned));
+                        }
+                    }
+                    map.values().for_each(|value| walk(value, owners));
+                },
+                _ => {},
+            }
+        }
+        let mut owners = BTreeMap::new();
+        walk(ir, &mut owners);
+        owners
+    }
+
+    #[test]
+    fn shared_body_sites_are_owned_by_the_options_the_adapter_dispatches_on() {
+        // These adapters pick a call site's closed-over literals from the
+        // option that owns the argument. A spec update that binds the same
+        // body under a new option would take the wrong branch silently, so
+        // pin the set of owners against the compiled IR.
+        let ir_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bundle/specs-ir");
+        let sidecar: JsonValue =
+            serde_json::from_str(&std::fs::read_to_string(ir_root.join("typed-hooks.json")).expect("typed-hooks.json"))
+                .expect("typed-hooks.json parses");
+        let adapters = sidecar["adapters"].as_object().expect("adapters map");
+        let expectations: [(&str, &str, &[&str]); 3] = [
+            (CARGO_TARGETS_SHA, "cargo", &["--bin", "--example", "--test", "--bench"]),
+            (
+                SCC_KEY_VALUE_LIST_SHA,
+                "scc",
+                &["--count-as", "--format-multi", "--remap-all", "--remap-unknown"],
+            ),
+            (SCC_VALUE_LIST_SHA, "scc", &["-i", "--include-ext"]),
+        ];
+        for (sha, spec, allowed) in expectations {
+            let ir: JsonValue = serde_json::from_str(
+                &std::fs::read_to_string(ir_root.join(format!("{spec}.json"))).expect("compiled spec"),
+            )
+            .expect("spec IR parses");
+            let owners = custom_hook_owners(&ir);
+            let bound: Vec<&String> = adapters
+                .iter()
+                .filter(|(_, binding)| binding["functionBodySha256"] == sha)
+                .map(|(id, _)| id)
+                .collect();
+            assert!(!bound.is_empty(), "{spec}: nothing is bound to {sha}");
+            let allowed: BTreeSet<&str> = allowed.iter().copied().collect();
+            for id in bound {
+                let names = owners
+                    .get(id)
+                    .unwrap_or_else(|| panic!("{id} is not under any option's args"));
+                assert!(
+                    names.iter().any(|name| allowed.contains(name.as_str())),
+                    "{id} is owned by {names:?}, which the adapter does not dispatch on"
+                );
+            }
+        }
+    }
 }
