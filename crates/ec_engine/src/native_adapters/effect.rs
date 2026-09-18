@@ -7,7 +7,7 @@ use crate::hook_types::HookContext;
 #[cfg(test)]
 use crate::hook_baseline::{ExecRule, Expected};
 
-use super::eval::{AdapterError, AdapterResult, js_index_of, js_to_string, throw};
+use super::eval::{AdapterError, AdapterResult, js_index_of, js_slice, js_to_string, throw};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AdapterExecRequest {
@@ -298,17 +298,17 @@ pub(super) fn key_value_list(
         ""
     };
     let rows = with_insert_suffix(suffix, list);
+    // Both `used` lists keep the spec's `indexOf` arithmetic when a part has
+    // no separator: `m.slice(0, -1)` drops the part's last character and
+    // `m.slice(-1 + separator.length)` keeps the whole part, so a bare `x`
+    // in `x,a:` hides the value `x` exactly as the JS did.
     if choosing_keys {
         if allow_repeated_keys {
             return Ok(JsonValue::Array(rows));
         }
         let used: Vec<String> = token
             .split(delimiter)
-            .map(|part| {
-                part.find(separator)
-                    .map(|index| part[..index].to_owned())
-                    .unwrap_or_default()
-            })
+            .map(|part| js_slice(part, 0, Some(js_index_of(part, separator))))
             .collect();
         return Ok(JsonValue::Array(filter_used(&used, rows)));
     }
@@ -318,9 +318,8 @@ pub(super) fn key_value_list(
     let used: Vec<String> = token
         .split(delimiter)
         .map(|part| {
-            part.find(separator)
-                .map(|index| part[index + separator.len()..].to_owned())
-                .unwrap_or_default()
+            let separator_units = separator.encode_utf16().count() as i64;
+            js_slice(part, js_index_of(part, separator) + separator_units, None)
         })
         .collect();
     Ok(JsonValue::Array(filter_used(&used, rows)))
@@ -444,6 +443,8 @@ mod tests {
     use std::collections::BTreeSet;
     use std::path::PathBuf;
 
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -478,5 +479,31 @@ mod tests {
         let sections = adapter_list("man-sections.json");
         assert!(!sections.is_empty());
         assert!(adapter_source("man-sections.json").contains("\"name\""));
+    }
+
+    #[test]
+    fn key_value_list_used_entries_follow_the_js_index_of_arithmetic() {
+        let keys = [json!({"name": "a"}), json!({"name": "b"}), json!({"name": "bc"})];
+        let values = [json!({"name": "x"}), json!({"name": "1"})];
+        // Keys: `"bc".slice(0, -1)` is `"b"`, so the key `b` is treated as
+        // used while `bc` itself is not.
+        let rows = key_value_list("a:1,bc", ":", ",", &keys, &values, true, false, false, false).unwrap();
+        let names: Vec<&str> = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["bc"]);
+        // Values: a part without a separator is `slice(0)`, the whole part,
+        // so the bare `x` hides the value `x`.
+        let rows = key_value_list("x,a:", ":", ",", &keys, &values, true, false, false, false).unwrap();
+        let names: Vec<&str> = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["1"]);
     }
 }
