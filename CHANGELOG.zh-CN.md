@@ -1,5 +1,12 @@
 # Changelog
 
+## v3.0.0-beta.15
+
+- 修复：`rustup +nightly toolchain uninstall` / `target remove` 仍走卸载和移除列表，不再被当成默认列出
+- 修复：共用的原生适配器从调用点读取 key、value 和开关
+- 修复：hook 返回 `undefined` / `null` 时是空候选，不再当成转换错误
+- 构建：50ms hook 基线不再把 timeout 和立刻抛错判成 drift；npm session 夹具保持逐键形状
+
 ## v3.0.0-beta.14
 
 - 功能：桌面零运行时 JS——补全 hook 只走 typed IR 或具名原生适配器；QuickJS、`rquickjs` 与 `hooks/` 已删除

@@ -68,7 +68,7 @@ a named Rust adapter at build time too.
 
 Native builds are the Apple Silicon DMGs from this repository:
 
-[Download latest DMG](https://github.com/codeime/easy-complete/releases/download/v3.0.0-beta.14/Easy-Complete-arm64.dmg) ·
+[Download latest DMG](https://github.com/codeime/easy-complete/releases/download/v3.0.0-beta.15/Easy-Complete-arm64.dmg) ·
 [All releases](https://github.com/codeime/easy-complete/releases)
 
 Then:

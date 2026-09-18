@@ -1,5 +1,12 @@
 # Changelog
 
+## v3.0.0-beta.15
+
+- fix: rustup `+nightly toolchain uninstall` / `target remove` keep the uninstall and remove listings
+- fix: shared native adapters read keys, values and flags from their call site
+- fix: hook `undefined` / `null` output is an empty suggestion list, not a conversion error
+- ci: the 50ms hook-baseline watchdog no longer flakes timeout against immediate error; the npm session fixture stays keystroke-shaped
+
 ## v3.0.0-beta.14
 
 - feat: desktop app has zero runtime JavaScript — completion hooks are typed IR or named native adapters; QuickJS, `rquickjs`, and `hooks/` are gone
