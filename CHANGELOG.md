@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.0.0-beta.16
+
+- perf: typed hook IR is parsed on first use; catalog provenance is dropped and the sidecar bytes are reused at snapshot open
+- perf: file path listings use dirent file type (still follow symlink directories) and cache Fig `matches` regexes
+- perf: figterm intercept IPC is sent only when a session's flags change; other tabs still unlock
+- perf: VS Code / Cursor keep the xterm caret cache on the focused helper textarea instead of walking the window on every key
+- ci: bundled specs freshness uses `--check` without rewriting the tree; unused workspace crates are skipped; the dist profile smokes on main only
+
 ## v3.0.0-beta.15
 
 - fix: rustup `+nightly toolchain uninstall` / `target remove` keep the uninstall and remove listings

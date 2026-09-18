@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.0.0-beta.16
+
+- 性能：typed hook IR 首次使用时再解析；去掉 catalog 来源字段，snapshot 打开时复用 sidecar 字节
+- 性能：文件列表用 dirent 的类型（symlink 目录仍跟随），并缓存 Fig `matches` 正则
+- 性能：figterm intercept 只在该 session 的 flags 变化时发 IPC，其他 tab 仍会 unlock
+- 性能：VS Code / Cursor 在当前 helper textarea 上保留 xterm caret 缓存，不再每次按键整窗走一遍
+- 构建：bundled specs 只用 `--check` 验新鲜度，不再重写目录；跳过无用 workspace crate；dist profile 只在 main 上冒烟
+
 ## v3.0.0-beta.15
 
 - 修复：`rustup +nightly toolchain uninstall` / `target remove` 仍走卸载和移除列表，不再被当成默认列出
