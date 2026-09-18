@@ -9,9 +9,11 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+#[cfg(test)]
+use std::sync::Arc;
 #[cfg(any(debug_assertions, test))]
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use rquickjs::{Context, Ctx, Function, Object, Persistent, Runtime, Value as JsValue};
@@ -26,6 +28,8 @@ use crate::ir::{
 use crate::process::{self, CommandError};
 use crate::runtime::Suggestion;
 use crate::snapshot::DirectorySnapshot;
+
+pub use crate::hook_types::{HookDiagnostic, HookDiagnosticRecord, ScriptCommand, ShellContext};
 
 const MEMORY_LIMIT: usize = 16 * 1024 * 1024;
 const STACK_LIMIT: usize = 512 * 1024;
@@ -56,50 +60,6 @@ thread_local! {
 static NEXT_DIAGNOSTIC_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Non-sensitive outcome information for one hook invocation.
-///
-/// The normal hook APIs deliberately keep their historical `Option` return
-/// values.  This status is a development/test diagnostic side channel so a
-/// missing source, a JavaScript failure, and a valid empty result do not look
-/// identical while investigating the native migration.  It intentionally
-/// carries no hook input, cwd, shell, environment, command, or error text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HookDiagnostic {
-    /// The hook produced a valid non-empty value accepted by its caller.
-    Success,
-    /// The hook produced no value, or a valid empty collection.
-    EmptyResult,
-    /// The extracted hook source was not available on disk.
-    SourceMissing,
-    /// The thread-local QuickJS runtime or context could not be created.
-    RuntimeUnavailable,
-    /// The hook source could not be evaluated as a function.
-    EvalError,
-    /// The evaluated function or a helper invoked by it failed.
-    InvokeError,
-    /// A returned Promise rejected.
-    PromiseRejected,
-    /// Promise setup or job execution failed before a rejection could be
-    /// observed.
-    PromiseError,
-    /// A returned Promise was still pending when its jobs were drained.
-    PromisePending,
-    /// The hook or one of its commands exceeded its time budget.
-    Timeout,
-    /// The JavaScript value could not be serialized to JSON.
-    JsonConversionError,
-    /// JSON was valid, but did not match the requested native result shape.
-    ResultConversionError,
-}
-
-/// A diagnostic paired with the hook that produced it. The hook id is the
-/// extracted asset name, not shell input; no cwd, command, environment, or
-/// JavaScript error text is retained.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HookDiagnosticRecord {
-    pub hook_id: String,
-    pub outcome: HookDiagnostic,
-}
-
 #[cfg(any(debug_assertions, test))]
 #[allow(dead_code)]
 struct DiagnosticEntry {
@@ -112,15 +72,6 @@ struct Active {
     host: *const JsHost,
     cwd: *const str,
     shell: *const ShellContext,
-}
-
-/// The subset of `Fig.ShellContext` that generators actually read. The WebView
-/// received it from figterm on every keystroke; here it rides along with the
-/// completion request and is bound for the duration of one attempt.
-#[derive(Debug, Clone, Default)]
-pub struct ShellContext {
-    pub current_process: String,
-    pub environment_variables: Arc<Vec<(String, String)>>,
 }
 
 fn empty_shell_context() -> &'static ShellContext {
@@ -919,6 +870,7 @@ pub fn cache_key(cache_by_directory: bool, cwd: &str, cache_key: Option<&str>, f
 /// — the resolved command, its args and the cwd — never on the typed tokens,
 /// so two generators that compute different commands cannot share an entry
 /// and the same command in another directory does not either.
+#[allow(dead_code)]
 pub fn script_cache_fallback(command: &str, args: &[String], cwd: &str) -> String {
     serde_json::json!({ "command": command, "args": args, "cwd": cwd }).to_string()
 }
@@ -1066,6 +1018,7 @@ fn run_cached<T: Clone>(
 
 /// Fig `runCachedGenerator` falls back to `tokenArray.join(" ")` for
 /// generators that do not run a script.
+#[allow(dead_code)]
 pub fn custom_cache_fallback(tokens: &[String]) -> String {
     tokens.join(" ")
 }
@@ -1097,13 +1050,6 @@ pub fn clear_caches(host: &JsHost) {
             inner.module_tables.get_mut().clear();
         }
     });
-}
-
-#[derive(Debug, Clone)]
-pub struct ScriptCommand {
-    pub command: String,
-    pub args: Vec<String>,
-    pub timeout_ms: Option<i64>,
 }
 
 fn eval_hook<'js>(ctx: &Ctx<'js>, source: &str) -> rquickjs::Result<Function<'js>> {
@@ -1376,12 +1322,7 @@ fn js_string_array(value: &JsValue<'_>) -> Option<Vec<String>> {
 }
 
 pub fn clean_output(output: &str) -> String {
-    output
-        .replace("\r\n", "\n")
-        .replace("\x1b[?25h", "")
-        .trim_start_matches('\n')
-        .trim_end_matches('\n')
-        .to_string()
+    crate::hook_types::clean_output(output)
 }
 
 fn js_to_json<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> rquickjs::Result<JsonValue> {

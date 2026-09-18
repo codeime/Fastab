@@ -10,6 +10,10 @@ license.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = ["js-compat"]
+js-compat = ["dep:rquickjs"]
+
 [dependencies]
 anyhow.workspace = true
 fig_settings = { path = "../fig_settings" }
@@ -17,7 +21,7 @@ futures.workspace = true
 fancy-regex = "0.16.2"
 libc.workspace = true
 nix.workspace = true
-rquickjs = { version = "0.12.2", default-features = true }
+rquickjs = { version = "0.12.2", default-features = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

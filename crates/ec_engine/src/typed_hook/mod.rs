@@ -1,11 +1,16 @@
+#![cfg_attr(not(test), allow(dead_code))]
+#![allow(clippy::map_err_ignore)]
+#![allow(clippy::map_unwrap_or)]
+#![allow(clippy::redundant_closure)]
+#![allow(clippy::unnested_or_patterns)]
 //! The closed, typed expression language used by native hook adapters.
 //!
 //! The JavaScript compiler emits this descriptor at build time.  This module
 //! deliberately does not know a command name or a hook id: it accepts the
 //! versioned field contracts and evaluates the expression supplied by that
-//! contract.  Production sidecars emit every side-effect-free field that
-//! compiles; this evaluator stays `#[cfg(test)]` until T3.1 wires it into the
-//! completion path.  Keeping the JSON boundary strict is important here.  A
+//! contract.  Production sidecars emit every field that compiles; T3.1 wires
+//! this evaluator into the Native hook backend.  Keeping the JSON boundary
+//! strict is important here.  A
 //! new operation or a field with a different meaning must be rejected until
 //! both the compiler and this evaluator have been updated.
 
@@ -16,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 
-use crate::js_host::ScriptCommand;
+use crate::hook_types::ScriptCommand;
 use crate::runtime::Suggestion;
 
 const IR_VERSION: u64 = 1;
@@ -631,10 +636,10 @@ pub(crate) struct TypedHookCatalogEntry {
     module_sha256: String,
     path: String,
     #[serde(rename = "sourceField")]
-    source_field: String,
+    pub(crate) source_field: String,
     #[serde(rename = "functionBodySha256")]
-    function_body_sha256: String,
-    descriptor: TypedHookIr,
+    pub(crate) function_body_sha256: String,
+    pub(crate) descriptor: TypedHookIr,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -643,7 +648,7 @@ pub(crate) struct TypedHookCatalog {
     version: u64,
     kind: String,
     contracts: TypedHookContracts,
-    hooks: BTreeMap<String, TypedHookCatalogEntry>,
+    pub(crate) hooks: BTreeMap<String, TypedHookCatalogEntry>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -760,7 +765,7 @@ pub(crate) struct TypedHookError {
 }
 
 impl TypedHookError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             js_class: None,
@@ -2470,8 +2475,7 @@ impl TypedHookContext {
     }
 }
 
-/// Test-only custom evaluator. Production stays on QuickJS until T3.1.
-#[allow(dead_code)]
+/// Evaluate a custom descriptor. The Native backend calls this at runtime.
 pub(crate) fn evaluate_typed_custom(
     descriptor: &TypedHookIr,
     tokens: &[String],
@@ -2495,7 +2499,6 @@ pub(crate) fn evaluate_typed_custom(
     suggestions_from_typed_json(&json)
 }
 
-#[allow(dead_code)]
 pub(crate) fn evaluate_typed_alias(
     descriptor: &TypedHookIr,
     token: &str,
@@ -2519,7 +2522,6 @@ pub(crate) fn evaluate_typed_alias(
         .ok_or_else(|| TypedHookError::new("typed alias result must be a string"))
 }
 
-#[allow(dead_code)]
 pub(crate) fn evaluate_typed_load_spec(
     descriptor: &TypedHookIr,
     token: &str,
@@ -2540,7 +2542,6 @@ pub(crate) fn evaluate_typed_load_spec(
     )
 }
 
-#[allow(dead_code)]
 pub(crate) fn evaluate_typed_generate_spec(
     descriptor: &TypedHookIr,
     tokens: &[String],
@@ -2635,7 +2636,7 @@ fn suggestions_to_typed_json(suggestions: &[Suggestion]) -> JsonValue {
     )
 }
 
-fn suggestions_from_typed_json(value: &JsonValue) -> TypedHookResult<Vec<Suggestion>> {
+pub(crate) fn suggestions_from_typed_json(value: &JsonValue) -> TypedHookResult<Vec<Suggestion>> {
     let Some(items) = value.as_array() else {
         return Err(TypedHookError::new("typed suggestion result must be an array"));
     };

@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use fancy_regex::Regex;
 use serde_json::{Value as JsonValue, json};
 
-use crate::hook_baseline::HookContext;
+use crate::hook_types::HookContext;
 
 use super::effect::{
     AdapterExec, AdapterExecRequest, adapter_list, catch_empty, env_var, exec_object, key_value, key_value_list,

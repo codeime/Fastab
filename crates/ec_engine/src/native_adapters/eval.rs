@@ -6,16 +6,17 @@
 
 use serde_json::{Map, Value as JsonValue};
 
+#[cfg(test)]
 use crate::hook_baseline::{Expected, FigName, FigSuggestion, FigSuggestionObject};
 
 #[derive(Debug)]
-pub(super) struct AdapterError {
+pub(crate) struct AdapterError {
     pub(super) js_class: Option<&'static str>,
 }
 
 pub(super) type AdapterResult = Result<JsonValue, AdapterError>;
 
-pub(super) fn throw(class: &'static str) -> AdapterError {
+pub(crate) fn throw(class: &'static str) -> AdapterError {
     AdapterError { js_class: Some(class) }
 }
 
@@ -80,6 +81,7 @@ pub(super) fn suggestion_object(name: impl Into<String>, extra: &[(&str, JsonVal
     JsonValue::Object(object)
 }
 
+#[cfg(test)]
 pub(super) fn normalize_expected(value: JsonValue) -> Expected {
     match normalize_suggestions(value) {
         Ok(suggestions) => Expected::Suggestions { value: suggestions },
@@ -87,6 +89,7 @@ pub(super) fn normalize_expected(value: JsonValue) -> Expected {
     }
 }
 
+#[cfg(test)]
 pub(super) fn expected_from_adapter(result: AdapterResult) -> Expected {
     match result {
         Ok(value) => normalize_expected(value),
@@ -96,6 +99,7 @@ pub(super) fn expected_from_adapter(result: AdapterResult) -> Expected {
     }
 }
 
+#[cfg(test)]
 fn normalize_suggestions(value: JsonValue) -> Result<Vec<FigSuggestion>, String> {
     let JsonValue::Array(items) = value else {
         return Err("suggestions result is not an array".into());
@@ -103,6 +107,7 @@ fn normalize_suggestions(value: JsonValue) -> Result<Vec<FigSuggestion>, String>
     items.iter().map(normalize_suggestion).collect()
 }
 
+#[cfg(test)]
 fn normalize_suggestion(item: &JsonValue) -> Result<FigSuggestion, String> {
     if let Some(name) = item.as_str() {
         if name.is_empty() {
@@ -149,6 +154,7 @@ fn normalize_suggestion(item: &JsonValue) -> Result<FigSuggestion, String> {
     }))
 }
 
+#[cfg(test)]
 fn nonempty_string(value: Option<&JsonValue>) -> Option<String> {
     value
         .and_then(JsonValue::as_str)

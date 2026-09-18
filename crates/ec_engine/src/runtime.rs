@@ -5,8 +5,9 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
+use crate::hook_backend::{self, NativeHooks};
+use crate::hook_types::ShellContext;
 use crate::ir::Registry;
-use crate::js_host;
 use crate::lookup;
 use crate::rank::{self, Frecency};
 
@@ -257,11 +258,9 @@ pub fn query_term_for(search_term: &str, separator: Option<&str>) -> String {
 /// the whole search term, matching `getQueryTermForSuggestion`.
 pub fn query_term_with_hook(search_term: &str, separator: Option<&str>, js_hook: Option<&str>) -> String {
     if let Some(hook_id) = js_hook.filter(|id| !id.is_empty())
-        && let Some((host, _)) = crate::js_host::current()
+        && let Some(term) = crate::hook_backend::dispatch_get_query_term(hook_id, search_term)
     {
-        return host
-            .get_query_term(hook_id, search_term)
-            .unwrap_or_else(|| search_term.to_string());
+        return term;
     }
     query_term_for(search_term, separator)
 }
@@ -338,7 +337,9 @@ pub fn ranking_root_command(buffer: &str, cursor: Option<u32>) -> String {
 pub struct Engine {
     specs_dir: PathBuf,
     registry: Registry,
+    #[cfg(feature = "js-compat")]
     js_host: crate::js_host::JsHost,
+    native: Arc<NativeHooks>,
     frecency: Frecency,
     acceptance: Arc<Mutex<rank::AcceptanceIndex>>,
     frecency_loaded: bool,
@@ -392,6 +393,8 @@ impl Engine {
         registry: Registry,
         acceptance: Arc<Mutex<rank::AcceptanceIndex>>,
     ) -> Self {
+        let native = Arc::new(NativeHooks::load(specs_dir, registry.snapshot().as_ref()));
+        #[cfg(feature = "js-compat")]
         let js_host = registry.snapshot().map_or_else(
             || crate::js_host::JsHost::from_specs_dir(specs_dir),
             crate::js_host::JsHost::from_snapshot,
@@ -399,7 +402,9 @@ impl Engine {
         Self {
             specs_dir: specs_dir.to_path_buf(),
             registry,
+            #[cfg(feature = "js-compat")]
             js_host,
+            native,
             frecency: Frecency::default(),
             acceptance,
             frecency_loaded: false,
@@ -426,29 +431,30 @@ impl Engine {
         acceptance: Arc<Mutex<rank::AcceptanceIndex>>,
     ) -> anyhow::Result<Self> {
         let registry = Self::load_registry(&specs_dir)?;
-        let js_host = registry.snapshot().map_or_else(
-            || crate::js_host::JsHost::from_specs_dir(&specs_dir),
-            crate::js_host::JsHost::from_snapshot,
-        );
-        Ok(Self {
-            specs_dir,
-            registry,
-            js_host,
-            frecency,
-            acceptance,
-            frecency_loaded: true,
-            // `new_with_frecency` is the test/embedding constructor that
-            // intentionally supplies its own ranking data. Treat it as the
-            // default source until a request asks for a different shell or
-            // history setting.
-            history_source: Some(rank::HistorySourceConfig {
-                custom_command: None,
-                all_shells: false,
-                current_shell: rank::HistoryShell::Unknown,
-            }),
-            history: Arc::default(),
-            generator_session: crate::generate::GeneratorSession::default(),
-        })
+        let mut engine = Self::from_registry(&specs_dir, registry, acceptance);
+        engine.frecency = frecency;
+        engine.frecency_loaded = true;
+        // `new_with_frecency` is the test/embedding constructor that
+        // intentionally supplies its own ranking data. Treat it as the
+        // default source until a request asks for a different shell or
+        // history setting.
+        engine.history_source = Some(rank::HistorySourceConfig {
+            custom_command: None,
+            all_shells: false,
+            current_shell: rank::HistoryShell::Unknown,
+        });
+        Ok(engine)
+    }
+
+    fn rebind_hosts(&mut self, registry: &Registry) {
+        self.native = Arc::new(NativeHooks::load(&self.specs_dir, registry.snapshot().as_ref()));
+        #[cfg(feature = "js-compat")]
+        {
+            self.js_host = registry.snapshot().map_or_else(
+                || crate::js_host::JsHost::from_specs_dir(&self.specs_dir),
+                crate::js_host::JsHost::from_snapshot,
+            );
+        }
     }
 
     pub fn registry(&self) -> &Registry {
@@ -458,8 +464,13 @@ impl Engine {
     /// Test helper for T1.5 engine golden: the latest hook outcome on this
     /// engine's host. `CompleteResult` does not carry diagnostics.
     #[cfg(test)]
-    pub(crate) fn last_hook_diagnostic(&self) -> Option<crate::js_host::HookDiagnosticRecord> {
-        self.js_host.last_hook_diagnostic()
+    #[allow(dead_code)]
+    pub(crate) fn last_hook_diagnostic(&self) -> Option<crate::hook_types::HookDiagnosticRecord> {
+        match hook_backend::current() {
+            #[cfg(feature = "js-compat")]
+            hook_backend::HookBackend::Js => self.js_host.last_hook_diagnostic(),
+            hook_backend::HookBackend::Native => hook_backend::last_diagnostic(),
+        }
     }
 
     /// The WebView's `clear-cache` event (`ec hook clear-autocomplete-cache`):
@@ -478,18 +489,16 @@ impl Engine {
     /// to avoid discarding its last good registry during an install rename
     /// window.
     pub(crate) fn clear_caches_and_report(&mut self) -> bool {
+        #[cfg(feature = "js-compat")]
         crate::js_host::clear_caches(&self.js_host);
         self.generator_session = crate::generate::GeneratorSession::default();
         self.history = Arc::default();
         match Self::load_registry(&self.specs_dir) {
             Ok(registry) => {
-                // A successful reload is a new generation. Rebind the host
+                // A successful reload is a new generation. Rebind both hosts
                 // together with the Registry so hooks and lazy specs cannot
                 // observe different trees.
-                self.js_host = registry.snapshot().map_or_else(
-                    || crate::js_host::JsHost::from_specs_dir(&self.specs_dir),
-                    crate::js_host::JsHost::from_snapshot,
-                );
+                self.rebind_hosts(&registry);
                 self.registry = registry;
                 true
             },
@@ -506,13 +515,9 @@ impl Engine {
         }
         match Self::load_registry(&self.specs_dir) {
             Ok(registry) => {
-                let js_host = registry.snapshot().map_or_else(
-                    || crate::js_host::JsHost::from_specs_dir(&self.specs_dir),
-                    crate::js_host::JsHost::from_snapshot,
-                );
+                self.rebind_hosts(&registry);
                 self.registry = registry;
-                self.js_host = js_host;
-                // GeneratorSession lives outside the Registry/JsHost and can
+                // GeneratorSession lives outside the Registry/hosts and can
                 // otherwise replay a custom result from the prior generation.
                 self.generator_session = crate::generate::GeneratorSession::default();
                 self.history = Arc::default();
@@ -520,7 +525,7 @@ impl Engine {
             Err(error) => {
                 // The publisher may currently have the canonical path
                 // absent. Keep the last generation for this request; the next
-                // request retries the complete Registry+JsHost rebuild.
+                // request retries the complete Registry+host rebuild.
                 tracing::debug!(%error, "spec generation refresh deferred");
             },
         }
@@ -634,13 +639,24 @@ impl Engine {
             });
         }
         let mut result = {
-            let shell = js_host::ShellContext {
+            let _native = hook_backend::bind_native(Arc::clone(&self.native));
+            let shell = ShellContext {
                 current_process: request.current_process.clone().unwrap_or_default(),
                 environment_variables: std::mem::take(&mut request.environment_variables),
             };
-            let host = &self.js_host;
             let registry = &mut self.registry;
-            host.enter_with_context(&request.cwd, &shell, || lookup::complete(registry, &request))
+            #[cfg(feature = "js-compat")]
+            let js_host = &self.js_host;
+            hook_backend::enter_context(&request.cwd, &shell, || {
+                #[cfg(feature = "js-compat")]
+                {
+                    js_host.enter_with_context(&request.cwd, &shell, || lookup::complete(registry, &request))
+                }
+                #[cfg(not(feature = "js-compat"))]
+                {
+                    lookup::complete(registry, &request)
+                }
+            })
         };
         if should_merge_history(request.include_history, history_disabled) {
             let effective_fuzzy = result.fuzzy;
@@ -742,7 +758,7 @@ mod tests {
         assert!(registry.is_empty());
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "js-compat"))]
     #[test]
     fn engine_rejects_cross_generation_lazy_reads_and_rebinds_after_publish() {
         use sha2::{Digest, Sha256};
@@ -889,7 +905,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "js-compat"))]
     #[test]
     fn identical_file_content_can_be_read_across_a_generation_replacement() {
         use sha2::{Digest, Sha256};

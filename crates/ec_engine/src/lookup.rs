@@ -1137,9 +1137,9 @@ fn resolve_arg_alias(arg: &ArgSpec, token: &str) -> Option<String> {
         return Some(literal.to_string());
     }
     let hook_id = directives.js_alias.as_deref()?;
-    let (host, cwd) = crate::js_host::current()?;
+    let cwd = crate::hook_backend::current_cwd()?;
     let timeout = dynamic_hook_timeout();
-    host.alias(hook_id, token, cwd, timeout)
+    crate::hook_backend::dispatch_alias(hook_id, token, &cwd, timeout)
 }
 
 fn substitute_token_alias(tokens: &mut Vec<String>, index: usize, alias_value: &str) -> Option<usize> {
@@ -1156,34 +1156,49 @@ fn apply_js_load_spec(current: &mut Arc<Spec>, token: &str) {
     let Some(hook_id) = current.js_load_spec.clone() else {
         return;
     };
-    let Some((host, cwd)) = crate::js_host::current() else {
+    let Some(cwd) = crate::hook_backend::current_cwd() else {
         return;
     };
     let timeout = dynamic_hook_timeout();
-    let Some(loaded) = host.load_spec(&hook_id, token, cwd, timeout) else {
+    let Some(loaded) = crate::hook_backend::dispatch_load_spec(&hook_id, token, &cwd, timeout) else {
         return;
     };
-    *current = Arc::new(crate::js_host::merge_generated_spec(current.as_ref(), loaded));
+    *current = Arc::new(crate::hook_backend::merge_generated_spec(current.as_ref(), loaded));
 }
 
 fn apply_generate_spec(current: &mut Arc<Spec>, tokens: &[String]) {
     let Some(hook_id) = current.js_generate_spec.clone() else {
         return;
     };
-    let Some((host, cwd)) = crate::js_host::current() else {
+    let Some(cwd) = crate::hook_backend::current_cwd() else {
         return;
     };
     let timeout = dynamic_hook_timeout();
     let generated = if let Some(key) = current.generate_spec_cache_key.as_deref() {
         let cache_key = format!("{}:{key}", tokens.first().cloned().unwrap_or_default());
-        crate::js_host::cached_spec(host, &cache_key, || host.generate_spec(&hook_id, tokens, cwd, timeout))
+        cached_generated_spec(&cache_key, || {
+            crate::hook_backend::dispatch_generate_spec(&hook_id, tokens, &cwd, timeout)
+        })
     } else {
-        host.generate_spec(&hook_id, tokens, cwd, timeout)
+        crate::hook_backend::dispatch_generate_spec(&hook_id, tokens, &cwd, timeout)
     };
     let Some(generated) = generated else {
         return;
     };
-    *current = Arc::new(crate::js_host::merge_generated_spec(current.as_ref(), generated));
+    *current = Arc::new(crate::hook_backend::merge_generated_spec(current.as_ref(), generated));
+}
+
+#[cfg(feature = "js-compat")]
+fn cached_generated_spec(cache_key: &str, run: impl FnOnce() -> Option<Spec>) -> Option<Spec> {
+    match crate::js_host::current() {
+        Some((host, _)) => crate::js_host::cached_spec(host, cache_key, run),
+        None => run(),
+    }
+}
+
+#[cfg(not(feature = "js-compat"))]
+fn cached_generated_spec(_cache_key: &str, run: impl FnOnce() -> Option<Spec>) -> Option<Spec> {
+    run()
 }
 
 /// Dynamic parser hooks do not have an argument/generator object from which
@@ -1239,9 +1254,9 @@ fn enter_loaded_spec(
 /// do `isCommand` / `isScript` / `isModule` load another bundled spec.
 fn next_spec_after_arg(registry: Option<&mut Registry>, arg: &ArgSpec, token: &str) -> Option<Arc<Spec>> {
     if let Some(hook_id) = arg.js_load_spec.as_deref() {
-        return crate::js_host::current().and_then(|(host, cwd)| {
+        return crate::hook_backend::current_cwd().and_then(|cwd| {
             let timeout = dynamic_hook_timeout();
-            host.load_spec(hook_id, token, cwd, timeout).map(Arc::new)
+            crate::hook_backend::dispatch_load_spec(hook_id, token, &cwd, timeout).map(Arc::new)
         });
     }
     if arg.load_spec.is_some() {

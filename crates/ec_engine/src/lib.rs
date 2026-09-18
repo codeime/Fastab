@@ -4,10 +4,17 @@
 //! generators run in Rust.
 
 mod cobra;
+#[cfg(all(test, feature = "js-compat"))]
+mod engine_golden;
 mod filegen;
 mod generate;
 mod history;
+mod hook_backend;
+#[cfg(test)]
+mod hook_baseline;
+mod hook_types;
 mod ir;
+#[cfg(feature = "js-compat")]
 mod js_host;
 mod lookup;
 mod native_adapters;
@@ -17,16 +24,8 @@ mod rank;
 mod runtime;
 mod snapshot;
 mod spec_pair;
-mod versioned;
-// Native sidecar loading will consume these APIs in later migration slices.
-// Keep the not-yet-wired parsers/evaluators test-only until that production
-// path is reviewed and connected.
-#[cfg(test)]
-mod engine_golden;
-#[cfg(test)]
-mod hook_baseline;
-#[cfg(test)]
 mod typed_hook;
+mod versioned;
 mod worker;
 
 pub use ir::{ArgSpec, Builtin, OptionSpec, Registry, Spec, Template};

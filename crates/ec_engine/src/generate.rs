@@ -588,9 +588,7 @@ fn should_trigger(
             let Some(hook) = trigger.js_trigger.as_deref() else {
                 return true;
             };
-            crate::js_host::current()
-                .and_then(|(host, _)| host.trigger(hook, search_term, previous))
-                .unwrap_or(true)
+            crate::hook_backend::dispatch_trigger(hook, search_term, previous).unwrap_or(true)
         },
         "string" => {
             let needle = trigger_string(trigger);
@@ -721,10 +719,12 @@ fn generate_from_generator(
     let snapshot = arg_snapshot_for_generator(arg, generator);
     // Fig's script and custom generators both bail on `haveContextForGenerator`
     // — no cwd, no run — so an empty cwd yields no rows from either.
-    if let Some((host, scope_cwd)) = crate::js_host::current() {
-        let cwd = if cwd.is_empty() { scope_cwd } else { cwd };
+    let cwd = crate::hook_backend::current_cwd()
+        .filter(|_| cwd.is_empty())
+        .unwrap_or_else(|| cwd.to_string());
+    let cwd = cwd.as_str();
+    if !cwd.is_empty() {
         out.extend(run_js_generators(
-            host,
             &snapshot,
             tokens,
             query,
@@ -733,7 +733,7 @@ fn generate_from_generator(
             fuzzy,
             timeout,
         ));
-    } else if !snapshot.script.is_empty() && !cwd.is_empty() {
+    } else if !snapshot.script.is_empty() {
         out.extend(run_script(
             &snapshot.script,
             query,
@@ -755,7 +755,7 @@ fn generate_from_generator(
         .any(|template| matches!(template, Template::Filepaths | Template::Folders));
     let mut template_rows = Vec::new();
     if lists_paths {
-        let environment = crate::js_host::current_shell().environment_variables.as_slice();
+        let environment = crate::hook_backend::current_shell().environment_variables;
         let filter = filegen::PathFilter {
             folders_only,
             files_only: generator.show_folders.as_deref() == Some("never"),
@@ -765,7 +765,7 @@ fn generate_from_generator(
             file_priority: generator.file_priority,
             folder_priority: generator.folder_priority,
             root_directory: generator.root_directory.as_deref(),
-            environment,
+            environment: environment.as_slice(),
             matches: generator.matches.as_deref(),
             matches_flags: generator.matches_flags.as_deref(),
         };
@@ -783,8 +783,7 @@ fn generate_from_generator(
         template_rows.extend(history_template_suggestions(history_values, query, fuzzy));
     }
     if let Some(hook) = generator.js_filter_template_suggestions.as_deref()
-        && let Some((host, _)) = crate::js_host::current()
-        && let Some(filtered) = host.filter_template_suggestions(hook, &template_rows)
+        && let Some(filtered) = crate::hook_backend::dispatch_filter_template_suggestions(hook, &template_rows)
     {
         template_rows = filtered;
     }
@@ -850,7 +849,6 @@ fn dedup_suggestions(suggestions: &mut Vec<Suggestion>) {
 
 #[allow(clippy::too_many_arguments)]
 fn run_js_generators(
-    host: &crate::js_host::JsHost,
     arg: &ArgSpec,
     tokens: &[String],
     query: &str,
@@ -865,7 +863,7 @@ fn run_js_generators(
     }
     let mut out = Vec::new();
     if has_script {
-        let raw = run_script_or_post_process(host, arg, tokens, cwd, timeout);
+        let raw = run_script_or_post_process(arg, tokens, cwd, timeout);
         out.extend(
             raw.into_iter()
                 .filter(|suggestion| matches_query(&suggestion.name, query, fuzzy))
@@ -873,9 +871,9 @@ fn run_js_generators(
         );
     }
     if let Some(hook_id) = arg.js_custom.as_deref() {
-        let fallback = crate::js_host::custom_cache_fallback(tokens);
-        let custom = crate::js_host::cached_suggestions(host, arg, cwd, "custom", &fallback, || {
-            host.custom(hook_id, tokens, cwd, raw_search_term, timeout, arg.meta.is_dangerous)
+        let fallback = tokens.join(" ");
+        let custom = with_suggestion_cache(arg, cwd, "custom", &fallback, || {
+            crate::hook_backend::dispatch_custom(hook_id, tokens, cwd, raw_search_term, timeout, arg.meta.is_dangerous)
                 .unwrap_or_default()
         });
         out.extend(
@@ -894,15 +892,9 @@ fn run_js_generators(
 /// `postProcess` runs against the current tokens, else there are no rows.
 /// Caching stdout rather than rows is what lets a `postProcess` that reads
 /// `tokens` see the current buffer on a cache hit, as it does in Fig.
-fn run_script_or_post_process(
-    host: &crate::js_host::JsHost,
-    arg: &ArgSpec,
-    tokens: &[String],
-    cwd: &str,
-    timeout: Duration,
-) -> Vec<Suggestion> {
+fn run_script_or_post_process(arg: &ArgSpec, tokens: &[String], cwd: &str, timeout: Duration) -> Vec<Suggestion> {
     let (command, args, timeout) = if let Some(hook_id) = arg.js_script.as_deref() {
-        let Some(script) = host.script_command(hook_id, tokens) else {
+        let Some(script) = crate::hook_backend::dispatch_script_command(hook_id, tokens) else {
             return Vec::new();
         };
         let timeout = Duration::from_millis(effective_script_timeout_ms(
@@ -919,32 +911,63 @@ fn run_script_or_post_process(
     if command.is_empty() {
         return Vec::new();
     }
-    let fallback = crate::js_host::script_cache_fallback(&command, &args, cwd);
-    let stdout = crate::js_host::cached_script_output(host, arg, cwd, &fallback, || {
-        process::execute(&command, &args, cwd, timeout)
-    });
-    shape_script_output(host, arg, tokens, &stdout)
+    let fallback = serde_json::json!({ "command": command, "args": args, "cwd": cwd }).to_string();
+    let stdout = with_script_cache(arg, cwd, &fallback, || process::execute(&command, &args, cwd, timeout));
+    shape_script_output(arg, tokens, &stdout)
 }
 
 /// Fig's `getScriptSuggestions` branches on `splitOn` first and only falls
 /// back to `postProcess`. Specs that declare both rely on that order, so
 /// running the hook here would feed it output it never expects. With
 /// neither, the result stays `[]`.
-fn shape_script_output(
-    host: &crate::js_host::JsHost,
-    arg: &ArgSpec,
-    tokens: &[String],
-    stdout: &str,
-) -> Vec<Suggestion> {
+fn shape_script_output(arg: &ArgSpec, tokens: &[String], stdout: &str) -> Vec<Suggestion> {
     // `executeCommandTimeout` hands both branches `cleanOutput(stdout)`.
-    let stdout = crate::js_host::clean_output(stdout);
+    let stdout = crate::hook_backend::clean_output(stdout);
     if let Some(separator) = arg.split_on.as_deref().filter(|value| !value.is_empty()) {
         return all_split(&stdout, separator);
     }
     if let Some(hook_id) = arg.js_post_process.as_deref() {
-        return host.post_process(hook_id, &stdout, tokens).unwrap_or_default();
+        return crate::hook_backend::dispatch_post_process(hook_id, &stdout, tokens).unwrap_or_default();
     }
     Vec::new()
+}
+
+#[cfg(feature = "js-compat")]
+fn with_suggestion_cache(
+    arg: &ArgSpec,
+    cwd: &str,
+    kind: &str,
+    fallback: &str,
+    run: impl FnOnce() -> Vec<Suggestion>,
+) -> Vec<Suggestion> {
+    match crate::js_host::current() {
+        Some((host, _)) => crate::js_host::cached_suggestions(host, arg, cwd, kind, fallback, run),
+        None => run(),
+    }
+}
+
+#[cfg(not(feature = "js-compat"))]
+fn with_suggestion_cache(
+    _arg: &ArgSpec,
+    _cwd: &str,
+    _kind: &str,
+    _fallback: &str,
+    run: impl FnOnce() -> Vec<Suggestion>,
+) -> Vec<Suggestion> {
+    run()
+}
+
+#[cfg(feature = "js-compat")]
+fn with_script_cache(arg: &ArgSpec, cwd: &str, fallback: &str, run: impl FnOnce() -> String) -> String {
+    match crate::js_host::current() {
+        Some((host, _)) => crate::js_host::cached_script_output(host, arg, cwd, fallback, run),
+        None => run(),
+    }
+}
+
+#[cfg(not(feature = "js-compat"))]
+fn with_script_cache(_arg: &ArgSpec, _cwd: &str, _fallback: &str, run: impl FnOnce() -> String) -> String {
+    run()
 }
 
 /// Host-less fallback for callers outside a completion attempt (the
@@ -2196,6 +2219,7 @@ mod tests {
         assert!(changed.iter().any(|item| item.name == "untracked.txt"), "{changed:?}");
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn docker_exec_post_process_parses_json_lines() {
         let dir = tempfile::tempdir().unwrap();
@@ -2216,6 +2240,7 @@ mod tests {
         assert_eq!(rows[0].display_name.as_deref(), Some("web (nginx)"));
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn js_post_process_maps_stdout_and_skips_empty_cwd() {
         let dir = tempfile::tempdir().unwrap();
@@ -2241,6 +2266,7 @@ mod tests {
         assert!(empty.is_empty(), "{empty:?}");
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn split_on_wins_over_post_process_like_the_webview() {
         // Fig's `getScriptSuggestions` is `if (splitOn) … else if (postProcess)`.
@@ -2279,6 +2305,7 @@ mod tests {
         assert_eq!(names, vec!["from-hook"]);
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn empty_split_on_without_post_process_has_no_script_rows() {
         // Both the desktop and the host-less engine must treat the empty
@@ -2300,6 +2327,7 @@ mod tests {
         assert!(rows.is_empty(), "{rows:?}");
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn js_post_process_errors_become_empty() {
         let dir = tempfile::tempdir().unwrap();
@@ -2320,6 +2348,7 @@ mod tests {
         assert!(rows.is_empty(), "{rows:?}");
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn custom_context_search_term_is_the_full_parser_token() {
         // WebView `getCustomSuggestions` puts parserResult.searchTerm (`src/foo`)
@@ -2352,6 +2381,7 @@ mod tests {
         assert_eq!(rows[0].description, "src/foo");
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn custom_generator_receives_parser_inner_text_without_second_unescape() {
         let dir = tempfile::tempdir().unwrap();
@@ -2379,6 +2409,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn js_custom_and_cache_avoid_repeat_spawns() {
         let dir = tempfile::tempdir().unwrap();
@@ -2412,6 +2443,7 @@ mod tests {
         assert_eq!(written.matches('x').count(), 1, "{written}");
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn cached_script_rows_are_refiltered_when_the_query_changes() {
         let dir = tempfile::tempdir().unwrap();
@@ -2451,6 +2483,7 @@ mod tests {
         assert_eq!(written.matches('x').count(), 1, "{written}");
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn script_cache_without_a_cache_key_does_not_include_the_typed_token() {
         let dir = tempfile::tempdir().unwrap();
@@ -2476,6 +2509,7 @@ mod tests {
         assert_eq!(written.matches('x').count(), 1, "{written}");
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn js_script_generators_without_a_cache_key_do_not_share_an_entry() {
         // Fig keys a script generator's cache on the resolved
@@ -2524,6 +2558,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn script_cache_is_keyed_on_the_directory_even_without_cache_by_directory() {
         // `JSON.stringify(executeCommandInput)` carries `cwd`, so the same
@@ -2551,6 +2586,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&count).unwrap_or_default().matches('x').count(), 2);
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn cached_script_output_is_reshaped_by_post_process_with_the_current_tokens() {
         // Fig caches `executeCommand` stdout and re-runs `postProcess(out,
@@ -2591,6 +2627,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&count).unwrap_or_default().matches('x').count(), 1);
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn script_without_split_on_or_post_process_yields_no_rows() {
         // Fig `getScriptSuggestions`: `if (splitOn) … else if (postProcess) …`
@@ -2609,6 +2646,7 @@ mod tests {
         assert!(rows.is_empty(), "{rows:?}");
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn scripts_need_a_cwd_like_every_fig_generator() {
         // `haveContextForGenerator` gates script and custom generators alike.

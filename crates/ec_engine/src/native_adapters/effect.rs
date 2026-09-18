@@ -2,12 +2,15 @@
 
 use serde_json::{Map, Value as JsonValue, json};
 
-use crate::hook_baseline::{ExecRule, Expected, HookContext};
+use crate::hook_types::HookContext;
+
+#[cfg(test)]
+use crate::hook_baseline::{ExecRule, Expected};
 
 use super::eval::{AdapterError, AdapterResult, js_index_of, js_to_string, throw};
 
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct AdapterExecRequest {
+pub(crate) struct AdapterExecRequest {
     pub command: String,
     pub args: Vec<JsonValue>,
     pub cwd: Option<String>,
@@ -16,13 +19,13 @@ pub(super) struct AdapterExecRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct AdapterExecResult {
+pub(crate) struct AdapterExecResult {
     pub stdout: String,
     pub stderr: String,
     pub status: i64,
 }
 
-pub(super) type AdapterExec<'a> = dyn Fn(AdapterExecRequest) -> Result<AdapterExecResult, AdapterError> + 'a;
+pub(crate) type AdapterExec<'a> = dyn Fn(AdapterExecRequest) -> Result<AdapterExecResult, AdapterError> + 'a;
 
 pub(super) fn last_token(tokens: &[String]) -> String {
     tokens.last().cloned().unwrap_or_default()
@@ -46,6 +49,7 @@ pub(super) fn exec_object(
     })
 }
 
+#[cfg(test)]
 fn exec_descriptor(
     command: &str,
     args: &JsonValue,
@@ -62,6 +66,7 @@ fn exec_descriptor(
     })
 }
 
+#[cfg(test)]
 pub(super) fn mock_exec_from_rules(
     rules: &[ExecRule],
 ) -> impl Fn(AdapterExecRequest) -> Result<AdapterExecResult, AdapterError> + '_ {
@@ -100,6 +105,7 @@ pub(super) fn mock_exec_from_rules(
     }
 }
 
+#[cfg(test)]
 pub(super) fn expected_from_field(field: &str, result: AdapterResult) -> Expected {
     match result {
         Err(error) => Expected::Error {

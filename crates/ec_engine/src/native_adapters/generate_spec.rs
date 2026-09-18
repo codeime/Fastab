@@ -2,7 +2,7 @@
 
 use serde_json::{Value as JsonValue, json};
 
-use crate::hook_baseline::HookContext;
+use crate::hook_types::HookContext;
 
 use super::effect::{AdapterExec, adapter_json, exec_object, parse_json};
 use super::eval::{AdapterResult, js_split_lines, throw};
