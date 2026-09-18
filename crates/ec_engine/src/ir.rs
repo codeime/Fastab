@@ -636,14 +636,23 @@ impl Registry {
     }
 
     fn load_relative_spec(&mut self, relative: &str, name: &str) -> Option<Arc<Spec>> {
-        let path = safe_index_path(&self.root, relative)?;
-        if let Some(spec) = self.path_specs.get(&path).cloned() {
+        // DirectorySnapshot keys are root-relative. An absolute path fails
+        // `read_file`, so `get_versioned_arc` returns None and lookup falls
+        // back to `files.<command>` (the default / highest IR).
+        let relative = relative.trim().trim_start_matches("./");
+        let relative_path = safe_relative_path(relative)?;
+        if let Some(spec) = self.path_specs.get(&relative_path).cloned() {
             return Some(spec);
         }
         let files = self.files.clone();
         let loaded = if let Some(snapshot) = self.snapshot.as_ref() {
-            load_snapshot_file(snapshot, &path, &files, &mut Vec::new())
+            if !snapshot.is_file(&relative_path) {
+                tracing::warn!(command = %name, path = %relative, "versioned spec missing from snapshot");
+                return None;
+            }
+            load_snapshot_file(snapshot, &relative_path, &files, &mut Vec::new())
         } else {
+            let path = safe_index_path(&self.root, relative)?;
             load_spec_file(&path, &self.root, &files, &mut Vec::new())
         };
         match loaded {
@@ -652,7 +661,7 @@ impl Registry {
                     spec.names.push(name.to_string());
                 }
                 let spec = Arc::new(spec);
-                self.path_specs.insert(path, spec.clone());
+                self.path_specs.insert(relative_path, spec.clone());
                 Some(spec)
             },
             Err(error) => {
@@ -1229,6 +1238,57 @@ mod tests {
     fn write_spec(dir: &Path, name: &str, body: &str) {
         fs::create_dir_all(dir).unwrap();
         fs::write(dir.join(format!("{name}.json")), body).unwrap();
+    }
+
+    #[test]
+    fn versioned_spec_loads_from_snapshot_relative_path() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("tool")).unwrap();
+        fs::write(
+            dir.path().join("tool/1.0.0.json"),
+            r#"{"names":["tool"],"subcommands":[{"names":["old"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("tool/1.0.0+1.1.0.json"),
+            r#"{"names":["tool"],"subcommands":[{"names":["old"]},{"names":["extra"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("tool/2.0.0.json"),
+            r#"{"names":["tool"],"subcommands":[{"names":["new"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{
+              "completions":["tool"],
+              "files":{"tool":"tool/2.0.0.json"},
+              "versioned":{
+                "tool":{
+                  "command":["tool","--version"],
+                  "parse":"after-first-space",
+                  "fallback":"2.0.0",
+                  "files":{"1.0.0":"tool/1.0.0.json","2.0.0":"tool/2.0.0.json"},
+                  "applied":{"1.0.0":{"1.1.0":"tool/1.0.0+1.1.0.json"}}
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let _guard = crate::process::mock::install(vec![crate::process::mock::ExecRule {
+            command: Some("tool".into()),
+            args: Some(vec!["--version".into()]),
+            stdout: "tool 1.0.5".into(),
+            ..crate::process::mock::ExecRule::default()
+        }]);
+        let spec = registry
+            .get_versioned_arc("tool", "/", std::time::Duration::from_secs(5))
+            .expect("versioned snapshot load");
+        assert!(spec.find_subcommand("extra").is_some());
+        assert!(spec.find_subcommand("old").is_some());
+        assert!(spec.find_subcommand("new").is_none());
     }
 
     #[test]

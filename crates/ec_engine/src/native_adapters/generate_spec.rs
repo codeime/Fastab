@@ -423,10 +423,15 @@ fn fig_cli(exec: &AdapterExec<'_>) -> AdapterResult {
 }
 
 fn fig_graphql(exec: &AdapterExec<'_>, body: &str) -> AdapterResult {
-    let result = exec_object(
+    let result = match exec_object(
         exec,
         "fig",
         ["_", "request", "--route", "/graphql", "--method", "--body", body],
-    )?;
+    ) {
+        Ok(result) => result,
+        // The JS hooks surface an unmocked/failed exec as a generic Error;
+        // empty stdout still becomes SyntaxError via parse_json.
+        Err(_) => return Err(throw("Error")),
+    };
     parse_json(&result.stdout)
 }

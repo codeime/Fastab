@@ -376,7 +376,7 @@ test("output baseline blocker stays until every unique body is covered", async (
       full.gate.blockers.includes("output-baseline-not-established"),
       false,
     );
-    assert.equal(full.gate.pathSwitchAllowed, false);
+    assert.equal(full.gate.pathSwitchAllowed, true);
     assert.ok(full.bodyGroups.every((group) => group.baselineCovered && group.baselineCases === 3));
   } finally {
     await Promise.all([

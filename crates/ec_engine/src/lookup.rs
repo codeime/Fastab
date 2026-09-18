@@ -2915,13 +2915,25 @@ mod tests {
         )
         .unwrap();
         let mut registry = Registry::load(dir.path()).unwrap();
+        let entry = registry
+            .versioned_command("heroku")
+            .expect("heroku versioned index")
+            .clone();
         let _guard = process::mock::install(vec![process::mock::ExecRule {
             command: Some("heroku".into()),
             args: Some(vec!["--version".into()]),
             stdout: "heroku/8.3.0 darwin-arm64".into(),
             ..process::mock::ExecRule::default()
         }]);
-        let result = complete(
+        assert_eq!(
+            crate::versioned::detect_cli_version(&entry, "/", std::time::Duration::from_secs(5)).as_deref(),
+            Some("8.3.0"),
+            "calls={:?}",
+            process::mock::calls()
+        );
+        let settings =
+            fig_settings::settings::Settings::from_slice(&[("autocomplete.scriptTimeout", serde_json::json!(5000))]);
+        let result = complete_with_settings(
             &mut registry,
             &CompleteRequest {
                 buffer: "heroku ".into(),
@@ -2929,6 +2941,7 @@ mod tests {
                 include_history: false,
                 ..CompleteRequest::default()
             },
+            &settings,
         );
         let names: Vec<_> = result.suggestions.iter().map(|item| item.name.as_str()).collect();
         assert!(names.contains(&"domains"), "{names:?}");
@@ -2954,7 +2967,7 @@ mod tests {
             dir.path().join("index.json"),
             r#"{
               "completions":["fig"],
-              "files":{"fig":"fig/2.0.0+2.16.0.json"},
+              "files":{"fig":"fig/2.0.0.json"},
               "versioned":{
                 "fig":{
                   "command":["fig","--version"],

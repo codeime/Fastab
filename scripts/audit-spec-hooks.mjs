@@ -1075,9 +1075,12 @@ function findSourceFunction(
     sourceRecord.functions?.[sourceField] ?? [],
     sourceRecord.mergedFunctions?.[sourceField] ?? [],
   ];
-  for (const pool of pools) {
-    const byPath = pool.find((candidate) => candidate.path === path);
-    if (byPath) return byPath;
+  if (typeof path === "string" && path) {
+    for (const pool of pools) {
+      const byPath = pool.find((candidate) => candidate.path === path);
+      if (byPath) return byPath;
+    }
+    return undefined;
   }
   if (typeof functionBodySha256 === "string" && functionBodySha256) {
     for (const pool of pools) {

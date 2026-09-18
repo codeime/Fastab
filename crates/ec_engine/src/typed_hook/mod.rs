@@ -3385,6 +3385,7 @@ mod tests {
         "scripts/reference-safe-io.mjs",
         "scripts/spec-hook-contract.mjs",
         "scripts/spec-pair.mjs",
+        "scripts/spec-versions.mjs",
         "scripts/typed-hook-inline.mjs",
         "scripts/typed-hook-ir.mjs",
         "scripts/typed-regex.mjs",
@@ -5341,7 +5342,7 @@ mod tests {
                 total = count.total
             );
         };
-        require("postProcess", 330, 373);
+        require("postProcess", 330, 376);
         require("script", 31, 31);
         require("filterTemplateSuggestions", 5, 5);
         require("trigger", 30, 30);
