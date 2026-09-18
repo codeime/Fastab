@@ -1,0 +1,18 @@
+{
+  "names": ["cachettl"],
+  "description": "Expired SWR refetch fixture",
+  "args": [
+    {
+      "name": "item",
+      "generators": [
+        {
+          "jsCustom": "cache#custom#0",
+          "cacheKey": "items",
+          "cacheTtl": 1,
+          "cacheStrategy": "stale-while-revalidate",
+          "trigger": { "on": "function" }
+        }
+      ]
+    }
+  ]
+}

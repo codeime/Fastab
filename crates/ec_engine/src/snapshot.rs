@@ -478,6 +478,9 @@ fn fstat_fd(fd: i32) -> io::Result<libc::stat> {
 #[cfg(unix)]
 fn root_identity(stat: &libc::stat) -> RootIdentity {
     RootIdentity {
+        // `st_dev` is already `u64` on Linux and a narrower type on some other Unix
+        // targets. Keep the cast so the identity stays a `u64` everywhere.
+        #[allow(clippy::unnecessary_cast)]
         device: stat.st_dev as u64,
         inode: stat.st_ino,
     }

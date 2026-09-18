@@ -1,0 +1,14 @@
+{
+  "names": ["cachetool"],
+  "description": "Generator session cache fixture",
+  "args": [
+    {
+      "name": "item",
+      "jsCustom": "cache#custom#0",
+      "cacheKey": "items",
+      "cacheByDirectory": true,
+      "cacheTtl": 60000,
+      "cacheStrategy": "stale-while-revalidate"
+    }
+  ]
+}

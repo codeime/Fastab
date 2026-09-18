@@ -1,0 +1,17 @@
+{
+  "names": ["open"],
+  "description": "Open a path",
+  "args": [
+    {
+      "name": "path",
+      "suggestions": [
+        {
+          "names": ["my files/notes.txt"],
+          "insertValue": "\"my files/notes.txt\"",
+          "description": "Quoted path with spaces",
+          "priority": 80
+        }
+      ]
+    }
+  ]
+}

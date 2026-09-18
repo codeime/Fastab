@@ -1,0 +1,2068 @@
+{
+  "cases": [
+    {
+      "diagnostic": "Success",
+      "dimension": "candidates",
+      "exec": [
+        {
+          "args": [
+            "branch",
+            "--list"
+          ],
+          "command": "git",
+          "stdout": "main\nmaster\nfeature"
+        }
+      ],
+      "expectCalls": 1,
+      "name": "git-checkout-all",
+      "request": {
+        "buffer": "git checkout ",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "Branch to checkout",
+          "name": "branch"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "git branch",
+            "hidden": false,
+            "icon": "fig://icon?type=git",
+            "insert_value": "main",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "main",
+            "priority": 70,
+            "should_add_space": true
+          },
+          {
+            "args_hint": "",
+            "description": "git branch",
+            "hidden": false,
+            "icon": "fig://icon?type=git",
+            "insert_value": "master",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "master",
+            "priority": 70,
+            "should_add_space": true
+          },
+          {
+            "args_hint": "",
+            "description": "git branch",
+            "hidden": false,
+            "icon": "fig://icon?type=git",
+            "insert_value": "feature",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "feature",
+            "priority": 70,
+            "should_add_space": true
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "candidates",
+      "exec": [
+        {
+          "args": [
+            "branch",
+            "--list"
+          ],
+          "command": "git",
+          "stdout": "main\nmaster\nfeature"
+        }
+      ],
+      "expectCalls": 1,
+      "name": "git-checkout-ma",
+      "request": {
+        "buffer": "git checkout ma",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "Branch to checkout",
+          "name": "branch"
+        },
+        "fuzzy": false,
+        "match_term": "ma",
+        "search_term": "ma",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "git branch",
+            "hidden": false,
+            "icon": "fig://icon?type=git",
+            "insert_value": "main",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "main",
+            "priority": 70,
+            "should_add_space": true
+          },
+          {
+            "args_hint": "",
+            "description": "git branch",
+            "hidden": false,
+            "icon": "fig://icon?type=git",
+            "insert_value": "master",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "master",
+            "priority": 70,
+            "should_add_space": true
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "candidates",
+      "exec": [
+        {
+          "args": [
+            "branch",
+            "--list"
+          ],
+          "command": "git",
+          "stdout": "main\nmaster\nfeature"
+        }
+      ],
+      "expectCalls": 1,
+      "name": "git-checkout-feature",
+      "request": {
+        "buffer": "git checkout fe",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "Branch to checkout",
+          "name": "branch"
+        },
+        "fuzzy": false,
+        "match_term": "fe",
+        "search_term": "fe",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "git branch",
+            "hidden": false,
+            "icon": "fig://icon?type=git",
+            "insert_value": "feature",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "feature",
+            "priority": 70,
+            "should_add_space": true
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "candidates",
+      "exec": [
+        {
+          "args": [
+            "run"
+          ],
+          "command": "npm",
+          "stdout": "test\ntest:watch\nbuild"
+        }
+      ],
+      "expectCalls": 1,
+      "name": "npm-run-all",
+      "request": {
+        "buffer": "npm run ",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "script"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "npm script",
+            "hidden": false,
+            "icon": "fig://icon?type=npm",
+            "insert_value": "test",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "test",
+            "priority": 60,
+            "should_add_space": true
+          },
+          {
+            "args_hint": "",
+            "description": "npm script",
+            "hidden": false,
+            "icon": "fig://icon?type=npm",
+            "insert_value": "test:watch",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "test:watch",
+            "priority": 60,
+            "should_add_space": true
+          },
+          {
+            "args_hint": "",
+            "description": "npm script",
+            "hidden": false,
+            "icon": "fig://icon?type=npm",
+            "insert_value": "build",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "build",
+            "priority": 60,
+            "should_add_space": true
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "candidates",
+      "exec": [
+        {
+          "args": [
+            "run"
+          ],
+          "command": "npm",
+          "stdout": "test\ntest:watch\nbuild"
+        }
+      ],
+      "expectCalls": 1,
+      "name": "npm-run-te",
+      "request": {
+        "buffer": "npm run te",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "script"
+        },
+        "fuzzy": false,
+        "match_term": "te",
+        "search_term": "te",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "npm script",
+            "hidden": false,
+            "icon": "fig://icon?type=npm",
+            "insert_value": "test",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "test",
+            "priority": 60,
+            "should_add_space": true
+          },
+          {
+            "args_hint": "",
+            "description": "npm script",
+            "hidden": false,
+            "icon": "fig://icon?type=npm",
+            "insert_value": "test:watch",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "test:watch",
+            "priority": 60,
+            "should_add_space": true
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "candidates",
+      "exec": [
+        {
+          "args": [
+            "run"
+          ],
+          "command": "npm",
+          "stdout": "test\ntest:watch\nbuild"
+        }
+      ],
+      "expectCalls": 1,
+      "name": "npm-run-build",
+      "request": {
+        "buffer": "npm run bu",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "script"
+        },
+        "fuzzy": false,
+        "match_term": "bu",
+        "search_term": "bu",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "npm script",
+            "hidden": false,
+            "icon": "fig://icon?type=npm",
+            "insert_value": "build",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "build",
+            "priority": 60,
+            "should_add_space": true
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "candidates",
+      "exec": [
+        {
+          "args": [
+            "images"
+          ],
+          "command": "docker",
+          "stdout": "nginx\nnode\nredis"
+        }
+      ],
+      "expectCalls": 1,
+      "name": "docker-run-all",
+      "request": {
+        "buffer": "docker run ",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "image"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "docker image",
+            "hidden": false,
+            "icon": "fig://icon?type=docker",
+            "insert_value": "nginx",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "nginx",
+            "priority": 65,
+            "should_add_space": true
+          },
+          {
+            "args_hint": "",
+            "description": "docker image",
+            "hidden": false,
+            "icon": "fig://icon?type=docker",
+            "insert_value": "node",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "node",
+            "priority": 65,
+            "should_add_space": true
+          },
+          {
+            "args_hint": "",
+            "description": "docker image",
+            "hidden": false,
+            "icon": "fig://icon?type=docker",
+            "insert_value": "redis",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "redis",
+            "priority": 65,
+            "should_add_space": true
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "candidates",
+      "exec": [
+        {
+          "args": [
+            "images"
+          ],
+          "command": "docker",
+          "stdout": "nginx\nnode\nredis"
+        }
+      ],
+      "expectCalls": 1,
+      "name": "docker-run-ng",
+      "request": {
+        "buffer": "docker run ng",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "image"
+        },
+        "fuzzy": false,
+        "match_term": "ng",
+        "search_term": "ng",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "docker image",
+            "hidden": false,
+            "icon": "fig://icon?type=docker",
+            "insert_value": "nginx",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "nginx",
+            "priority": 65,
+            "should_add_space": true
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "candidates",
+      "exec": [
+        {
+          "args": [
+            "images"
+          ],
+          "command": "docker",
+          "stdout": "nginx\nnode\nredis"
+        }
+      ],
+      "expectCalls": 1,
+      "name": "docker-run-redis",
+      "request": {
+        "buffer": "docker run re",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "image"
+        },
+        "fuzzy": false,
+        "match_term": "re",
+        "search_term": "re",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "docker image",
+            "hidden": false,
+            "icon": "fig://icon?type=docker",
+            "insert_value": "redis",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "redis",
+            "priority": 65,
+            "should_add_space": true
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "candidates",
+      "exec": [
+        {
+          "args": [
+            "api-resources"
+          ],
+          "command": "kubectl",
+          "stdout": "pods\nnodes\nservices\nconfigmaps"
+        }
+      ],
+      "expectCalls": 1,
+      "name": "kubectl-get-all",
+      "request": {
+        "buffer": "kubectl get ",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "resource"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "alias_names": [
+              "pods"
+            ],
+            "args_hint": "",
+            "description": "Pod",
+            "hidden": false,
+            "icon": "fig://icon?type=kubernetes",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "pods",
+            "priority": 80,
+            "should_add_space": false
+          },
+          {
+            "alias_names": [
+              "nodes"
+            ],
+            "args_hint": "",
+            "description": "Node",
+            "hidden": false,
+            "icon": "fig://icon?type=kubernetes",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "nodes",
+            "priority": 70,
+            "should_add_space": false
+          },
+          {
+            "alias_names": [
+              "services"
+            ],
+            "args_hint": "",
+            "description": "Service",
+            "hidden": false,
+            "icon": "fig://icon?type=kubernetes",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "services",
+            "priority": 60,
+            "should_add_space": false
+          },
+          {
+            "args_hint": "",
+            "description": "api resource",
+            "hidden": false,
+            "icon": "fig://icon?type=kubernetes",
+            "insert_value": "pods",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "pods",
+            "priority": 55,
+            "should_add_space": true
+          },
+          {
+            "args_hint": "",
+            "description": "api resource",
+            "hidden": false,
+            "icon": "fig://icon?type=kubernetes",
+            "insert_value": "nodes",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "nodes",
+            "priority": 55,
+            "should_add_space": true
+          },
+          {
+            "args_hint": "",
+            "description": "api resource",
+            "hidden": false,
+            "icon": "fig://icon?type=kubernetes",
+            "insert_value": "services",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "services",
+            "priority": 55,
+            "should_add_space": true
+          },
+          {
+            "args_hint": "",
+            "description": "api resource",
+            "hidden": false,
+            "icon": "fig://icon?type=kubernetes",
+            "insert_value": "configmaps",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "configmaps",
+            "priority": 55,
+            "should_add_space": true
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "candidates",
+      "exec": [
+        {
+          "args": [
+            "api-resources"
+          ],
+          "command": "kubectl",
+          "stdout": "pods\nnodes\nservices\nconfigmaps"
+        }
+      ],
+      "expectCalls": 1,
+      "name": "kubectl-get-po",
+      "request": {
+        "buffer": "kubectl get po",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "resource"
+        },
+        "fuzzy": false,
+        "match_term": "po",
+        "search_term": "po",
+        "suggestions": [
+          {
+            "alias_names": [
+              "pods"
+            ],
+            "args_hint": "",
+            "description": "Pod",
+            "hidden": false,
+            "icon": "fig://icon?type=kubernetes",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "pods",
+            "priority": 80,
+            "should_add_space": false
+          },
+          {
+            "args_hint": "",
+            "description": "api resource",
+            "hidden": false,
+            "icon": "fig://icon?type=kubernetes",
+            "insert_value": "pods",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "pods",
+            "priority": 55,
+            "should_add_space": true
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "candidates",
+      "exec": [
+        {
+          "args": [
+            "api-resources"
+          ],
+          "command": "kubectl",
+          "stdout": "pods\nnodes\nservices\nconfigmaps"
+        }
+      ],
+      "expectCalls": 1,
+      "name": "kubectl-get-no",
+      "request": {
+        "buffer": "kubectl get no",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "resource"
+        },
+        "fuzzy": false,
+        "match_term": "no",
+        "search_term": "no",
+        "suggestions": [
+          {
+            "alias_names": [
+              "nodes"
+            ],
+            "args_hint": "",
+            "description": "Node",
+            "hidden": false,
+            "icon": "fig://icon?type=kubernetes",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "nodes",
+            "priority": 70,
+            "should_add_space": false
+          },
+          {
+            "args_hint": "",
+            "description": "api resource",
+            "hidden": false,
+            "icon": "fig://icon?type=kubernetes",
+            "insert_value": "nodes",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "nodes",
+            "priority": 55,
+            "should_add_space": true
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "candidates",
+      "expectCalls": 0,
+      "name": "cd-root",
+      "request": {
+        "buffer": "cd ",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "directory"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "folder",
+            "hidden": false,
+            "insert_value": "docs/",
+            "is_dangerous": false,
+            "kind": "folder",
+            "name": "docs/",
+            "priority": 50,
+            "query_term": "",
+            "should_add_space": false
+          },
+          {
+            "args_hint": "",
+            "description": "folder",
+            "hidden": false,
+            "insert_value": "my files/",
+            "is_dangerous": false,
+            "kind": "folder",
+            "name": "my files/",
+            "priority": 50,
+            "query_term": "",
+            "should_add_space": false
+          },
+          {
+            "args_hint": "",
+            "description": "folder",
+            "hidden": false,
+            "insert_value": "src/",
+            "is_dangerous": false,
+            "kind": "folder",
+            "name": "src/",
+            "priority": 50,
+            "query_term": "",
+            "should_add_space": false
+          },
+          {
+            "args_hint": "",
+            "description": "folder",
+            "hidden": false,
+            "insert_value": "../",
+            "is_dangerous": false,
+            "kind": "folder",
+            "name": "../",
+            "priority": 50,
+            "query_term": "",
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "candidates",
+      "expectCalls": 0,
+      "name": "cd-src",
+      "request": {
+        "buffer": "cd src/",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "directory"
+        },
+        "fuzzy": false,
+        "match_term": "src/",
+        "search_term": "src/",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "folder",
+            "hidden": false,
+            "insert_value": "src/main/",
+            "is_dangerous": false,
+            "kind": "folder",
+            "name": "src/main/",
+            "priority": 50,
+            "should_add_space": false
+          },
+          {
+            "args_hint": "",
+            "description": "folder",
+            "hidden": false,
+            "insert_value": "src/mod/",
+            "is_dangerous": false,
+            "kind": "folder",
+            "name": "src/mod/",
+            "priority": 50,
+            "should_add_space": false
+          },
+          {
+            "args_hint": "",
+            "description": "folder",
+            "hidden": false,
+            "insert_value": "../",
+            "is_dangerous": false,
+            "kind": "folder",
+            "name": "../",
+            "priority": 50,
+            "query_term": "",
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "candidates",
+      "expectCalls": 0,
+      "name": "cd-src-m",
+      "request": {
+        "buffer": "cd src/m",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "directory"
+        },
+        "fuzzy": false,
+        "match_term": "src/m",
+        "search_term": "src/m",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "folder",
+            "hidden": false,
+            "insert_value": "src/main/",
+            "is_dangerous": false,
+            "kind": "folder",
+            "name": "src/main/",
+            "priority": 50,
+            "should_add_space": false
+          },
+          {
+            "args_hint": "",
+            "description": "folder",
+            "hidden": false,
+            "insert_value": "src/mod/",
+            "is_dangerous": false,
+            "kind": "folder",
+            "name": "src/mod/",
+            "priority": 50,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "candidates",
+      "expectCalls": 0,
+      "name": "ls-dash",
+      "request": {
+        "buffer": "ls -",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "fuzzy": false,
+        "match_term": "-",
+        "search_term": "-",
+        "suggestions": [
+          {
+            "alias_names": [
+              "-a"
+            ],
+            "args_hint": "",
+            "description": "Include directory entries whose names begin with a dot",
+            "hidden": false,
+            "icon": "fig://icon?type=string",
+            "is_dangerous": false,
+            "kind": "option",
+            "name": "-a",
+            "priority": 70,
+            "should_add_space": false
+          },
+          {
+            "alias_names": [
+              "-l"
+            ],
+            "args_hint": "",
+            "description": "List in long format",
+            "hidden": false,
+            "icon": "fig://icon?type=string",
+            "is_dangerous": false,
+            "kind": "option",
+            "name": "-l",
+            "priority": 65,
+            "should_add_space": false
+          },
+          {
+            "alias_names": [
+              "--color"
+            ],
+            "args_hint": "",
+            "description": "Colorize output",
+            "hidden": false,
+            "icon": "fig://icon?type=string",
+            "is_dangerous": false,
+            "kind": "option",
+            "name": "--color",
+            "priority": 50,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "candidates",
+      "expectCalls": 0,
+      "name": "ls-a",
+      "request": {
+        "buffer": "ls -a",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "fuzzy": false,
+        "match_term": "-a",
+        "search_term": "-a",
+        "suggestions": [
+          {
+            "alias_names": [
+              "-a"
+            ],
+            "args_hint": "",
+            "description": "Include directory entries whose names begin with a dot",
+            "hidden": false,
+            "icon": "fig://icon?type=string",
+            "is_dangerous": false,
+            "kind": "option",
+            "name": "-a",
+            "priority": 70,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "candidates",
+      "expectCalls": 0,
+      "name": "ls-color",
+      "request": {
+        "buffer": "ls --",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "fuzzy": false,
+        "match_term": "--",
+        "search_term": "--",
+        "suggestions": [
+          {
+            "alias_names": [
+              "--color"
+            ],
+            "args_hint": "",
+            "description": "Colorize output",
+            "hidden": false,
+            "icon": "fig://icon?type=string",
+            "is_dangerous": false,
+            "kind": "option",
+            "name": "--color",
+            "priority": 50,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "insertion",
+      "expectCalls": 0,
+      "name": "insert-cd-query-term",
+      "request": {
+        "buffer": "cd src/m",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "directory"
+        },
+        "fuzzy": false,
+        "match_term": "src/m",
+        "search_term": "src/m",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "folder",
+            "hidden": false,
+            "insert_value": "src/main/",
+            "is_dangerous": false,
+            "kind": "folder",
+            "name": "src/main/",
+            "priority": 50,
+            "should_add_space": false
+          },
+          {
+            "args_hint": "",
+            "description": "folder",
+            "hidden": false,
+            "insert_value": "src/mod/",
+            "is_dangerous": false,
+            "kind": "folder",
+            "name": "src/mod/",
+            "priority": 50,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "insertion",
+      "expectCalls": 0,
+      "name": "insert-asdf-colon",
+      "request": {
+        "buffer": "asdf install nodejs:",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "plugin-version"
+        },
+        "fuzzy": false,
+        "match_term": "nodejs:",
+        "search_term": "nodejs:",
+        "suggestions": [
+          {
+            "alias_names": [
+              "20.11.0"
+            ],
+            "args_hint": "",
+            "description": "Node 20",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "20.11.0",
+            "priority": 70,
+            "query_term": "",
+            "should_add_space": false
+          },
+          {
+            "alias_names": [
+              "18.20.0"
+            ],
+            "args_hint": "",
+            "description": "Node 18",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "18.20.0",
+            "priority": 60,
+            "query_term": "",
+            "should_add_space": false
+          },
+          {
+            "alias_names": [
+              "3.12.0"
+            ],
+            "args_hint": "",
+            "description": "Python 3.12",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "3.12.0",
+            "priority": 50,
+            "query_term": "",
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "insertion",
+      "expectCalls": 0,
+      "name": "insert-asdf-version",
+      "request": {
+        "buffer": "asdf install nodejs:20",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "plugin-version"
+        },
+        "fuzzy": false,
+        "match_term": "nodejs:20",
+        "search_term": "nodejs:20",
+        "suggestions": [
+          {
+            "alias_names": [
+              "20.11.0"
+            ],
+            "args_hint": "",
+            "description": "Node 20",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "20.11.0",
+            "priority": 70,
+            "query_term": "20",
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "insertion",
+      "expectCalls": 0,
+      "name": "insert-git-cursor",
+      "request": {
+        "buffer": "git commit -",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "fuzzy": false,
+        "match_term": "-",
+        "search_term": "-",
+        "suggestions": [
+          {
+            "alias_names": [
+              "-m",
+              "--message"
+            ],
+            "args_hint": "<message>",
+            "description": "Use the given message",
+            "display_name": "-m, --message",
+            "hidden": false,
+            "icon": "fig://icon?type=string",
+            "insert_value": "-m \"{cursor}\"",
+            "is_dangerous": false,
+            "kind": "option",
+            "name": "-m",
+            "priority": 75,
+            "requires_arg": true,
+            "should_add_space": true
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "insertion",
+      "expectCalls": 0,
+      "name": "insert-quoted-path",
+      "request": {
+        "buffer": "open ",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "path"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "alias_names": [
+              "my files/notes.txt"
+            ],
+            "args_hint": "",
+            "description": "Quoted path with spaces",
+            "hidden": false,
+            "insert_value": "\"my files/notes.txt\"",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "my files/notes.txt",
+            "priority": 80,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "insertion",
+      "expectCalls": 0,
+      "name": "insert-spaced-folder",
+      "request": {
+        "buffer": "cd my",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "directory"
+        },
+        "fuzzy": false,
+        "match_term": "my",
+        "search_term": "my",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "folder",
+            "hidden": false,
+            "insert_value": "my files/",
+            "is_dangerous": false,
+            "kind": "folder",
+            "name": "my files/",
+            "priority": 50,
+            "query_term": "my",
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "insertion",
+      "expectCalls": 0,
+      "name": "insert-quoted-buffer",
+      "request": {
+        "buffer": "cd \"my files/",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "directory"
+        },
+        "fuzzy": false,
+        "match_term": "my files/",
+        "search_term": "\"my files/",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "folder",
+            "hidden": false,
+            "insert_value": "../",
+            "is_dangerous": false,
+            "kind": "folder",
+            "name": "../",
+            "priority": 50,
+            "query_term": "",
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "ranking",
+      "expectCalls": 0,
+      "history": [
+        [
+          "ranktool checkout",
+          100
+        ]
+      ],
+      "name": "rank-same-name-hides-history",
+      "request": {
+        "buffer": "ranktool ",
+        "cwd": "$CWD",
+        "include_history": true
+      },
+      "result": {
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "alias_names": [
+              "alpha"
+            ],
+            "args_hint": "",
+            "description": "High priority",
+            "hidden": false,
+            "icon": "fig://icon?type=star",
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "alpha",
+            "priority": 95,
+            "should_add_space": false
+          },
+          {
+            "alias_names": [
+              "checkout"
+            ],
+            "args_hint": "",
+            "description": "Spec checkout",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "checkout",
+            "priority": 60,
+            "should_add_space": false
+          },
+          {
+            "alias_names": [
+              "beta"
+            ],
+            "args_hint": "",
+            "description": "Low priority",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "beta",
+            "priority": 20,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "ranking",
+      "expectCalls": 0,
+      "history": [
+        [
+          "ranktool unique-hist",
+          90
+        ]
+      ],
+      "name": "rank-unique-history-appears",
+      "request": {
+        "buffer": "ranktool ",
+        "cwd": "$CWD",
+        "include_history": true
+      },
+      "result": {
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "alias_names": [
+              "alpha"
+            ],
+            "args_hint": "",
+            "description": "High priority",
+            "hidden": false,
+            "icon": "fig://icon?type=star",
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "alpha",
+            "priority": 95,
+            "should_add_space": false
+          },
+          {
+            "alias_names": [
+              "checkout"
+            ],
+            "args_hint": "",
+            "description": "Spec checkout",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "checkout",
+            "priority": 60,
+            "should_add_space": false
+          },
+          {
+            "args_hint": "",
+            "description": "past command",
+            "hidden": false,
+            "insert_value": "unique-hist",
+            "is_dangerous": false,
+            "kind": "history",
+            "name": "unique-hist",
+            "priority": 50,
+            "should_add_space": false
+          },
+          {
+            "alias_names": [
+              "beta"
+            ],
+            "args_hint": "",
+            "description": "Low priority",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "beta",
+            "priority": 20,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "ranking",
+      "expectCalls": 0,
+      "name": "rank-priority-order",
+      "request": {
+        "buffer": "ranktool ",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "alias_names": [
+              "alpha"
+            ],
+            "args_hint": "",
+            "description": "High priority",
+            "hidden": false,
+            "icon": "fig://icon?type=star",
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "alpha",
+            "priority": 95,
+            "should_add_space": false
+          },
+          {
+            "alias_names": [
+              "checkout"
+            ],
+            "args_hint": "",
+            "description": "Spec checkout",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "checkout",
+            "priority": 60,
+            "should_add_space": false
+          },
+          {
+            "alias_names": [
+              "beta"
+            ],
+            "args_hint": "",
+            "description": "Low priority",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "beta",
+            "priority": 20,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "ranking",
+      "expectCalls": 0,
+      "name": "rank-priority-alpha-first",
+      "request": {
+        "buffer": "ranktool a",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "fuzzy": false,
+        "match_term": "a",
+        "search_term": "a",
+        "suggestions": [
+          {
+            "alias_names": [
+              "alpha"
+            ],
+            "args_hint": "",
+            "description": "High priority",
+            "hidden": false,
+            "icon": "fig://icon?type=star",
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "alpha",
+            "priority": 95,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "dimension": "ranking",
+      "expectCalls": 0,
+      "name": "rank-fuzzy-off",
+      "request": {
+        "buffer": "ranktool ckt",
+        "cwd": "$CWD",
+        "fuzzy": false,
+        "include_history": false
+      },
+      "result": {
+        "fuzzy": false,
+        "match_term": "ckt",
+        "search_term": "ckt",
+        "suggestions": []
+      }
+    },
+    {
+      "dimension": "ranking",
+      "expectCalls": 0,
+      "name": "rank-fuzzy-on",
+      "request": {
+        "buffer": "ranktool ckt",
+        "cwd": "$CWD",
+        "fuzzy": true,
+        "include_history": false
+      },
+      "result": {
+        "fuzzy": true,
+        "match_term": "ckt",
+        "search_term": "ckt",
+        "suggestions": [
+          {
+            "alias_names": [
+              "checkout"
+            ],
+            "args_hint": "",
+            "description": "Spec checkout",
+            "hidden": false,
+            "is_dangerous": false,
+            "kind": "subcommand",
+            "name": "checkout",
+            "priority": 60,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "cache",
+      "exec": [
+        {
+          "args": [
+            "$CWD"
+          ],
+          "command": "cache-source",
+          "stdout": "alpha"
+        }
+      ],
+      "expectCalls": 1,
+      "expectSecondCalls": 0,
+      "firstResult": {
+        "current_arg": {
+          "description": "",
+          "name": "item"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "cached",
+            "hidden": false,
+            "insert_value": "alpha",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "alpha",
+            "priority": 60,
+            "should_add_space": false
+          }
+        ]
+      },
+      "name": "cache-same-arg-id-skips-second-exec",
+      "request": {
+        "buffer": "cachetool ",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "item"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "cached",
+            "hidden": false,
+            "insert_value": "alpha",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "alpha",
+            "priority": 60,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "cache",
+      "exec": [
+        {
+          "args": [
+            "$CWD"
+          ],
+          "command": "cache-source",
+          "stdout": "alpha"
+        },
+        {
+          "args": [
+            "$CWD_B"
+          ],
+          "command": "cache-source",
+          "stdout": "beta"
+        }
+      ],
+      "expectCalls": 1,
+      "expectSecondCalls": 1,
+      "firstResult": {
+        "current_arg": {
+          "description": "",
+          "name": "item"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "cached",
+            "hidden": false,
+            "insert_value": "alpha",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "alpha",
+            "priority": 60,
+            "should_add_space": false
+          }
+        ]
+      },
+      "name": "cache-by-directory-refetches",
+      "request": {
+        "buffer": "cachetool ",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "item"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "cached",
+            "hidden": false,
+            "insert_value": "beta",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "beta",
+            "priority": 60,
+            "should_add_space": false
+          }
+        ]
+      },
+      "secondRequest": {
+        "buffer": "cachetool ",
+        "cwd": "$CWD_B",
+        "include_history": false
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "cache",
+      "exec": [
+        {
+          "args": [
+            "$CWD"
+          ],
+          "command": "cache-source",
+          "stdout": "stale-row"
+        }
+      ],
+      "expectCalls": 1,
+      "expectSecondCalls": 1,
+      "firstResult": {
+        "current_arg": {
+          "description": "",
+          "name": "item"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "cached",
+            "hidden": false,
+            "insert_value": "stale-row",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "stale-row",
+            "priority": 60,
+            "should_add_space": false
+          }
+        ]
+      },
+      "name": "cache-ttl-expired-refetches",
+      "request": {
+        "buffer": "cachettl ",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "item"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "cached",
+            "hidden": false,
+            "insert_value": "fresh-row",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "fresh-row",
+            "priority": 60,
+            "should_add_space": false
+          }
+        ]
+      },
+      "secondExec": [
+        {
+          "args": [
+            "$CWD"
+          ],
+          "command": "cache-source",
+          "stdout": "fresh-row"
+        }
+      ],
+      "sleepMs": 5
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "cache",
+      "exec": [
+        {
+          "args": [
+            "$CWD"
+          ],
+          "command": "cache-source",
+          "stdout": "cached-row"
+        }
+      ],
+      "expectCalls": 1,
+      "expectSecondCalls": 0,
+      "firstResult": {
+        "current_arg": {
+          "description": "",
+          "name": "item"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "cached",
+            "hidden": false,
+            "insert_value": "cached-row",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "cached-row",
+            "priority": 60,
+            "should_add_space": false
+          }
+        ]
+      },
+      "name": "cache-ttl-fresh-hits",
+      "request": {
+        "buffer": "cachefresh ",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "item"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "cached",
+            "hidden": false,
+            "insert_value": "cached-row",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "cached-row",
+            "priority": 60,
+            "should_add_space": false
+          }
+        ]
+      },
+      "secondExec": [
+        {
+          "args": [
+            "$CWD"
+          ],
+          "command": "cache-source",
+          "stdout": "should-not-appear"
+        }
+      ]
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "shell",
+      "expectCalls": 1,
+      "name": "shell-env-home-zsh",
+      "request": {
+        "buffer": "env ",
+        "current_process": "zsh",
+        "cwd": "$CWD",
+        "environment_variables": [
+          [
+            "HOME",
+            "/Users/fixture"
+          ],
+          [
+            "KUBECONFIG",
+            "/tmp/kube"
+          ]
+        ],
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "name"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "env context",
+            "hidden": false,
+            "insert_value": "/Users/fixture:zsh",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "/Users/fixture:zsh",
+            "priority": 80,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "shell",
+      "expectCalls": 1,
+      "name": "shell-env-home-bash",
+      "request": {
+        "buffer": "env ",
+        "current_process": "bash",
+        "cwd": "$CWD",
+        "environment_variables": [
+          [
+            "HOME",
+            "/home/fixture"
+          ],
+          [
+            "KUBECONFIG",
+            "/tmp/kube"
+          ]
+        ],
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "name"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "env context",
+            "hidden": false,
+            "insert_value": "/home/fixture:bash",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "/home/fixture:bash",
+            "priority": 80,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "shell",
+      "expectCalls": 1,
+      "name": "shell-kubectl-kubeconfig",
+      "request": {
+        "buffer": "kubectl config use-context ",
+        "current_process": "zsh",
+        "cwd": "$CWD",
+        "environment_variables": [
+          [
+            "HOME",
+            "/Users/fixture"
+          ],
+          [
+            "KUBECONFIG",
+            "/tmp/kube"
+          ]
+        ],
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "context"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "kube context",
+            "hidden": false,
+            "icon": "fig://icon?type=kubernetes",
+            "insert_value": "/tmp/kube@zsh",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "/tmp/kube@zsh",
+            "priority": 75,
+            "should_add_space": false
+          }
+        ]
+      }
+    },
+    {
+      "diagnostic": "PromiseRejected",
+      "dimension": "timeout",
+      "exec": [
+        {
+          "args": [
+            "job"
+          ],
+          "command": "slow",
+          "delayMs": 10000,
+          "stdout": "too-late"
+        }
+      ],
+      "expectCalls": 1,
+      "name": "timeout-exec-promise-rejected",
+      "request": {
+        "buffer": "slowexec ",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "job"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": []
+      },
+      "settings": {
+        "autocomplete.scriptTimeout": 50
+      }
+    },
+    {
+      "diagnostic": "Timeout",
+      "dimension": "timeout",
+      "expectCalls": 0,
+      "name": "timeout-js-loop",
+      "request": {
+        "buffer": "spinloop ",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "job"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": []
+      },
+      "settings": {
+        "autocomplete.scriptTimeout": 50
+      }
+    },
+    {
+      "diagnostic": "Success",
+      "dimension": "timeout",
+      "exec": [
+        {
+          "args": [
+            "job"
+          ],
+          "command": "slow",
+          "delayMs": 10,
+          "stdout": "done"
+        }
+      ],
+      "expectCalls": 1,
+      "name": "timeout-exec-succeeds-with-budget",
+      "request": {
+        "buffer": "slowexec ",
+        "cwd": "$CWD",
+        "include_history": false
+      },
+      "result": {
+        "current_arg": {
+          "description": "",
+          "name": "job"
+        },
+        "fuzzy": false,
+        "search_term": "",
+        "suggestions": [
+          {
+            "args_hint": "",
+            "description": "",
+            "hidden": false,
+            "insert_value": "done",
+            "is_dangerous": false,
+            "kind": "arg",
+            "name": "done",
+            "priority": 50,
+            "should_add_space": false
+          }
+        ]
+      },
+      "settings": {
+        "autocomplete.scriptTimeout": 5000
+      }
+    }
+  ]
+}

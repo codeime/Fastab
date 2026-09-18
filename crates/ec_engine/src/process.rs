@@ -6,7 +6,7 @@ use std::time::Duration;
 const MAX_STDOUT: usize = 256 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
-enum RunResult {
+pub(crate) enum RunResult {
     Output(String),
     TimedOut,
     Failed,
@@ -41,6 +41,10 @@ pub fn execute_full(
 ) -> Result<CommandOutput, CommandError> {
     if command.is_empty() {
         return Err(CommandError::Failed);
+    }
+    #[cfg(test)]
+    if let Some(result) = mock::intercept_full(command, args, timeout) {
+        return result;
     }
     let mut cmd = Command::new(command);
     cmd.args(args)
@@ -135,6 +139,10 @@ fn run(
 ) -> RunResult {
     if command.is_empty() {
         return RunResult::Failed;
+    }
+    #[cfg(test)]
+    if let Some(result) = mock::intercept_run(command, args, timeout, require_success) {
+        return result;
     }
     let mut cmd = Command::new(command);
     cmd.args(args)
@@ -345,6 +353,124 @@ fn kill_process_group(pid: u32) {
     #[cfg(not(unix))]
     {
         let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/F"]).status();
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod mock {
+    use super::{CommandError, CommandOutput, RunResult};
+    use std::cell::RefCell;
+    use std::time::Duration;
+
+    #[derive(Debug, Clone, Default)]
+    pub struct ExecRule {
+        pub command: Option<String>,
+        pub args: Option<Vec<String>>,
+        pub stdout: String,
+        pub stderr: String,
+        pub status: i32,
+        pub delay_ms: Option<u64>,
+    }
+
+    thread_local! {
+        static ACTIVE: RefCell<bool> = const { RefCell::new(false) };
+        static RULES: RefCell<Vec<ExecRule>> = const { RefCell::new(Vec::new()) };
+        static CALLS: RefCell<Vec<(String, Vec<String>)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub struct Guard;
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            clear();
+        }
+    }
+
+    pub fn install(rules: Vec<ExecRule>) -> Guard {
+        ACTIVE.with(|cell| *cell.borrow_mut() = true);
+        RULES.with(|cell| *cell.borrow_mut() = rules);
+        CALLS.with(|cell| cell.borrow_mut().clear());
+        Guard
+    }
+
+    pub fn clear() {
+        ACTIVE.with(|cell| *cell.borrow_mut() = false);
+        RULES.with(|cell| cell.borrow_mut().clear());
+        CALLS.with(|cell| cell.borrow_mut().clear());
+    }
+
+    pub fn calls() -> Vec<(String, Vec<String>)> {
+        CALLS.with(|cell| cell.borrow().clone())
+    }
+
+    /// Swap the rule table without clearing the recorded call log. Engine
+    /// golden cases use this between two `complete` calls so a TTL refetch
+    /// can return different stdout while `expectSecondCalls` still counts.
+    pub fn replace_rules(rules: Vec<ExecRule>) {
+        RULES.with(|cell| *cell.borrow_mut() = rules);
+    }
+
+    fn is_active() -> bool {
+        ACTIVE.with(|cell| *cell.borrow())
+    }
+
+    fn record(command: &str, args: &[String]) {
+        CALLS.with(|cell| cell.borrow_mut().push((command.to_string(), args.to_vec())));
+    }
+
+    fn matching_rule(command: &str, args: &[String]) -> Option<ExecRule> {
+        RULES.with(|cell| {
+            cell.borrow()
+                .iter()
+                .find(|rule| {
+                    rule.command.as_deref().is_none_or(|expected| expected == command)
+                        && rule.args.as_ref().is_none_or(|expected| expected == args)
+                })
+                .cloned()
+        })
+    }
+
+    fn timed_out(rule: &ExecRule, timeout: Duration) -> bool {
+        rule.delay_ms
+            .is_some_and(|delay| u128::from(delay) > timeout.as_millis())
+    }
+
+    pub fn intercept_run(
+        command: &str,
+        args: &[String],
+        timeout: Duration,
+        require_success: bool,
+    ) -> Option<RunResult> {
+        if !is_active() {
+            return None;
+        }
+        record(command, args);
+        match matching_rule(command, args) {
+            Some(rule) if timed_out(&rule, timeout) => Some(RunResult::TimedOut),
+            Some(rule) if require_success && rule.status != 0 => Some(RunResult::Failed),
+            Some(rule) => Some(RunResult::Output(rule.stdout)),
+            None => Some(RunResult::Failed),
+        }
+    }
+
+    pub fn intercept_full(
+        command: &str,
+        args: &[String],
+        timeout: Duration,
+    ) -> Option<Result<CommandOutput, CommandError>> {
+        if !is_active() {
+            return None;
+        }
+        record(command, args);
+        match matching_rule(command, args) {
+            Some(rule) if timed_out(&rule, timeout) => Some(Err(CommandError::TimedOut)),
+            Some(rule) => Some(Ok(CommandOutput {
+                status: rule.status,
+                stdout: rule.stdout,
+                stderr: rule.stderr,
+            })),
+            None => Some(Err(CommandError::Failed)),
+        }
     }
 }
 

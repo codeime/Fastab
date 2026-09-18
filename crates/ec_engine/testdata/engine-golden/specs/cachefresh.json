@@ -1,0 +1,18 @@
+{
+  "names": ["cachefresh"],
+  "description": "Fresh SWR hit fixture",
+  "args": [
+    {
+      "name": "item",
+      "generators": [
+        {
+          "jsCustom": "cache#custom#0",
+          "cacheKey": "items",
+          "cacheTtl": 60000,
+          "cacheStrategy": "stale-while-revalidate",
+          "trigger": { "on": "function" }
+        }
+      ]
+    }
+  ]
+}

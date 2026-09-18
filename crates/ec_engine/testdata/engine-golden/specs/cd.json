@@ -1,0 +1,11 @@
+{
+  "names": ["cd"],
+  "description": "Change the current directory",
+  "args": [
+    {
+      "name": "directory",
+      "templates": ["folders"],
+      "getQueryTerm": "/"
+    }
+  ]
+}

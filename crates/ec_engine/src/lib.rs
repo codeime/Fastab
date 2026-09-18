@@ -20,6 +20,8 @@ mod spec_pair;
 // Keep the not-yet-wired parsers/evaluators test-only until that production
 // path is reviewed and connected.
 #[cfg(test)]
+mod engine_golden;
+#[cfg(test)]
 mod hook_baseline;
 #[cfg(test)]
 mod typed_hook;

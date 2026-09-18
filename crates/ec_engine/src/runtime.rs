@@ -455,6 +455,13 @@ impl Engine {
         &self.registry
     }
 
+    /// Test helper for T1.5 engine golden: the latest hook outcome on this
+    /// engine's host. `CompleteResult` does not carry diagnostics.
+    #[cfg(test)]
+    pub(crate) fn last_hook_diagnostic(&self) -> Option<crate::js_host::HookDiagnosticRecord> {
+        self.js_host.last_hook_diagnostic()
+    }
+
     /// The WebView's `clear-cache` event (`ec hook clear-autocomplete-cache`):
     /// `resetCaches()` dropped every loaded and generated spec, and
     /// `generatorCache.clear()` every generator result. Re-index the specs

@@ -10,6 +10,11 @@ license.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Downstream integration tests (ec_engine golden) need Settings::new() to see
+# an installed override. `#[cfg(test)]` only applies to this crate's own tests.
+test-support = []
+
 [dependencies]
 fd-lock = "4.0.4"
 fig_util.workspace = true
