@@ -11,6 +11,10 @@ import {
   checkHookBaselines,
   updateHookBaselines,
 } from "./capture-hook-baseline.mjs";
+import {
+  baselineTextsEquivalent,
+  stableStringify,
+} from "./hook-baseline-lib.mjs";
 
 async function withFixture(body, run) {
   const sourceRoot = await mkdtemp(join(tmpdir(), "easy-complete-baseline-src-"));
@@ -51,6 +55,53 @@ function factorySource() {
   };\n`;
 }
 
+function sampleBaseline(timeoutExpected) {
+  return {
+    bodySha256: "a".repeat(64),
+    cases: [
+      {
+        args: [["fig"]],
+        context: { currentWorkingDirectory: "/repo" },
+        exec: [],
+        expected: { kind: "error", value: "Error" },
+        id: "root",
+        timeoutMs: 5000,
+      },
+      {
+        args: [["fig"]],
+        context: { currentWorkingDirectory: "/repo" },
+        exec: [{ delayMs: 10_000 }],
+        expected: timeoutExpected,
+        id: "timeout",
+        timeoutMs: 50,
+      },
+    ],
+    field: "custom",
+    hookCount: 1,
+    kind: "native-hook-baseline",
+    representativeHookId: "fig/1.0.0#custom#6",
+    version: 1,
+  };
+}
+
+test("timeout-case error and timeout are equivalent; other drift is not", () => {
+  const errorText = stableStringify(sampleBaseline({ kind: "error", value: "Error" }));
+  const timeoutText = stableStringify(sampleBaseline({ kind: "timeout" }));
+  const otherErrorText = stableStringify(sampleBaseline({ kind: "error", value: "TypeError" }));
+  const successText = stableStringify(sampleBaseline({ kind: "suggestions", value: [] }));
+  assert.equal(baselineTextsEquivalent(errorText, timeoutText), true);
+  assert.equal(baselineTextsEquivalent(timeoutText, errorText), true);
+  assert.equal(baselineTextsEquivalent(errorText, errorText), true);
+  assert.equal(baselineTextsEquivalent(errorText, otherErrorText), false);
+  assert.equal(baselineTextsEquivalent(errorText, successText), false);
+  assert.equal(baselineTextsEquivalent(timeoutText, successText), false);
+
+  const tamperedRoot = sampleBaseline({ kind: "timeout" });
+  tamperedRoot.cases[0].expected = { kind: "suggestions", value: [{ name: "x" }] };
+  assert.equal(baselineTextsEquivalent(errorText, stableStringify(tamperedRoot)), false);
+  assert.equal(baselineTextsEquivalent("{", timeoutText), false);
+});
+
 test("captures a small fixture and --check fails after tampering", async () => {
   await withFixture(factorySource(), async (roots) => {
     const updated = await updateHookBaselines(roots);
@@ -64,6 +115,24 @@ test("captures a small fixture and --check fails after tampering", async () => {
     const file = join(roots.baselinesDir, "postProcess", names[0]);
     const original = await readFile(file, "utf8");
     await writeFile(file, original.replace("factory", "tampered"));
+    await assert.rejects(() => checkHookBaselines(roots), /stale|drift/);
+  });
+});
+
+test("timeout-case error spelling does not fail --check", async () => {
+  await withFixture(factorySource(), async (roots) => {
+    await updateHookBaselines(roots);
+    const names = await readdir(join(roots.baselinesDir, "postProcess"));
+    const file = join(roots.baselinesDir, "postProcess", names[0]);
+    const baseline = JSON.parse(await readFile(file, "utf8"));
+    const timeout = baseline.cases.find((item) => item.id === "timeout");
+    assert.equal(timeout.expected.kind, "timeout");
+    timeout.expected = { kind: "error", value: "Error" };
+    await writeFile(file, stableStringify(baseline));
+    await checkHookBaselines(roots);
+
+    timeout.expected = { kind: "suggestions", value: [] };
+    await writeFile(file, stableStringify(baseline));
     await assert.rejects(() => checkHookBaselines(roots), /stale|drift/);
   });
 });

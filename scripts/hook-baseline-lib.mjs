@@ -70,6 +70,43 @@ export function stableStringify(value) {
   return `${JSON.stringify(sortKeys(value), null, 2)}\n`;
 }
 
+const WATCHDOG_KINDS = new Set(["timeout", "error"]);
+
+function watchdogPair(left, right) {
+  if (!left || !right) return false;
+  if (left.kind === "error" && right.kind === "error") return false;
+  return WATCHDOG_KINDS.has(left.kind) && WATCHDOG_KINDS.has(right.kind);
+}
+
+/**
+ * The 50 ms timeout case races process start against bodies that throw before
+ * `exec`. Those eight record `error` on a fast machine and `timeout` on a
+ * loaded runner. Both are fail-closed; every other case still has to match.
+ */
+export function baselineTextsEquivalent(leftText, rightText) {
+  if (leftText === rightText) return true;
+  let left;
+  let right;
+  try {
+    left = JSON.parse(leftText);
+    right = JSON.parse(rightText);
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(left?.cases) || !Array.isArray(right?.cases)) return false;
+  if (left.cases.length !== right.cases.length) return false;
+  const leftCopy = structuredClone(left);
+  const rightCopy = structuredClone(right);
+  for (const [index, item] of leftCopy.cases.entries()) {
+    const other = rightCopy.cases[index];
+    if (item?.id === "timeout" && other?.id === "timeout" && watchdogPair(item.expected, other.expected)) {
+      item.expected = { kind: "timeout" };
+      other.expected = { kind: "timeout" };
+    }
+  }
+  return stableStringify(sortKeys(leftCopy)) === stableStringify(sortKeys(rightCopy));
+}
+
 export function sortKeys(value) {
   if (Array.isArray(value)) return value.map(sortKeys);
   if (value !== null && typeof value === "object") {

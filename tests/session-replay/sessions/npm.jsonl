@@ -53,7 +53,7 @@
 {"buffer":"npm ex","cwd":"npm"}
 {"buffer":"npm exe","cwd":"npm"}
 {"buffer":"npm exec","cwd":"npm"}
-{"buffer":"npx","cwd":"npm"}
+{"buffer":"npm exec ","cwd":"npm"}
 {"buffer":"npm -","cwd":"npm"}
 {"buffer":"npm --","cwd":"npm"}
 {"buffer":"npm --e","cwd":"npm"}

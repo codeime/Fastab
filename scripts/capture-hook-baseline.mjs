@@ -14,6 +14,7 @@ import { comparePath } from "./spec-pair.mjs";
 import {
   baselineRelativePath,
   baselineRoot,
+  baselineTextsEquivalent,
   captureCases,
   finalizeBaseline,
   fixtureIdentity,
@@ -70,9 +71,10 @@ function assertInputMatchesGroup(input, group) {
   // of the 603 bodies do not finish inside it and record `timeout`; the eight
   // that throw immediately record that error instead. A body near that
   // boundary therefore records a different outcome on a faster or less loaded
-  // machine, which reads as drift. Check where the boundary sits before
-  // running --update to settle one: a re-record taken on the fast side turns
-  // the check red everywhere slower.
+  // machine. --check treats timeout vs immediate error as equivalent on the
+  // timeout case so neither a fast-side nor a slow-side recapture of those
+  // eight turns the other machines red. Do not --update them just to pick a
+  // spelling.
   if (!input.cases.some((item) => item.id === "timeout" && item.timeoutMs === 50)) {
     throw new Error(`${input.field}/${input.bodySha256} is missing a timeout case`);
   }
@@ -157,7 +159,7 @@ export async function captureHookBaselines({
           continue;
         }
         const actual = await readFile(found.path, "utf8");
-        if (actual !== item.text) {
+        if (!baselineTextsEquivalent(actual, item.text)) {
           mismatches.push(`drift ${item.relative}`);
         }
       }
