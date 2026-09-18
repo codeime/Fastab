@@ -1,0 +1,996 @@
+{
+  "args": {
+    "generators": {
+      "cache": {
+        "cacheByDirectory": true,
+        "strategy": "stale-while-revalidate",
+        "ttl": 259200000
+      },
+      "custom": {
+        "bodySha256": "02e4b80a753fd6f374001f86b7a64d89a2ea79794339f1b55ce6363a7f2488d8",
+        "kind": "function"
+      }
+    },
+    "isOptional": true
+  },
+  "name": "rails",
+  "subcommands": [
+    {
+      "description": "Interact with your Rails application from the command line",
+      "name": [
+        "c",
+        "console"
+      ],
+      "options": [
+        {
+          "description": "Rollback database modifications on exit",
+          "name": [
+            "-s",
+            "--sandbox"
+          ]
+        },
+        {
+          "args": {
+            "name": "environment"
+          },
+          "description": "Specifies the environment to run this console under",
+          "name": [
+            "-e",
+            "--environment"
+          ]
+        }
+      ]
+    },
+    {
+      "description": "Launch a web server to access your application through a browser",
+      "name": "server",
+      "options": [
+        {
+          "args": {
+            "name": "environment"
+          },
+          "description": "Specifies the environment to run this server under (e.g. test/development/production)",
+          "name": [
+            "-e",
+            "--environment"
+          ]
+        },
+        {
+          "args": {
+            "name": "port"
+          },
+          "description": "Runs Rails on the specified port - defaults to 3000",
+          "name": [
+            "-p",
+            "--port"
+          ]
+        },
+        {
+          "args": {
+            "name": "IP"
+          },
+          "description": "Binds Rails to the specified IP - defaults to 'localhost' in development and '0.0.0.0' in other environments'",
+          "name": [
+            "-b",
+            "--binding"
+          ]
+        },
+        {
+          "args": {
+            "name": "file"
+          },
+          "description": "Uses a custom rackup configuration - defaults to config.ru",
+          "name": [
+            "-c",
+            "--config"
+          ]
+        },
+        {
+          "description": "Runs server as a Daemon",
+          "name": [
+            "-d",
+            "--daemon"
+          ]
+        },
+        {
+          "args": {
+            "name": "server"
+          },
+          "description": "Specifies the Rack server used to run the application (thin/puma/webrick)",
+          "name": [
+            "-u",
+            "--using"
+          ]
+        },
+        {
+          "args": {
+            "name": "PID"
+          },
+          "description": "Specifies the PID file - defaults to tmp/pids/server.pid",
+          "name": [
+            "-P",
+            "--pid"
+          ]
+        },
+        {
+          "description": "Specifies whether to perform caching in development",
+          "name": [
+            "-C",
+            "--dev-caching"
+          ]
+        },
+        {
+          "description": "Enables HTTP/2 early hints",
+          "name": "--early-hints"
+        },
+        {
+          "description": "Whether to log to stdout. Enabled by default in development when not daemonized",
+          "name": "--log-to-stdout"
+        }
+      ]
+    },
+    {
+      "description": "Create your database",
+      "name": "db:create",
+      "options": [
+        {
+          "description": "Enable full backtrace.  OUT can be stderr (default) or stdout",
+          "name": "--backtrace"
+        },
+        {
+          "description": "Show commented tasks only",
+          "name": "--comments"
+        },
+        {
+          "description": "Display job statistics. LEVEL=history displays a complete job list",
+          "name": "--job-stats"
+        },
+        {
+          "description": "Trace the rules resolution",
+          "name": "--rules"
+        },
+        {
+          "args": {
+            "name": "pattern"
+          },
+          "description": "Suppress backtrace lines matching regexp PATTERN. Ignored if --trace is on",
+          "name": "--suppress-backtrace"
+        },
+        {
+          "description": "Show all tasks, even uncommented ones (in combination with -T or -D)",
+          "name": [
+            "-A",
+            "--all"
+          ]
+        },
+        {
+          "description": "Build all prerequisites, including those which are up-to-date",
+          "name": [
+            "-B",
+            "--build-all"
+          ]
+        },
+        {
+          "args": {
+            "isOptional": true,
+            "name": "pattern"
+          },
+          "description": "Describe the tasks (matching optional PATTERN), then exit",
+          "name": [
+            "-D",
+            "--describe"
+          ]
+        },
+        {
+          "args": {
+            "name": "code"
+          },
+          "description": "Execute some Ruby code and exit",
+          "name": [
+            "-e",
+            "--execute"
+          ]
+        },
+        {
+          "args": {
+            "name": "code"
+          },
+          "description": "Execute some Ruby code, then continue with normal task processing",
+          "name": [
+            "-E",
+            "--execute-continue"
+          ]
+        },
+        {
+          "args": {
+            "name": "filename"
+          },
+          "description": "Use FILENAME as the rakefile to search for",
+          "name": [
+            "-f",
+            "--rakefile"
+          ]
+        },
+        {
+          "description": "Use standard project Rakefile search paths, ignore system wide rakefiles",
+          "name": "-G"
+        },
+        {
+          "description": "Using system wide (global) rakefiles (usually '~/.rake/*.rake')",
+          "name": [
+            "-g",
+            "--system"
+          ]
+        },
+        {
+          "args": {
+            "name": "libdir"
+          },
+          "description": "Include LIBDIR in the search path for required modules",
+          "name": [
+            "-I",
+            "--libdir"
+          ]
+        },
+        {
+          "args": {
+            "name": "number"
+          },
+          "description": "Specifies the maximum number of tasks to execute in parallel. (default is number of CPU cores + 4)",
+          "name": [
+            "-j",
+            "--jobs"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Treat all tasks as multitasks",
+          "name": [
+            "-m",
+            "--multitask"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Do a dry run without executing actions",
+          "name": [
+            "-n",
+            "--dry-run"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Do not search parent directories for the Rakefile",
+          "name": "-N"
+        },
+        {
+          "args": {},
+          "description": "Display the tasks and dependencies, then exit",
+          "name": [
+            "-P",
+            "--prereqs"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Execute some Ruby code, print the result, then exit",
+          "name": [
+            "-p",
+            "--execute-print"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Do not log messages to standard output",
+          "name": [
+            "-q",
+            "--quiet"
+          ]
+        },
+        {
+          "args": {
+            "name": "module"
+          },
+          "description": "Require MODULE before executing rakefile",
+          "name": [
+            "-r",
+            "--require"
+          ]
+        },
+        {
+          "args": {
+            "name": "rakelibdir"
+          },
+          "description": "Auto-import any .rake files in RAKELIBDIR. (default is 'rakelib')",
+          "name": [
+            "-R",
+            "--rakelibdir"
+          ]
+        },
+        {
+          "args": {},
+          "description": "-s, --silent                     Like --quiet, but also suppresses the 'in directory' announcement",
+          "name": "--rakelib"
+        },
+        {
+          "args": {},
+          "description": "Turn on invoke/execute tracing, enable full backtrace. OUT can be stderr (default) or stdout",
+          "name": [
+            "-t",
+            "--trace"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Display the tasks (matching optional PATTERN) with descriptions, then exit. -AT combination displays all of tasks contained no description",
+          "name": [
+            "-T",
+            "--tasks"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Log message to standard output",
+          "name": [
+            "-v",
+            "--verbose"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Display the program version",
+          "name": [
+            "-V",
+            "--version"
+          ]
+        },
+        {
+          "args": {
+            "name": "pattern"
+          },
+          "description": "Describe the tasks (matching optional PATTERN), then exit",
+          "name": [
+            "-W",
+            "--where"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Disable the deprecation warnings",
+          "name": [
+            "-X",
+            "--no-deprecation-warnings"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Display this help message",
+          "name": [
+            "-h",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "description": "Run any pending database migrations",
+      "name": "db:migrate",
+      "options": [
+        {
+          "description": "Enable full backtrace.  OUT can be stderr (default) or stdout",
+          "name": "--backtrace"
+        },
+        {
+          "description": "Show commented tasks only",
+          "name": "--comments"
+        },
+        {
+          "description": "Display job statistics. LEVEL=history displays a complete job list",
+          "name": "--job-stats"
+        },
+        {
+          "description": "Trace the rules resolution",
+          "name": "--rules"
+        },
+        {
+          "args": {
+            "name": "pattern"
+          },
+          "description": "Suppress backtrace lines matching regexp PATTERN. Ignored if --trace is on",
+          "name": "--suppress-backtrace"
+        },
+        {
+          "description": "Show all tasks, even uncommented ones (in combination with -T or -D)",
+          "name": [
+            "-A",
+            "--all"
+          ]
+        },
+        {
+          "description": "Build all prerequisites, including those which are up-to-date",
+          "name": [
+            "-B",
+            "--build-all"
+          ]
+        },
+        {
+          "args": {
+            "isOptional": true,
+            "name": "pattern"
+          },
+          "description": "Describe the tasks (matching optional PATTERN), then exit",
+          "name": [
+            "-D",
+            "--describe"
+          ]
+        },
+        {
+          "args": {
+            "name": "code"
+          },
+          "description": "Execute some Ruby code and exit",
+          "name": [
+            "-e",
+            "--execute"
+          ]
+        },
+        {
+          "args": {
+            "name": "code"
+          },
+          "description": "Execute some Ruby code, then continue with normal task processing",
+          "name": [
+            "-E",
+            "--execute-continue"
+          ]
+        },
+        {
+          "args": {
+            "name": "filename"
+          },
+          "description": "Use FILENAME as the rakefile to search for",
+          "name": [
+            "-f",
+            "--rakefile"
+          ]
+        },
+        {
+          "description": "Use standard project Rakefile search paths, ignore system wide rakefiles",
+          "name": "-G"
+        },
+        {
+          "description": "Using system wide (global) rakefiles (usually '~/.rake/*.rake')",
+          "name": [
+            "-g",
+            "--system"
+          ]
+        },
+        {
+          "args": {
+            "name": "libdir"
+          },
+          "description": "Include LIBDIR in the search path for required modules",
+          "name": [
+            "-I",
+            "--libdir"
+          ]
+        },
+        {
+          "args": {
+            "name": "number"
+          },
+          "description": "Specifies the maximum number of tasks to execute in parallel. (default is number of CPU cores + 4)",
+          "name": [
+            "-j",
+            "--jobs"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Treat all tasks as multitasks",
+          "name": [
+            "-m",
+            "--multitask"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Do a dry run without executing actions",
+          "name": [
+            "-n",
+            "--dry-run"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Do not search parent directories for the Rakefile",
+          "name": "-N"
+        },
+        {
+          "args": {},
+          "description": "Display the tasks and dependencies, then exit",
+          "name": [
+            "-P",
+            "--prereqs"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Execute some Ruby code, print the result, then exit",
+          "name": [
+            "-p",
+            "--execute-print"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Do not log messages to standard output",
+          "name": [
+            "-q",
+            "--quiet"
+          ]
+        },
+        {
+          "args": {
+            "name": "module"
+          },
+          "description": "Require MODULE before executing rakefile",
+          "name": [
+            "-r",
+            "--require"
+          ]
+        },
+        {
+          "args": {
+            "name": "rakelibdir"
+          },
+          "description": "Auto-import any .rake files in RAKELIBDIR. (default is 'rakelib')",
+          "name": [
+            "-R",
+            "--rakelibdir"
+          ]
+        },
+        {
+          "args": {},
+          "description": "-s, --silent                     Like --quiet, but also suppresses the 'in directory' announcement",
+          "name": "--rakelib"
+        },
+        {
+          "args": {},
+          "description": "Turn on invoke/execute tracing, enable full backtrace. OUT can be stderr (default) or stdout",
+          "name": [
+            "-t",
+            "--trace"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Display the tasks (matching optional PATTERN) with descriptions, then exit. -AT combination displays all of tasks contained no description",
+          "name": [
+            "-T",
+            "--tasks"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Log message to standard output",
+          "name": [
+            "-v",
+            "--verbose"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Display the program version",
+          "name": [
+            "-V",
+            "--version"
+          ]
+        },
+        {
+          "args": {
+            "name": "pattern"
+          },
+          "description": "Describe the tasks (matching optional PATTERN), then exit",
+          "name": [
+            "-W",
+            "--where"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Disable the deprecation warnings",
+          "name": [
+            "-X",
+            "--no-deprecation-warnings"
+          ]
+        },
+        {
+          "args": {},
+          "description": "Display this help message",
+          "name": [
+            "-h",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "description": "Opens a console to your database (supports MySQL, PostgreSQL, and SQLite3)",
+      "name": "dbconsole",
+      "options": [
+        {
+          "args": {},
+          "description": "Specifies the environment to run this dbconsole under (e.g. test/development/production)",
+          "name": "-e"
+        },
+        {
+          "args": {
+            "name": "mode",
+            "suggestions": [
+              "html",
+              "list",
+              "line",
+              "column"
+            ]
+          },
+          "description": "Automatically put the sqlite3 database in the specified mode",
+          "name": "--mode"
+        },
+        {
+          "args": {},
+          "description": "Automatically provide the password from database.yml",
+          "name": "-p"
+        },
+        {
+          "args": {
+            "name": "connection"
+          },
+          "description": "Specifies the connection to use",
+          "name": "-c"
+        },
+        {
+          "description": "Specifies the database to use",
+          "name": [
+            "-db",
+            "--database"
+          ]
+        }
+      ]
+    },
+    {
+      "description": "Enumerate all annotations",
+      "name": "notes",
+      "options": [
+        {
+          "args": {
+            "description": "Filter by specific annotations, e.g. Foobar TODO",
+            "isVariadic": true,
+            "name": "annotations"
+          },
+          "name": [
+            "-a",
+            "--annotations"
+          ],
+          "requiresSeparator": true
+        }
+      ]
+    },
+    {
+      "args": [
+        {
+          "filterStrategy": "fuzzy",
+          "generators": {
+            "cache": {
+              "cacheByDirectory": true,
+              "strategy": "stale-while-revalidate"
+            },
+            "postProcess": {
+              "bodySha256": "45b92f9083220ba2620f46c8a3f36df55014b941fd49461e38ca56aa80284c3a",
+              "kind": "function"
+            },
+            "script": [
+              "rails",
+              "g",
+              "--help"
+            ]
+          },
+          "name": "generator",
+          "suggestions": [
+            "model",
+            "resource",
+            "scaffold",
+            "controller",
+            "migration"
+          ]
+        },
+        {
+          "isVariadic": true,
+          "name": "args"
+        }
+      ],
+      "description": "Use templates to generate Rails resources",
+      "name": "generate",
+      "options": [
+        {
+          "args": {},
+          "description": "Print generator's options and usage",
+          "name": "-h"
+        },
+        {
+          "args": {},
+          "description": "Run but do not make any changes",
+          "name": "-p"
+        },
+        {
+          "args": {},
+          "description": "Overwrite files that already exist",
+          "name": "-f"
+        },
+        {
+          "args": {},
+          "description": "Skip files that already exist",
+          "name": "-s"
+        },
+        {
+          "args": {},
+          "description": "Suppress status output",
+          "name": "-q"
+        }
+      ]
+    },
+    {
+      "description": "List all of the routes defined in your application",
+      "name": "routes",
+      "options": [
+        {
+          "args": {},
+          "description": "Filter by a specific controller, e.g. PostsController or Admin::PostsController",
+          "name": "-c"
+        },
+        {
+          "args": {},
+          "description": "Grep routes by a specific pattern",
+          "name": "-g"
+        },
+        {
+          "args": {},
+          "description": "Print routes expanded vertically with parts explained",
+          "name": "-E"
+        }
+      ]
+    },
+    {
+      "args": {
+        "generators": {
+          "custom": {
+            "bodySha256": "26e4161dfa50a849215db51bcb40814c6cbc34ae53919810d628002e3a09e123",
+            "kind": "function"
+          },
+          "getQueryTerm": {
+            "bodySha256": "cec68882ec3ae03283a73513488576d59aa250f762639cbf39d7f399053e1774",
+            "kind": "function"
+          },
+          "trigger": {
+            "bodySha256": "c6b904bde2499066a485985d340da96c55887875bcf908e81226c1fe5e977ba8",
+            "kind": "function"
+          }
+        },
+        "isOptional": true,
+        "name": "files or directories"
+      },
+      "description": "Run your test suite",
+      "generateSpec": {
+        "bodySha256": "b6c22d6bade4c830c84dbca1c4c73f44ae58730d76c8bfbe5bea491ba8f962ee",
+        "kind": "function"
+      },
+      "name": "test"
+    },
+    {
+      "args": {
+        "description": "Path to directory to be created containing the new application",
+        "name": "path"
+      },
+      "description": "Create a new rails application",
+      "name": "new",
+      "options": [
+        {
+          "args": {},
+          "description": "Skip namespace (affects only isolated applications)",
+          "name": "-skip-namespace"
+        },
+        {
+          "args": {},
+          "description": "Path to the Ruby binary of your choice",
+          "name": [
+            "-r",
+            "--ruby"
+          ]
+        },
+        {
+          "description": "Path to some application template (can be a filesystem path or URL)",
+          "name": "-m"
+        },
+        {
+          "args": {
+            "name": "database",
+            "suggestions": [
+              "mysql",
+              "postgresql",
+              "sqlite3",
+              "oracle",
+              "frontbase",
+              "ibm_db",
+              "sqlserver",
+              "jdbcmysql",
+              "jdbcsqlite3",
+              "jdbcpostgresql",
+              "jdbc"
+            ]
+          },
+          "description": "Preconfigure for selected database - defaults to sqlite3",
+          "name": "-d"
+        },
+        {
+          "description": "Don't create a Gemfile",
+          "name": "--skip-gemfile"
+        },
+        {
+          "description": "Skip .gitignore file",
+          "name": "-G"
+        },
+        {
+          "description": "Skip source control .keep files",
+          "name": "--skip-keeps"
+        },
+        {
+          "description": "Skip Action Mailer files",
+          "name": "-M"
+        },
+        {
+          "description": "Skip Action Mailbox gem",
+          "name": "--skip-action-mailbox"
+        },
+        {
+          "description": "Skip Action Text gem",
+          "name": "--skip-action-text"
+        },
+        {
+          "description": "Skip Active Record files",
+          "name": "-O"
+        },
+        {
+          "description": "Skip Active Storage files",
+          "name": "--skip-active-storage"
+        },
+        {
+          "description": "Skip Puma related files",
+          "name": "-P"
+        },
+        {
+          "description": "Skip Action Cable files",
+          "name": "-C"
+        },
+        {
+          "description": "Skip Sprockets files",
+          "name": "-S"
+        },
+        {
+          "description": "Don't install Spring application preloader",
+          "name": "--skip-spring"
+        },
+        {
+          "description": "Don't generate configuration that depends on the listen gem",
+          "name": "--skip-listen"
+        },
+        {
+          "description": "Skip JavaScript files",
+          "name": "-J"
+        },
+        {
+          "description": "Skip turbolinks gem",
+          "name": "--skip-turbolinks"
+        },
+        {
+          "description": "Skip test files",
+          "name": "-T"
+        },
+        {
+          "description": "Skip system test files",
+          "name": "--skip-system-test"
+        },
+        {
+          "description": "Skip bootsnap gem",
+          "name": "--skip-bootsnap"
+        },
+        {
+          "description": "Setup the application with Gemfile pointing to your Rails checkout",
+          "name": "--dev"
+        },
+        {
+          "description": "Setup the application with Gemfile pointing to Rails repository",
+          "name": "--edge"
+        },
+        {
+          "args": {
+            "name": "path"
+          },
+          "description": "Path to file containing extra configuration options for rails command",
+          "name": "--rc"
+        },
+        {
+          "description": "Skip loading of extra configuration options from .railsrc file",
+          "name": "--no-rc"
+        },
+        {
+          "description": "Preconfigure smaller stack for API only apps",
+          "name": "--api"
+        },
+        {
+          "description": "Don't run bundle install",
+          "name": "-B"
+        },
+        {
+          "args": {
+            "name": "framework",
+            "suggestions": [
+              "react",
+              "vue",
+              "angular",
+              "elm",
+              "stimulus"
+            ]
+          },
+          "description": "Preconfigure Webpack with a particular framework",
+          "name": "--webpacker"
+        },
+        {
+          "description": "Don't run Webpack install",
+          "name": "--skip-webpack-install]"
+        },
+        {
+          "description": "Overwrite files that already exist",
+          "name": [
+            "--f",
+            "--force"
+          ]
+        },
+        {
+          "description": "Run but do not make any changes",
+          "name": [
+            "--p",
+            "--pretend"
+          ]
+        },
+        {
+          "description": "Suppress status output",
+          "name": [
+            "--q",
+            "--quiet"
+          ]
+        },
+        {
+          "description": "Skip files that already exist",
+          "name": [
+            "--s",
+            "--skip"
+          ]
+        },
+        {
+          "description": "Show this help message and quit",
+          "name": [
+            "--h",
+            "--help"
+          ]
+        },
+        {
+          "description": "Show Rails version number and quit",
+          "name": [
+            "--v",
+            "--version"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -94,7 +94,7 @@ test("looks up registered leftovers and formats the compile hard-fail", () => {
     { id: "direnv#filterTemplateSuggestions#0", field: "filterTemplateSuggestions" },
     { id: "git#postProcess#8", field: "postProcess" },
   ]);
-  assert.match(message, /2 side-effect-free hook/);
+  assert.match(message, /2 hook/);
   assert.match(message, /EC_ALLOW_UNADAPTED=1/);
 });
 

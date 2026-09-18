@@ -1,0 +1,334 @@
+//! Shared exec/context helpers for T2.5 leftover effect adapters.
+
+use serde_json::{Map, Value as JsonValue, json};
+
+use crate::hook_baseline::{ExecRule, Expected, HookContext};
+
+use super::eval::{AdapterError, AdapterResult, js_index_of, js_to_string, throw};
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct AdapterExecRequest {
+    pub command: String,
+    pub args: Vec<JsonValue>,
+    pub cwd: Option<String>,
+    pub env: Option<JsonValue>,
+    pub timeout: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct AdapterExecResult {
+    pub stdout: String,
+    pub stderr: String,
+    pub status: i64,
+}
+
+pub(super) type AdapterExec<'a> = dyn Fn(AdapterExecRequest) -> Result<AdapterExecResult, AdapterError> + 'a;
+
+pub(super) fn last_token(tokens: &[String]) -> String {
+    tokens.last().cloned().unwrap_or_default()
+}
+
+pub(super) fn env_var(context: &HookContext, name: &str) -> String {
+    context.environment_variables.get(name).cloned().unwrap_or_default()
+}
+
+pub(super) fn exec_object(
+    exec: &AdapterExec<'_>,
+    command: impl Into<String>,
+    args: impl IntoIterator<Item = impl Into<String>>,
+) -> Result<AdapterExecResult, AdapterError> {
+    exec(AdapterExecRequest {
+        command: command.into(),
+        args: args.into_iter().map(|arg| JsonValue::String(arg.into())).collect(),
+        cwd: None,
+        env: None,
+        timeout: None,
+    })
+}
+
+fn exec_descriptor(
+    command: &str,
+    args: &JsonValue,
+    cwd: Option<&str>,
+    env: Option<&JsonValue>,
+    timeout: Option<i64>,
+) -> JsonValue {
+    json!({
+        "command": command,
+        "args": args,
+        "cwd": cwd,
+        "env": env,
+        "timeout": timeout,
+    })
+}
+
+pub(super) fn mock_exec_from_rules(
+    rules: &[ExecRule],
+) -> impl Fn(AdapterExecRequest) -> Result<AdapterExecResult, AdapterError> + '_ {
+    move |request| {
+        let request_args = JsonValue::Array(request.args.clone());
+        let want = exec_descriptor(
+            &request.command,
+            &request_args,
+            request.cwd.as_deref(),
+            request.env.as_ref(),
+            request.timeout,
+        );
+        for rule in rules {
+            let command = rule.command.as_deref().unwrap_or("");
+            if command.is_empty() {
+                continue;
+            }
+            let args = JsonValue::Array(
+                rule.args
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(JsonValue::String)
+                    .collect(),
+            );
+            let got = exec_descriptor(command, &args, None, None, None);
+            if want == got {
+                return Ok(AdapterExecResult {
+                    stdout: rule.stdout.clone().unwrap_or_default(),
+                    stderr: rule.stderr.clone().unwrap_or_default(),
+                    status: rule.status.unwrap_or(0),
+                });
+            }
+        }
+        Err(throw("UnmockedCommand"))
+    }
+}
+
+pub(super) fn expected_from_field(field: &str, result: AdapterResult) -> Expected {
+    match result {
+        Err(error) => Expected::Error {
+            value: error.js_class.unwrap_or("Error").to_string(),
+        },
+        Ok(value) => match field {
+            "custom" => super::eval::normalize_expected(value),
+            "alias" => match value.as_str() {
+                Some(text) => Expected::String { value: text.to_owned() },
+                None => Expected::Error {
+                    value: "typed alias result must be a string".into(),
+                },
+            },
+            "loadSpec" | "generateSpec" => Expected::Spec { value },
+            _ => super::eval::normalize_expected(value),
+        },
+    }
+}
+
+fn suggestion_from_name(name: impl Into<String>) -> JsonValue {
+    let mut object = Map::new();
+    object.insert("name".into(), JsonValue::String(name.into()));
+    JsonValue::Object(object)
+}
+
+fn as_suggestion(item: &JsonValue) -> JsonValue {
+    match item {
+        JsonValue::String(name) => suggestion_from_name(name),
+        other => other.clone(),
+    }
+}
+
+fn with_insert_suffix(suffix: &str, items: &[JsonValue]) -> Vec<JsonValue> {
+    if suffix.is_empty() {
+        return items.iter().map(as_suggestion).collect();
+    }
+    items
+        .iter()
+        .map(|item| {
+            let mut object = match as_suggestion(item) {
+                JsonValue::Object(object) => object,
+                other => return other,
+            };
+            if object.get("insertValue").and_then(JsonValue::as_str).is_none() {
+                let name = js_to_string(object.get("name"));
+                object.insert("insertValue".into(), JsonValue::String(format!("{name}{suffix}")));
+            }
+            JsonValue::Object(object)
+        })
+        .collect()
+}
+
+fn names_of(item: &JsonValue) -> Vec<String> {
+    match item.get("name") {
+        Some(JsonValue::String(name)) => vec![name.clone()],
+        Some(JsonValue::Array(names)) => names
+            .iter()
+            .filter_map(JsonValue::as_str)
+            .map(ToOwned::to_owned)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn filter_used(used: &[String], items: Vec<JsonValue>) -> Vec<JsonValue> {
+    let used: std::collections::HashSet<&str> = used.iter().map(String::as_str).collect();
+    items
+        .into_iter()
+        .filter(|item| {
+            let names = names_of(item);
+            if names.is_empty() {
+                return true;
+            }
+            names.iter().all(|name| !used.contains(name.as_str()))
+        })
+        .collect()
+}
+
+pub(super) fn key_value(
+    token: &str,
+    separator: &str,
+    keys: &[JsonValue],
+    values: &[JsonValue],
+    insert_separator: bool,
+) -> AdapterResult {
+    let choosing_keys = !token.contains(separator);
+    let list = if choosing_keys { keys } else { values };
+    let suffix = if choosing_keys && insert_separator {
+        separator
+    } else {
+        ""
+    };
+    Ok(JsonValue::Array(with_insert_suffix(suffix, list)))
+}
+
+fn last_index_of(value: &str, needle: &str) -> i64 {
+    if needle.is_empty() {
+        return value.encode_utf16().count() as i64;
+    }
+    match value.rfind(needle) {
+        Some(index) => value[..index].encode_utf16().count() as i64,
+        None => -1,
+    }
+}
+
+fn last_index_of_any(value: &str, needles: &[&str]) -> i64 {
+    needles
+        .iter()
+        .map(|needle| last_index_of(value, needle))
+        .max()
+        .unwrap_or(-1)
+}
+
+pub(super) fn key_value_list(
+    token: &str,
+    separator: &str,
+    delimiter: &str,
+    keys: &[JsonValue],
+    values: &[JsonValue],
+    insert_separator: bool,
+    insert_delimiter: bool,
+    allow_repeated_keys: bool,
+    allow_repeated_values: bool,
+) -> AdapterResult {
+    let last = last_index_of_any(token, &[separator, delimiter]);
+    let choosing_keys = last < 0 || {
+        let start = utf16_slice_start(token, last);
+        !token[start..].starts_with(separator)
+    };
+    let list = if choosing_keys { keys } else { values };
+    let suffix = if choosing_keys {
+        if insert_separator { separator } else { "" }
+    } else if insert_delimiter {
+        delimiter
+    } else {
+        ""
+    };
+    let rows = with_insert_suffix(suffix, list);
+    if choosing_keys {
+        if allow_repeated_keys {
+            return Ok(JsonValue::Array(rows));
+        }
+        let used: Vec<String> = token
+            .split(delimiter)
+            .map(|part| {
+                part.find(separator)
+                    .map(|index| part[..index].to_owned())
+                    .unwrap_or_default()
+            })
+            .collect();
+        return Ok(JsonValue::Array(filter_used(&used, rows)));
+    }
+    if allow_repeated_values {
+        return Ok(JsonValue::Array(rows));
+    }
+    let used: Vec<String> = token
+        .split(delimiter)
+        .map(|part| {
+            part.find(separator)
+                .map(|index| part[index + separator.len()..].to_owned())
+                .unwrap_or_default()
+        })
+        .collect();
+    Ok(JsonValue::Array(filter_used(&used, rows)))
+}
+
+pub(super) fn value_list(
+    token: &str,
+    delimiter: &str,
+    values: &[JsonValue],
+    insert_delimiter: bool,
+    allow_repeated: bool,
+) -> AdapterResult {
+    let suffix = if insert_delimiter { delimiter } else { "" };
+    let rows = with_insert_suffix(suffix, values);
+    if allow_repeated {
+        return Ok(JsonValue::Array(rows));
+    }
+    let used: Vec<String> = token.split(delimiter).map(ToOwned::to_owned).collect();
+    Ok(JsonValue::Array(filter_used(&used, rows)))
+}
+
+fn utf16_slice_start(value: &str, unit: i64) -> usize {
+    if unit <= 0 {
+        return 0;
+    }
+    let mut consumed = 0i64;
+    for (index, ch) in value.char_indices() {
+        if consumed >= unit {
+            return index;
+        }
+        consumed += ch.len_utf16() as i64;
+    }
+    value.len()
+}
+
+pub(super) fn adapter_list(file: &str) -> Vec<JsonValue> {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata/native-hooks/adapter-lists")
+        .join(file);
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    serde_json::from_str(&text).unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
+}
+
+pub(super) fn adapter_json(file: &str) -> JsonValue {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata/native-hooks/adapter-lists")
+        .join(file);
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    serde_json::from_str(&text).unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
+}
+
+#[allow(dead_code)]
+pub(super) fn named_strings(names: &[&str]) -> Vec<JsonValue> {
+    names.iter().map(|name| suggestion_from_name(*name)).collect()
+}
+
+pub(super) fn catch_empty(result: Result<JsonValue, AdapterError>) -> AdapterResult {
+    match result {
+        Ok(value) => Ok(value),
+        Err(_) => Ok(json!([])),
+    }
+}
+
+pub(super) fn parse_json(source: &str) -> Result<JsonValue, AdapterError> {
+    serde_json::from_str(source).map_err(|_error| throw("SyntaxError"))
+}
+
+#[allow(dead_code)]
+pub(super) fn index_of_sep(value: &str, needle: &str) -> i64 {
+    js_index_of(value, needle)
+}

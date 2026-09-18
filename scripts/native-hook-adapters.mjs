@@ -25,6 +25,18 @@ export const SIDE_EFFECT_FREE_ADAPTER_FIELDS = Object.freeze([
   "filterTemplateSuggestions",
 ]);
 
+export const EFFECT_ADAPTER_FIELDS = Object.freeze([
+  "custom",
+  "alias",
+  "loadSpec",
+  "generateSpec",
+]);
+
+export const NAMED_ADAPTER_FIELDS = Object.freeze([
+  ...SIDE_EFFECT_FREE_ADAPTER_FIELDS,
+  ...EFFECT_ADAPTER_FIELDS,
+]);
+
 export const defaultAdaptersPath = join(
   repoDir,
   "crates",
@@ -126,7 +138,7 @@ export function formatUnadaptedHookError(unadapted) {
   const extra =
     unadapted.length > 8 ? ` and ${unadapted.length - 8} more` : "";
   return (
-    `typed compile failed for ${unadapted.length} side-effect-free hook(s) ` +
+    `typed compile failed for ${unadapted.length} hook(s) ` +
     `with no named adapter: ${sample}${extra}. Register a native adapter ` +
     `in crates/ec_engine/src/native_adapters or set EC_ALLOW_UNADAPTED=1 to stage.`
   );

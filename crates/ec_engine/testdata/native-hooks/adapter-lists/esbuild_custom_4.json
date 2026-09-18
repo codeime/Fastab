@@ -1,0 +1,29 @@
+[
+  {
+    "name": "esnext"
+  },
+  {
+    "name": "es2016"
+  },
+  {
+    "name": "es2022"
+  },
+  {
+    "name": "chrome"
+  },
+  {
+    "name": "firefox"
+  },
+  {
+    "name": "ie"
+  },
+  {
+    "name": "node"
+  },
+  {
+    "name": "safari"
+  },
+  {
+    "name": "opera"
+  }
+]

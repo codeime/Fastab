@@ -78,7 +78,7 @@ import {
   formatUnadaptedHookError,
   isRegisteredNativeAdapter,
   loadNativeHookAdapters,
-  SIDE_EFFECT_FREE_ADAPTER_FIELDS,
+  NAMED_ADAPTER_FIELDS,
 } from "./native-hook-adapters.mjs";
 import {
   compileTypedHook,
@@ -509,7 +509,7 @@ async function writeTypedHookSidecar({
       ) {
         continue;
       }
-      if (SIDE_EFFECT_FREE_ADAPTER_FIELDS.includes(binding.field)) {
+      if (NAMED_ADAPTER_FIELDS.includes(binding.field)) {
         unadapted.push({
           id: binding.id,
           field: binding.field,

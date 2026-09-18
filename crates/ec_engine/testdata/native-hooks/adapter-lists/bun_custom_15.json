@@ -1,0 +1,42 @@
+[
+  {
+    "insertValue": ".js=",
+    "name": ".js"
+  },
+  {
+    "insertValue": ".jsx=",
+    "name": ".jsx"
+  },
+  {
+    "insertValue": ".ts=",
+    "name": ".ts"
+  },
+  {
+    "insertValue": ".tsx=",
+    "name": ".tsx"
+  },
+  {
+    "insertValue": ".json=",
+    "name": ".json"
+  },
+  {
+    "insertValue": ".toml=",
+    "name": ".toml"
+  },
+  {
+    "insertValue": ".text=",
+    "name": ".text"
+  },
+  {
+    "insertValue": ".file=",
+    "name": ".file"
+  },
+  {
+    "insertValue": ".wasm=",
+    "name": ".wasm"
+  },
+  {
+    "insertValue": ".napi=",
+    "name": ".napi"
+  }
+]

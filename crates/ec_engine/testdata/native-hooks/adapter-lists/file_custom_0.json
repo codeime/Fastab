@@ -1,0 +1,30 @@
+[
+  {
+    "insertValue": "bytes=",
+    "name": "bytes"
+  },
+  {
+    "insertValue": "elf_notes=",
+    "name": "elf_notes"
+  },
+  {
+    "insertValue": "elf_phum=",
+    "name": "elf_phum"
+  },
+  {
+    "insertValue": "encoding=",
+    "name": "encoding"
+  },
+  {
+    "insertValue": "indir=",
+    "name": "indir"
+  },
+  {
+    "insertValue": "name=",
+    "name": "name"
+  },
+  {
+    "insertValue": "regex=",
+    "name": "regex"
+  }
+]

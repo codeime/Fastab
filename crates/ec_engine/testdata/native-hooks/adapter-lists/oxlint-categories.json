@@ -1,0 +1,49 @@
+[
+  {
+    "description": "All lints (except nursery)",
+    "icon": "📦",
+    "name": "all",
+    "priority": 55
+  },
+  {
+    "description": "Outright wrong or useless code (enabled by default)",
+    "icon": "📦",
+    "name": "correctness",
+    "priority": 56
+  },
+  {
+    "description": "Code that is likely wrong or useless",
+    "icon": "📦",
+    "name": "suspicious",
+    "priority": 54
+  },
+  {
+    "description": "Prevent the use of language and library features",
+    "icon": "📦",
+    "name": "restriction",
+    "priority": 53
+  },
+  {
+    "description": "Check for inefficient code",
+    "icon": "📦",
+    "name": "perf",
+    "priority": 53
+  },
+  {
+    "description": "Strict or have occasional false positives",
+    "icon": "📦",
+    "name": "pedantic",
+    "priority": 52
+  },
+  {
+    "description": "Code that could be more idiomatic",
+    "icon": "📦",
+    "name": "style",
+    "priority": 51
+  },
+  {
+    "description": "Lints that are still under development",
+    "icon": "📦",
+    "name": "nursery"
+  }
+]

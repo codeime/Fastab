@@ -1,0 +1,45 @@
+{
+  "args": {
+    "generators": {
+      "custom": {
+        "bodySha256": "1e54b2491260ab1f0989125abe04bba670a19ac0853a580b0a8ac6f4566f44d2",
+        "kind": "function"
+      }
+    },
+    "isOptional": true,
+    "isVariadic": true,
+    "name": "directory"
+  },
+  "description": "CLI tool to jump around directories",
+  "name": "z",
+  "options": [
+    {
+      "description": "Restrict matches to subdirectories of the current directory",
+      "name": "-c"
+    },
+    {
+      "description": "Echo the best match, don't cd",
+      "name": "-e"
+    },
+    {
+      "description": "Show a brief help message",
+      "name": "-h"
+    },
+    {
+      "description": "List only",
+      "name": "-l"
+    },
+    {
+      "description": "Match by rank only",
+      "name": "-r"
+    },
+    {
+      "description": "Match by recent access only",
+      "name": "-t"
+    },
+    {
+      "description": "Remove the current directory from the datafile",
+      "name": "-x"
+    }
+  ]
+}

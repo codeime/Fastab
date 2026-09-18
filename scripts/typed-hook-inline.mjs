@@ -17,7 +17,6 @@ export const HOST_IDENTIFIERS = Object.freeze([
   "window",
   "process",
   "require",
-  "console",
   "Intl",
 ]);
 
@@ -517,6 +516,7 @@ const KNOWN_BUILTINS = new Set([
   "Array",
   "RegExp",
   "Error",
+  "Promise",
   "console",
 ]);
 

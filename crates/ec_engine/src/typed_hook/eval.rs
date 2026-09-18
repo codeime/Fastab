@@ -9,10 +9,10 @@ use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use super::{
-    TypedExpr, TypedHookError, TypedHookResult, TypedObjectField, TypedValue, Utf16String, ensure_safe_integer,
-    ensure_string_limit, js_at, js_char_at, js_map_case, js_pad, js_repeat, js_replace, js_slice, js_slice_range,
-    js_split, js_substring, js_trim, safe_arithmetic, typed_value_to_json, utf16_ends_with, utf16_index_of,
-    utf16_index_of_i64, utf16_last_index_of_i64, utf16_starts_with,
+    TypedExecRequest, TypedExpr, TypedHookEffects, TypedHookError, TypedHookResult, TypedObjectField, TypedValue,
+    Utf16String, ensure_safe_integer, ensure_string_limit, js_at, js_char_at, js_map_case, js_pad, js_repeat,
+    js_replace, js_slice, js_slice_range, js_split, js_substring, js_trim, safe_arithmetic, typed_value_to_json,
+    utf16_ends_with, utf16_index_of, utf16_index_of_i64, utf16_last_index_of_i64, utf16_starts_with,
 };
 
 enum Abort {
@@ -31,8 +31,16 @@ impl From<TypedHookError> for Abort {
 }
 
 pub(super) fn evaluate(expression: &TypedExpr, arguments: &[TypedValue]) -> TypedHookResult<TypedValue> {
+    evaluate_with_effects(expression, arguments, None)
+}
+
+pub(super) fn evaluate_with_effects(
+    expression: &TypedExpr,
+    arguments: &[TypedValue],
+    effects: Option<&TypedHookEffects<'_>>,
+) -> TypedHookResult<TypedValue> {
     let mut locals = BTreeMap::new();
-    match evaluate_inner(expression, arguments, &mut locals) {
+    match evaluate_inner(expression, arguments, &mut locals, effects) {
         Ok(value) => Ok(value),
         Err(Abort::Return(value)) => Ok(value),
         Err(Abort::Break) => Err(TypedHookError::new("break outside loop")),
@@ -49,9 +57,10 @@ fn evaluate_inner(
     expression: &TypedExpr,
     arguments: &[TypedValue],
     locals: &mut BTreeMap<String, TypedValue>,
+    effects: Option<&TypedHookEffects<'_>>,
 ) -> EvalResult<TypedValue> {
     let ev = |expression: &TypedExpr, locals: &mut BTreeMap<String, TypedValue>| {
-        evaluate_inner(expression, arguments, locals)
+        evaluate_inner(expression, arguments, locals, effects)
     };
     match expression {
         TypedExpr::Arg { index } => {
@@ -370,11 +379,21 @@ fn evaluate_inner(
         TypedExpr::Typeof { value } => Ok(TypedValue::String(Utf16String::from_str(js_typeof(&ev(
             value, locals,
         )?)))),
-        TypedExpr::Object { fields } => Ok(TypedValue::Object(eval_fields(fields, arguments, locals, None)?)),
-        TypedExpr::JsonObject { fields } => Ok(TypedValue::Object(eval_fields(fields, arguments, locals, None)?)),
+        TypedExpr::Object { fields } => Ok(TypedValue::Object(eval_fields(
+            fields, arguments, locals, None, effects,
+        )?)),
+        TypedExpr::JsonObject { fields } => Ok(TypedValue::Object(eval_fields(
+            fields, arguments, locals, None, effects,
+        )?)),
         TypedExpr::Spread { value, fields } => {
             let base = ev(value, locals)?;
-            Ok(TypedValue::Object(eval_fields(fields, arguments, locals, Some(base))?))
+            Ok(TypedValue::Object(eval_fields(
+                fields,
+                arguments,
+                locals,
+                Some(base),
+                effects,
+            )?))
         },
         TypedExpr::ObjectAssign { parts } => {
             let mut fields = Vec::new();
@@ -415,6 +434,7 @@ fn evaluate_inner(
                     arguments,
                     locals,
                     &[item, TypedValue::Integer(index as i64)],
+                    effects,
                 )?);
             }
             Ok(TypedValue::Array(out))
@@ -428,6 +448,7 @@ fn evaluate_inner(
                     arguments,
                     locals,
                     &[item.clone(), TypedValue::Integer(index as i64)],
+                    effects,
                 )?) {
                     out.push(item);
                 }
@@ -438,7 +459,13 @@ fn evaluate_inner(
             let items = as_array(&ev(value, locals)?);
             let mut out = Vec::new();
             for (index, item) in items.into_iter().enumerate() {
-                let mapped = apply_lambda(callback, arguments, locals, &[item, TypedValue::Integer(index as i64)])?;
+                let mapped = apply_lambda(
+                    callback,
+                    arguments,
+                    locals,
+                    &[item, TypedValue::Integer(index as i64)],
+                    effects,
+                )?;
                 out.extend(as_array(&mapped));
             }
             Ok(TypedValue::Array(out))
@@ -467,6 +494,7 @@ fn evaluate_inner(
                     arguments,
                     locals,
                     &[item, TypedValue::Integer(index as i64)],
+                    effects,
                 )?) {
                     return Ok(TypedValue::Bool(true));
                 }
@@ -481,6 +509,7 @@ fn evaluate_inner(
                     arguments,
                     locals,
                     &[item, TypedValue::Integer(index as i64)],
+                    effects,
                 )?) {
                     return Ok(TypedValue::Bool(false));
                 }
@@ -495,6 +524,7 @@ fn evaluate_inner(
                     arguments,
                     locals,
                     &[item.clone(), TypedValue::Integer(index as i64)],
+                    effects,
                 )?) {
                     return Ok(item);
                 }
@@ -509,6 +539,7 @@ fn evaluate_inner(
                     arguments,
                     locals,
                     &[item, TypedValue::Integer(index as i64)],
+                    effects,
                 )?) {
                     return Ok(TypedValue::Integer(index as i64));
                 }
@@ -557,7 +588,7 @@ fn evaluate_inner(
         TypedExpr::ArraySort { value, callback } => {
             let mut items = as_array(&ev(value, locals)?);
             items.sort_by(|left, right| {
-                match apply_lambda(callback, arguments, locals, &[left.clone(), right.clone()]) {
+                match apply_lambda(callback, arguments, locals, &[left.clone(), right.clone()], effects) {
                     Ok(TypedValue::Integer(value)) => value.cmp(&0),
                     _ => std::cmp::Ordering::Equal,
                 }
@@ -743,7 +774,148 @@ fn evaluate_inner(
             let right = as_utf16(&ev(right, locals)?, "locale-compare.right")?.to_string_lossy();
             Ok(TypedValue::Integer(js_locale_compare(&left, &right)))
         },
+        TypedExpr::Exec {
+            command,
+            args,
+            cwd,
+            env,
+            timeout,
+        } => evaluate_exec(
+            &ev(command, locals)?,
+            &ev(args, locals)?,
+            &ev(cwd, locals)?,
+            &ev(env, locals)?,
+            &ev(timeout, locals)?,
+            effects,
+        ),
+        TypedExpr::Par { items } => {
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                values.push(ev(item, locals)?);
+            }
+            Ok(TypedValue::Array(values))
+        },
+        TypedExpr::CtxCwd => Ok(TypedValue::String(Utf16String::from_str(
+            &require_effects(effects)?.context.current_working_directory,
+        ))),
+        TypedExpr::CtxProcess => Ok(TypedValue::String(Utf16String::from_str(
+            &require_effects(effects)?.context.current_process,
+        ))),
+        TypedExpr::CtxSshPrefix => Ok(TypedValue::String(Utf16String::from_str(
+            &require_effects(effects)?.context.ssh_prefix,
+        ))),
+        TypedExpr::CtxSearchTerm => Ok(TypedValue::String(Utf16String::from_str(
+            &require_effects(effects)?.context.search_term,
+        ))),
+        TypedExpr::CtxIsDangerous => Ok(TypedValue::Bool(require_effects(effects)?.context.is_dangerous)),
+        TypedExpr::CtxEnvironment => Ok(TypedValue::Object(
+            require_effects(effects)?
+                .context
+                .environment_variables
+                .iter()
+                .map(|(key, value)| (key.clone(), TypedValue::String(Utf16String::from_str(value))))
+                .collect(),
+        )),
+        TypedExpr::CtxEnv { name } => {
+            let name = as_utf16(&ev(name, locals)?, "ctx-env.name")?.to_string_lossy();
+            let value = require_effects(effects)?
+                .context
+                .environment_variables
+                .iter()
+                .find(|(key, _)| key == &name)
+                .map(|(_, value)| value.as_str());
+            Ok(match value {
+                Some(value) => TypedValue::String(Utf16String::from_str(value)),
+                None => TypedValue::Null,
+            })
+        },
+        TypedExpr::SpecObject { fields } => Ok(TypedValue::Object(eval_fields(
+            fields, arguments, locals, None, effects,
+        )?)),
+        TypedExpr::Throw { class, message } => {
+            let message = as_utf16(&ev(message, locals)?, "throw.message")?.to_string_lossy();
+            Err(Abort::Error(TypedHookError::throw(class, message)))
+        },
     }
+}
+
+fn require_effects<'a, 'e>(effects: Option<&'e TypedHookEffects<'a>>) -> EvalResult<&'e TypedHookEffects<'a>> {
+    effects.ok_or_else(|| fail("effect operation requires typed hook effects"))
+}
+
+fn evaluate_exec(
+    command: &TypedValue,
+    args: &TypedValue,
+    cwd: &TypedValue,
+    env: &TypedValue,
+    timeout: &TypedValue,
+    effects: Option<&TypedHookEffects<'_>>,
+) -> EvalResult<TypedValue> {
+    let effects = require_effects(effects)?;
+    if let Some(deadline) = effects.deadline {
+        if deadline.checked_duration_since(std::time::Instant::now()).is_none() {
+            return Err(Abort::Error(TypedHookError::new(
+                "typed hook exec exceeded its deadline",
+            )));
+        }
+    }
+    let command = as_utf16(command, "exec.command")?.to_string_lossy();
+    let args = as_array(args)
+        .into_iter()
+        .map(|item| {
+            as_utf16(&item, "exec.args")
+                .map(|value| value.to_string_lossy())
+                .map_err(Abort::from)
+        })
+        .collect::<EvalResult<Vec<_>>>()?;
+    let cwd = match cwd {
+        TypedValue::Null => None,
+        other => Some(as_utf16(other, "exec.cwd")?.to_string_lossy()),
+    };
+    let env = match env {
+        TypedValue::Null => Vec::new(),
+        other => object_entries(other)
+            .into_iter()
+            .map(|(key, value)| {
+                as_utf16(&value, "exec.env")
+                    .map(|text| (key, text.to_string_lossy()))
+                    .map_err(Abort::from)
+            })
+            .collect::<EvalResult<Vec<_>>>()?,
+    };
+    let timeout_ms = match timeout {
+        TypedValue::Null => None,
+        other => Some(as_i64(other, "exec.timeout")? as u64),
+    };
+    let mut request = TypedExecRequest {
+        command,
+        args,
+        cwd,
+        env,
+        timeout_ms,
+    };
+    if let Some(deadline) = effects.deadline {
+        if let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
+            let remaining_ms = u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX);
+            request.timeout_ms = Some(
+                request
+                    .timeout_ms
+                    .map_or(remaining_ms, |timeout| timeout.min(remaining_ms)),
+            );
+        }
+    }
+    let result = (effects.exec)(request)?;
+    Ok(TypedValue::Object(vec![
+        (
+            "stdout".into(),
+            TypedValue::String(Utf16String::from_str(&result.stdout)),
+        ),
+        (
+            "stderr".into(),
+            TypedValue::String(Utf16String::from_str(&result.stderr)),
+        ),
+        ("status".into(), TypedValue::Integer(result.status)),
+    ]))
 }
 
 fn apply_lambda(
@@ -751,6 +923,7 @@ fn apply_lambda(
     arguments: &[TypedValue],
     locals: &mut BTreeMap<String, TypedValue>,
     values: &[TypedValue],
+    effects: Option<&TypedHookEffects<'_>>,
 ) -> EvalResult<TypedValue> {
     let TypedExpr::Lambda { params, body } = callback else {
         return Err(fail("array callback is not a lambda"));
@@ -762,7 +935,7 @@ fn apply_lambda(
     for (index, name) in params.iter().enumerate() {
         locals.insert(name.clone(), values.get(index).cloned().unwrap_or(TypedValue::Null));
     }
-    let result = match evaluate_inner(body, arguments, locals) {
+    let result = match evaluate_inner(body, arguments, locals, effects) {
         Err(Abort::Return(value)) => Ok(value),
         other => other,
     };
@@ -784,6 +957,7 @@ fn eval_fields(
     arguments: &[TypedValue],
     locals: &mut BTreeMap<String, TypedValue>,
     base: Option<TypedValue>,
+    effects: Option<&TypedHookEffects<'_>>,
 ) -> EvalResult<Vec<(String, TypedValue)>> {
     let mut object = match base {
         Some(value) => object_map(value),
@@ -793,7 +967,7 @@ fn eval_fields(
         object_insert(
             &mut object,
             field.key.clone(),
-            evaluate_inner(&field.value, arguments, locals)?,
+            evaluate_inner(&field.value, arguments, locals, effects)?,
         );
     }
     Ok(object)

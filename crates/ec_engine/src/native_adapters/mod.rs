@@ -286,6 +286,468 @@ const ADAPTERS: &[AdapterMeta] = &[
         "cf#postProcess#0",
         "factory helper s disagrees across call sites"
     ),
+    meta!(
+        "03b126c52218b618b258b4113e23cf47ef5a0197646c1f48f7983f6bf146ead8",
+        "custom",
+        "make#custom#0",
+        "only new Set is representable"
+    ),
+    meta!(
+        "082bc08b4bdda4806561b75e8cc0731eebc9d4400f2113e5c7be189485a43558",
+        "custom",
+        "scc#custom#0",
+        "factory argument t has disagreeing call-site values"
+    ),
+    meta!(
+        "111e4cf667dc7a906760475f6dd4eca45bb903941a433cc4775e2f8c2cdb7d40",
+        "custom",
+        "man#custom#0",
+        "factory argument t has disagreeing call-site values"
+    ),
+    meta!(
+        "1479ee375b43e8542737587098c3443c5b480cddafb76ed3a5e1d458c119e608",
+        "custom",
+        "pkgutil#custom#0",
+        "only allowlisted methods may be called"
+    ),
+    meta!(
+        "15969249b10aedd33ec7f60746954920fc08b8e25e0671ca53aaf51ac946ce37",
+        "custom",
+        "nx#custom#15",
+        "executeCommand is only valid as a callee"
+    ),
+    meta!(
+        "1a93472e0d5a250a7a3ba467851694ca669a32bb9d509dfabcd5528b74702941",
+        "custom",
+        "git#custom#59",
+        "AST node ArrowFunctionExpression is not representable"
+    ),
+    meta!(
+        "1b1c58278249c1860643584345a4e2999f6f809c8700b284e7a26ce6cbd6fa20",
+        "custom",
+        "spring#custom#0",
+        "only allowlisted methods may be called"
+    ),
+    meta!(
+        "1ddb3946a1205a82600a80ab80897691a797873651f7afb8ff97a0159c139fe7",
+        "custom",
+        "chezmoi#custom#0",
+        "hook parameters must be simple identifiers or destructuring patterns"
+    ),
+    meta!(
+        "20e727a6b059f8d895ae13dcba72e4308f8935db13897c58057e7805f0182e1e",
+        "custom",
+        "deno#custom#19",
+        "executeCommand is only valid as a callee"
+    ),
+    meta!(
+        "2176333a01195561f613dca132852a71d43c790bdd316c99b3533f02ba9fff46",
+        "custom",
+        "esbuild#custom#4",
+        "hook parameters must be simple identifiers or destructuring patterns"
+    ),
+    meta!(
+        "25d872a1238176acad55fdc6ab4925964829c5b33510679a754b1de0a5af8008",
+        "custom",
+        "scp#custom#1",
+        "helper d is recursive"
+    ),
+    meta!(
+        "2a1148465e4a6f039eaf6a53448cf72d9ddcbe1de292c76c631364edda8ef870",
+        "custom",
+        "ykman#custom#0",
+        "only new Set is representable"
+    ),
+    meta!(
+        "2d5b190a7bae97d96654250225aaefb33dde63770d47876954c52e32ddbc255e",
+        "custom",
+        "firefox#custom#0",
+        "identifier Number is only valid as a callee"
+    ),
+    meta!(
+        "2ed14222e43605a4615b0d098db0dca8fb7016d90702476658c98a8d3397be57",
+        "custom",
+        "npm#custom#1",
+        "spread calls are unsupported"
+    ),
+    meta!(
+        "2fadd1a502cd5f4ba4a55f8bdc1ee236ea4d572c77e2188e7cdcb3c77856036d",
+        "custom",
+        "file#custom#0",
+        "hook parameters must be simple identifiers or destructuring patterns"
+    ),
+    meta!(
+        "353cc07bf9fb8f63179771f62005442bc7b3c5f0e22102ff5f567156226a0366",
+        "custom",
+        "pnpm#custom#1",
+        "spread calls are unsupported"
+    ),
+    meta!(
+        "4df08d834f2264ea2b300b6b8e847fe753da5c9a5ecfaebf87596a84d584625d",
+        "custom",
+        "spring#custom#5",
+        "only allowlisted methods may be called"
+    ),
+    meta!(
+        "4e14f9a18a339f1a0ff2799de460a98abbbd4f754e729069e600065d6b23bf9f",
+        "custom",
+        "dscacheutil#custom#1",
+        "only allowlisted methods may be called"
+    ),
+    meta!(
+        "5104550a1de4f3c8210aefeca860ac9ba05a66d588d3940c98b15fb473090866",
+        "custom",
+        "tldr#custom#3",
+        "free identifier n is not representable"
+    ),
+    meta!(
+        "5395d7fb1d0b608ce456527e703936e65ead88c78e1d64d17e5223015e947473",
+        "custom",
+        "rush#custom#0",
+        "spread calls are unsupported"
+    ),
+    meta!(
+        "5693d96360a2e105298439a7a22abbde058eaa41e74ef120f1b1d722e2eedbf6",
+        "custom",
+        "fig/1.0.0#custom#3",
+        "factory argument i has disagreeing call-site values"
+    ),
+    meta!(
+        "5aa8d63e46c44f4cf86dbb62c9035c2a33506a4aa04da4b928adf5ef102b2a9a",
+        "custom",
+        "codesign#custom#0",
+        "hook parameters must be simple identifiers or destructuring patterns"
+    ),
+    meta!(
+        "5c415cacc2e9cfe61ff86d5ec428d6b0089216ab3e13fd1acb53ed513b9e2606",
+        "custom",
+        "chezmoi#custom#24",
+        ".map is supported only on arrays"
+    ),
+    meta!(
+        "61c3b8a8846c19ae82d4c833b36fec1e52cebac1e8ebbd976587556ea427847d",
+        "custom",
+        "mosh#custom#1",
+        "helper c is recursive"
+    ),
+    meta!(
+        "63f4199d5d1d44c71d013364bf8dbb477411f11d776cde35821ca712569034c0",
+        "custom",
+        "scc#custom#8",
+        "factory argument n has disagreeing call-site values"
+    ),
+    meta!(
+        "63f7ebc4331aeef1adf022c2217ba0c013735b99a32015c475374c61c076ff95",
+        "custom",
+        "oxlint#custom#3",
+        "method .charCodeAt is not in the typed hook allowlist"
+    ),
+    meta!(
+        "661801a6a065f6a47a99557d48b30b8ddaf73a2b08a407d4db2b1434196c8fc9",
+        "custom",
+        "gh#custom#26",
+        "factory argument n has disagreeing call-site values"
+    ),
+    meta!(
+        "7118b51f5ab4abf816ec0fd32b660d4495361defafb617d48a91bab93e74d914",
+        "custom",
+        "swift#custom#0",
+        "hook parameters must be simple identifiers or destructuring patterns"
+    ),
+    meta!(
+        "7238b45ae90afed81b58fe2198530b0074949e85863636d179d805d7fe23d1c0",
+        "custom",
+        "airflow#custom#0",
+        "hook parameters must be simple identifiers or destructuring patterns"
+    ),
+    meta!(
+        "7cdfa0e8c803cb9e4c6176f51aa7730cdd864347528547cf8291722c94fd8784",
+        "custom",
+        "nx#custom#11",
+        "factory argument n has disagreeing call-site values"
+    ),
+    meta!(
+        "7d44d284dc19be5e46e12cea613a04edbc98e806a318d94d52a38b0c296c9927",
+        "custom",
+        "oxlint#custom#2",
+        "free identifier g is not representable"
+    ),
+    meta!(
+        "83fee23ebcadbf1d63827dd335c7cf0b8a40bbc3d7266022e9ad49e4e231e1ae",
+        "custom",
+        "esbuild#custom#0",
+        "factory argument r has disagreeing call-site values"
+    ),
+    meta!(
+        "84025fe23bbe188d73039e3d402687d1f0b39418ad70f09a1e4e6ed495038bb3",
+        "custom",
+        "deno#custom#10",
+        "factory argument t has disagreeing call-site values"
+    ),
+    meta!(
+        "9523c6ca2b912383473caefc1b9f7eea0a712e3e648b161621a7b945277df483",
+        "custom",
+        "goto#custom#0",
+        "only new Set is representable"
+    ),
+    meta!(
+        "9c22acfa8a0ec3748d93b0fa87f7aca3df2f20e71e41da53f60dacae3209e570",
+        "custom",
+        "git-flow#custom#0",
+        "executeCommand is only valid as a callee"
+    ),
+    meta!(
+        "a0947a29c5844aa06f36b4666c32b578a97663219aa1b47687c2916c0102d57b",
+        "custom",
+        "rsync#custom#1",
+        "helper c is recursive"
+    ),
+    meta!(
+        "a22d06a56581e86c16f9dc836857cc1c418d4c19cf441b9207b8b333aac56608",
+        "custom",
+        "spring#custom#1",
+        "only allowlisted methods may be called"
+    ),
+    meta!(
+        "a66254e7246fa779b200beb5f1907554b3cdafd35415f8bb20cfe87ae545a01c",
+        "custom",
+        "git#custom#3",
+        "factory argument t has disagreeing call-site values"
+    ),
+    meta!(
+        "ad600744147080b3bbb0ee8363c354bcc1ec7198ac5a9b16ccbf6285f70b82eb",
+        "custom",
+        "@magnolia/cli#custom#0",
+        "factory argument n has disagreeing call-site values"
+    ),
+    meta!(
+        "add93fb6b6f290a3c95e19f260fff11c67a5039441066c0c3e97c39663b7d9fb",
+        "custom",
+        "twilio#custom#0",
+        "factory argument i has disagreeing call-site values"
+    ),
+    meta!(
+        "aeef663f3f913be3aae37442b98f532b8495d5cfbe89c42e731c48d60e2fa291",
+        "custom",
+        "nx#custom#7",
+        "executeCommand is only valid as a callee"
+    ),
+    meta!(
+        "b5a3021322137127b1384a405317a1e561d6f8da31e33d391262f8bb12350849",
+        "custom",
+        "rich#custom#0",
+        "helper y has no statically visible initializer"
+    ),
+    meta!(
+        "b78df2cf1a8bb3a6e158fed0c9f86cc6ab1a59af3b1c78902a272db13ffe65e1",
+        "custom",
+        "man#custom#4",
+        "free identifier Date is not representable"
+    ),
+    meta!(
+        "c7306386562b66c67f69ba7a123f8a4116b4e523cbe4160c6e20193fda412fab",
+        "custom",
+        "mosh#custom#0",
+        ".indexOf is supported only on strings and arrays"
+    ),
+    meta!(
+        "cd92b7bcc8f44295973c4b7bfc5a4851b633bff0e57f4ee98cfe91680c2b82ac",
+        "custom",
+        "ni#custom#0",
+        "spread calls are unsupported"
+    ),
+    meta!(
+        "d928c7d8792f6d2a77531253fa3a5cce3b7cf3b0f255bddb090cbd33dd38cb12",
+        "custom",
+        "ssh#custom#0",
+        ".indexOf is supported only on strings and arrays"
+    ),
+    meta!(
+        "d972eb5f899bdf11a9a76db260c3984cd04d2ab1d4d0a2d98661c1f1a56530b3",
+        "custom",
+        "osqueryi#custom#0",
+        "hook parameters must be simple identifiers or destructuring patterns"
+    ),
+    meta!(
+        "dc40f21f14541d8f6743f532137900894daa56f7d8fede9edadae126dfc8074b",
+        "custom",
+        "bun#custom#15",
+        "factory argument t has disagreeing call-site values"
+    ),
+    meta!(
+        "ddf08d87219a1404bfeec7328e0a92e5d615202ab064e51081c6a2181619777e",
+        "custom",
+        "cargo#custom#102",
+        "free identifier Intl is not representable"
+    ),
+    meta!(
+        "e0f755fcbcdd4aa9db41d69f013e92b961ad64f347b05a750718d30d8a851634",
+        "custom",
+        "cargo#custom#1",
+        "factory argument e has disagreeing call-site values"
+    ),
+    meta!(
+        "e299db05c81077e0ef9b1344daef841fa83f1849ad704e508af664ed388ce510",
+        "custom",
+        "bun#custom#11",
+        "spread calls are unsupported"
+    ),
+    meta!(
+        "ece47a53affb3d4f9b613f64e9e2e6b2dfa848b291ac79d4618a66c06f4769d6",
+        "custom",
+        "rsync#custom#0",
+        ".indexOf is supported only on strings and arrays"
+    ),
+    meta!(
+        "f4cb5caf468f2f8af4b0b33e6bb43d9ccf8af8bc4d230519b947b17cd7043111",
+        "custom",
+        "rich#custom#2",
+        "statement SwitchStatement is not representable"
+    ),
+    meta!(
+        "f6c6c160699c68fe7cf0500219e46b8c6c7b327c7db559d3632e1de31cf40fc4",
+        "custom",
+        "yarn#custom#1",
+        "spread calls are unsupported"
+    ),
+    meta!(
+        "faf81d363c15195974dc41b68bfaeb799bc2a67b0d6143555695df0e4bce9827",
+        "custom",
+        "fig/2.0.0#custom#14",
+        "factory argument t has disagreeing call-site values"
+    ),
+    meta!(
+        "fb26b35043ba67c50e86361dc595f1ca096a2c9b46796349d8eafbee0939e4c7",
+        "custom",
+        "dscl#custom#0",
+        "free identifier d is not representable"
+    ),
+    meta!(
+        "fde524eda218ac28c5bce41a27df6ac6bdc9254da9e25f8dcb5880c8b7026c18",
+        "custom",
+        "nx#custom#20",
+        "spread calls are unsupported"
+    ),
+    meta!(
+        "fde95bc4219fd9ff0a036e870a458c96dd54ba80ebe06fb725b1224fd0b51ebf",
+        "custom",
+        "cargo#custom#104",
+        "factory argument t has disagreeing call-site values"
+    ),
+    meta!(
+        "04bdcd95f16944d756d2ca38dfb448f803ff71d43d430bbf8eb8cfbc8c4652d1",
+        "generateSpec",
+        "yarn#generateSpec#16",
+        "hook parameters must be simple identifiers"
+    ),
+    meta!(
+        "124fc96c760bc04b02dc9baec9d6fd550c4e3823948891bee9c1bf667b9eb902",
+        "generateSpec",
+        "kamal#generateSpec#0",
+        "free identifier r is not representable"
+    ),
+    meta!(
+        "18d24ae447e700e8b7e6865d53ebf24373d36e131954e26bc0a36c2819d50d79",
+        "generateSpec",
+        "sake#generateSpec#0",
+        "method .reduce is not in the typed hook allowlist"
+    ),
+    meta!(
+        "1d6fbd6ace2331fa39dbab0f60383af2495789fef4e4a2fabdabdb463aa9df95",
+        "generateSpec",
+        "drush#generateSpec#0",
+        "identifier Array is only valid as a callee"
+    ),
+    meta!(
+        "3acab33d9a4fa0871aa2a9d41fbed3b5e02743b609bb4381524cb4ab5c9ba9f5",
+        "generateSpec",
+        "rails#generateSpec#0",
+        "free identifier H is not representable"
+    ),
+    meta!(
+        "40e584e98997164e1b77338ae696000029dd1fe8f0cc3ba753d0517b0ef74e9c",
+        "generateSpec",
+        "z#generateSpec#0",
+        "AST node ArrowFunctionExpression is not representable"
+    ),
+    meta!(
+        "4bba28e7b0bec9d3b055fd4b3fe7c26d8ca69ab2d4777aae6e7c7266cf5756d0",
+        "generateSpec",
+        "dotnet#generateSpec#0",
+        "spread calls are unsupported"
+    ),
+    meta!(
+        "65622e2681477974a4e8314edfdc88e3550d5201e2948f1a9f3e5b99326208b4",
+        "generateSpec",
+        "fig/2.0.0#generateSpec#1",
+        "free identifier G is not representable"
+    ),
+    meta!(
+        "682679dc8ba7e238f7470ed62e6215129b2901203bbd3c36385dab9f0872463e",
+        "generateSpec",
+        "serverless#generateSpec#0",
+        "free identifier ps is not representable"
+    ),
+    meta!(
+        "7685c9fbc459a05d9f68bf80ede922a9b8e7c4b6968ec9db4dab14407af3e26c",
+        "generateSpec",
+        "php#generateSpec#0",
+        "executeCommand is only valid as a callee"
+    ),
+    meta!(
+        "77bd90323f3a9b1c7f94ea21f7660327748a3fbf5f6c988672501f326d5b0d59",
+        "generateSpec",
+        "composer#generateSpec#0",
+        "helper y references host object require"
+    ),
+    meta!(
+        "960fa21e9aabac50aa83fe21530721cf8ac8149d4c1fcde03a70768a55fd2b36",
+        "generateSpec",
+        "task#generateSpec#0",
+        "free identifier b is not representable"
+    ),
+    meta!(
+        "ac3c6daaedebddcfa9871f54fa397f2d61807997debd7ea8b051ac516b94c89d",
+        "generateSpec",
+        "fig/1.0.0#generateSpec#1",
+        "free identifier N is not representable"
+    ),
+    meta!(
+        "b690636bab463d831ea84c645c151e63a938765f3e3b16f08bf4254d3721900a",
+        "generateSpec",
+        "magento#generateSpec#0",
+        "executeCommand is only valid as a callee"
+    ),
+    meta!(
+        "c89e4d5b3f8b94c4ba519c27308fb2e0855928eb15f15cb254945cc084147831",
+        "generateSpec",
+        "cargo#generateSpec#0",
+        "hook parameters must be simple identifiers"
+    ),
+    meta!(
+        "d56f9ed1b9eb112da968b87d8ecbd2a2c24d31c4b4ee6a1512aaf1f103546dc3",
+        "generateSpec",
+        "pnpm#generateSpec#19",
+        "free identifier h is not representable"
+    ),
+    meta!(
+        "db71cdeee0cb1c325e95fcee6db9e70169915a026edb6bc5da8e5b0073d44f38",
+        "generateSpec",
+        "pnpm#generateSpec#0",
+        "AST node FunctionExpression is not representable"
+    ),
+    meta!(
+        "de30ca8db08f693bea3d309d4ac7d974534296b3cba283840927ad716a56295e",
+        "generateSpec",
+        "nx#generateSpec#0",
+        "executeCommand is only valid as a callee"
+    ),
+    meta!(
+        "f4eecad7e6457e73322dbcf599e0c63cb1ef8ec83bb1fc7b0982642b81007465",
+        "generateSpec",
+        "fig/2.0.0#generateSpec#16",
+        "helper parameters must be simple identifiers"
+    ),
 ];
 
 #[derive(Serialize)]
@@ -336,9 +798,15 @@ pub fn native_adapter_catalog_path() -> std::path::PathBuf {
 #[cfg(test)]
 mod bunx_names;
 #[cfg(test)]
+mod custom;
+#[cfg(test)]
+mod effect;
+#[cfg(test)]
 mod eval;
 #[cfg(test)]
 mod filter;
+#[cfg(test)]
+mod generate_spec;
 #[cfg(test)]
 mod git_config_keys;
 #[cfg(test)]
@@ -351,12 +819,16 @@ mod tests {
     use serde_json::Value as JsonValue;
 
     use super::*;
-    use crate::hook_baseline::{Expected, load_all};
+    use crate::hook_baseline::{BaselineCase, Expected, load_all};
+    use crate::native_adapters::effect::{expected_from_field, mock_exec_from_rules};
     use crate::native_adapters::eval::{AdapterResult, expected_from_adapter};
 
+    #[derive(Clone, Copy)]
     enum AdapterFn {
         PostProcess(fn(&str, &[String]) -> AdapterResult),
         Filter(fn(&[JsonValue]) -> AdapterResult),
+        Custom,
+        GenerateSpec,
     }
 
     fn adapter_eval(field: &str, body_sha256: &str) -> Option<AdapterFn> {
@@ -491,16 +963,29 @@ mod tests {
             ("postProcess", "f04211ce9cc3b53755c0429dfc0fcaac7b07fe7d4a7d9021fc2c3c11cf5f6adb") => {
                 AdapterFn::PostProcess(|stdout, _| post_process::cf_lines(stdout))
             },
+            (field, sha)
+                if ADAPTERS
+                    .iter()
+                    .any(|entry| entry.field == field && entry.body_sha256 == sha) =>
+            {
+                match field {
+                    "custom" => AdapterFn::Custom,
+                    "generateSpec" => AdapterFn::GenerateSpec,
+                    _ => return None,
+                }
+            },
             _ => return None,
         })
     }
 
-    fn evaluate_adapter(field: &str, body_sha256: &str, args: &[JsonValue]) -> Option<Expected> {
+    fn evaluate_adapter(field: &str, body_sha256: &str, case: &BaselineCase) -> Option<Expected> {
         let eval = adapter_eval(field, body_sha256)?;
+        let exec = mock_exec_from_rules(&case.exec);
         let result = match eval {
             AdapterFn::PostProcess(function) => {
-                let stdout = args.first().and_then(JsonValue::as_str).unwrap_or("");
-                let tokens = args
+                let stdout = case.args.first().and_then(JsonValue::as_str).unwrap_or("");
+                let tokens = case
+                    .args
                     .get(1)
                     .and_then(JsonValue::as_array)
                     .map(|items| {
@@ -513,11 +998,47 @@ mod tests {
                 function(stdout, &tokens)
             },
             AdapterFn::Filter(function) => {
-                let suggestions = args.first().and_then(JsonValue::as_array).cloned().unwrap_or_default();
+                let suggestions = case
+                    .args
+                    .first()
+                    .and_then(JsonValue::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 function(&suggestions)
             },
+            AdapterFn::Custom => {
+                let tokens = case
+                    .args
+                    .first()
+                    .and_then(JsonValue::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .map(|item| item.as_str().unwrap_or("").to_string())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                crate::native_adapters::custom::evaluate(body_sha256, &tokens, &exec, &case.context)?
+            },
+            AdapterFn::GenerateSpec => {
+                let tokens = case
+                    .args
+                    .first()
+                    .and_then(JsonValue::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .map(|item| item.as_str().unwrap_or("").to_string())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                crate::native_adapters::generate_spec::evaluate(body_sha256, &tokens, &exec, &case.context)?
+            },
         };
-        Some(expected_from_adapter(result))
+        Some(match eval {
+            AdapterFn::Custom | AdapterFn::GenerateSpec => expected_from_field(field, result),
+            _ => expected_from_adapter(result),
+        })
     }
 
     #[test]
@@ -546,7 +1067,7 @@ mod tests {
                 if matches!(case.expected, Expected::Timeout { .. }) {
                     continue;
                 }
-                let Some(actual) = evaluate_adapter(&baseline.field, &baseline.body_sha256, &case.args) else {
+                let Some(actual) = evaluate_adapter(&baseline.field, &baseline.body_sha256, case) else {
                     failures.push(format!("{}:{} missing adapter", baseline.field, baseline.body_sha256));
                     continue;
                 };

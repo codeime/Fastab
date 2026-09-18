@@ -1370,3 +1370,109 @@ test("evaluateTypedHookJson drops empty suggestion fields like Rust", () => {
     { name: "main", type: "arg" },
   ]);
 });
+
+test("T2.5 effect contracts compile exec, context, spec-object, and Promise.all", () => {
+  assert.deepEqual(TYPED_HOOK_CONTRACTS.custom, {
+    params: ["string-array", "exec", "context"],
+    resultType: "suggestion-array",
+  });
+  assert.deepEqual(TYPED_HOOK_CONTRACTS.alias, {
+    params: ["string", "exec"],
+    resultType: "string",
+  });
+  assert.deepEqual(TYPED_HOOK_CONTRACTS.loadSpec, {
+    params: ["string", "exec"],
+    resultType: "spec",
+  });
+  assert.deepEqual(TYPED_HOOK_CONTRACTS.generateSpec, {
+    params: ["string-array", "exec"],
+    resultType: "spec",
+  });
+
+  const alias = compileTypedHook({
+    body: `async(e,t)=>{let{stdout:i,status:o}=await t({command:"git",args:["config","--get",\`alias.\${e}\`]});if(o!==0)throw new Error("Failed parsing alias");return i;}`,
+    sourceField: "alias",
+  });
+  assert.equal(alias.expr.op, "let");
+  assert.throws(
+    () =>
+      compileTypedHook({
+        body: `async(e,t)=>t("git "+e)`,
+        sourceField: "alias",
+      }),
+    (error) => error instanceof TypedHookCompileError && error.code === "shell-concat",
+  );
+
+  const env = compileTypedHook({
+    body: `async(r,a,e)=>Object.values(e.environmentVariables).map(n=>({name:n,description:"Environment variable"}))`,
+    sourceField: "custom",
+  });
+  assert.deepEqual(
+    evaluateTypedHook(
+      env,
+      [["env"]],
+      {
+        context: {
+          currentWorkingDirectory: "/repo",
+          currentProcess: "zsh",
+          sshPrefix: "",
+          environmentVariables: { HOME: "/Users/x", PATH: "/bin" },
+          searchTerm: "",
+          isDangerous: false,
+        },
+        exec() {
+          throw new Error("exec should not run");
+        },
+      },
+    ),
+    [
+      { name: "/Users/x", description: "Environment variable" },
+      { name: "/bin", description: "Environment variable" },
+    ],
+  );
+
+  const load = compileTypedHook({
+    body: `async e=>({name:"create-"+e,type:"global"})`,
+    sourceField: "loadSpec",
+  });
+  assert.equal(load.expr.op, "spec-object");
+  assert.deepEqual(evaluateTypedHook(load, ["react-app"]), {
+    name: "create-react-app",
+    type: "global",
+  });
+
+  const parallel = compileTypedHook({
+    body: `async(tokens,exec)=>{const rows=await Promise.all([exec({command:"echo",args:["a"]}),exec({command:"echo",args:["b"]})]);return rows.map(row=>({name:row.stdout}));}`,
+    sourceField: "custom",
+  });
+  assert.equal(parallel.expr.op, "let");
+  let seen = [];
+  assert.deepEqual(
+    evaluateTypedHook(
+      parallel,
+      [["cmd"]],
+      {
+        context: {
+          currentWorkingDirectory: "/",
+          currentProcess: "zsh",
+          sshPrefix: "",
+          environmentVariables: {},
+          searchTerm: "",
+          isDangerous: false,
+        },
+        exec(request) {
+          seen.push(`${request.command} ${request.args.join(" ")}`);
+          return { stdout: request.args[0], stderr: "", status: 0 };
+        },
+      },
+    ),
+    [{ name: "a" }, { name: "b" }],
+  );
+  assert.deepEqual(seen, ["echo a", "echo b"]);
+
+  const resolved = compileTypedHook({
+    body: `()=>Promise.resolve([{name:"ok"}])`,
+    sourceField: "custom",
+  });
+  assert.deepEqual(evaluateTypedHook(resolved, [[]]), [{ name: "ok" }]);
+});

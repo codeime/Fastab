@@ -26,12 +26,20 @@ const GET_QUERY_TERM_SOURCE_FIELD: &str = "getQueryTerm";
 const POST_PROCESS_SOURCE_FIELD: &str = "postProcess";
 const SCRIPT_SOURCE_FIELD: &str = "script";
 const FILTER_TEMPLATE_SUGGESTIONS_SOURCE_FIELD: &str = "filterTemplateSuggestions";
-const SIDECAR_SOURCE_FIELDS: [&str; 5] = [
+const CUSTOM_SOURCE_FIELD: &str = "custom";
+const ALIAS_SOURCE_FIELD: &str = "alias";
+const LOAD_SPEC_SOURCE_FIELD: &str = "loadSpec";
+const GENERATE_SPEC_SOURCE_FIELD: &str = "generateSpec";
+const SIDECAR_SOURCE_FIELDS: [&str; 9] = [
     SOURCE_FIELD,
     GET_QUERY_TERM_SOURCE_FIELD,
     POST_PROCESS_SOURCE_FIELD,
     SCRIPT_SOURCE_FIELD,
     FILTER_TEMPLATE_SUGGESTIONS_SOURCE_FIELD,
+    CUSTOM_SOURCE_FIELD,
+    ALIAS_SOURCE_FIELD,
+    LOAD_SPEC_SOURCE_FIELD,
+    GENERATE_SPEC_SOURCE_FIELD,
 ];
 const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 const MAX_STRING_LITERAL_UNITS: usize = 32_768;
@@ -72,6 +80,10 @@ enum TypedValueType {
     ValueArray,
     Regex,
     Null,
+    Exec,
+    Context,
+    ExecResult,
+    Spec,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -532,6 +544,34 @@ enum TypedExpr {
         start: Box<TypedExpr>,
         end: Box<TypedExpr>,
     },
+    #[serde(rename = "exec")]
+    Exec {
+        command: Box<TypedExpr>,
+        args: Box<TypedExpr>,
+        cwd: Box<TypedExpr>,
+        env: Box<TypedExpr>,
+        timeout: Box<TypedExpr>,
+    },
+    #[serde(rename = "par")]
+    Par { items: Vec<TypedExpr> },
+    #[serde(rename = "ctx-cwd")]
+    CtxCwd,
+    #[serde(rename = "ctx-process")]
+    CtxProcess,
+    #[serde(rename = "ctx-ssh-prefix")]
+    CtxSshPrefix,
+    #[serde(rename = "ctx-env")]
+    CtxEnv { name: Box<TypedExpr> },
+    #[serde(rename = "ctx-environment")]
+    CtxEnvironment,
+    #[serde(rename = "ctx-search-term")]
+    CtxSearchTerm,
+    #[serde(rename = "ctx-is-dangerous")]
+    CtxIsDangerous,
+    #[serde(rename = "spec-object")]
+    SpecObject { fields: Vec<TypedObjectField> },
+    #[serde(rename = "throw")]
+    Throw { class: String, message: Box<TypedExpr> },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -575,6 +615,12 @@ struct TypedHookContracts {
     script: TypedHookContract,
     #[serde(rename = "filterTemplateSuggestions")]
     filter_template_suggestions: TypedHookContract,
+    custom: TypedHookContract,
+    alias: TypedHookContract,
+    #[serde(rename = "loadSpec")]
+    load_spec: TypedHookContract,
+    #[serde(rename = "generateSpec")]
+    generate_spec: TypedHookContract,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -710,13 +756,27 @@ pub(crate) struct TypedGetQueryTermReferenceBaseline {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TypedHookError {
     message: String,
+    js_class: Option<String>,
 }
 
 impl TypedHookError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            js_class: None,
         }
+    }
+
+    fn throw(class: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            js_class: Some(class.into()),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn js_class(&self) -> Option<&str> {
+        self.js_class.as_deref()
     }
 }
 
@@ -1334,6 +1394,34 @@ fn validate_typed_hook_catalog(catalog: &TypedHookCatalog) -> TypedHookResult<()
         "script",
     )?;
     validate_sidecar_contract(
+        &catalog.contracts.custom,
+        &[
+            TypedValueType::StringArray,
+            TypedValueType::Exec,
+            TypedValueType::Context,
+        ],
+        TypedValueType::SuggestionArray,
+        "custom",
+    )?;
+    validate_sidecar_contract(
+        &catalog.contracts.alias,
+        &[TypedValueType::String, TypedValueType::Exec],
+        TypedValueType::String,
+        "alias",
+    )?;
+    validate_sidecar_contract(
+        &catalog.contracts.load_spec,
+        &[TypedValueType::String, TypedValueType::Exec],
+        TypedValueType::Spec,
+        "loadSpec",
+    )?;
+    validate_sidecar_contract(
+        &catalog.contracts.generate_spec,
+        &[TypedValueType::StringArray, TypedValueType::Exec],
+        TypedValueType::Spec,
+        "generateSpec",
+    )?;
+    validate_sidecar_contract(
         &catalog.contracts.filter_template_suggestions,
         &[TypedValueType::SuggestionArray],
         TypedValueType::SuggestionArray,
@@ -1610,6 +1698,12 @@ fn types_compatible(actual: TypedValueType, expected: TypedValueType) -> bool {
                 TypedValueType::String | TypedValueType::Integer | TypedValueType::Bool,
                 TypedValueType::Json
             )
+            | (
+                TypedValueType::Json | TypedValueType::Null | TypedValueType::Suggestion,
+                TypedValueType::Spec
+            )
+            | (TypedValueType::Spec, TypedValueType::Json)
+            | (TypedValueType::ExecResult, TypedValueType::Json)
     )
 }
 
@@ -1631,6 +1725,30 @@ fn typed_hook_contract(source_field: &str) -> Option<(&'static str, TypedValueTy
             "filterTemplateSuggestions",
             TypedValueType::SuggestionArray,
             &[TypedValueType::SuggestionArray],
+        )),
+        CUSTOM_SOURCE_FIELD => Some((
+            "custom",
+            TypedValueType::SuggestionArray,
+            &[
+                TypedValueType::StringArray,
+                TypedValueType::Exec,
+                TypedValueType::Context,
+            ],
+        )),
+        ALIAS_SOURCE_FIELD => Some((
+            "alias",
+            TypedValueType::String,
+            &[TypedValueType::String, TypedValueType::Exec],
+        )),
+        LOAD_SPEC_SOURCE_FIELD => Some((
+            "loadSpec",
+            TypedValueType::Spec,
+            &[TypedValueType::String, TypedValueType::Exec],
+        )),
+        GENERATE_SPEC_SOURCE_FIELD => Some((
+            "generateSpec",
+            TypedValueType::Spec,
+            &[TypedValueType::StringArray, TypedValueType::Exec],
         )),
         _ => None,
     }
@@ -2147,6 +2265,45 @@ fn validate_expr(
             child(end, None, "end", state)?;
             Ok(TypedValueType::String)
         },
+        TypedExpr::Exec {
+            command,
+            args,
+            cwd,
+            env,
+            timeout,
+        } => {
+            child(command, Some(TypedValueType::String), "command", state)?;
+            child(args, Some(TypedValueType::StringArray), "args", state)?;
+            child(cwd, None, "cwd", state)?;
+            child(env, None, "env", state)?;
+            child(timeout, None, "timeout", state)?;
+            Ok(TypedValueType::ExecResult)
+        },
+        TypedExpr::Par { items } => {
+            for (index, item) in items.iter().enumerate() {
+                child(item, None, &format!("items[{index}]"), state)?;
+            }
+            Ok(TypedValueType::ValueArray)
+        },
+        TypedExpr::CtxCwd | TypedExpr::CtxProcess | TypedExpr::CtxSshPrefix | TypedExpr::CtxSearchTerm => {
+            Ok(TypedValueType::String)
+        },
+        TypedExpr::CtxIsDangerous => Ok(TypedValueType::Bool),
+        TypedExpr::CtxEnvironment => Ok(TypedValueType::StringRecord),
+        TypedExpr::CtxEnv { name } => {
+            child(name, Some(TypedValueType::String), "name", state)?;
+            Ok(TypedValueType::String)
+        },
+        TypedExpr::SpecObject { fields } => {
+            for (index, field) in fields.iter().enumerate() {
+                child(&field.value, None, &format!("fields[{index}].value"), state)?;
+            }
+            Ok(TypedValueType::Spec)
+        },
+        TypedExpr::Throw { message, .. } => {
+            child(message, Some(TypedValueType::String), "message", state)?;
+            Ok(expected.unwrap_or(TypedValueType::Null))
+        },
     }
 }
 
@@ -2261,6 +2418,186 @@ pub(crate) fn evaluate_typed_filter_template_suggestions(
     }
     let json = evaluate_typed_hook_json(descriptor, &[suggestions_to_typed_json(suggestions)])?;
     suggestions_from_typed_json(&json)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TypedExecRequest {
+    pub command: String,
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub env: Vec<(String, String)>,
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TypedExecResult {
+    pub stdout: String,
+    pub stderr: String,
+    pub status: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TypedHookContext {
+    pub current_working_directory: String,
+    pub current_process: String,
+    pub ssh_prefix: String,
+    pub environment_variables: Vec<(String, String)>,
+    pub search_term: String,
+    pub is_dangerous: bool,
+}
+
+pub(crate) struct TypedHookEffects<'a> {
+    pub context: &'a TypedHookContext,
+    pub exec: &'a dyn Fn(TypedExecRequest) -> TypedHookResult<TypedExecResult>,
+    pub deadline: Option<std::time::Instant>,
+}
+
+#[cfg(test)]
+impl TypedHookContext {
+    fn from_baseline(context: &crate::hook_baseline::HookContext) -> Self {
+        Self {
+            current_working_directory: context.current_working_directory.clone(),
+            current_process: context.current_process.clone(),
+            ssh_prefix: context.ssh_prefix.clone(),
+            environment_variables: context
+                .environment_variables
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+            search_term: context.search_term.clone(),
+            is_dangerous: context.is_dangerous,
+        }
+    }
+}
+
+/// Test-only custom evaluator. Production stays on QuickJS until T3.1.
+#[allow(dead_code)]
+pub(crate) fn evaluate_typed_custom(
+    descriptor: &TypedHookIr,
+    tokens: &[String],
+    context: &TypedHookContext,
+    exec: &dyn Fn(TypedExecRequest) -> TypedHookResult<TypedExecResult>,
+    deadline: Option<std::time::Instant>,
+) -> TypedHookResult<Vec<Suggestion>> {
+    validate_typed_hook_ir(descriptor)?;
+    if descriptor.source_field != CUSTOM_SOURCE_FIELD {
+        return Err(TypedHookError::new("descriptor is not a custom hook"));
+    }
+    let json = evaluate_typed_effect_json(
+        descriptor,
+        &[JsonValue::Array(
+            tokens.iter().map(|token| JsonValue::String(token.clone())).collect(),
+        )],
+        context,
+        exec,
+        deadline,
+    )?;
+    suggestions_from_typed_json(&json)
+}
+
+#[allow(dead_code)]
+pub(crate) fn evaluate_typed_alias(
+    descriptor: &TypedHookIr,
+    token: &str,
+    context: &TypedHookContext,
+    exec: &dyn Fn(TypedExecRequest) -> TypedHookResult<TypedExecResult>,
+    deadline: Option<std::time::Instant>,
+) -> TypedHookResult<String> {
+    validate_typed_hook_ir(descriptor)?;
+    if descriptor.source_field != ALIAS_SOURCE_FIELD {
+        return Err(TypedHookError::new("descriptor is not an alias hook"));
+    }
+    let json = evaluate_typed_effect_json(
+        descriptor,
+        &[JsonValue::String(token.to_owned())],
+        context,
+        exec,
+        deadline,
+    )?;
+    json.as_str()
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| TypedHookError::new("typed alias result must be a string"))
+}
+
+#[allow(dead_code)]
+pub(crate) fn evaluate_typed_load_spec(
+    descriptor: &TypedHookIr,
+    token: &str,
+    context: &TypedHookContext,
+    exec: &dyn Fn(TypedExecRequest) -> TypedHookResult<TypedExecResult>,
+    deadline: Option<std::time::Instant>,
+) -> TypedHookResult<JsonValue> {
+    validate_typed_hook_ir(descriptor)?;
+    if descriptor.source_field != LOAD_SPEC_SOURCE_FIELD {
+        return Err(TypedHookError::new("descriptor is not a loadSpec hook"));
+    }
+    evaluate_typed_effect_json(
+        descriptor,
+        &[JsonValue::String(token.to_owned())],
+        context,
+        exec,
+        deadline,
+    )
+}
+
+#[allow(dead_code)]
+pub(crate) fn evaluate_typed_generate_spec(
+    descriptor: &TypedHookIr,
+    tokens: &[String],
+    context: &TypedHookContext,
+    exec: &dyn Fn(TypedExecRequest) -> TypedHookResult<TypedExecResult>,
+    deadline: Option<std::time::Instant>,
+) -> TypedHookResult<JsonValue> {
+    validate_typed_hook_ir(descriptor)?;
+    if descriptor.source_field != GENERATE_SPEC_SOURCE_FIELD {
+        return Err(TypedHookError::new("descriptor is not a generateSpec hook"));
+    }
+    evaluate_typed_effect_json(
+        descriptor,
+        &[JsonValue::Array(
+            tokens.iter().map(|token| JsonValue::String(token.clone())).collect(),
+        )],
+        context,
+        exec,
+        deadline,
+    )
+}
+
+pub(crate) fn evaluate_typed_effect_json(
+    descriptor: &TypedHookIr,
+    args: &[JsonValue],
+    context: &TypedHookContext,
+    exec: &dyn Fn(TypedExecRequest) -> TypedHookResult<TypedExecResult>,
+    deadline: Option<std::time::Instant>,
+) -> TypedHookResult<JsonValue> {
+    let runtime_params: Vec<_> = descriptor
+        .params
+        .iter()
+        .filter(|param| !matches!(param.value_type, TypedValueType::Exec | TypedValueType::Context))
+        .collect();
+    if args.len() != runtime_params.len() {
+        return Err(TypedHookError::new("evaluate args must match the field contract"));
+    }
+    let mut arguments = vec![TypedValue::Null; descriptor.params.len()];
+    let mut arg_index = 0usize;
+    for param in &descriptor.params {
+        if matches!(param.value_type, TypedValueType::Exec | TypedValueType::Context) {
+            continue;
+        }
+        arguments[param.index as usize] = json_to_typed_value(&args[arg_index], param.value_type)?;
+        arg_index += 1;
+    }
+    let effects = TypedHookEffects {
+        context,
+        exec,
+        deadline,
+    };
+    let value = typed_value_to_json(&evaluate_expr_with_effects(&descriptor.expr, &arguments, &effects)?)?;
+    Ok(match descriptor.result_type {
+        TypedValueType::SuggestionArray => normalize_suggestion_array(value),
+        TypedValueType::Suggestion => normalize_suggestion_value(value),
+        _ => value,
+    })
 }
 
 fn suggestions_to_typed_json(suggestions: &[Suggestion]) -> JsonValue {
@@ -2431,6 +2768,14 @@ fn script_command_from_typed_json(value: &JsonValue) -> TypedHookResult<ScriptCo
 
 fn evaluate_expr(expression: &TypedExpr, arguments: &[TypedValue]) -> TypedHookResult<TypedValue> {
     eval::evaluate(expression, arguments)
+}
+
+fn evaluate_expr_with_effects(
+    expression: &TypedExpr,
+    arguments: &[TypedValue],
+    effects: &TypedHookEffects<'_>,
+) -> TypedHookResult<TypedValue> {
+    eval::evaluate_with_effects(expression, arguments, Some(effects))
 }
 
 fn safe_length(length: usize) -> TypedHookResult<TypedValue> {
@@ -2798,7 +3143,10 @@ fn json_to_typed_value(value: &JsonValue, expected: TypedValueType) -> TypedHook
             }
             Ok(TypedValue::StringSet(set))
         },
-        TypedValueType::Regex => Err(TypedHookError::new("regex arguments are compile-only")),
+        TypedValueType::Regex | TypedValueType::Exec | TypedValueType::Context | TypedValueType::ExecResult => {
+            Err(TypedHookError::new("effect arguments are compile-only"))
+        },
+        TypedValueType::Spec => Ok(json_value_to_typed(value)),
     }
 }
 
@@ -3009,6 +3357,7 @@ fn js_split(value: &Utf16String, separator: &Utf16String) -> Vec<Utf16String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::BTreeSet;
     use std::fs::{self, Metadata, OpenOptions};
     use std::io::Read;
     use std::path::{Component, Path, PathBuf};
@@ -3734,6 +4083,26 @@ mod tests {
                 "params": ["suggestion-array"],
                 "resultType": "suggestion-array",
             },
+            "custom": {
+                "irVersion": IR_VERSION,
+                "params": ["string-array", "exec", "context"],
+                "resultType": "suggestion-array",
+            },
+            "alias": {
+                "irVersion": IR_VERSION,
+                "params": ["string", "exec"],
+                "resultType": "string",
+            },
+            "loadSpec": {
+                "irVersion": IR_VERSION,
+                "params": ["string", "exec"],
+                "resultType": "spec",
+            },
+            "generateSpec": {
+                "irVersion": IR_VERSION,
+                "params": ["string-array", "exec"],
+                "resultType": "spec",
+            },
         })
     }
 
@@ -3772,6 +4141,30 @@ mod tests {
                 ir_version: IR_VERSION,
                 params: vec![TypedValueType::SuggestionArray],
                 result_type: TypedValueType::SuggestionArray,
+            },
+            custom: TypedHookContract {
+                ir_version: IR_VERSION,
+                params: vec![
+                    TypedValueType::StringArray,
+                    TypedValueType::Exec,
+                    TypedValueType::Context,
+                ],
+                result_type: TypedValueType::SuggestionArray,
+            },
+            alias: TypedHookContract {
+                ir_version: IR_VERSION,
+                params: vec![TypedValueType::String, TypedValueType::Exec],
+                result_type: TypedValueType::String,
+            },
+            load_spec: TypedHookContract {
+                ir_version: IR_VERSION,
+                params: vec![TypedValueType::String, TypedValueType::Exec],
+                result_type: TypedValueType::Spec,
+            },
+            generate_spec: TypedHookContract {
+                ir_version: IR_VERSION,
+                params: vec![TypedValueType::StringArray, TypedValueType::Exec],
+                result_type: TypedValueType::Spec,
             },
         }
     }
@@ -4543,6 +4936,89 @@ mod tests {
         assert_eq!(rows[0].name, "a");
     }
 
+    #[test]
+    fn effect_ops_evaluate_exec_context_and_spec_object() {
+        let load = json!({
+            "version": IR_VERSION,
+            "kind": IR_KIND,
+            "sourceField": "loadSpec",
+            "resultType": "spec",
+            "params": [
+                {"index": 0, "type": "string"},
+                {"index": 1, "type": "exec"}
+            ],
+            "expr": {
+                "op": "spec-object",
+                "fields": [
+                    {
+                        "key": "name",
+                        "value": {
+                            "op": "string-concat",
+                            "parts": [
+                                {"op": "string", "value": "create-"},
+                                {"op": "arg", "index": 0}
+                            ]
+                        }
+                    },
+                    {"key": "type", "value": {"op": "string", "value": "global"}}
+                ]
+            }
+        });
+        let descriptor = parse_typed_hook_ir(&load).expect("loadSpec descriptor");
+        let context = TypedHookContext {
+            current_working_directory: "/repo".into(),
+            current_process: "zsh".into(),
+            ssh_prefix: String::new(),
+            environment_variables: vec![("HOME".into(), "/Users/x".into())],
+            search_term: String::new(),
+            is_dangerous: false,
+        };
+        let exec = |_request: TypedExecRequest| -> TypedHookResult<TypedExecResult> {
+            panic!("exec should not run");
+        };
+        assert_eq!(
+            evaluate_typed_load_spec(&descriptor, "react-app", &context, &exec, None).expect("loadSpec"),
+            json!({"name": "create-react-app", "type": "global"})
+        );
+
+        let custom = json!({
+            "version": IR_VERSION,
+            "kind": IR_KIND,
+            "sourceField": "custom",
+            "resultType": "suggestion-array",
+            "params": [
+                {"index": 0, "type": "string-array"},
+                {"index": 1, "type": "exec"},
+                {"index": 2, "type": "context"}
+            ],
+            "expr": {
+                "op": "array-map",
+                "value": {"op": "object-values", "value": {"op": "ctx-environment"}},
+                "fn": {
+                    "op": "lambda",
+                    "params": ["n"],
+                    "body": {
+                        "op": "object",
+                        "fields": [
+                            {"key": "name", "value": {"op": "var", "name": "n"}},
+                            {"key": "description", "value": {"op": "string", "value": "Environment variable"}}
+                        ]
+                    }
+                }
+            }
+        });
+        let rows = evaluate_typed_custom(
+            &parse_typed_hook_ir(&custom).expect("custom"),
+            &["env".into()],
+            &context,
+            &exec,
+            None,
+        )
+        .expect("custom");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "/Users/x");
+    }
+
     fn typed_eval_error_shape(value: &JsonValue) -> bool {
         value.get("kind").and_then(JsonValue::as_str) == Some("error")
             && value.get("name").and_then(JsonValue::as_str).is_some()
@@ -4667,8 +5143,26 @@ mod tests {
             crate::hook_baseline::Expected::String { value } => Some(JsonValue::String(value.clone())),
             crate::hook_baseline::Expected::Bool { value } => Some(JsonValue::Bool(*value)),
             crate::hook_baseline::Expected::Argv { value } => serde_json::to_value(value).ok(),
-            crate::hook_baseline::Expected::Spec { value } => Some(value.clone()),
+            crate::hook_baseline::Expected::Spec { value } => Some(decode_baseline_undefined(value.clone())),
             crate::hook_baseline::Expected::Error { .. } | crate::hook_baseline::Expected::Timeout { .. } => None,
+        }
+    }
+
+    fn decode_baseline_undefined(value: JsonValue) -> JsonValue {
+        match value {
+            JsonValue::Object(fields)
+                if fields.len() == 1 && fields.get("kind").and_then(JsonValue::as_str) == Some("undefined") =>
+            {
+                JsonValue::Null
+            },
+            JsonValue::Object(fields) => JsonValue::Object(
+                fields
+                    .into_iter()
+                    .map(|(key, child)| (key, decode_baseline_undefined(child)))
+                    .collect(),
+            ),
+            JsonValue::Array(items) => JsonValue::Array(items.into_iter().map(decode_baseline_undefined).collect()),
+            other => other,
         }
     }
 
@@ -4853,11 +5347,21 @@ mod tests {
         require("trigger", 30, 30);
         require("getQueryTerm", 16, 16);
 
+        let adapter_keys = registered_adapter_keys();
         let baselines = crate::hook_baseline::load_all().expect("T1.2 baselines");
         let mut compared = 0usize;
         let mut failures = Vec::new();
         for baseline in &baselines {
+            if matches!(
+                baseline.field.as_str(),
+                "custom" | "alias" | "loadSpec" | "generateSpec"
+            ) {
+                continue;
+            }
             let key = format!("{}:{}", baseline.field, baseline.body_sha256);
+            if adapter_keys.contains(&key) {
+                continue;
+            }
             let Some(descriptor_json) = catalog.descriptors.get(&key) else {
                 continue;
             };
@@ -4889,6 +5393,125 @@ mod tests {
             "typed baseline parity mismatches ({}): {}",
             failures.len(),
             failures.iter().take(20).cloned().collect::<Vec<_>>().join(" | ")
+        );
+    }
+
+    fn registered_adapter_keys() -> BTreeSet<String> {
+        let path = crate::native_adapter_catalog_path();
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        let catalog: JsonValue = serde_json::from_str(&text).unwrap_or(JsonValue::Null);
+        catalog
+            .get("adapters")
+            .and_then(JsonValue::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|row| {
+                Some(format!(
+                    "{}:{}",
+                    row.get("field")?.as_str()?,
+                    row.get("bodySha256")?.as_str()?
+                ))
+            })
+            .collect()
+    }
+
+    fn mock_typed_exec(
+        rules: &[crate::hook_baseline::ExecRule],
+    ) -> impl Fn(TypedExecRequest) -> TypedHookResult<TypedExecResult> + '_ {
+        move |request| {
+            let env_is_default = request.env.is_empty();
+            for rule in rules {
+                let command = rule.command.as_deref().unwrap_or("");
+                if command.is_empty() {
+                    continue;
+                }
+                let args = rule.args.clone().unwrap_or_default();
+                if request.command == command
+                    && request.args == args
+                    && request.cwd.is_none()
+                    && env_is_default
+                    && request.timeout_ms.is_none()
+                {
+                    return Ok(TypedExecResult {
+                        stdout: rule.stdout.clone().unwrap_or_default(),
+                        stderr: rule.stderr.clone().unwrap_or_default(),
+                        status: rule.status.unwrap_or(0),
+                    });
+                }
+            }
+            Err(TypedHookError::throw("UnmockedCommand", "unmocked command"))
+        }
+    }
+
+    #[test]
+    fn typed_effect_baseline_parity() {
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let script = repo.join("scripts/emit-typed-hook-descriptors.mjs");
+        let output = std::process::Command::new("node")
+            .arg(&script)
+            .current_dir(&repo)
+            .output()
+            .expect("emit typed hook descriptors");
+        assert!(
+            output.status.success(),
+            "emit-typed-hook-descriptors failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let catalog: TypedBaselineDescriptors =
+            serde_json::from_slice(&output.stdout).expect("typed baseline descriptor catalog");
+        let adapter_keys = registered_adapter_keys();
+        let baselines = crate::hook_baseline::load_all().expect("T1.2 baselines");
+        let mut compared = 0usize;
+        let mut seen = 0usize;
+        let mut failures = Vec::new();
+        for baseline in &baselines {
+            if !matches!(
+                baseline.field.as_str(),
+                "custom" | "alias" | "loadSpec" | "generateSpec"
+            ) {
+                continue;
+            }
+            let key = format!("{}:{}", baseline.field, baseline.body_sha256);
+            if adapter_keys.contains(&key) {
+                continue;
+            }
+            let Some(descriptor_json) = catalog.descriptors.get(&key) else {
+                continue;
+            };
+            seen += 1;
+            let descriptor = match parse_typed_hook_ir(descriptor_json) {
+                Ok(descriptor) => descriptor,
+                Err(error) => {
+                    failures.push(format!("{key}: parse {error}"));
+                    continue;
+                },
+            };
+            for case in &baseline.cases {
+                let Some(expected) = expected_baseline_json(&case.expected) else {
+                    continue;
+                };
+                let context = TypedHookContext::from_baseline(&case.context);
+                let exec = mock_typed_exec(&case.exec);
+                match evaluate_typed_effect_json(&descriptor, &case.args, &context, &exec, None) {
+                    Ok(actual) if actual == expected => compared += 1,
+                    Ok(actual) => failures.push(format!("{key} {} actual={actual} expected={expected}", case.id)),
+                    Err(error) => failures.push(format!("{key} {} eval {error}", case.id)),
+                }
+            }
+        }
+        assert!(
+            seen >= 4,
+            "typed effect catalog should include compiled custom/alias/loadSpec/generateSpec bodies"
+        );
+        assert!(
+            failures.is_empty(),
+            "typed effect baseline mismatches ({}): {}",
+            failures.len(),
+            failures.iter().take(20).cloned().collect::<Vec<_>>().join(" | ")
+        );
+        assert!(
+            compared > 0,
+            "typed effect baseline parity compared {compared} cases across {seen} bodies"
         );
     }
 }

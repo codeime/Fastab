@@ -73,6 +73,10 @@ test("reference baseline covers every audited typed hook and corpus case", async
         "postProcess",
         "script",
         "filterTemplateSuggestions",
+        "custom",
+        "alias",
+        "loadSpec",
+        "generateSpec",
       ],
     );
     assert.equal(baseline.cases.length, INPUT_CORPUS.length);

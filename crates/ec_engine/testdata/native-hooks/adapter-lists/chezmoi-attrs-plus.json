@@ -1,0 +1,170 @@
+[
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "+after",
+      "+a"
+    ]
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "+before",
+      "+b"
+    ]
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "+empty",
+      "+e"
+    ]
+  },
+  {
+    "description": "Attribute modifier",
+    "name": "+encrypted"
+  },
+  {
+    "description": "Attribute modifier",
+    "name": "+exact"
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "+executable",
+      "+x"
+    ]
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "+once",
+      "+o"
+    ]
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "+private",
+      "+p"
+    ]
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "+readonly",
+      "+r"
+    ]
+  },
+  {
+    "description": "Attribute modifier",
+    "name": "+remove"
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "+template",
+      "+t"
+    ]
+  },
+  {
+    "description": "Type modifier",
+    "name": "+create"
+  },
+  {
+    "description": "Type modifier",
+    "name": "+modify"
+  },
+  {
+    "description": "Type modifier",
+    "name": "+script"
+  },
+  {
+    "description": "Type modifier",
+    "name": "+symlink"
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "-after",
+      "-a"
+    ]
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "-before",
+      "-b"
+    ]
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "-empty",
+      "-e"
+    ]
+  },
+  {
+    "description": "Attribute modifier",
+    "name": "-encrypted"
+  },
+  {
+    "description": "Attribute modifier",
+    "name": "-exact"
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "-executable",
+      "-x"
+    ]
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "-once",
+      "-o"
+    ]
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "-private",
+      "-p"
+    ]
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "-readonly",
+      "-r"
+    ]
+  },
+  {
+    "description": "Attribute modifier",
+    "name": "-remove"
+  },
+  {
+    "description": "Attribute modifier",
+    "name": [
+      "-template",
+      "-t"
+    ]
+  },
+  {
+    "description": "Type modifier",
+    "name": "-create"
+  },
+  {
+    "description": "Type modifier",
+    "name": "-modify"
+  },
+  {
+    "description": "Type modifier",
+    "name": "-script"
+  },
+  {
+    "description": "Type modifier",
+    "name": "-symlink"
+  }
+]

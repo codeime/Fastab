@@ -24,7 +24,7 @@
         "hub#alias#90"
       ],
       "sourceField": "alias",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 3,
@@ -49,7 +49,7 @@
         "gh#alias#35"
       ],
       "sourceField": "alias",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 3,
@@ -77,7 +77,7 @@
         "yarn#alias#18"
       ],
       "sourceField": "alias",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -104,7 +104,7 @@
         "make#custom#2"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -149,7 +149,7 @@
         "scc#custom#16"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -175,7 +175,7 @@
         "fig/2.0.0#custom#8"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -201,7 +201,7 @@
         "degit#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -229,7 +229,7 @@
         "apt#custom#12"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -257,7 +257,7 @@
         "npm#custom#16"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -294,7 +294,7 @@
         "man#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -323,7 +323,7 @@
         "pkgutil#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -353,7 +353,7 @@
         "nx#custom#83"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -382,7 +382,7 @@
         "dscacheutil#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -406,7 +406,7 @@
         "fig/1.0.0#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -431,7 +431,7 @@
         "fig/2.0.0#custom#11"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -461,7 +461,7 @@
         "hub#custom#59"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -489,7 +489,7 @@
         "spring#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -517,7 +517,7 @@
         "capacitor#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -556,7 +556,7 @@
         "chezmoi#custom#16"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -586,7 +586,7 @@
         "deno#custom#19"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -623,7 +623,7 @@
         "esbuild#custom#4"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -647,7 +647,7 @@
         "fig/2.0.0#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -678,7 +678,7 @@
         "sftp#custom#1"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -704,7 +704,7 @@
         "ykman#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -730,7 +730,7 @@
         "firefox#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -763,7 +763,7 @@
         "npm#custom#24"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -800,7 +800,7 @@
         "file#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -833,7 +833,7 @@
         "pnpm#custom#20"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -859,7 +859,7 @@
         "shadcn-ui#custom#1"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -885,7 +885,7 @@
         "echo#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -912,7 +912,7 @@
         "pass#custom#2"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -937,7 +937,7 @@
         "bun#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -965,7 +965,7 @@
         "bun#custom#27"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -993,7 +993,7 @@
         "st2#custom#2"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1021,7 +1021,7 @@
         "spring#custom#5"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1050,7 +1050,7 @@
         "dscacheutil#custom#1"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1084,7 +1084,7 @@
         "tldr#custom#3"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1110,7 +1110,7 @@
         "dapr#custom#1"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1141,7 +1141,7 @@
         "rush#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1170,7 +1170,7 @@
         "fig/1.0.0#custom#4"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1196,7 +1196,7 @@
         "ts-node#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1233,7 +1233,7 @@
         "codesign#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1264,7 +1264,7 @@
         "chezmoi#custom#24"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1294,7 +1294,7 @@
         "ssh#custom#1"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1331,7 +1331,7 @@
         "scc#custom#8"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1362,7 +1362,7 @@
         "oxlint#custom#7"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1400,7 +1400,7 @@
         "gh#custom#30"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1428,7 +1428,7 @@
         "trivy#custom#13"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1467,7 +1467,7 @@
         "swift#custom#4"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1510,7 +1510,7 @@
         "airflow#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1535,7 +1535,7 @@
         "pass#custom#3"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1560,7 +1560,7 @@
         "fig/2.0.0#custom#12"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1588,7 +1588,7 @@
         "cap#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1620,7 +1620,7 @@
         "nx#custom#21"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1648,7 +1648,7 @@
         "oxlint#custom#6"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1675,7 +1675,7 @@
         "wd#custom#2"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1720,7 +1720,7 @@
         "esbuild#custom#16"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1759,7 +1759,7 @@
         "deno#custom#6"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -1786,7 +1786,7 @@
         "projj#custom#1"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1812,7 +1812,7 @@
         "mdfind#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1838,7 +1838,7 @@
         "nrm#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1866,7 +1866,7 @@
         "trivy#custom#2"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1895,7 +1895,7 @@
         "asdf#custom#2"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1925,7 +1925,7 @@
         "gh#custom#23"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1953,7 +1953,7 @@
         "npm#custom#35"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -1981,7 +1981,7 @@
         "gem#custom#12"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2009,7 +2009,7 @@
         "goto#custom#2"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2039,7 +2039,7 @@
         "asdf#custom#40"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2071,7 +2071,7 @@
         "git-flow#custom#2"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2098,7 +2098,7 @@
         "systemctl#custom#23"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2128,7 +2128,7 @@
         "rsync#custom#3"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2154,7 +2154,7 @@
         "chown#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2182,7 +2182,7 @@
         "trivy#custom#14"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2212,7 +2212,7 @@
         "spring#custom#1"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2250,7 +2250,7 @@
         "hub#custom#3"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2283,7 +2283,7 @@
         "mgnl#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2315,7 +2315,7 @@
         "twilio#custom#1"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2346,7 +2346,7 @@
         "nx#custom#7"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2381,7 +2381,7 @@
         "rich#custom#4"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2407,7 +2407,7 @@
         "robot#custom#6"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2441,7 +2441,7 @@
         "man#custom#4"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2468,7 +2468,7 @@
         "systemctl#custom#10"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2492,7 +2492,7 @@
         "env#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2518,7 +2518,7 @@
         "eslint#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2543,7 +2543,7 @@
         "fig/2.0.0#custom#2"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2575,7 +2575,7 @@
         "scp#custom#2"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2606,7 +2606,7 @@
         "ni#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2636,7 +2636,7 @@
         "ssh#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2674,7 +2674,7 @@
         "osqueryi#custom#4"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2699,7 +2699,7 @@
         "youtube-dl#custom#6"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2744,7 +2744,7 @@
         "bun#custom#37"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2774,7 +2774,7 @@
         "cargo#custom#257"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2805,7 +2805,7 @@
         "cargo#custom#16"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2838,7 +2838,7 @@
         "bun#custom#33"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -2865,7 +2865,7 @@
         "projj#custom#3"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2891,7 +2891,7 @@
         "j#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2916,7 +2916,7 @@
         "yarn#custom#10"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2942,7 +2942,7 @@
         "dd#custom#0"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -2973,7 +2973,7 @@
         "rsync#custom#2"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -3002,7 +3002,7 @@
         "rich#custom#2"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -3034,7 +3034,7 @@
         "yarn#custom#8"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -3060,7 +3060,7 @@
         "brew#custom#2"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -3089,7 +3089,7 @@
         "fig/2.0.0#custom#15"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -3120,7 +3120,7 @@
         "dscl#custom#10"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -3152,7 +3152,7 @@
         "nx#custom#51"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -3191,7 +3191,7 @@
         "cargo#custom#112"
       ],
       "sourceField": "custom",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3352,7 +3352,7 @@
         "yarn#generateSpec#16"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3381,7 +3381,7 @@
         "kamal#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3411,7 +3411,7 @@
         "sake#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3438,7 +3438,7 @@
         "drush#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3468,7 +3468,7 @@
         "rails#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3497,7 +3497,7 @@
         "z#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3522,7 +3522,7 @@
         "dotnet#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3547,7 +3547,7 @@
         "python3#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 3,
@@ -3572,7 +3572,7 @@
         "node#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 3,
@@ -3601,7 +3601,7 @@
         "fig/2.0.0#generateSpec#1"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3631,7 +3631,7 @@
         "sls#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3659,7 +3659,7 @@
         "yarn#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 3,
@@ -3687,7 +3687,7 @@
         "php#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3719,7 +3719,7 @@
         "composer#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3744,7 +3744,7 @@
         "xc#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 3,
@@ -3773,7 +3773,7 @@
         "task#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3803,7 +3803,7 @@
         "hub#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 3,
@@ -3828,7 +3828,7 @@
         "python#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 3,
@@ -3854,7 +3854,7 @@
         "php/artisan#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 3,
@@ -3883,7 +3883,7 @@
         "fig/1.0.0#generateSpec#1"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3911,7 +3911,7 @@
         "magento#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -3937,7 +3937,7 @@
         "php/please#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 3,
@@ -3963,7 +3963,7 @@
         "php/bin-console#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 3,
@@ -3998,7 +3998,7 @@
         "cargo#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -4024,7 +4024,7 @@
         "mask#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 3,
@@ -4055,7 +4055,7 @@
         "pnpm#generateSpec#3"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -4085,7 +4085,7 @@
         "pnpm#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -4117,7 +4117,7 @@
         "nx#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -4142,7 +4142,7 @@
         "rugby#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 3,
@@ -4168,7 +4168,7 @@
         "rustup#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 3,
@@ -4199,7 +4199,7 @@
         "fig/2.0.0#generateSpec#16"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -4224,7 +4224,7 @@
         "fin#generateSpec#0"
       ],
       "sourceField": "generateSpec",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 7,
@@ -4678,7 +4678,7 @@
         "yarn#loadSpec#7"
       ],
       "sourceField": "loadSpec",
-      "status": "requires-native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -5079,7 +5079,7 @@
         "just#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -9417,7 +9417,7 @@
         "yarn#postProcess#14"
       ],
       "sourceField": "postProcess",
-      "status": "native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -11134,7 +11134,7 @@
         "pnpm#postProcess#14"
       ],
       "sourceField": "postProcess",
-      "status": "native-adapter"
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -15806,17 +15806,17 @@
       "jsAlias": {
         "native-adapter": 0,
         "native-filepaths-rewrite": 0,
-        "requires-native-adapter": 6,
+        "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
-        "typed-ir": 0,
+        "typed-ir": 6,
         "unclassified": 0
       },
       "jsCustom": {
-        "native-adapter": 0,
+        "native-adapter": 282,
         "native-filepaths-rewrite": 0,
-        "requires-native-adapter": 457,
+        "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
-        "typed-ir": 0,
+        "typed-ir": 175,
         "unclassified": 0
       },
       "jsFilterTemplateSuggestions": {
@@ -15828,11 +15828,11 @@
         "unclassified": 0
       },
       "jsGenerateSpec": {
-        "native-adapter": 0,
+        "native-adapter": 21,
         "native-filepaths-rewrite": 0,
-        "requires-native-adapter": 35,
+        "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
-        "typed-ir": 0,
+        "typed-ir": 14,
         "unclassified": 0
       },
       "jsGetQueryTerm": {
@@ -15846,17 +15846,17 @@
       "jsLoadSpec": {
         "native-adapter": 0,
         "native-filepaths-rewrite": 0,
-        "requires-native-adapter": 2,
+        "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
-        "typed-ir": 0,
+        "typed-ir": 2,
         "unclassified": 0
       },
       "jsPostProcess": {
-        "native-adapter": 274,
+        "native-adapter": 257,
         "native-filepaths-rewrite": 0,
         "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
-        "typed-ir": 2277,
+        "typed-ir": 2294,
         "unclassified": 0
       },
       "jsScript": {
@@ -15893,27 +15893,27 @@
       }
     },
     "extractedHooks": {
-      "native-adapter": 277,
+      "native-adapter": 563,
       "native-filepaths-rewrite": 0,
-      "requires-native-adapter": 500,
+      "requires-native-adapter": 0,
       "syntax-or-analysis-failure": 0,
-      "typed-ir": 2915,
+      "typed-ir": 3129,
       "unclassified": 0
     },
     "hooks": {
-      "native-adapter": 277,
+      "native-adapter": 563,
       "native-filepaths-rewrite": 0,
-      "requires-native-adapter": 500,
+      "requires-native-adapter": 0,
       "syntax-or-analysis-failure": 0,
-      "typed-ir": 2915,
+      "typed-ir": 3129,
       "unclassified": 0
     },
     "uniqueBodies": {
-      "native-adapter": 43,
+      "native-adapter": 117,
       "native-filepaths-rewrite": 0,
-      "requires-native-adapter": 139,
+      "requires-native-adapter": 0,
       "syntax-or-analysis-failure": 0,
-      "typed-ir": 412,
+      "typed-ir": 477,
       "unclassified": 0
     }
   },
@@ -15929,7 +15929,6 @@
   "gate": {
     "allBundledHooksMustPass": true,
     "blockers": [
-      "requires-native-adapter",
       "versioned-spec-behaviour-unadapted"
     ],
     "classificationComplete": true,

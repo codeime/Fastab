@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { hookFileName } from "./spec-hook-contract.mjs";
 import { factoryHelperCandidates } from "./typed-hook-inline.mjs";
 import {
+  EFFECT_HOOK_FIELDS,
   TYPED_HOOK_CONTRACTS,
   compileTypedHook,
   evaluateTypedHook,
@@ -122,6 +123,7 @@ export async function emitTypedHookDescriptors({
         }
       }
       if (!descriptor) continue;
+      if (baseline && !descriptorMatchesBaseline(descriptor, baseline)) continue;
       descriptors[`${group.field}:${group.sha}`] = descriptor;
       counts[group.field].ok += 1;
     } catch {
@@ -143,13 +145,54 @@ function expectedValue(expected) {
   return expected.value;
 }
 
+function mockEffects(cse) {
+  const descriptorOf = (item) =>
+    JSON.stringify({
+      command: item?.command,
+      args: item?.args ?? [],
+      cwd: item?.cwd ?? null,
+      env: item?.env ?? null,
+      timeout: item?.timeout ?? null,
+    });
+  return {
+    context: {
+      currentWorkingDirectory: cse.context?.currentWorkingDirectory ?? "",
+      currentProcess: cse.context?.currentProcess ?? "",
+      sshPrefix: cse.context?.sshPrefix ?? "",
+      environmentVariables: cse.context?.environmentVariables ?? {},
+      searchTerm: cse.context?.searchTerm ?? "",
+      isDangerous: Boolean(cse.context?.isDangerous),
+    },
+    exec(request) {
+      const snapshot =
+        typeof request === "string" ? { command: request, args: [] } : request;
+      const rule = (cse.exec ?? []).find(
+        (item) => descriptorOf(item) === descriptorOf(snapshot),
+      );
+      if (!rule) {
+        const error = new Error("unmocked command");
+        error.name = "UnmockedCommand";
+        throw error;
+      }
+      return {
+        status: rule.status ?? 0,
+        stdout: rule.stdout ?? "",
+        stderr: rule.stderr ?? "",
+      };
+    },
+  };
+}
+
 function descriptorMatchesBaseline(descriptor, baseline) {
   for (const cse of baseline.cases ?? []) {
     const expected = expectedValue(cse.expected);
     if (expected === undefined) continue;
     let actual;
     try {
-      actual = evaluateTypedHook(descriptor, cse.args);
+      const effects = EFFECT_HOOK_FIELDS.includes(descriptor.sourceField)
+        ? mockEffects(cse)
+        : null;
+      actual = evaluateTypedHook(descriptor, cse.args, effects);
     } catch {
       return false;
     }

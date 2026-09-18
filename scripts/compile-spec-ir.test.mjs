@@ -1434,6 +1434,26 @@ test("compiler emits a deterministic typed trigger sidecar from binding identity
         params: ["suggestion-array"],
         resultType: "suggestion-array",
       },
+      custom: {
+        irVersion: 1,
+        params: ["string-array", "exec", "context"],
+        resultType: "suggestion-array",
+      },
+      alias: {
+        irVersion: 1,
+        params: ["string", "exec"],
+        resultType: "string",
+      },
+      loadSpec: {
+        irVersion: 1,
+        params: ["string", "exec"],
+        resultType: "spec",
+      },
+      generateSpec: {
+        irVersion: 1,
+        params: ["string-array", "exec"],
+        resultType: "spec",
+      },
     });
     assert.deepEqual(Object.keys(sidecar.hooks), [supportedId]);
     const imported = await import(
@@ -2045,7 +2065,7 @@ test("side-effect-free leftovers hard-fail unless a named adapter or EC_ALLOW_UN
     );
     await assert.rejects(
       compileSpecsIr({ srcDir, outDir, enforceNamedAdapters: true }),
-      /typed compile failed for 1 side-effect-free hook/,
+      /typed compile failed for 1 hook/,
     );
     process.env.EC_ALLOW_UNADAPTED = "1";
     const result = await compileSpecsIr({

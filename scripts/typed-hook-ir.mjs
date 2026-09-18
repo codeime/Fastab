@@ -41,6 +41,17 @@ export const TYPED_VALUE_TYPES = Object.freeze([
   "value-array",
   "regex",
   "null",
+  "exec",
+  "context",
+  "exec-result",
+  "spec",
+]);
+
+export const EFFECT_HOOK_FIELDS = Object.freeze([
+  "custom",
+  "alias",
+  "loadSpec",
+  "generateSpec",
 ]);
 
 export const TYPED_HOOK_CONTRACTS = Object.freeze({
@@ -64,13 +75,29 @@ export const TYPED_HOOK_CONTRACTS = Object.freeze({
     params: Object.freeze(["suggestion-array"]),
     resultType: "suggestion-array",
   }),
+  custom: Object.freeze({
+    params: Object.freeze(["string-array", "exec", "context"]),
+    resultType: "suggestion-array",
+  }),
+  alias: Object.freeze({
+    params: Object.freeze(["string", "exec"]),
+    resultType: "string",
+  }),
+  loadSpec: Object.freeze({
+    params: Object.freeze(["string", "exec"]),
+    resultType: "spec",
+  }),
+  generateSpec: Object.freeze({
+    params: Object.freeze(["string-array", "exec"]),
+    resultType: "spec",
+  }),
 });
 
 export const TYPED_HOOK_SIDECAR_FIELDS = Object.freeze(
   Object.keys(TYPED_HOOK_CONTRACTS),
 );
 
-/** Sidecar `contracts` block: every T2.3 side-effect-free field. */
+/** Sidecar `contracts` block: every typed hook field, including T2.5 effects. */
 export function typedHookSidecarContracts() {
   return Object.fromEntries(
     Object.entries(TYPED_HOOK_CONTRACTS).map(([field, contract]) => [
@@ -208,6 +235,17 @@ export const TYPED_EXPRESSION_OPERATIONS = Object.freeze([
   "string-set-add",
   "object-values",
   "regex-search",
+  "exec",
+  "par",
+  "ctx-cwd",
+  "ctx-process",
+  "ctx-ssh-prefix",
+  "ctx-env",
+  "ctx-environment",
+  "ctx-search-term",
+  "ctx-is-dangerous",
+  "spec-object",
+  "throw",
 ]);
 
 const TYPE = Object.freeze({
@@ -224,6 +262,10 @@ const TYPE = Object.freeze({
   VALUE_ARRAY: "value-array",
   REGEX: "regex",
   NULL: "null",
+  EXEC: "exec",
+  CONTEXT: "context",
+  EXEC_RESULT: "exec-result",
+  SPEC: "spec",
 });
 
 const SUGGESTION_KEYS = Object.freeze([
@@ -241,6 +283,58 @@ const SUGGESTION_KEYS = Object.freeze([
   "deprecated",
 ]);
 
+const SPEC_OBJECT_KEYS = Object.freeze([
+  "name",
+  "names",
+  "description",
+  "subcommands",
+  "options",
+  "persistentOptions",
+  "args",
+  "additionalSuggestions",
+  "loadSpec",
+  "requiresSubcommand",
+  "filterStrategy",
+  "parserDirectives",
+  "generateSpecCacheKey",
+  "icon",
+  "priority",
+  "hidden",
+  "insertValue",
+  "displayName",
+  "isDangerous",
+  "type",
+  "debounce",
+  "isOptional",
+  "isVariadic",
+  "isRequired",
+  "isRepeatable",
+  "default",
+  "suggestions",
+  "requiresEquals",
+  "exclusiveOn",
+  "dependsOn",
+  "generators",
+  "template",
+  "templates",
+  "script",
+  "splitOn",
+  "cache",
+  "scriptTimeout",
+  "trigger",
+  "getQueryTerm",
+  "filterTemplateSuggestions",
+  "extensions",
+  "equals",
+  "replaceValue",
+  "deprecated",
+  "isPersistent",
+  "requiresSeparator",
+  "isCommand",
+  "contents",
+  "suggestCurrentToken",
+]);
+
 const BUILTIN_IDENTIFIERS = Object.freeze({
   undefined: { type: TYPE.NULL, expr: { op: "null" } },
   NaN: null,
@@ -254,6 +348,7 @@ const BUILTIN_IDENTIFIERS = Object.freeze({
   Object: { kind: "object-ns" },
   Math: { kind: "math-ns" },
   Set: { kind: "set-ctor" },
+  Promise: { kind: "promise-ns" },
 });
 
 export const MAX_NODES = 512;
@@ -382,6 +477,17 @@ const OP_KEYS = Object.freeze({
   "string-set-add": ["op", "name", "item"],
   "object-values": ["op", "value"],
   "regex-search": ["op", "value", "pattern", "flags"],
+  exec: ["op", "command", "args", "cwd", "env", "timeout"],
+  par: ["op", "items"],
+  "ctx-cwd": ["op"],
+  "ctx-process": ["op"],
+  "ctx-ssh-prefix": ["op"],
+  "ctx-env": ["op", "name"],
+  "ctx-environment": ["op"],
+  "ctx-search-term": ["op"],
+  "ctx-is-dangerous": ["op"],
+  "spec-object": ["op", "fields"],
+  throw: ["op", "class", "message"],
 });
 
 export class TypedHookCompileError extends Error {
@@ -484,7 +590,7 @@ function literalExpression(value, path) {
   });
 }
 
-function unwrapFunction(ast, body) {
+function unwrapFunction(ast, body, allowAsync = false) {
   if (ast.type !== "Program" || ast.body.length !== 1) {
     fail("hook must contain exactly one function expression", {
       code: "function-shape",
@@ -507,7 +613,13 @@ function unwrapFunction(ast, body) {
       nodeType: fn.type,
     });
   }
-  if (fn.async || fn.generator) {
+  if (fn.generator) {
+    fail("async and generator hooks are not representable", {
+      code: "async",
+      nodeType: fn.type,
+    });
+  }
+  if (fn.async && !allowAsync) {
     fail("async and generator hooks are not representable", {
       code: "async",
       nodeType: fn.type,
@@ -545,7 +657,7 @@ function unwrapFunction(ast, body) {
   return { fn, names, body };
 }
 
-function parseFunctionBody(body) {
+function parseFunctionBody(body, allowAsync = false) {
   if (typeof body !== "string" || !body.trim()) {
     fail("hook body must be a non-empty string", { code: "input" });
   }
@@ -563,7 +675,7 @@ function parseFunctionBody(body) {
       code: "syntax",
     });
   }
-  return unwrapFunction(ast, body);
+  return unwrapFunction(ast, body, allowAsync);
 }
 
 function propertyName(member) {
@@ -655,6 +767,18 @@ function unifyTypes(left, right, expectedType = null) {
   }
   if (left === TYPE.INTEGER && right === TYPE.BOOL) return TYPE.INTEGER;
   if (left === TYPE.BOOL && right === TYPE.INTEGER) return TYPE.INTEGER;
+  if (expectedType === TYPE.SPEC) {
+    if (
+      left === TYPE.SPEC ||
+      right === TYPE.SPEC ||
+      left === TYPE.JSON ||
+      right === TYPE.JSON ||
+      left === TYPE.NULL ||
+      right === TYPE.NULL
+    ) {
+      return TYPE.SPEC;
+    }
+  }
   if (isJsonLike(left) || isJsonLike(right)) return expectedType ?? TYPE.JSON;
   return expectedType ?? left;
 }
@@ -910,6 +1034,9 @@ function compileStatements(statements, environment, expectedType, state, depth) 
     if (expectedType && expectedType !== TYPE.NULL) {
       if (isArrayType(expectedType)) {
         return { type: expectedType, expr: { op: "array", items: [] } };
+      }
+      if (expectedType === TYPE.SPEC) {
+        return { type: TYPE.SPEC, expr: { op: "null" } };
       }
       fail("empty block does not match expected type", { code: "type-mismatch" });
     }
@@ -1286,6 +1413,22 @@ function compileStatements(statements, environment, expectedType, state, depth) 
       },
     };
   }
+  if (head.type === "ThrowStatement") {
+    const thrown = compileThrowArgument(head.argument, (argument, expected) =>
+      compileExpression(argument, environment, expected, state, depth + 1),
+    );
+    if (tail.length === 0) return thrown;
+    return {
+      type: expectedType ?? TYPE.NULL,
+      expr: {
+        op: "seq",
+        items: [
+          thrown.expr,
+          compileStatements(tail, environment, expectedType, state, depth + 1).expr,
+        ],
+      },
+    };
+  }
   if (head.type === "ExpressionStatement") {
     const value = compileExpression(head.expression, environment, null, state, depth + 1);
     if (tail.length === 0) {
@@ -1387,6 +1530,201 @@ function compileHelperCall(
   return body;
 }
 
+function execNullField() {
+  return { op: "null" };
+}
+
+function compileContextProperty(name, keyExpr) {
+  switch (name) {
+    case "currentWorkingDirectory":
+      return { type: TYPE.STRING, expr: { op: "ctx-cwd" } };
+    case "currentProcess":
+      return { type: TYPE.STRING, expr: { op: "ctx-process" } };
+    case "sshPrefix":
+      return { type: TYPE.STRING, expr: { op: "ctx-ssh-prefix" } };
+    case "searchTerm":
+      return { type: TYPE.STRING, expr: { op: "ctx-search-term" } };
+    case "isDangerous":
+      return { type: TYPE.BOOL, expr: { op: "ctx-is-dangerous" } };
+    case "environmentVariables":
+      if (keyExpr) {
+        return {
+          type: TYPE.STRING,
+          expr: { op: "ctx-env", name: keyExpr },
+        };
+      }
+      return { type: TYPE.STRING_RECORD, expr: { op: "ctx-environment" } };
+    default:
+      fail(`context.${name} is not representable`, {
+        code: "unsupported-property",
+      });
+  }
+}
+
+function compileExecArgument(argument, environment, state, depth, child) {
+  if (argument.type === "SpreadElement") {
+    fail("spread executeCommand calls are unsupported", {
+      code: "unsupported-syntax",
+    });
+  }
+  if (argument.type === "Literal" && typeof argument.value === "string") {
+    return {
+      type: TYPE.EXEC_RESULT,
+      expr: {
+        op: "exec",
+        command: { op: "string", value: "sh" },
+        args: {
+          op: "array",
+          items: [
+            { op: "string", value: "-c" },
+            { op: "string", value: argument.value },
+          ],
+        },
+        cwd: execNullField(),
+        env: execNullField(),
+        timeout: execNullField(),
+      },
+    };
+  }
+  if (
+    argument.type === "BinaryExpression" &&
+    argument.operator === "+"
+  ) {
+    fail("string-concatenated shell commands are not representable", {
+      code: "shell-concat",
+    });
+  }
+  if (argument.type === "TemplateLiteral" && argument.expressions.length > 0) {
+    fail("string-concatenated shell commands are not representable", {
+      code: "shell-concat",
+    });
+  }
+  if (argument.type === "TemplateLiteral") {
+    const cooked = argument.quasis[0]?.value.cooked;
+    if (typeof cooked !== "string") {
+      fail("executeCommand template must be a cooked string", {
+        code: "unsupported-literal",
+      });
+    }
+    return compileExecArgument(
+      { type: "Literal", value: cooked },
+      environment,
+      state,
+      depth,
+      child,
+    );
+  }
+  if (argument.type !== "ObjectExpression") {
+    fail("executeCommand requires a command object or a string literal", {
+      code: "unsupported-syntax",
+      nodeType: argument.type,
+    });
+  }
+  const fields = new Map();
+  for (const property of argument.properties) {
+    if (property.type !== "Property" || property.computed || property.kind !== "init") {
+      fail("executeCommand object is not representable", {
+        code: "unsupported-syntax",
+      });
+    }
+    const key =
+      property.key.type === "Identifier"
+        ? property.key.name
+        : property.key.type === "Literal" && typeof property.key.value === "string"
+          ? property.key.value
+          : null;
+    if (!key) {
+      fail("executeCommand object key is not representable", {
+        code: "unsupported-syntax",
+      });
+    }
+    if (!["command", "args", "cwd", "env", "timeout"].includes(key)) {
+      fail(`executeCommand field ${key} is not representable`, {
+        code: "unsupported-property",
+      });
+    }
+    fields.set(key, property.value);
+  }
+  if (!fields.has("command")) {
+    fail("executeCommand object requires command", { code: "call-arity" });
+  }
+  const command = child(fields.get("command"), TYPE.STRING);
+  const args = fields.has("args")
+    ? child(fields.get("args"), TYPE.STRING_ARRAY)
+    : { type: TYPE.STRING_ARRAY, expr: { op: "array", items: [] } };
+  const cwd = fields.has("cwd")
+    ? child(fields.get("cwd"), TYPE.STRING)
+    : { type: TYPE.NULL, expr: execNullField() };
+  const env = fields.has("env")
+    ? child(fields.get("env"), TYPE.STRING_RECORD)
+    : { type: TYPE.NULL, expr: execNullField() };
+  const timeout = fields.has("timeout")
+    ? child(fields.get("timeout"), TYPE.INTEGER)
+    : { type: TYPE.NULL, expr: execNullField() };
+  return {
+    type: TYPE.EXEC_RESULT,
+    expr: {
+      op: "exec",
+      command: command.expr,
+      args: args.expr,
+      cwd: cwd.expr,
+      env: env.expr,
+      timeout: timeout.expr,
+    },
+  };
+}
+
+function compileSpecObjectLiteral(node, child) {
+  const fields = [];
+  for (const property of node.properties) {
+    if (property.type === "SpreadElement") {
+      fail("spec-object spread is not representable", {
+        code: "unsupported-syntax",
+      });
+    }
+    if (property.type !== "Property" || property.computed || property.kind !== "init") {
+      fail("spec-object property is not representable", {
+        code: "unsupported-syntax",
+      });
+    }
+    const key =
+      property.key.type === "Identifier"
+        ? property.key.name
+        : property.key.type === "Literal" && typeof property.key.value === "string"
+          ? property.key.value
+          : null;
+    if (!key || !SPEC_OBJECT_KEYS.includes(key)) {
+      fail(`spec-object key ${String(key)} is not a Fig spec field`, {
+        code: "schema",
+      });
+    }
+    fields.push({ key, value: child(property.value).expr });
+  }
+  return { type: TYPE.SPEC, expr: { op: "spec-object", fields } };
+}
+
+function compileThrowArgument(argument, child) {
+  if (
+    argument &&
+    argument.type === "NewExpression" &&
+    argument.callee.type === "Identifier" &&
+    argument.callee.name === "Error"
+  ) {
+    const message =
+      argument.arguments[0] != null
+        ? child(argument.arguments[0], TYPE.STRING)
+        : { type: TYPE.STRING, expr: { op: "string", value: "" } };
+    return {
+      type: TYPE.NULL,
+      expr: { op: "throw", class: "Error", message: message.expr },
+    };
+  }
+  fail("only throw new Error(...) is representable", {
+    code: "unsupported-syntax",
+    nodeType: argument?.type,
+  });
+}
+
 function compileExpression(node, environment, expectedType, state, depth = 0) {
   if (!node || typeof node.type !== "string") {
     fail("missing expression node", { code: "unsupported-syntax" });
@@ -1416,6 +1754,18 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
   switch (node.type) {
     case "Identifier": {
       const binding = envGet(environment, node.name);
+      if (binding?.kind === "exec-fn") {
+        fail("executeCommand is only valid as a callee", {
+          code: "unknown-call",
+          nodeType: node.type,
+        });
+      }
+      if (binding?.kind === "context") {
+        fail("context is only valid for property access", {
+          code: "unsupported-property",
+          nodeType: node.type,
+        });
+      }
       if (binding?.kind === "param") {
         return finish({
           type: binding.type,
@@ -1543,6 +1893,75 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
       });
     }
     case "MemberExpression": {
+      if (
+        node.object.type === "Identifier" &&
+        envGet(environment, node.object.name)?.kind === "context" &&
+        !node.computed
+      ) {
+        return finish(compileContextProperty(propertyName(node), null));
+      }
+      if (
+        node.computed &&
+        node.object.type === "MemberExpression" &&
+        !node.object.computed &&
+        node.object.object.type === "Identifier" &&
+        envGet(environment, node.object.object.name)?.kind === "context" &&
+        propertyName(node.object) === "environmentVariables"
+      ) {
+        return finish(compileContextProperty("environmentVariables", child(node.property, TYPE.STRING).expr));
+      }
+      if (
+        !node.computed &&
+        node.object.type === "MemberExpression" &&
+        !node.object.computed &&
+        node.object.object.type === "Identifier" &&
+        envGet(environment, node.object.object.name)?.kind === "context" &&
+        propertyName(node.object) === "environmentVariables"
+      ) {
+        return finish(
+          compileContextProperty("environmentVariables", {
+            op: "string",
+            value: propertyName(node),
+          }),
+        );
+      }
+      if (node.optional) {
+        const receiver = child(node.object);
+        const innerEnv = cloneEnv(environment);
+        innerEnv.set("$recv", {
+          kind: "let",
+          type: receiver.type,
+          name: "$recv",
+        });
+        const inner = compileExpression(
+          { ...node, optional: false, object: { type: "Identifier", name: "$recv" } },
+          innerEnv,
+          expectedType,
+          state,
+          depth + 1,
+        );
+        return finish({
+          type: inner.type,
+          expr: {
+            op: "let",
+            name: "$recv",
+            value: receiver.expr,
+            body: {
+              op: "if",
+              condition: {
+                op: "not",
+                value: {
+                  op: "loose-eq",
+                  left: { op: "var", name: "$recv" },
+                  right: { op: "null" },
+                },
+              },
+              then: inner.expr,
+              else: { op: "null" },
+            },
+          },
+        });
+      }
       if (node.computed) {
         const receiver = child(node.object);
         const index = child(node.property);
@@ -1627,6 +2046,18 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
           expr: { op: "get", value: receiver.expr, key: { op: "string", value: name } },
         });
       }
+      if (receiver.type === TYPE.EXEC_RESULT && ["stdout", "stderr", "status"].includes(name)) {
+        return finish({
+          type: name === "status" ? TYPE.INTEGER : TYPE.STRING,
+          expr: { op: "get", value: receiver.expr, key: { op: "string", value: name } },
+        });
+      }
+      if (receiver.type === TYPE.SPEC) {
+        return finish({
+          type: TYPE.JSON,
+          expr: { op: "get", value: receiver.expr, key: { op: "string", value: name } },
+        });
+      }
       if (isJsonLike(receiver.type) || receiver.type === TYPE.SUGGESTION) {
         return finish({
           type: TYPE.JSON,
@@ -1663,6 +2094,20 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
       if (node.callee.type === "Identifier") {
         const calleeName = node.callee.name;
         const binding = envGet(environment, calleeName);
+        if (binding?.kind === "exec-fn") {
+          if (node.arguments.length !== 1) {
+            fail("executeCommand expects exactly one argument", { code: "call-arity" });
+          }
+          return finish(
+            compileExecArgument(
+              node.arguments[0],
+              environment,
+              state,
+              depth,
+              child,
+            ),
+          );
+        }
         if (binding?.kind === "helper" && binding.helper.kind === "function") {
           return finish(
             compileHelperCall(
@@ -1726,6 +2171,46 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
             child,
           ),
         );
+      }
+      if (
+        node.callee.type === "MemberExpression" &&
+        !node.callee.computed &&
+        node.callee.object.type === "Identifier" &&
+        node.callee.object.name === "Promise" &&
+        node.callee.property.type === "Identifier"
+      ) {
+        if (node.callee.property.name === "resolve") {
+          if (node.arguments.length !== 1) {
+            fail("Promise.resolve expects one argument", { code: "call-arity" });
+          }
+          return finish(child(node.arguments[0], expectedType));
+        }
+        if (node.callee.property.name === "all") {
+          if (node.arguments.length !== 1) {
+            fail("Promise.all expects one argument", { code: "call-arity" });
+          }
+          const list = node.arguments[0];
+          if (list.type !== "ArrayExpression") {
+            fail("Promise.all requires an array literal", {
+              code: "unsupported-syntax",
+            });
+          }
+          const items = list.elements.map((element) => {
+            if (!element || element.type === "SpreadElement") {
+              fail("Promise.all spread is not representable", {
+                code: "unsupported-syntax",
+              });
+            }
+            return child(element).expr;
+          });
+          return finish({
+            type: TYPE.VALUE_ARRAY,
+            expr: { op: "par", items },
+          });
+        }
+        fail(`Promise.${node.callee.property.name} is not representable`, {
+          code: "unknown-call",
+        });
       }
       if (node.callee.type !== "MemberExpression") {
         fail("only allowlisted methods may be called", {
@@ -1804,6 +2289,18 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
           return finish({
             type: TYPE.VALUE_ARRAY,
             expr: { op: "object-values", value: value.expr },
+          });
+        }
+        if (methodName === "assign") {
+          if (node.arguments.length < 1) {
+            fail("Object.assign expects at least one argument", { code: "call-arity" });
+          }
+          return finish({
+            type: expectedType === TYPE.STRING_RECORD ? TYPE.STRING_RECORD : TYPE.JSON,
+            expr: {
+              op: "object-assign",
+              parts: node.arguments.map((argument) => child(argument).expr),
+            },
           });
         }
         fail(`Object.${methodName} is not representable`, { code: "unknown-call" });
@@ -2344,7 +2841,10 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
           });
         }
         if (method === "localeCompare") {
-          const other = oneArgument(TYPE.STRING);
+          if (node.arguments.length < 1) {
+            fail("localeCompare expects a compare target", { code: "call-arity" });
+          }
+          const other = child(node.arguments[0], TYPE.STRING);
           return finish({
             type: TYPE.INTEGER,
             expr: {
@@ -2932,6 +3432,10 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
         },
       });
     }
+    case "AwaitExpression":
+      return finish(child(node.argument, expectedType));
+    case "ChainExpression":
+      return finish(child(node.expression, expectedType));
     case "TemplateLiteral": {
       if (node.expressions.length !== node.quasis.length - 1) {
         fail("template literal is malformed", {
@@ -3026,6 +3530,9 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
       });
     }
     case "ObjectExpression": {
+      if (expectedType === TYPE.SPEC) {
+        return finish(compileSpecObjectLiteral(node, child));
+      }
       if (node.properties.length === 0) {
         return finish({
           type:
@@ -3299,7 +3806,13 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
   }
 }
 
-function compileFunction({ body, parameterTypes, resultType, helpers = new Map() }) {
+function compileFunction({
+  body,
+  parameterTypes,
+  resultType,
+  helpers = new Map(),
+  allowAsync = false,
+}) {
   if (!Array.isArray(parameterTypes)) {
     fail("parameterTypes must be a type array", { code: "input" });
   }
@@ -3307,7 +3820,7 @@ function compileFunction({ body, parameterTypes, resultType, helpers = new Map()
     assertType(type, `parameterTypes[${index}]`),
   );
   assertType(resultType, "resultType");
-  const { fn } = parseFunctionBody(body);
+  const { fn } = parseFunctionBody(body, allowAsync);
   if (fn.params.length > parameterTypes.length) {
     fail(
       `hook declares ${fn.params.length} parameters but contract provides ${parameterTypes.length}`,
@@ -3318,6 +3831,24 @@ function compileFunction({ body, parameterTypes, resultType, helpers = new Map()
   fn.params.forEach((param, index) => {
     const type = parameterTypes[index];
     if (param.type === "Identifier") {
+      if (type === TYPE.EXEC) {
+        environment.set(param.name, {
+          kind: "exec-fn",
+          index,
+          type,
+          name: param.name,
+        });
+        return;
+      }
+      if (type === TYPE.CONTEXT) {
+        environment.set(param.name, {
+          kind: "context",
+          index,
+          type,
+          name: param.name,
+        });
+        return;
+      }
       environment.set(param.name, {
         kind: "param",
         index,
@@ -3351,6 +3882,9 @@ function compileFunction({ body, parameterTypes, resultType, helpers = new Map()
     expression = { op: "let", name, value, body: expression };
   };
   fn.params.forEach((param, index) => {
+    if (parameterTypes[index] === TYPE.EXEC || parameterTypes[index] === TYPE.CONTEXT) {
+      return;
+    }
     if (param.type === "ArrayPattern") {
       param.elements.forEach((element, elementIndex) => {
         if (element?.type === "Identifier") {
@@ -3490,6 +4024,7 @@ export function compileTypedHook({
     parameterTypes: contract.params,
     resultType: contract.resultType,
     helpers,
+    allowAsync: EFFECT_HOOK_FIELDS.includes(sourceField),
   });
   const descriptor = {
     version: TYPED_HOOK_IR_VERSION,
@@ -3961,6 +4496,51 @@ function validateExpression(
       assertString(node.flags, `${path}.flags`);
       assertTypedRegexLiteral(node.pattern, node.flags);
       return ensureResult(TYPE.INTEGER);
+    case "exec":
+      child(node.command, TYPE.STRING, "command");
+      child(node.args, TYPE.STRING_ARRAY, "args");
+      child(node.cwd, null, "cwd");
+      child(node.env, null, "env");
+      child(node.timeout, null, "timeout");
+      return ensureResult(TYPE.EXEC_RESULT);
+    case "par":
+      if (!Array.isArray(node.items)) {
+        fail(`${path}.items must be an array`, { code: "schema" });
+      }
+      node.items.forEach((item, index) => child(item, null, `items[${index}]`));
+      return ensureResult(TYPE.VALUE_ARRAY);
+    case "ctx-cwd":
+    case "ctx-process":
+    case "ctx-ssh-prefix":
+    case "ctx-search-term":
+      return ensureResult(TYPE.STRING);
+    case "ctx-is-dangerous":
+      return ensureResult(TYPE.BOOL);
+    case "ctx-environment":
+      return ensureResult(TYPE.STRING_RECORD);
+    case "ctx-env":
+      child(node.name, TYPE.STRING, "name");
+      return ensureResult(TYPE.STRING);
+    case "spec-object":
+      if (!Array.isArray(node.fields)) {
+        fail(`${path}.fields must be an array`, { code: "schema" });
+      }
+      node.fields.forEach((field, index) => {
+        if (!field || typeof field !== "object") {
+          fail(`${path}.fields[${index}] must be an object`, { code: "schema" });
+        }
+        if (typeof field.key !== "string" || !SPEC_OBJECT_KEYS.includes(field.key)) {
+          fail(`${path}.fields[${index}].key is not a Fig spec field`, {
+            code: "schema",
+          });
+        }
+        child(field.value, null, `fields[${index}].value`);
+      });
+      return ensureResult(TYPE.SPEC);
+    case "throw":
+      assertString(node.class, `${path}.class`);
+      child(node.message, TYPE.STRING, "message");
+      return expectedType ?? TYPE.NULL;
     case "string-slice-range":
       child(node.value, TYPE.STRING, "value");
       child(node.start, TYPE.INTEGER, "start");
@@ -4669,9 +5249,88 @@ function evaluateExpression(node, args, locals = new Map()) {
     }
     case "regex-search":
       return ev(node.value).search(new RegExp(node.pattern, node.flags));
+    case "exec":
+      return evaluateExec(node, ev);
+    case "par":
+      return node.items.map((item) => ev(item));
+    case "ctx-cwd":
+      return requireEffects().context.currentWorkingDirectory;
+    case "ctx-process":
+      return requireEffects().context.currentProcess;
+    case "ctx-ssh-prefix":
+      return requireEffects().context.sshPrefix;
+    case "ctx-search-term":
+      return requireEffects().context.searchTerm;
+    case "ctx-is-dangerous":
+      return requireEffects().context.isDangerous;
+    case "ctx-environment":
+      return { ...requireEffects().context.environmentVariables };
+    case "ctx-env": {
+      const name = asUtf16(ev(node.name), "ctx-env.name");
+      const value = requireEffects().context.environmentVariables?.[name];
+      return value == null ? undefined : value;
+    }
+    case "spec-object": {
+      const object = {};
+      for (const field of node.fields) {
+        object[field.key] = ev(field.value);
+      }
+      return object;
+    }
+    case "throw": {
+      const error = new Error(asUtf16(ev(node.message), "throw.message"));
+      error.name = node.class;
+      throw error;
+    }
     default:
       fail(`unhandled expression operation ${node.op}`, { code: "schema" });
   }
+}
+
+let activeEffects = null;
+
+function requireEffects() {
+  if (!activeEffects?.context && !activeEffects?.exec) {
+    fail("effect operation requires evaluateTypedHook effects", { code: "input" });
+  }
+  return activeEffects;
+}
+
+function evaluateExec(node, ev) {
+  const effects = requireEffects();
+  if (typeof effects.exec !== "function") {
+    fail("exec requires an executeCommand implementation", { code: "input" });
+  }
+  const command = asUtf16(ev(node.command), "exec.command");
+  const rawArgs = ev(node.args);
+  const args = (asArray(rawArgs) ?? []).map((item) => asUtf16(item, "exec.args"));
+  const cwdValue = ev(node.cwd);
+  const envValue = ev(node.env);
+  const timeoutValue = ev(node.timeout);
+  const request = {
+    command,
+    args,
+    cwd: cwdValue == null ? undefined : asUtf16(cwdValue, "exec.cwd"),
+    env:
+      envValue && typeof envValue === "object" && !Array.isArray(envValue)
+        ? Object.fromEntries(
+            Object.entries(envValue).map(([key, value]) => [
+              key,
+              asUtf16(value, "exec.env"),
+            ]),
+          )
+        : undefined,
+    timeout:
+      timeoutValue == null || timeoutValue === undefined
+        ? undefined
+        : timeoutValue,
+  };
+  const result = effects.exec(request);
+  return {
+    stdout: result?.stdout ?? "",
+    stderr: result?.stderr ?? "",
+    status: result?.status ?? 0,
+  };
 }
 
 /**
@@ -4722,6 +5381,10 @@ function assertEvaluateArg(value, type, index) {
     case TYPE.STRING_SET:
     case TYPE.VALUE_ARRAY:
     case TYPE.REGEX:
+    case TYPE.EXEC:
+    case TYPE.CONTEXT:
+    case TYPE.EXEC_RESULT:
+    case TYPE.SPEC:
       return;
     default:
       fail(`args[${index}] type ${type} is compile-only until later ops`, {
@@ -4730,23 +5393,59 @@ function assertEvaluateArg(value, type, index) {
   }
 }
 
-export function evaluateTypedHook(descriptor, args) {
-  validateTypedHookIr(descriptor);
-  if (!Array.isArray(args) || args.length !== descriptor.params.length) {
+function runtimeEvaluateArgs(descriptor, args) {
+  const runtime = [];
+  descriptor.params.forEach((param, index) => {
+    if (param.type === TYPE.EXEC || param.type === TYPE.CONTEXT) return;
+    runtime.push({ param, value: args[runtime.length] });
+  });
+  if (args.length === descriptor.params.length) {
+    return descriptor.params.map((param, index) => ({
+      param,
+      value: args[index],
+    }));
+  }
+  if (runtime.length !== args.length) {
     fail("evaluateTypedHook args must match the field contract", {
       code: "input",
     });
   }
-  descriptor.params.forEach((param, index) =>
-    assertEvaluateArg(args[index], param.type, index),
-  );
+  return runtime;
+}
+
+export function evaluateTypedHook(descriptor, args, effects = null) {
+  validateTypedHookIr(descriptor);
+  if (!Array.isArray(args)) {
+    fail("evaluateTypedHook args must match the field contract", {
+      code: "input",
+    });
+  }
+  const pairs = runtimeEvaluateArgs(descriptor, args);
+  const bound = Array.from({ length: descriptor.params.length }, () => null);
+  if (args.length === descriptor.params.length) {
+    descriptor.params.forEach((param, index) => {
+      if (param.type !== TYPE.EXEC && param.type !== TYPE.CONTEXT) {
+        assertEvaluateArg(args[index], param.type, index);
+      }
+      bound[index] = args[index];
+    });
+  } else {
+    pairs.forEach(({ param, value }, index) => {
+      assertEvaluateArg(value, param.type, index);
+      bound[param.index] = value;
+    });
+  }
+  const previous = activeEffects;
+  activeEffects = effects;
   try {
-    return evaluateExpression(descriptor.expr, args, new Map());
+    return evaluateExpression(descriptor.expr, bound, new Map());
   } catch (error) {
     if (error instanceof TypedCompletion && error.kind === "return") {
       return error.value;
     }
     throw error;
+  } finally {
+    activeEffects = previous;
   }
 }
 
@@ -4777,8 +5476,8 @@ function normalizeSuggestionArrayJson(value) {
 }
 
 /** JSON shape `evaluate_typed_hook_json` compares against on the Rust side. */
-export function evaluateTypedHookJson(descriptor, args) {
-  const value = evaluateTypedHook(descriptor, args);
+export function evaluateTypedHookJson(descriptor, args, effects = null) {
+  const value = evaluateTypedHook(descriptor, args, effects);
   const cloned = JSON.parse(JSON.stringify(value));
   if (descriptor.resultType === "suggestion-array") {
     return normalizeSuggestionArrayJson(cloned);

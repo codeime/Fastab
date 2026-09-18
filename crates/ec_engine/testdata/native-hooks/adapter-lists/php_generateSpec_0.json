@@ -1,0 +1,13 @@
+{
+  "args": {
+    "generators": {
+      "filterTemplateSuggestions": {
+        "bodySha256": "db7b47887c241019943c4720df42e12ed6398665028de47a92fc6d863a529ea9",
+        "kind": "function"
+      },
+      "template": "filepaths"
+    }
+  },
+  "name": "php",
+  "subcommands": []
+}
