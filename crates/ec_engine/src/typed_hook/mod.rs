@@ -5114,7 +5114,10 @@ mod tests {
 
     #[test]
     fn suggestions_from_typed_json_treats_null_as_empty() {
-        assert_eq!(suggestions_from_typed_json(&JsonValue::Null).expect("null"), Vec::<Suggestion>::new());
+        assert_eq!(
+            suggestions_from_typed_json(&JsonValue::Null).expect("null"),
+            Vec::<Suggestion>::new()
+        );
         assert!(suggestions_from_typed_json(&json!({"name": "x"})).is_err());
     }
 
