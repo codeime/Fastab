@@ -116,7 +116,13 @@ export function tryCompileTypedHook(options) {
   try {
     return compileTypedHook(options);
   } catch (error) {
-    if (error instanceof TypedHookCompileError) return null;
+    if (
+      error instanceof TypedHookCompileError ||
+      error instanceof TypedRegexError ||
+      error instanceof TypedHookInlineError
+    ) {
+      return null;
+    }
     throw error;
   }
 }

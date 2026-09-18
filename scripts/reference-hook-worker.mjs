@@ -521,16 +521,6 @@ async function run(payload) {
       throw new Error("source hook SHA differs from audit");
     verified = { sourceShaVerified: true };
   } else {
-    await assertNoSymlinkAncestors(payload.irRoot, "IR root");
-    const irRoot = await realpath(payload.irRoot);
-    const moduleRootPath = join(irRoot, "source-modules");
-    await assertNoSymlinkAncestors(moduleRootPath, "source module root");
-    const moduleRoot = await realpath(moduleRootPath);
-    if (!inside(irRoot, moduleRoot)) {
-      throw new Error(
-        "closure-preserving hook module directory escapes its IR root",
-      );
-    }
     if (
       typeof payload.module !== "string" ||
       !/^[^/\\\0]+\.js$/.test(payload.module) ||
@@ -545,20 +535,15 @@ async function run(payload) {
     ) {
       throw new Error("closure-preserving hook module SHA is invalid");
     }
-    const moduleRead = await readRegularFile(
-      join(moduleRoot, payload.module),
-      "closure-preserving hook module",
-      { root: moduleRoot },
-    );
-    file = moduleRead.path;
-    if (!inside(moduleRoot, file) || !file.endsWith(".js")) {
-      throw new Error("closure-preserving hook module escapes its root");
+    if (typeof payload.moduleSource !== "string" || !payload.moduleSource) {
+      throw new Error("closure-preserving hook module source is required");
     }
-    source = moduleRead.text;
+    file = payload.module;
+    source = payload.moduleSource;
     const digest = createHash("sha256").update(source).digest("hex");
     if (digest !== payload.moduleSha256) {
       throw new Error(
-        "closure-preserving hook module SHA differs from manifest",
+        "closure-preserving hook module SHA differs from reconstructed module",
       );
     }
     const moduleInstance = sourceModule(source, context, payload.module, file);

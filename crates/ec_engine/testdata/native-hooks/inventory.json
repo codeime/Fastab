@@ -16155,7 +16155,7 @@
     "auditErrors": 0,
     "classifiedHooks": 3701,
     "extractedHooks": 3701,
-    "hookFilesOnDisk": 3701,
+    "hookFilesOnDisk": 0,
     "nativeFilepathsRewrite": 576,
     "unclassifiedHooks": 0,
     "uniqueBodies": 603

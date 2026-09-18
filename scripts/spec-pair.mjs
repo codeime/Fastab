@@ -63,7 +63,7 @@ export function sha256(value) {
 // cross-language contract and Rust orders `String` by UTF-8 bytes. Buffer
 // comparison keeps supplementary characters and BMP code points aligned.
 export function comparePath(left, right) {
-  return Buffer.compare(Buffer.from(left), Buffer.from(right));
+  return Buffer.compare(Buffer.from(left ?? ""), Buffer.from(right ?? ""));
 }
 
 // macOS exposes these two stable compatibility aliases. They are not user
@@ -503,7 +503,36 @@ async function readPairMarker(irRoot) {
  * for a stable tree even when the first and second directory digests happen
  * to come from different generations.
  */
-export async function verifyPair({ sourceRoot, irRoot, irOnly = false } = {}) {
+const LEFTOVER_RUNTIME_JS = Object.freeze([
+  "hook-modules.json",
+  "source-modules",
+  "hooks",
+]);
+
+export async function assertNoRuntimeJsArtifacts(irRoot) {
+  for (const name of LEFTOVER_RUNTIME_JS) {
+    const path = join(irRoot, name);
+    try {
+      await lstat(path);
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+    throw new Error(
+      `IR tree contains leftover runtime JS artifact ${name}: ${path}`,
+    );
+  }
+}
+
+export async function verifyPair({
+  sourceRoot,
+  irRoot,
+  irOnly = false,
+  allowLeftoverRuntimeJs = false,
+} = {}) {
+  if (!allowLeftoverRuntimeJs) {
+    await assertNoRuntimeJsArtifacts(irRoot);
+  }
   const before = await readPairMarker(irRoot);
   const source = irOnly
     ? null
@@ -1436,10 +1465,15 @@ async function currentOldPair(journal, canonical) {
   try {
     const verified =
       journal.operation === "ir"
-        ? await verifyPair({ irRoot: canonical.ir.path, irOnly: true })
+        ? await verifyPair({
+            irRoot: canonical.ir.path,
+            irOnly: true,
+            allowLeftoverRuntimeJs: true,
+          })
         : await verifyPair({
             sourceRoot: canonical.source.path,
             irRoot: canonical.ir.path,
+            allowLeftoverRuntimeJs: true,
           });
     if (verified.pairSha256 !== marker.pairSha256) {
       throw new Error(`canonical pair changed while reading its marker`);

@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 #
-# Replay T3.3 dual-path sessions through `ec engine complete --compare`.
+# Replay T3.3 session buffers through `ec engine complete` (Native only).
 #
 #   scripts/dual-path-session.sh
 #   scripts/dual-path-session.sh tests/dual-path/sessions/git.jsonl
 #
 # Each session is a JSONL of `{buffer, cwd}` where `cwd` is a repo key under
-# tests/dual-path/repos/{git,npm,docker,kubectl,cargo}. Product default stays Js.
-# Engines are spawned once per session; every row is still compared.
+# tests/dual-path/repos/{git,npm,docker,kubectl,cargo}. Runtime JS is gone.
 #
 set -euo pipefail
 
@@ -17,7 +16,7 @@ REPOS_DIR="$ROOT/tests/dual-path/repos"
 SPECS_DIR="${EC_SPECS_DIR:-$ROOT/bundle/specs-ir}"
 
 usage() {
-    sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,11p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-0}"
 }
 
@@ -77,7 +76,16 @@ fi
 
 for file in "${files[@]}"; do
     echo "==> $(basename "$file")"
-    "$EC" engine complete --session "$file" --repos-dir "$REPOS_DIR" --specs-dir "$SPECS_DIR"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "${line// }" ]] && continue
+        buffer="$(node -e 'const r=JSON.parse(process.argv[1]); process.stdout.write(r.buffer)' "$line")"
+        cwd_key="$(node -e 'const r=JSON.parse(process.argv[1]); process.stdout.write(r.cwd)' "$line")"
+        case "$cwd_key" in
+            git|npm|docker|kubectl|cargo) cwd="$REPOS_DIR/$cwd_key" ;;
+            *) cwd="$cwd_key" ;;
+        esac
+        "$EC" engine complete --buffer "$buffer" --cwd "$cwd" --specs-dir "$SPECS_DIR" >/dev/null
+    done < "$file"
 done
 
-echo "all sessions equal"
+echo "all sessions completed"

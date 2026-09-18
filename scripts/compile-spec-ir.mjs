@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
  * Compile bundled Fig JS specs into static JSON IR for the Rust engine.
- * Static walk data stays in JSON. Fig functions keep legacy standalone files
- * under hooks/ for audit and compatibility. The runtime path uses one
- * closure-preserving table per source module under source-modules/, referenced
- * through hook-modules.json. Known Rust builtins still replace matching
- * git/npm scripts.
+ * Static walk data stays in JSON. Fig functions are compiled to typed IR or
+ * named native adapters and recorded in typed-hooks.json. Closure-preserving
+ * modules stay in memory only so helper inlining can still run; hooks/,
+ * source-modules/, and hook-modules.json are not published. Known Rust
+ * builtins still replace matching git/npm scripts.
  */
 import {
   mkdir,
@@ -252,7 +252,7 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function sourceModuleFileName(sourcePath) {
+export function sourceModuleFileName(sourcePath) {
   return `${sha256(sourcePath).slice(0, 24)}.js`;
 }
 
@@ -479,6 +479,7 @@ async function writeTypedHookSidecar({
   enforceNamedAdapters = false,
 }) {
   const typedHooks = new Map();
+  const adapters = new Map();
   const fields = new Set(TYPED_HOOK_SIDECAR_FIELDS);
   const adapterCatalog = await loadNativeHookAdapters();
   const unadapted = [];
@@ -522,6 +523,11 @@ async function writeTypedHookSidecar({
           adapterCatalog,
         )
       ) {
+        adapters.set(binding.id, {
+          path: binding.path,
+          sourceField: binding.field,
+          functionBodySha256: binding.functionBodySha256,
+        });
         continue;
       }
       if (NAMED_ADAPTER_FIELDS.includes(binding.field)) {
@@ -545,7 +551,7 @@ async function writeTypedHookSidecar({
     typedHooks.set(binding.id, entry);
   }
 
-  if (typedHooks.size > TYPED_HOOK_CATALOG_MAX_HOOKS) {
+  if (typedHooks.size + adapters.size > TYPED_HOOK_CATALOG_MAX_HOOKS) {
     throw new Error(
       `typed hook catalog exceeds the ${TYPED_HOOK_CATALOG_MAX_HOOKS}-hook limit`,
     );
@@ -560,6 +566,13 @@ async function writeTypedHookSidecar({
       ),
     ),
   };
+  if (adapters.size > 0) {
+    sidecar.adapters = Object.fromEntries(
+      [...adapters.entries()].sort(([left], [right]) =>
+        comparePath(left, right),
+      ),
+    );
+  }
   const text = `${JSON.stringify(sidecar)}\n`;
   if (utf8ByteLength(text) > TYPED_HOOK_CATALOG_MAX_BYTES) {
     throw new Error(
@@ -1646,12 +1659,6 @@ async function writeClosurePreservingHookModules({
     );
   }
 
-  const modulesDir = join(stagedOutDir, HOOK_MODULES_DIR);
-  assertSafeSourceRelativePath(HOOK_MODULES_DIR);
-  assertPathInsideRoot(stagedOutDir, modulesDir, "compiled IR module directory");
-  await assertNoSymlinkInPath(modulesDir);
-  await mkdir(modulesDir, { recursive: true });
-  await assertNoSymlinkInPath(modulesDir);
   const manifestHooks = new Map();
   const manifestModules = new Map();
   const moduleSources = new Map();
@@ -1718,11 +1725,6 @@ async function writeClosurePreservingHookModules({
     }
     const moduleSha256 = sha256(moduleSource);
     moduleSources.set(moduleFile, moduleSource);
-    await writeOutputFile(
-      stagedOutDir,
-      `${HOOK_MODULES_DIR}/${moduleFile}`,
-      moduleSource,
-    );
     const hookIds = instances.map((instance) => instance.id).sort();
     manifestModules.set(moduleFile, {
       source: record.source,
@@ -1751,25 +1753,6 @@ async function writeClosurePreservingHookModules({
       `closure-preserving manifest covers ${hookCount}/${audit.hookManifest.length} audited hooks`,
     );
   }
-  const manifest = {
-    version: 1,
-    kind: "closure-preserving-hook-modules",
-    hooks: Object.fromEntries(
-      [...manifestHooks.entries()].sort(([left], [right]) =>
-        comparePath(left, right),
-      ),
-    ),
-    modules: Object.fromEntries(
-      [...manifestModules.entries()].sort(([left], [right]) =>
-        comparePath(left, right),
-      ),
-    ),
-  };
-  await writeOutputFile(
-    stagedOutDir,
-    HOOK_MODULE_MANIFEST,
-    `${JSON.stringify(manifest)}\n`,
-  );
   const typedHooks = await writeTypedHookSidecar({
     stagedOutDir,
     compilerBindings,
@@ -1894,6 +1877,17 @@ async function assertManagedIrOutput(
       }
       throw error;
     }
+    // T4.1: the previous compiler published hooks/, source-modules/, and
+    // hook-modules.json. Replacing that exact canonical tree is the
+    // migration; custom outputs still fail closed if leftover JS is present.
+    for (const name of [HOOK_MODULE_MANIFEST, HOOK_MODULES_DIR, "hooks"]) {
+      try {
+        await lstat(join(directory, name));
+        return snapshot;
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+    }
   }
   try {
     await verifyPair({ irRoot: directory, irOnly: true });
@@ -1940,17 +1934,11 @@ async function compileSpecsIrUnlocked({
     let compiled = 0;
     let failed = 0;
     let skipped = 0;
-    let hooksWritten = 0;
+    let hooksExtracted = 0;
     const failures = [];
     const appliedVersionDiffs = [];
     const versionedByCommand = new Map();
-    const hooksDir = join(stagedOutDir, "hooks");
-    assertSafeSourceRelativePath("hooks");
-    assertPathInsideRoot(stagedOutDir, hooksDir, "compiled IR hook directory");
-    await assertNoSymlinkInPath(hooksDir);
     const hookFilesByName = new Map();
-    await mkdir(hooksDir, { recursive: true });
-    await assertNoSymlinkInPath(hooksDir);
 
     for (const rel of files) {
       assertSafeSourceRelativePath(rel);
@@ -2034,7 +2022,7 @@ async function compileSpecsIrUnlocked({
             })),
           });
         }
-        for (const [id, hookSource] of hooks.files) {
+        for (const [id] of hooks.files) {
           const filename = hookFileName(id);
           const previousId = hookFilesByName.get(filename);
           if (previousId && previousId !== id) {
@@ -2043,12 +2031,7 @@ async function compileSpecsIrUnlocked({
             );
           }
           hookFilesByName.set(filename, id);
-          await writeOutputFile(
-            stagedOutDir,
-            `hooks/${filename}`,
-            hookSource,
-          );
-          hooksWritten += 1;
+          hooksExtracted += 1;
         }
         compiled += 1;
         compiledSpecs.push({
@@ -2235,7 +2218,7 @@ async function compileSpecsIrUnlocked({
     await publishDirectory(stagedOutDir, outDir);
     published = true;
     process.stdout.write(
-      `Wrote ${compiled} IR specs (${unique.length} names, ${hooksWritten} hooks in ${hookModules.modules} closure-preserving modules, ${hookModules.typedHooks} typed hooks; ${skipped} allowlisted skipped) to ${outDir}\n`,
+      `Wrote ${compiled} IR specs (${unique.length} names, ${hooksExtracted} extracted hooks in ${hookModules.modules} in-memory closure modules, ${hookModules.typedHooks} typed hooks; ${skipped} allowlisted skipped) to ${outDir}\n`,
     );
     if (appliedVersionDiffs.length || versionedByCommand.size) {
       process.stdout.write(
@@ -2248,7 +2231,7 @@ async function compileSpecsIrUnlocked({
       skipped,
       allowlistedSkipped: skipped,
       names: unique.length,
-      hooks: hooksWritten,
+      hooks: hooksExtracted,
       hookModules: hookModules.modules,
       typedHooks: hookModules.typedHooks,
       appliedVersionDiffs,
@@ -2497,26 +2480,32 @@ const isMain =
 export async function typedHookCompileReport({
   irRoot = join(repoDir, "bundle", "specs-ir"),
 } = {}) {
-  const manifest = JSON.parse(
-    await readFile(join(irRoot, HOOK_MODULE_MANIFEST), "utf8"),
+  const sidecar = JSON.parse(
+    await readFile(join(irRoot, TYPED_HOOK_SIDECAR), "utf8"),
   );
-  const modules = new Map();
   const fields = Object.keys(TYPED_HOOK_CONTRACTS);
   const groups = new Map();
-  for (const [id, entry] of Object.entries(manifest.hooks ?? {})) {
-    if (!fields.includes(entry.sourceField)) continue;
+  const addGroup = (id, entry, ok, code = null) => {
+    if (!fields.includes(entry.sourceField)) return;
     const key = `${entry.sourceField}\0${entry.functionBodySha256}`;
     if (groups.has(key)) {
       groups.get(key).ids.push(id);
-      continue;
+      return;
     }
     groups.set(key, {
       id,
       field: entry.sourceField,
       sha: entry.functionBodySha256,
-      module: entry.module,
       ids: [id],
+      ok,
+      code,
     });
+  };
+  for (const [id, entry] of Object.entries(sidecar.hooks ?? {})) {
+    addGroup(id, entry, true);
+  }
+  for (const [id, entry] of Object.entries(sidecar.adapters ?? {})) {
+    addGroup(id, entry, false, "adapter");
   }
   const byField = Object.fromEntries(
     fields.map((field) => [field, { total: 0, ok: 0, codes: {} }]),
@@ -2524,34 +2513,12 @@ export async function typedHookCompileReport({
   for (const group of groups.values()) {
     const bucket = byField[group.field];
     bucket.total += 1;
-    const hookPath = join(irRoot, "hooks", hookFileName(group.id));
-    const text = await readFile(hookPath, "utf8");
-    const body = text.startsWith("export default ")
-      ? text.slice("export default ".length).replace(/;\n$/, "").replace(/;$/, "")
-      : text;
-    let moduleSource = "";
-    if (group.module) {
-      if (!modules.has(group.module)) {
-        modules.set(
-          group.module,
-          await readFile(join(irRoot, HOOK_MODULES_DIR, group.module), "utf8"),
-        );
-      }
-      moduleSource = modules.get(group.module);
-    }
-    try {
-      compileTypedHook({
-        body,
-        sourceField: group.field,
-        moduleSource,
-      });
+    if (group.ok) {
       bucket.ok += 1;
-    } catch (error) {
-      const code =
-        error instanceof TypedHookCompileError ? error.code : "throw";
-      const key = error.nodeType ? `${code}:${error.nodeType}` : code;
-      bucket.codes[key] = (bucket.codes[key] ?? 0) + 1;
+      continue;
     }
+    const key = group.code ?? "leftover";
+    bucket.codes[key] = (bucket.codes[key] ?? 0) + 1;
   }
   return { byField, uniqueBodies: groups.size };
 }

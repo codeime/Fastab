@@ -40,8 +40,7 @@ async function makePair() {
   const sourceRoot = join(root, "source");
   const irRoot = join(root, "ir");
   await mkdir(sourceRoot, { recursive: true });
-  await mkdir(join(irRoot, "hooks"), { recursive: true });
-  await mkdir(join(irRoot, "source-modules"), { recursive: true });
+  await mkdir(irRoot, { recursive: true });
   await writeFile(join(sourceRoot, "z.js"), "export default { name: 'z' };\n");
   await writeFile(join(sourceRoot, "a.js"), "export default { name: 'a' };\n");
   await writeFile(join(sourceRoot, ".source-manifest.json"), '{"format":1}\n');

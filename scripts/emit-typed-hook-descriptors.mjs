@@ -6,15 +6,19 @@
  * sidecars now cover the side-effect-free fields; this catalog is still
  * test-only and may bind factory helpers that the sidecar refused.
  *
+ * Runtime JS artifacts are gone (T4.1). Bodies come from the source audit
+ * and closure modules are reconstructed in memory from the same compiler
+ * helper the IR publisher uses.
+ *
  * When a T1.2 baseline names a representative hook, that hook's extracted
- * body and closure module are the ones compiled so factory bindings match
- * the captured `expected` values.
+ * body and reconstructed module are the ones compiled so factory bindings
+ * match the captured `expected` values.
  */
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { hookFileName } from "./spec-hook-contract.mjs";
+import { SUPPORTED_HOOK_FIELDS } from "./spec-hook-contract.mjs";
 import { factoryHelperCandidates } from "./typed-hook-inline.mjs";
 import {
   EFFECT_HOOK_FIELDS,
@@ -28,41 +32,92 @@ const baselineRoot = join(
   repoDir,
   "crates/ec_engine/testdata/native-hooks/baseline",
 );
+const IR_TO_SOURCE_FIELD = Object.fromEntries(
+  Object.entries(SUPPORTED_HOOK_FIELDS).map(([source, ir]) => [ir, source]),
+);
 
 export async function emitTypedHookDescriptors({
+  sourceRoot = join(repoDir, "bundle", "specs"),
   irRoot = join(repoDir, "bundle", "specs-ir"),
 } = {}) {
-  const manifest = JSON.parse(await readFile(join(irRoot, "hook-modules.json"), "utf8"));
-  const modules = new Map();
+  const { auditSpecsHooks } = await import("./audit-spec-hooks.mjs");
+  const { closurePreservingHookModule } = await import("./compile-spec-ir.mjs");
+  const audit = await auditSpecsHooks({ sourceRoot, irRoot });
+  if (audit.ok !== true) {
+    const counts = Object.fromEntries(
+      Object.entries(audit.errors ?? {}).map(([name, entries]) => [
+        name,
+        Array.isArray(entries) ? entries.length : 0,
+      ]),
+    );
+    throw new Error(
+      `cannot emit typed descriptors from a failing source/IR audit: ${JSON.stringify(counts)}`,
+    );
+  }
+
+  const sourceById = new Map();
+  for (const record of audit.sourceToIr ?? []) {
+    for (const [field, items] of Object.entries(record.hookInstances ?? {})) {
+      for (const item of items ?? []) {
+        if (!item?.id || sourceById.has(item.id)) continue;
+        sourceById.set(item.id, { source: record.source, field, item });
+      }
+    }
+  }
+
+  const moduleBySource = new Map();
+  async function moduleSourceFor(sourceRel) {
+    if (!sourceRel) return "";
+    if (moduleBySource.has(sourceRel)) return moduleBySource.get(sourceRel);
+    const instances = [];
+    for (const record of audit.sourceToIr ?? []) {
+      if (record.source !== sourceRel) continue;
+      for (const [field, items] of Object.entries(record.hookInstances ?? {})) {
+        for (const item of items ?? []) {
+          if (!item?.id || !item.path) continue;
+          instances.push({
+            id: item.id,
+            path: item.path,
+            sourceField: field,
+            functionBodySha256: item.functionBodySha256,
+            ownerPath:
+              field === "custom" ? item.path.replace(/\.[^.]+$/, "") : undefined,
+          });
+        }
+      }
+    }
+    const sourceText = await readFile(join(sourceRoot, sourceRel), "utf8");
+    const moduleSource = instances.length
+      ? closurePreservingHookModule(sourceText, sourceRel, instances)
+      : "";
+    moduleBySource.set(sourceRel, moduleSource);
+    return moduleSource;
+  }
+
   const descriptors = {};
   const counts = Object.fromEntries(
     Object.keys(TYPED_HOOK_CONTRACTS).map((field) => [field, { total: 0, ok: 0 }]),
   );
   const groups = new Map();
-  for (const [id, entry] of Object.entries(manifest.hooks ?? {})) {
-    if (!Object.hasOwn(TYPED_HOOK_CONTRACTS, entry.sourceField)) continue;
-    const key = `${entry.sourceField}:${entry.functionBodySha256}`;
+  for (const entry of audit.hookManifest ?? []) {
+    const sourceField = IR_TO_SOURCE_FIELD[entry.field];
+    if (!sourceField || !Object.hasOwn(TYPED_HOOK_CONTRACTS, sourceField)) {
+      continue;
+    }
+    const sha = entry.functionBodySha256;
+    if (!sha || typeof entry.body !== "string") continue;
+    const key = `${sourceField}:${sha}`;
     if (!groups.has(key)) {
       groups.set(key, {
-        field: entry.sourceField,
-        sha: entry.functionBodySha256,
+        field: sourceField,
+        sha,
         ids: [],
+        entries: [],
       });
     }
-    groups.get(key).ids.push(id);
+    groups.get(key).ids.push(entry.id);
+    groups.get(key).entries.push(entry);
   }
-
-  const loadModule = async (name) => {
-    if (!name) return "";
-    if (!modules.has(name)) {
-      try {
-        modules.set(name, await readFile(join(irRoot, "source-modules", name), "utf8"));
-      } catch {
-        modules.set(name, "");
-      }
-    }
-    return modules.get(name);
-  };
 
   for (const group of groups.values()) {
     counts[group.field].total += 1;
@@ -77,17 +132,15 @@ export async function emitTypedHookDescriptors({
     } catch {
       // Synthesized fixtures and research-only bodies have no T1.2 file.
     }
-    const entry = manifest.hooks[representative];
-    const text = await readFile(join(irRoot, "hooks", hookFileName(representative)), "utf8");
-    const body = text.startsWith("export default ")
-      ? text.slice("export default ".length).replace(/;\n$/, "").replace(/;$/, "")
-      : text;
+    const entry = group.entries.find((item) => item.id === representative) ?? group.entries[0];
+    const body = entry.body;
     try {
-      const moduleSource = await loadModule(entry.module);
+      const sourceRel = sourceById.get(representative)?.source;
+      const moduleSource = await moduleSourceFor(sourceRel);
       const tryCompile = (helperLiterals) =>
         compileTypedHook({
           body,
-          sourceField: entry.sourceField,
+          sourceField: group.field,
           moduleSource,
           ...(helperLiterals ? { helperLiterals } : {}),
         });

@@ -168,6 +168,10 @@ const COMPLEXITY_LIMITS = Object.freeze({
   maxMembers: 6,
 });
 
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -1055,25 +1059,22 @@ export async function classifyNativeHooks({
   adapters = null,
 } = {}) {
   const adapterCatalog = adapters ?? (await loadNativeHookAdapters());
-  const audit = await auditSpecsHooks({ sourceRoot, irRoot, hooksRoot });
+  const audit = await auditSpecsHooks({ sourceRoot, irRoot });
   const locationsById = sourceLocations(audit);
   const manifest = [...(audit.hookManifest ?? [])].sort((left, right) =>
     comparePath(left.id, right.id),
   );
-  const hookFilesOnDisk = await walkHookFiles(hooksRoot);
-  const manifestFiles = new Set(manifest.map((hook) => hook.file));
   const hooks = [];
   const groupsByHash = new Map();
   const readErrors = [];
-  let hookModules = {};
+  let sidecar = { hooks: {}, adapters: {} };
   try {
-    hookModules =
-      JSON.parse(await readFile(join(irRoot, "hook-modules.json"), "utf8"))
-        .hooks ?? {};
-  } catch {
-    hookModules = {};
+    sidecar = JSON.parse(await readFile(join(irRoot, "typed-hooks.json"), "utf8"));
+  } catch (error) {
+    readErrors.push({ file: "typed-hooks.json", message: error.message });
   }
-  const moduleSourceCache = new Map();
+  const sidecarHooks = isRecord(sidecar.hooks) ? sidecar.hooks : {};
+  const sidecarAdapters = isRecord(sidecar.adapters) ? sidecar.adapters : {};
 
   for (const entry of manifest) {
     const field = entry.field;
@@ -1099,11 +1100,19 @@ export async function classifyNativeHooks({
       });
       continue;
     }
-    let text;
-    try {
-      text = await readFile(join(hooksRoot, entry.file), "utf8");
-    } catch (error) {
-      readErrors.push({ file: entry.file, message: error.message });
+    const typed = sidecarHooks[entry.id];
+    const adapter = sidecarAdapters[entry.id];
+    const body = typeof entry.body === "string" ? entry.body : null;
+    const bodySha256 =
+      typed?.functionBodySha256 ??
+      adapter?.functionBodySha256 ??
+      entry.functionBodySha256 ??
+      (body == null ? null : sha256(body));
+    if (body == null && !bodySha256) {
+      readErrors.push({
+        file: entry.file,
+        message: "hook body is missing from the typed sidecar and source audit",
+      });
       hooks.push({
         id: entry.id,
         file: entry.file,
@@ -1124,29 +1133,25 @@ export async function classifyNativeHooks({
       });
       continue;
     }
-    const body = bodyFromHookFile(text);
-    const bodySha256 = body == null ? null : sha256(body);
-    const moduleName = hookModules[entry.id]?.module;
-    let moduleSource;
-    if (moduleName) {
-      if (!moduleSourceCache.has(moduleName)) {
-        try {
-          moduleSourceCache.set(
-            moduleName,
-            await readFile(join(irRoot, "source-modules", moduleName), "utf8"),
-          );
-        } catch {
-          moduleSourceCache.set(moduleName, "");
-        }
-      }
-      moduleSource = moduleSourceCache.get(moduleName) || undefined;
-    }
-    const analysis = classifyHookBody({
-      body,
+    let analysis = classifyHookBody({
+      body: body ?? "",
       field,
-      moduleSource,
+      moduleSource: undefined,
       adapters: adapterCatalog,
     });
+    if (isRecord(typed)) {
+      analysis = {
+        ...analysis,
+        status: TYPED_IR_STATUS,
+        nativeExecutable: true,
+      };
+    } else if (isRecord(adapter)) {
+      analysis = {
+        ...analysis,
+        status: NATIVE_ADAPTER_STATUS,
+        nativeExecutable: true,
+      };
+    }
     const hook = {
       id: entry.id,
       file: entry.file,
@@ -1187,30 +1192,6 @@ export async function classifyNativeHooks({
       group.analyses.push(analysis);
       groupsByHash.set(key, group);
     }
-  }
-
-  // A hook file without an IR reference cannot be assigned a field or a
-  // native implementation. Keep it visible and fail closed.
-  for (const file of hookFilesOnDisk) {
-    if (manifestFiles.has(file)) continue;
-    hooks.push({
-      id: null,
-      file,
-      field: null,
-      sourceField: null,
-      bodySha256: null,
-      status: UNCLASSIFIED_STATUS,
-      reasonCodes: ["orphan-hook-file"],
-      researchCandidate: false,
-      nativeExecutable: false,
-      dependencies: {
-        input: false,
-        command: false,
-        environment: false,
-        buildTimePureStatic: false,
-      },
-      locations: [],
-    });
   }
 
   hooks.sort(
@@ -1345,7 +1326,7 @@ export async function classifyNativeHooks({
     coverage: {
       extractedHooks: extractedHooks.length,
       uniqueBodies: groups.length,
-      hookFilesOnDisk: hookFilesOnDisk.length,
+      hookFilesOnDisk: audit.hooks?.files ?? 0,
       classifiedHooks: classifiedHooks.length,
       unclassifiedHooks: unclassifiedCount,
       nativeFilepathsRewrite: nativeRewrites.total,

@@ -1,7 +1,4 @@
-//! Shared hook types used by both the QuickJS host and the native backend.
-//!
-//! These stay outside `js_host` so `--no-default-features` (no rquickjs) can
-//! still record diagnostics and evaluate typed/adapter hooks.
+//! Shared hook types used by the native backend (typed IR + named adapters).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

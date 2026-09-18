@@ -29,7 +29,7 @@ use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
 /// One opened generation of the IR directory. Cloning this value is cheap and
-/// shares stale state with every Registry/JsHost clone.
+/// shares stale state with every Registry/NativeHooks clone.
 #[derive(Clone, Debug)]
 pub(crate) struct DirectorySnapshot {
     inner: Arc<SnapshotInner>,
@@ -224,14 +224,10 @@ impl DirectorySnapshot {
         Ok(bytes)
     }
 
-    pub(crate) fn read_to_string(&self, relative: &Path) -> io::Result<String> {
-        let bytes = self.read_file(relative)?;
-        String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
-    }
-
     /// Read a file that may legitimately be absent from an older generation
-    /// (for example `hook-modules.json`). An unexpected present file is not
-    /// consumed; the next request will refresh the generation.
+    /// (for example `typed-hooks.json` before the sidecar existed). An
+    /// unexpected present file is not consumed; the next request will refresh
+    /// the generation.
     pub(crate) fn read_optional_file(&self, relative: &Path) -> io::Result<Option<Vec<u8>>> {
         validate_relative_path(relative)?;
         if !self.inner.file_digests.contains_key(relative) {

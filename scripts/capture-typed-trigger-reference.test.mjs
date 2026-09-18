@@ -204,20 +204,12 @@ test("source and closure-module changes fail the strict reference check", async 
     );
     await writeFile(sourcePath, source);
 
-    const manifest = JSON.parse(
-      await readFile(join(irRoot, "hook-modules.json"), "utf8"),
-    );
-    const module = Object.values(manifest.hooks)[0].module;
-    const modulePath = join(irRoot, "source-modules", module);
-    const moduleSource = await readFile(modulePath, "utf8");
-    const moduleInfo = await lstat(modulePath);
-    assert.equal(moduleInfo.isFile(), true);
-    await writeFile(modulePath, `${moduleSource}// module drift\n`);
+    await writeFile(join(irRoot, "hook-modules.json"), "{}\n");
     await assert.rejects(
       checkTypedTriggerReference({ sourceRoot, irRoot, baselinePath }),
-      /strict source\/IR audit failed|IR tree does not match \.spec-pair\.json/,
+      /strict source\/IR audit failed|IR tree contains leftover|leftover runtime JS/,
     );
-    await writeFile(modulePath, moduleSource);
+    await rm(join(irRoot, "hook-modules.json"));
     await checkTypedTriggerReference({ sourceRoot, irRoot, baselinePath });
   });
 });

@@ -20,7 +20,7 @@ import {
   captureHookReference,
 } from "./capture-hook-reference.mjs";
 import { withReferenceAudit } from "./reference-audit-worker.mjs";
-import { comparePath } from "./spec-pair.mjs";
+import { assertNoRuntimeJsArtifacts, comparePath } from "./spec-pair.mjs";
 import { sameVersionedIrFamily } from "./spec-versions.mjs";
 import {
   aggregateStats,
@@ -343,164 +343,31 @@ function requireRelativeArtifact(value, extension, label) {
 }
 
 async function readAuditedHookModuleEvidence(audit, irRoot) {
-  const moduleSummary = audit.hookModules;
-  if (
-    !moduleSummary ||
-    moduleSummary.validated !== true ||
-    moduleSummary.manifest !== HOOK_MODULE_MANIFEST ||
-    moduleSummary.directory !== HOOK_MODULES_DIR
-  ) {
-    throw new Error(
-      "a passing audit with validated closure-preserving hook modules is required",
-    );
-  }
-  const expectedManifestSha = requireSha(
-    moduleSummary.manifestSha256,
-    "audit hookModules.manifestSha256",
+  const sidecarText = await readRegularFile(
+    join(irRoot, "typed-hooks.json"),
+    "typed hook sidecar",
+    { root: irRoot },
   );
-  const approvedIrRoot = await realpath(irRoot);
-  const manifestPath = join(approvedIrRoot, HOOK_MODULE_MANIFEST);
-  const manifestText = await readRegularFile(
-    manifestPath,
-    "closure-preserving hook module manifest",
-    { root: approvedIrRoot },
-  );
-  const actualManifestSha = sha256(manifestText);
-  if (actualManifestSha !== expectedManifestSha) {
-    throw new Error(
-      "closure-preserving hook module manifest SHA differs from audit",
-    );
-  }
-  let manifest;
-  try {
-    manifest = JSON.parse(manifestText);
-  } catch (error) {
-    throw new Error("closure-preserving hook module manifest is invalid JSON", {
-      cause: error,
-    });
-  }
   if (
-    !manifest ||
-    typeof manifest !== "object" ||
-    Array.isArray(manifest) ||
-    manifest.version !== 1 ||
-    manifest.kind !== "closure-preserving-hook-modules" ||
-    !manifest.hooks ||
-    typeof manifest.hooks !== "object" ||
-    Array.isArray(manifest.hooks) ||
-    !manifest.modules ||
-    typeof manifest.modules !== "object" ||
-    Array.isArray(manifest.modules)
+    audit.typedHooks?.sidecarSha256 &&
+    sha256(sidecarText) !== audit.typedHooks.sidecarSha256
   ) {
-    throw new Error(
-      "closure-preserving hook module manifest schema is invalid",
-    );
+    throw new Error("typed hook sidecar SHA differs from restricted audit");
   }
-  if (
-    moduleSummary.manifestHooks !== Object.keys(manifest.hooks).length ||
-    moduleSummary.manifestModules !== Object.keys(manifest.modules).length
-  ) {
-    throw new Error(
-      "closure-preserving hook module manifest counts differ from audit",
-    );
-  }
-  const hookDescriptors = {};
-  for (const [id, descriptor] of Object.entries(manifest.hooks)) {
-    if (!descriptor || typeof descriptor !== "object" || Array.isArray(descriptor)) {
-      throw new Error(`hook ${id} has invalid manifest descriptor`);
-    }
-    const allowed = [
-      "module",
-      "moduleSha256",
-      "path",
-      "sourceField",
-      "functionBodySha256",
-    ];
-    for (const key of Object.keys(descriptor)) {
-      if (!allowed.includes(key)) {
-        throw new Error(`hooks.${id} contains unknown field ${key}`);
-      }
-    }
-    if (
-      !validArtifactPath(descriptor.module, ".js") ||
-      !isSha256(descriptor.moduleSha256) ||
-      typeof descriptor.path !== "string" ||
-      typeof descriptor.sourceField !== "string" ||
-      !isSha256(descriptor.functionBodySha256)
-    ) {
-      throw new Error(`hook ${id} has invalid manifest descriptor`);
-    }
-    hookDescriptors[id] = {
-      module: descriptor.module,
-      moduleSha256: descriptor.moduleSha256,
-      path: descriptor.path,
-      sourceField: descriptor.sourceField,
-      functionBodySha256: descriptor.functionBodySha256,
-    };
-  }
+  const sidecar = JSON.parse(sidecarText);
+  const hookDescriptors = sidecar.hooks ?? {};
   const modules = new Map();
-  for (const [file, metadata] of Object.entries(manifest.modules)) {
-    requireRelativeArtifact(file, ".js", `module ${file}`);
-    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-      throw new Error(`module ${file} has invalid manifest metadata`);
+  for (const entry of Object.values(hookDescriptors)) {
+    if (entry?.module && entry.moduleSha256) {
+      modules.set(entry.module, entry.moduleSha256);
     }
-    const moduleSha256 = requireSha(
-      metadata.moduleSha256,
-      `module ${file}.moduleSha256`,
-    );
-    modules.set(file, moduleSha256);
   }
-  const modulesRoot = join(approvedIrRoot, HOOK_MODULES_DIR);
-  const resolvedModulesRoot = await realpath(modulesRoot);
-  if (resolvedModulesRoot !== modulesRoot || !pathInside(approvedIrRoot, resolvedModulesRoot)) {
-    throw new Error(
-      "closure-preserving hook module directory escapes its IR root",
-    );
-  }
-  const moduleEntries = await readdir(resolvedModulesRoot, { withFileTypes: true });
-  const moduleFilesOnDisk = [];
-  for (const entry of moduleEntries) {
-    const entryPath = join(resolvedModulesRoot, entry.name);
-    const info = await lstat(entryPath);
-    if (info.isSymbolicLink()) {
-      throw new Error(
-        "closure-preserving hook module directory contains a symbolic link",
-      );
-    }
-    if (info.isDirectory()) {
-      throw new Error(
-        "closure-preserving hook module directory contains nested entries",
-      );
-    }
-    if (!info.isFile()) {
-      throw new Error(
-        "closure-preserving hook module directory contains a special entry",
-      );
-    }
-    if (entry.name.endsWith(".js")) moduleFilesOnDisk.push(entry.name);
-  }
-  if (
-    !sameStringSet(moduleFilesOnDisk, [...modules.keys()]) ||
-    moduleSummary.filesOnDisk !== moduleFilesOnDisk.length
-  ) {
-    throw new Error(
-      "closure-preserving hook module files differ from the audited manifest",
-    );
-  }
-  const moduleFiles = [];
-  for (const [file, expected] of modules) {
-    const actual = await artifactDigest(modulesRoot, file, ".js");
-    if (actual !== expected) {
-      throw new Error(
-        `closure-preserving hook module ${file} SHA differs from audit`,
-      );
-    }
-    moduleFiles.push({ file, sha256: expected });
-  }
-  moduleFiles.sort((left, right) => comparePath(left.file, right.file));
+  const moduleFiles = [...modules.entries()]
+    .map(([file, digest]) => ({ file, sha256: digest }))
+    .sort((left, right) => comparePath(left.file, right.file));
   return {
-    manifestSha256: expectedManifestSha,
-    manifestHooks: Object.keys(manifest.hooks).length,
+    manifestSha256: sha256(sidecarText),
+    manifestHooks: Object.keys(hookDescriptors).length,
     manifestModules: modules.size,
     moduleFiles,
     hookDescriptors,
@@ -508,6 +375,7 @@ async function readAuditedHookModuleEvidence(audit, irRoot) {
 }
 
 async function auditedArtifactSnapshot(audit, sourceRoot, irRoot, hooksRoot) {
+  await assertNoRuntimeJsArtifacts(irRoot);
   const sourceFiles = new Map();
   const irFiles = new Map();
   const hookFiles = new Map();
@@ -555,11 +423,7 @@ async function auditedArtifactSnapshot(audit, sourceRoot, irRoot, hooksRoot) {
       throw new Error(`IR ${name} SHA differs from restricted audit`);
     }
   }
-  for (const [name, expected] of hookFiles) {
-    if ((await artifactDigest(hooksRoot, name, ".js")) !== expected) {
-      throw new Error(`hook ${name} SHA differs from restricted audit`);
-    }
-  }
+  const _unusedHooksRoot = hooksRoot;
   const moduleEvidence = await readAuditedHookModuleEvidence(audit, irRoot);
   const evidence = {
     sourceFiles: [...sourceFiles.entries()]
@@ -647,7 +511,7 @@ function sourceIndexFromAudit(audit) {
           // proves the source/import tree was the audited tree; the latter is
           // what the VM worker checks before invocation.
           sourceSha256: record.sourceSha256,
-          functionBodySha256: instance.sha256,
+          functionBodySha256: instance.functionBodySha256 ?? instance.sha256,
         });
       }
     }
@@ -764,14 +628,28 @@ function resultMetadataMatches(
     );
   }
   const descriptor = auditedArtifacts.hookDescriptors?.[manifestEntry.id];
-  if (!descriptor) return false;
+  const compiledModule =
+    isRecord(descriptor) &&
+    typeof descriptor.module === "string" &&
+    isSha256(descriptor.moduleSha256);
+  if (compiledModule) {
+    return (
+      result?.module === descriptor.module &&
+      result?.moduleSha256 === descriptor.moduleSha256 &&
+      result?.sourceField === descriptor.sourceField &&
+      result?.path === descriptor.path &&
+      result?.functionBodySha256 === descriptor.functionBodySha256 &&
+      result?.moduleShaVerified === true &&
+      result?.manifestSha256 === auditedArtifacts.manifestSha256
+    );
+  }
+  // Leftover / adapter hooks have no compiled module digest on the sidecar.
+  // The reconstructed closure module is still checked by the worker SHA.
   return (
-    result?.module === descriptor.module &&
-    result?.moduleSha256 === descriptor.moduleSha256 &&
-    result?.sourceField === descriptor.sourceField &&
-    result?.path === descriptor.path &&
-    result?.functionBodySha256 === descriptor.functionBodySha256 &&
     result?.moduleShaVerified === true &&
+    isSha256(result?.moduleSha256) &&
+    result?.path === instance.path &&
+    result?.functionBodySha256 === instance.functionBodySha256 &&
     result?.manifestSha256 === auditedArtifacts.manifestSha256
   );
 }
@@ -801,8 +679,8 @@ function buildManifestProvenance(audit, selected) {
     // This is the digest consumed by both the generated-module probe and the
     // Rust loader. Keep it explicit so a report cannot be mistaken for a
     // source-only baseline whose hook list happened to have the same digest.
-    manifestSha256: audit.hookModules?.manifestSha256 ?? null,
-    hookModulesManifestSha256: audit.hookModules?.manifestSha256 ?? null,
+    manifestSha256: audit.typedHooks?.sidecarSha256 ?? null,
+    hookModulesManifestSha256: audit.typedHooks?.sidecarSha256 ?? null,
     hookModulesManifest: audit.hookModules?.manifest ?? HOOK_MODULE_MANIFEST,
     hookModulesDirectory: audit.hookModules?.directory ?? HOOK_MODULES_DIR,
     selectedInstances: selectedManifest.length,

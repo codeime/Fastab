@@ -134,8 +134,8 @@ pub struct ArgSpec {
     /// hook, when present, runs instead of this split.
     #[serde(default, alias = "splitOn")]
     pub split_on: Option<String>,
-    /// Extracted Fig `postProcess` hook id. The worker looks up source under
-    /// `hooks/` and runs it in the process-local QuickJS runtime.
+    /// Extracted Fig `postProcess` hook id. NativeHooks looks this up in
+    /// `typed-hooks.json` (typed IR or a named adapter).
     #[serde(default, alias = "jsPostProcess")]
     pub js_post_process: Option<String>,
     /// Extracted Fig `custom` generator hook id.

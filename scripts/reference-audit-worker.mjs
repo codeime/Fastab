@@ -19,8 +19,10 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { defaultAdaptersPath } from "./native-hook-adapters.mjs";
 import {
   PAIR_LOCK_NAME,
+  assertNoRuntimeJsArtifacts,
   verifyPair,
   withPairLock,
 } from "./spec-pair.mjs";
@@ -143,10 +145,16 @@ async function normalizeRoots({
     readableDirectory(sourceRoot, "sourceRoot"),
     readableDirectory(irRoot, "irRoot"),
   ]);
-  const hooks = await readableDirectory(
-    hooksRoot ?? join(ir, "hooks"),
-    "hooksRoot",
-  );
+  const requestedHooks = hooksRoot ?? join(ir, "hooks");
+  let hooks;
+  try {
+    hooks = await readableDirectory(requestedHooks, "hooksRoot");
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    // T4.1: runtime JS hooks/ is gone. Keep the default path for request
+    // identity only; audit must fail if that directory later appears.
+    hooks = resolve(safeRootValue(requestedHooks, "hooksRoot"));
+  }
   return { sourceRoot: source, irRoot: ir, hooksRoot: hooks };
 }
 
@@ -209,6 +217,39 @@ export function permissionGrants(roots) {
     );
     return shadowed ? `${root}*` : root;
   });
+}
+
+/**
+ * Named-adapter catalog paths the restricted audit child must read.
+ *
+ * Grant the catalog file itself — never its parent. testdata/native-hooks
+ * sits beside inventories and baselines; widening that directory would
+ * let a hostile source module read them. An `EC_NATIVE_ADAPTERS_JSON`
+ * override is granted as that exact file only.
+ */
+export function adapterCatalogReadRoots() {
+  const override = process.env.EC_NATIVE_ADAPTERS_JSON;
+  if (
+    typeof override === "string" &&
+    override.length > 0 &&
+    !override.includes("\0") &&
+    !override.includes(",")
+  ) {
+    return [resolve(override)];
+  }
+  return [defaultAdaptersPath];
+}
+
+export function referenceAuditReadRoots(childRoots) {
+  return new Set([
+    repoScriptsDir,
+    repoNodeModulesDir,
+    childRoots.sourceRoot,
+    childRoots.irRoot,
+    childRoots.hooksRoot,
+    pairLockPath,
+    ...adapterCatalogReadRoots(),
+  ]);
 }
 
 function rejectUnknownFields(value, allowed, label) {
@@ -285,6 +326,7 @@ function outputError(error) {
     status: "worker-failed",
     errorClass: error?.name ?? "Error",
     message: typeof error?.message === "string" ? error.message : String(error),
+    stack: typeof error?.stack === "string" ? error.stack.split("\n").slice(0, 12) : [],
   };
 }
 
@@ -360,18 +402,12 @@ async function spawnReferenceAudit(roots, timeoutMs, lockProof) {
   // child_process, fs-write, and worker access. Node's permission model does
   // not provide network isolation, so this worker makes no such claim.
   const { spawn } = await import("node:child_process");
-  // Permit only the selected trees and the scripts/dependency roots needed to
-  // load the audit implementation. Do not grant a custom fixture's parent:
-  // that would make sibling files readable by the restricted child and would
-  // undermine the audit root boundary.
-  const fsReadRoots = new Set([
-    repoScriptsDir,
-    repoNodeModulesDir,
-    childRoots.sourceRoot,
-    childRoots.irRoot,
-    childRoots.hooksRoot,
-    pairLockPath,
-  ]);
+  // Permit only the selected trees, the scripts/dependency roots needed to
+  // load the audit implementation, and the named-adapter catalog file.
+  // Do not grant a custom fixture's parent: that would make sibling files
+  // readable by the restricted child and would undermine the audit root
+  // boundary.
+  const fsReadRoots = referenceAuditReadRoots(childRoots);
   return new Promise((resolveReport, rejectReport) => {
     const child = spawn(
       process.execPath,
@@ -446,7 +482,9 @@ async function spawnReferenceAudit(roots, timeoutMs, lockProof) {
         return;
       }
       if (code !== 0) {
-        const suffix = stderr ? `: ${stderr.slice(0, 500)}` : "";
+        const suffix = (stderr || stdout).trim()
+          ? `: ${(stderr || stdout).trim().slice(0, 800)}`
+          : "";
         finishReject(
           new Error(
             `reference audit worker failed (${signal ?? `exit ${code}`})${suffix}`,
@@ -572,7 +610,10 @@ export async function withReferenceAudit(options = {}, callback) {
       irRoot: options.irRoot ?? active.irRoot,
       hooksRoot: options.hooksRoot ?? active.hooksRoot,
     });
-    if (sameRoot(active, roots)) return callback(active.audit);
+    if (sameRoot(active, roots)) {
+      await assertNoRuntimeJsArtifacts(roots.irRoot);
+      return callback(active.audit);
+    }
     // The outer context already owns the repository pair lock. Do not try to
     // acquire it again for a nested, explicitly different root.
     return withReferenceAuditLocked(roots, callback, active.lockProof);
@@ -597,7 +638,10 @@ export async function referenceAuditFor(options = {}) {
     // when present; an explicitly supplied root still gets its own audit.
     hooksRoot: options?.hooksRoot ?? active?.hooksRoot,
   });
-  if (active && sameRoot(active, roots)) return active.audit;
+  if (active && sameRoot(active, roots)) {
+    await assertNoRuntimeJsArtifacts(roots.irRoot);
+    return active.audit;
+  }
   return generateReferenceAudit(roots);
 }
 

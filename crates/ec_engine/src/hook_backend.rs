@@ -1,9 +1,7 @@
-//! Runtime hook backend: QuickJS or native (typed IR + named adapters).
+//! Native hook backend: typed IR + named adapters.
 //!
-//! Dual-path compare is test-only. After T3.4 the product default is `Native`
-//! while `js-compat` remains for one version (`EC_HOOK_BACKEND=js` /
-//! `autocomplete.hookBackend=js`). Native misses record a [`HookDiagnostic`]
-//! and do **not** fall back to QuickJS.
+//! Runtime JavaScript is gone (T4.1). A miss records a [`HookDiagnostic`]
+//! and returns empty — there is no QuickJS fallback.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -11,7 +9,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use crate::hook_types::{HookContext, HookDiagnostic, HookDiagnosticRecord, ScriptCommand, ShellContext};
@@ -27,13 +24,10 @@ use crate::typed_hook::{
 };
 
 const TYPED_HOOKS_FILE: &str = "typed-hooks.json";
-const HOOK_MODULES_FILE: &str = "hook-modules.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookBackend {
     Native,
-    #[cfg(feature = "js-compat")]
-    Js,
 }
 
 #[derive(Debug, Clone)]
@@ -49,17 +43,30 @@ pub struct NativeHooks {
 
 impl NativeHooks {
     #[cfg(test)]
-    pub(crate) fn contains_hook(&self, hook_id: &str) -> bool {
-        self.hooks.contains_key(hook_id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn hook_id_for(&self, field: &str, body_sha256: &str) -> Option<&str> {
-        self.hooks
-            .iter()
-            .filter(|(_, meta)| meta.field == field && meta.body_sha256 == body_sha256)
-            .map(|(id, _)| id.as_str())
-            .min()
+    pub(crate) fn from_catalog(catalog: crate::typed_hook::TypedHookCatalog) -> Self {
+        let mut hooks = HashMap::new();
+        for (id, entry) in catalog.hooks.iter() {
+            hooks.insert(
+                id.clone(),
+                HookMeta {
+                    field: entry.source_field.clone(),
+                    body_sha256: entry.function_body_sha256.clone(),
+                },
+            );
+        }
+        for (id, entry) in catalog.adapters.iter() {
+            hooks.insert(
+                id.clone(),
+                HookMeta {
+                    field: entry.source_field.clone(),
+                    body_sha256: entry.function_body_sha256.clone(),
+                },
+            );
+        }
+        Self {
+            catalog: Some(catalog),
+            hooks,
+        }
     }
 
     pub fn load(specs_dir: &Path, snapshot: Option<&DirectorySnapshot>) -> Self {
@@ -74,45 +81,28 @@ impl NativeHooks {
                 },
             });
         let mut hooks = HashMap::new();
-        if let Some(bytes) = read_sidecar(specs_dir, snapshot, HOOK_MODULES_FILE) {
-            match serde_json::from_slice::<HookModuleManifest>(&bytes) {
-                Ok(manifest) => {
-                    for (id, entry) in manifest.hooks {
-                        hooks.insert(
-                            id,
-                            HookMeta {
-                                field: entry.source_field,
-                                body_sha256: entry.function_body_sha256,
-                            },
-                        );
-                    }
-                },
-                Err(error) => tracing::warn!(%error, "hook module manifest rejected"),
-            }
-        }
         if let Some(catalog) = &catalog {
             for (id, entry) in catalog.hooks.iter() {
-                hooks.entry(id.clone()).or_insert_with(|| HookMeta {
-                    field: entry.source_field.clone(),
-                    body_sha256: entry.function_body_sha256.clone(),
-                });
+                hooks.insert(
+                    id.clone(),
+                    HookMeta {
+                        field: entry.source_field.clone(),
+                        body_sha256: entry.function_body_sha256.clone(),
+                    },
+                );
+            }
+            for (id, entry) in catalog.adapters.iter() {
+                hooks.insert(
+                    id.clone(),
+                    HookMeta {
+                        field: entry.source_field.clone(),
+                        body_sha256: entry.function_body_sha256.clone(),
+                    },
+                );
             }
         }
         Self { catalog, hooks }
     }
-}
-
-#[derive(Deserialize)]
-struct HookModuleManifest {
-    hooks: HashMap<String, HookModuleEntry>,
-}
-
-#[derive(Deserialize)]
-struct HookModuleEntry {
-    #[serde(rename = "sourceField")]
-    source_field: String,
-    #[serde(rename = "functionBodySha256")]
-    function_body_sha256: String,
 }
 
 fn read_sidecar(specs_dir: &Path, snapshot: Option<&DirectorySnapshot>, relative: &str) -> Option<Vec<u8>> {
@@ -139,8 +129,7 @@ pub fn current() -> HookBackend {
     current_from_settings(&fig_settings::settings::Settings::new())
 }
 
-/// Force one backend for the duration of `f`. Dual-path compare (T3.2/T3.3)
-/// uses this instead of mutating process-wide `EC_HOOK_BACKEND`.
+/// Force one backend for the duration of `f`.
 #[allow(dead_code)]
 pub fn with_backend<R>(backend: HookBackend, f: impl FnOnce() -> R) -> R {
     OVERRIDE.with(|cell| {
@@ -152,28 +141,14 @@ pub fn with_backend<R>(backend: HookBackend, f: impl FnOnce() -> R) -> R {
 }
 
 pub fn current_from_settings(settings: &fig_settings::settings::Settings) -> HookBackend {
-    #[cfg(not(feature = "js-compat"))]
-    {
-        let _ = settings;
-        return HookBackend::Native;
-    }
-    #[cfg(feature = "js-compat")]
-    {
-        if let Some(backend) = parse_backend_name(std::env::var("EC_HOOK_BACKEND").ok().as_deref()) {
-            return backend;
-        }
-        if let Some(backend) = parse_backend_name(settings.get_string_opt("autocomplete.hookBackend").as_deref()) {
-            return backend;
-        }
-        HookBackend::Native
-    }
+    let _ = settings;
+    HookBackend::Native
 }
 
+#[cfg(test)]
 fn parse_backend_name(value: Option<&str>) -> Option<HookBackend> {
     match value?.trim().to_ascii_lowercase().as_str() {
         "native" => Some(HookBackend::Native),
-        #[cfg(feature = "js-compat")]
-        "js" => Some(HookBackend::Js),
         _ => None,
     }
 }
@@ -214,9 +189,6 @@ pub fn enter_context<R>(cwd: &str, shell: &ShellContext, f: impl FnOnce() -> R) 
 pub fn without_hooks<R>(f: impl FnOnce() -> R) -> R {
     SKIP_HOOKS.with(|cell| {
         let previous = cell.replace(true);
-        #[cfg(feature = "js-compat")]
-        let result = crate::js_host::without_hooks(f);
-        #[cfg(not(feature = "js-compat"))]
         let result = f();
         cell.set(previous);
         result
@@ -289,8 +261,6 @@ pub fn dispatch_trigger(hook_id: &str, search_term: &str, previous: &str) -> Opt
         return None;
     }
     match current() {
-        #[cfg(feature = "js-compat")]
-        HookBackend::Js => crate::js_host::current().and_then(|(host, _)| host.trigger(hook_id, search_term, previous)),
         HookBackend::Native => native_trigger(hook_id, search_term, previous),
     }
 }
@@ -300,8 +270,6 @@ pub fn dispatch_get_query_term(hook_id: &str, search_term: &str) -> Option<Strin
         return None;
     }
     match current() {
-        #[cfg(feature = "js-compat")]
-        HookBackend::Js => crate::js_host::current().and_then(|(host, _)| host.get_query_term(hook_id, search_term)),
         HookBackend::Native => native_get_query_term(hook_id, search_term),
     }
 }
@@ -311,8 +279,6 @@ pub fn dispatch_post_process(hook_id: &str, stdout: &str, tokens: &[String]) -> 
         return None;
     }
     match current() {
-        #[cfg(feature = "js-compat")]
-        HookBackend::Js => crate::js_host::current().and_then(|(host, _)| host.post_process(hook_id, stdout, tokens)),
         HookBackend::Native => native_post_process(hook_id, stdout, tokens),
     }
 }
@@ -322,8 +288,6 @@ pub fn dispatch_script_command(hook_id: &str, tokens: &[String]) -> Option<Scrip
         return None;
     }
     match current() {
-        #[cfg(feature = "js-compat")]
-        HookBackend::Js => crate::js_host::current().and_then(|(host, _)| host.script_command(hook_id, tokens)),
         HookBackend::Native => native_script(hook_id, tokens),
     }
 }
@@ -333,10 +297,6 @@ pub fn dispatch_filter_template_suggestions(hook_id: &str, suggestions: &[Sugges
         return None;
     }
     match current() {
-        #[cfg(feature = "js-compat")]
-        HookBackend::Js => {
-            crate::js_host::current().and_then(|(host, _)| host.filter_template_suggestions(hook_id, suggestions))
-        },
         HookBackend::Native => native_filter(hook_id, suggestions),
     }
 }
@@ -353,9 +313,6 @@ pub fn dispatch_custom(
         return None;
     }
     match current() {
-        #[cfg(feature = "js-compat")]
-        HookBackend::Js => crate::js_host::current()
-            .and_then(|(host, _)| host.custom(hook_id, tokens, cwd, search_term, timeout, is_dangerous)),
         HookBackend::Native => native_custom(hook_id, tokens, cwd, search_term, timeout, is_dangerous),
     }
 }
@@ -365,8 +322,6 @@ pub fn dispatch_alias(hook_id: &str, token: &str, cwd: &str, timeout: Duration) 
         return None;
     }
     match current() {
-        #[cfg(feature = "js-compat")]
-        HookBackend::Js => crate::js_host::current().and_then(|(host, _)| host.alias(hook_id, token, cwd, timeout)),
         HookBackend::Native => native_alias(hook_id, token, cwd, timeout),
     }
 }
@@ -376,8 +331,6 @@ pub fn dispatch_load_spec(hook_id: &str, token: &str, cwd: &str, timeout: Durati
         return None;
     }
     match current() {
-        #[cfg(feature = "js-compat")]
-        HookBackend::Js => crate::js_host::current().and_then(|(host, _)| host.load_spec(hook_id, token, cwd, timeout)),
         HookBackend::Native => native_load_spec(hook_id, token, cwd, timeout),
     }
 }
@@ -387,10 +340,6 @@ pub fn dispatch_generate_spec(hook_id: &str, tokens: &[String], cwd: &str, timeo
         return None;
     }
     match current() {
-        #[cfg(feature = "js-compat")]
-        HookBackend::Js => {
-            crate::js_host::current().and_then(|(host, _)| host.generate_spec(hook_id, tokens, cwd, timeout))
-        },
         HookBackend::Native => native_generate_spec(hook_id, tokens, cwd, timeout),
     }
 }
@@ -613,14 +562,7 @@ fn spec_from_json(hook_id: &str, json: JsonValue) -> Option<Spec> {
 }
 
 fn fig_spec_from_json(value: &JsonValue) -> Option<Spec> {
-    #[cfg(feature = "js-compat")]
-    {
-        crate::js_host::spec_from_fig_json(value)
-    }
-    #[cfg(not(feature = "js-compat"))]
-    {
-        serde_json::from_value(value.clone()).ok()
-    }
+    crate::fig_spec::spec_from_fig_json(value)
 }
 
 fn typed_context(context: &HookContext) -> TypedHookContext {
@@ -701,27 +643,109 @@ fn live_adapter_exec(
 }
 
 pub fn merge_generated_spec(wrapper: &Spec, generated: Spec) -> Spec {
-    #[cfg(feature = "js-compat")]
-    {
-        crate::js_host::merge_generated_spec(wrapper, generated)
-    }
-    #[cfg(not(feature = "js-compat"))]
-    {
-        let mut merged = generated;
-        if !wrapper.names.is_empty() {
-            merged.names = wrapper.names.clone();
-        }
-        if merged.description.is_empty() {
-            merged.description = wrapper.description.clone();
-        }
-        if !wrapper.args.is_empty() {
-            merged.args = wrapper.args.clone();
-        }
-        merged
-    }
+    crate::fig_spec::merge_generated_spec(wrapper, generated)
 }
 
 pub use crate::hook_types::clean_output;
+
+#[cfg(test)]
+pub(crate) fn test_sidecar_contracts() -> JsonValue {
+    serde_json::json!({
+        "trigger": {"irVersion": 1, "params": ["string", "string"], "resultType": "bool"},
+        "getQueryTerm": {"irVersion": 1, "params": ["string"], "resultType": "string"},
+        "postProcess": {"irVersion": 1, "params": ["string", "string-array"], "resultType": "suggestion-array"},
+        "script": {"irVersion": 1, "params": ["string-array"], "resultType": "string-array"},
+        "filterTemplateSuggestions": {"irVersion": 1, "params": ["suggestion-array"], "resultType": "suggestion-array"},
+        "custom": {"irVersion": 1, "params": ["string-array", "exec", "context"], "resultType": "suggestion-array"},
+        "alias": {"irVersion": 1, "params": ["string", "exec"], "resultType": "string"},
+        "loadSpec": {"irVersion": 1, "params": ["string", "exec"], "resultType": "spec"},
+        "generateSpec": {"irVersion": 1, "params": ["string-array", "exec"], "resultType": "spec"}
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn test_typed_entry(id: &str, field: &str, expr: JsonValue) -> (String, JsonValue) {
+    let (params, result_type) = match field {
+        "trigger" => (
+            serde_json::json!([{"index": 0, "type": "string"}, {"index": 1, "type": "string"}]),
+            "bool",
+        ),
+        "getQueryTerm" => (serde_json::json!([{"index": 0, "type": "string"}]), "string"),
+        "postProcess" => (
+            serde_json::json!([{"index": 0, "type": "string"}, {"index": 1, "type": "string-array"}]),
+            "suggestion-array",
+        ),
+        "script" => (
+            serde_json::json!([{"index": 0, "type": "string-array"}]),
+            "string-array",
+        ),
+        "filterTemplateSuggestions" => (
+            serde_json::json!([{"index": 0, "type": "suggestion-array"}]),
+            "suggestion-array",
+        ),
+        "custom" => (
+            serde_json::json!([
+                {"index": 0, "type": "string-array"},
+                {"index": 1, "type": "exec"},
+                {"index": 2, "type": "context"}
+            ]),
+            "suggestion-array",
+        ),
+        "alias" => (
+            serde_json::json!([{"index": 0, "type": "string"}, {"index": 1, "type": "exec"}]),
+            "string",
+        ),
+        "loadSpec" => (
+            serde_json::json!([{"index": 0, "type": "string"}, {"index": 1, "type": "exec"}]),
+            "spec",
+        ),
+        "generateSpec" => (
+            serde_json::json!([{"index": 0, "type": "string-array"}, {"index": 1, "type": "exec"}]),
+            "spec",
+        ),
+        other => panic!("unsupported test hook field {other}"),
+    };
+    let mut sha = String::new();
+    for byte in id.as_bytes() {
+        sha.push_str(&format!("{byte:02x}"));
+    }
+    while sha.len() < 64 {
+        sha.push('0');
+    }
+    sha.truncate(64);
+    (
+        id.to_string(),
+        serde_json::json!({
+            "module": "test.js",
+            "moduleSha256": "0".repeat(64),
+            "path": "root.args[0]",
+            "sourceField": field,
+            "functionBodySha256": sha,
+            "descriptor": {
+                "version": 1,
+                "kind": "typed-hook-expression",
+                "sourceField": field,
+                "resultType": result_type,
+                "params": params,
+                "expr": expr
+            }
+        }),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn test_native_hooks(entries: Vec<(String, JsonValue)>) -> NativeHooks {
+    use crate::typed_hook::parse_typed_hook_catalog;
+    let hooks = JsonValue::Object(entries.into_iter().collect());
+    let catalog = serde_json::json!({
+        "version": 1,
+        "kind": "typed-hook-expressions",
+        "contracts": test_sidecar_contracts(),
+        "hooks": hooks
+    });
+    let catalog = parse_typed_hook_catalog(&catalog).expect("test typed catalog");
+    NativeHooks::from_catalog(catalog)
+}
 
 #[cfg(test)]
 mod tests {
@@ -730,36 +754,20 @@ mod tests {
     #[test]
     fn default_backend_is_native() {
         let settings = fig_settings::settings::Settings::from_slice(&[]);
-        #[cfg(feature = "js-compat")]
-        {
-            assert_eq!(parse_backend_name(None), None);
-            assert_eq!(parse_backend_name(Some("js")), Some(HookBackend::Js));
-            assert_eq!(parse_backend_name(Some("native")), Some(HookBackend::Native));
-            assert_eq!(
-                current_from_settings(&settings),
-                parse_backend_name(std::env::var("EC_HOOK_BACKEND").ok().as_deref()).unwrap_or(HookBackend::Native)
-            );
-            with_backend(HookBackend::Native, || {
-                assert_eq!(current(), HookBackend::Native);
-            });
-        }
-        #[cfg(not(feature = "js-compat"))]
-        {
-            let _ = settings;
-            assert_eq!(current(), HookBackend::Native);
-            assert_eq!(parse_backend_name(Some("native")), Some(HookBackend::Native));
-            assert_eq!(parse_backend_name(Some("js")), None);
-        }
+        let _ = settings;
+        assert_eq!(current(), HookBackend::Native);
+        assert_eq!(
+            current_from_settings(&fig_settings::settings::Settings::from_slice(&[])),
+            HookBackend::Native
+        );
+        assert_eq!(parse_backend_name(Some("native")), Some(HookBackend::Native));
+        assert_eq!(parse_backend_name(Some("js")), None);
     }
 
     #[test]
     fn override_selects_native_without_touching_process_env() {
         with_backend(HookBackend::Native, || {
             assert_eq!(current(), HookBackend::Native);
-        });
-        #[cfg(feature = "js-compat")]
-        with_backend(HookBackend::Js, || {
-            assert_eq!(current(), HookBackend::Js);
         });
     }
 

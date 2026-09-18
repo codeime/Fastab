@@ -1188,17 +1188,8 @@ fn apply_generate_spec(current: &mut Arc<Spec>, tokens: &[String]) {
     *current = Arc::new(crate::hook_backend::merge_generated_spec(current.as_ref(), generated));
 }
 
-#[cfg(feature = "js-compat")]
 fn cached_generated_spec(cache_key: &str, run: impl FnOnce() -> Option<Spec>) -> Option<Spec> {
-    match crate::js_host::current() {
-        Some((host, _)) => crate::js_host::cached_spec(host, cache_key, run),
-        None => run(),
-    }
-}
-
-#[cfg(not(feature = "js-compat"))]
-fn cached_generated_spec(_cache_key: &str, run: impl FnOnce() -> Option<Spec>) -> Option<Spec> {
-    run()
+    crate::hook_cache::cached_spec(cache_key, run)
 }
 
 /// Dynamic parser hooks do not have an argument/generator object from which

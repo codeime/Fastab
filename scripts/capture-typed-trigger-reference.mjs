@@ -29,7 +29,6 @@ import { comparePath, verifyPair } from "./spec-pair.mjs";
 import { sameVersionedIrFamily } from "./spec-versions.mjs";
 import { writeReferenceFile } from "./reference-safe-io.mjs";
 import {
-  HOOK_MODULE_MANIFEST,
   SUPPORTED_HOOK_FIELDS,
   TYPED_HOOK_DESCRIPTOR_MAX_BYTES,
   TYPED_HOOK_ID_MAX_BYTES,
@@ -563,14 +562,15 @@ async function loadSidecar(irRoot, audit) {
   }
   assertKnownFields(
     sidecar,
-    ["version", "kind", "contracts", "hooks"],
+    ["version", "kind", "contracts", "hooks", "adapters"],
     "typed hook sidecar",
   );
   if (
     sidecar.version !== TYPED_HOOK_SIDECAR_VERSION ||
     sidecar.kind !== TYPED_HOOK_SIDECAR_KIND ||
     !isRecord(sidecar.contracts) ||
-    !isRecord(sidecar.hooks)
+    !isRecord(sidecar.hooks) ||
+    (sidecar.adapters != null && !isRecord(sidecar.adapters))
   ) {
     throw new Error("typed hook sidecar schema is invalid");
   }
@@ -578,71 +578,6 @@ async function loadSidecar(irRoot, audit) {
     throw new Error("typed hook sidecar count differs from strict audit");
   }
   return { sidecar, sidecarSha256 };
-}
-
-function parseHookManifest(text) {
-  let manifest;
-  try {
-    manifest = JSON.parse(text);
-  } catch (error) {
-    throw new Error("closure-preserving hook manifest is invalid JSON", {
-      cause: error,
-    });
-  }
-  assertKnownFields(
-    manifest,
-    ["version", "kind", "hooks", "modules"],
-    "closure-preserving hook manifest",
-  );
-  if (
-    manifest.version !== 1 ||
-    manifest.kind !== "closure-preserving-hook-modules" ||
-    !isRecord(manifest.hooks) ||
-    !isRecord(manifest.modules)
-  ) {
-    throw new Error("closure-preserving hook manifest schema is invalid");
-  }
-  for (const [id, descriptor] of Object.entries(manifest.hooks)) {
-    assertKnownFields(
-      descriptor,
-      ["module", "moduleSha256", "path", "sourceField", "functionBodySha256"],
-      `closure-preserving hook manifest hook ${id}`,
-    );
-    if (
-      typeof descriptor.module !== "string" ||
-      !/^[^/\\\0]+\.js$/.test(descriptor.module) ||
-      descriptor.module === ".js" ||
-      descriptor.module === "..js" ||
-      !/^[a-f0-9]{64}$/.test(descriptor.moduleSha256) ||
-      !/^[a-f0-9]{64}$/.test(descriptor.functionBodySha256) ||
-      !validSourceHookPath(descriptor.path) ||
-      typeof descriptor.sourceField !== "string"
-    ) {
-      throw new Error(
-        `closure-preserving hook manifest hook ${id} has invalid identity`,
-      );
-    }
-  }
-  for (const [file, metadata] of Object.entries(manifest.modules)) {
-    assertKnownFields(
-      metadata,
-      ["source", "sourceSha256", "moduleSha256", "hookIds"],
-      `closure-preserving hook manifest module ${file}`,
-    );
-    if (
-      !/^[^/\\\0]+\.js$/.test(file) ||
-      !isRecord(metadata) ||
-      !validRelativeFile(metadata.source) ||
-      !/^[a-f0-9]{64}$/.test(metadata.sourceSha256) ||
-      !/^[a-f0-9]{64}$/.test(metadata.moduleSha256) ||
-      !Array.isArray(metadata.hookIds)
-    ) {
-      throw new Error(
-        `closure-preserving hook manifest module ${file} has invalid metadata`,
-      );
-    }
-  }
-  return manifest;
 }
 
 async function loadEvidence({ sourceRoot, irRoot, audit }) {
@@ -658,29 +593,16 @@ async function loadEvidence({ sourceRoot, irRoot, audit }) {
   }
   const pair = await verifyPair({ sourceRoot, irRoot });
   const { sidecar, sidecarSha256 } = await loadSidecar(irRoot, audit);
-  const hookManifestText = await readRegular(
-    irRoot,
-    HOOK_MODULE_MANIFEST,
-    "closure-preserving hook manifest",
-  );
-  const hookManifestSha256 = sha256(hookManifestText);
-  if (audit.hookModules?.manifestSha256 !== hookManifestSha256) {
-    throw new Error("closure-preserving hook manifest SHA differs from audit");
-  }
-  const hookManifest = parseHookManifest(hookManifestText);
-  if (
-    audit.hookModules?.manifestHooks !== Object.keys(hookManifest.hooks).length ||
-    audit.hookModules?.manifestModules !== Object.keys(hookManifest.modules).length
-  ) {
-    throw new Error("closure-preserving hook manifest counts differ from audit");
-  }
   return {
     audit,
     pair,
     sidecar,
     sidecarSha256,
-    hookManifestSha256,
-    hookManifest,
+    hookManifestSha256: sidecarSha256,
+    hookManifest: {
+      hooks: { ...(sidecar.hooks ?? {}), ...(sidecar.adapters ?? {}) },
+      modules: {},
+    },
   };
 }
 
@@ -709,7 +631,6 @@ function auditedTypedIds(audit, sidecar, hookManifest, field = "trigger") {
   const auditManifest = new Map(
     (audit.hookManifest ?? []).map((entry) => [entry.id, entry]),
   );
-  const closureManifest = new Map(Object.entries(hookManifest.hooks));
   const ids = sortedIds(Object.keys(sidecarHooksForField(sidecar, field)));
   if (ids.length === 0) {
     throw new Error(`typed hook sidecar has no ${field} hooks`);
@@ -721,41 +642,19 @@ function auditedTypedIds(audit, sidecar, hookManifest, field = "trigger") {
       throw new Error(`typed hook ${id} has an invalid ${field} entry`);
     }
     const audited = auditManifest.get(id);
-    const descriptor = closureManifest.get(id);
     const source = auditedSourceInstance(audit, id);
     if (!audited || audited.field !== irField || !source) {
       throw new Error(`typed hook ${id} is not a strict audited ${field}`);
     }
-    if (!descriptor) {
-      throw new Error(`typed hook ${id} is missing from the closure manifest`);
-    }
-    const moduleMetadata = hookManifest.modules[descriptor.module];
     if (
       audited.file !== hookFileName(id) ||
       !sameVersionedIrFamily(audited.ir, source.record.ir) ||
-      !/^[a-f0-9]{64}$/.test(audited.sha256) ||
       source.sourceField !== field ||
-      descriptor.path !== source.instance.path ||
-      descriptor.sourceField !== source.sourceField ||
-      descriptor.functionBodySha256 !== source.instance.sha256 ||
-      !isRecord(moduleMetadata) ||
-      moduleMetadata.moduleSha256 !== descriptor.moduleSha256 ||
-      moduleMetadata.source !== source.record.source ||
-      moduleMetadata.sourceSha256 !== source.record.sourceSha256 ||
-      !moduleMetadata.hookIds.includes(id)
+      entry.path !== source.instance.path ||
+      entry.sourceField !== source.sourceField ||
+      entry.functionBodySha256 !== source.instance.sha256
     ) {
-      throw new Error(`typed hook ${id} closure identity differs from audit`);
-    }
-    for (const field of [
-      "module",
-      "moduleSha256",
-      "functionBodySha256",
-      "path",
-      "sourceField",
-    ]) {
-      if (entry[field] !== descriptor[field]) {
-        throw new Error(`typed hook ${id} ${field} differs from audit`);
-      }
+      throw new Error(`typed hook ${id} sidecar identity differs from audit`);
     }
   }
   return ids;
@@ -780,14 +679,14 @@ function typedIdentity(audit, hookManifest, id, manifestSha256) {
     functionBodySha256: descriptor.functionBodySha256,
     hookFile: audited.file,
     hookFileSha256: audited.sha256,
-    module: descriptor.module,
-    moduleSha256: descriptor.moduleSha256,
+    module: descriptor.module ?? "",
+    moduleSha256: descriptor.moduleSha256 ?? "0".repeat(64),
     manifestSha256,
   };
 }
 
 function auditedAsdfGetQueryTermIds(audit, hookManifest) {
-  const manifestIds = Object.keys(hookManifest.hooks).filter((id) =>
+  const manifestIds = Object.keys(hookManifest.hooks ?? {}).filter((id) =>
     id.startsWith("asdf#getQueryTerm#"),
   );
   if (stableJson(sortedIds(manifestIds)) !== stableJson(ASDF_GET_QUERY_TERM_CANDIDATE_IDS)) {
@@ -818,29 +717,17 @@ function auditedAsdfGetQueryTermIds(audit, hookManifest) {
 
 async function readAuditedAsdfGetQueryTermBody(audit, irRoot, id) {
   const audited = (audit.hookManifest ?? []).find((entry) => entry.id === id);
-  if (!audited || typeof audited.file !== "string") {
-    throw new Error(`asdf getQueryTerm ${id} has no audited hook artifact`);
+  if (!audited || typeof audited.body !== "string") {
+    throw new Error(`asdf getQueryTerm ${id} has no audited source body`);
   }
-  const text = await readRegular(
-    irRoot,
-    `hooks/${audited.file}`,
-    `asdf getQueryTerm hook artifact ${id}`,
-  );
-  const match = text.trim().match(/^export\s+default\s+([\s\S]*?);?$/);
-  if (!match) {
-    throw new Error(`asdf getQueryTerm ${id} hook artifact has no standalone body`);
-  }
-  const body = match[1].trim();
-  if (sha256(text) !== audited.sha256) {
-    throw new Error(`asdf getQueryTerm ${id} hook artifact SHA differs from audit`);
-  }
+  const body = audited.body;
   const bodySha256 = sha256(body);
   const source = auditedSourceInstance(audit, id);
   if (!source || bodySha256 !== source.instance.sha256) {
-    throw new Error(`asdf getQueryTerm ${id} hook artifact body SHA differs from source audit`);
+    throw new Error(`asdf getQueryTerm ${id} audited body SHA differs from source audit`);
   }
   if (bodySha256 !== sha256(ASDF_GET_QUERY_TERM_BODY)) {
-    throw new Error(`asdf getQueryTerm ${id} hook artifact is not the reviewed source closure`);
+    throw new Error(`asdf getQueryTerm ${id} audited body is not the reviewed source closure`);
   }
   return body;
 }
@@ -946,40 +833,20 @@ async function probeHook({ id, sourceRoot, irRoot, cases, identity }) {
     args: [...item.args],
     mockExecRules: [],
   }));
-  const [source, module] = await Promise.all([
-    captureHookReferenceBatch({
-      hookId: id,
-      invocations,
-      sourceRoot,
-      irRoot,
-      timeoutMs: REFERENCE_TIMEOUT_MS,
-    }),
-    captureHookModuleReferenceBatch({
-      hookId: id,
-      invocations,
-      sourceRoot,
-      irRoot,
-      timeoutMs: REFERENCE_TIMEOUT_MS,
-    }),
-  ]);
-  if (
-    source.runs.length !== cases.length ||
-    module.runs.length !== cases.length
-  ) {
+  const source = await captureHookReferenceBatch({
+    hookId: id,
+    invocations,
+    sourceRoot,
+    irRoot,
+    timeoutMs: REFERENCE_TIMEOUT_MS,
+  });
+  if (source.runs.length !== cases.length) {
     throw new Error(`typed trigger ${id} did not return every corpus case`);
   }
   const expected = [];
   for (let index = 0; index < cases.length; index += 1) {
     const sourceRun = source.runs[index];
-    const moduleRun = module.runs[index];
     verifyRun(sourceRun, { id, pathName: "source", index, identity });
-    verifyRun(moduleRun, { id, pathName: "module", index, identity });
-    if (sourceRun.value !== moduleRun.value) {
-      throw new Error(`typed trigger ${id} differs between source and module`);
-    }
-    if (stableJson(sourceRun.execTrace) !== stableJson(moduleRun.execTrace)) {
-      throw new Error(`typed trigger ${id} executor traces differ`);
-    }
     expected.push(sourceRun.value);
   }
   return expected;
@@ -1080,50 +947,25 @@ async function probeAsdfGetQueryTerm({ id, sourceRoot, irRoot, cases, identity }
     args: [...item.args],
     mockExecRules: [],
   }));
-  const [source, module] = await Promise.all([
-    captureHookReferenceBatch({
-      hookId: id,
-      invocations,
-      sourceRoot,
-      irRoot,
-      timeoutMs: REFERENCE_TIMEOUT_MS,
-    }),
-    captureHookModuleReferenceBatch({
-      hookId: id,
-      invocations,
-      sourceRoot,
-      irRoot,
-      timeoutMs: REFERENCE_TIMEOUT_MS,
-    }),
-  ]);
-  if (
-    source.runs.length !== cases.length ||
-    module.runs.length !== cases.length
-  ) {
+  const source = await captureHookReferenceBatch({
+    hookId: id,
+    invocations,
+    sourceRoot,
+    irRoot,
+    timeoutMs: REFERENCE_TIMEOUT_MS,
+  });
+  if (source.runs.length !== cases.length) {
     throw new Error(`asdf getQueryTerm ${id} did not return every corpus case`);
   }
   const expected = [];
   for (let index = 0; index < cases.length; index += 1) {
     const sourceRun = source.runs[index];
-    const moduleRun = module.runs[index];
     verifyGetQueryTermRun(sourceRun, {
       id,
       pathName: "source",
       index,
       identity,
     });
-    verifyGetQueryTermRun(moduleRun, {
-      id,
-      pathName: "module",
-      index,
-      identity,
-    });
-    if (sourceRun.value !== moduleRun.value) {
-      throw new Error(`asdf getQueryTerm ${id} differs between source and module`);
-    }
-    if (stableJson(sourceRun.execTrace) !== stableJson(moduleRun.execTrace)) {
-      throw new Error(`asdf getQueryTerm ${id} executor traces differ`);
-    }
     expected.push(sourceRun.value);
   }
   return expected;

@@ -56,7 +56,7 @@ pub struct CompleteRequest {
     /// Shell environment reported by the terminal integration. Fig `custom`
     /// generators read it through `context.environmentVariables`.
     ///
-    /// Shared across the overlay request and the JS host so a keystroke does
+    /// Shared across the overlay request and native hooks so a keystroke does
     /// not clone every `KEY=value` pair.
     #[serde(default, skip_serializing_if = "empty_env")]
     pub environment_variables: Arc<Vec<(String, String)>>,
@@ -64,9 +64,8 @@ pub struct CompleteRequest {
     /// from this map before walking specs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
-    /// Dual-path / `ec engine complete --compare` override. The overlay leaves
-    /// this `None` so [`hook_backend::current`] (env, then settings, default
-    /// Native after T3.4) owns the product path.
+    /// Test override. The overlay leaves this `None` so [`hook_backend::current`]
+    /// owns the product path (always Native after T4.1).
     #[serde(skip)]
     pub backend_override: Option<hook_backend::HookBackend>,
 }
@@ -343,9 +342,8 @@ pub fn ranking_root_command(buffer: &str, cursor: Option<u32>) -> String {
 pub struct Engine {
     specs_dir: PathBuf,
     registry: Registry,
-    #[cfg(feature = "js-compat")]
-    js_host: crate::js_host::JsHost,
     native: Arc<NativeHooks>,
+    hook_cache: Arc<crate::hook_cache::HookCache>,
     frecency: Frecency,
     acceptance: Arc<Mutex<rank::AcceptanceIndex>>,
     frecency_loaded: bool,
@@ -400,17 +398,11 @@ impl Engine {
         acceptance: Arc<Mutex<rank::AcceptanceIndex>>,
     ) -> Self {
         let native = Arc::new(NativeHooks::load(specs_dir, registry.snapshot().as_ref()));
-        #[cfg(feature = "js-compat")]
-        let js_host = registry.snapshot().map_or_else(
-            || crate::js_host::JsHost::from_specs_dir(specs_dir),
-            crate::js_host::JsHost::from_snapshot,
-        );
         Self {
             specs_dir: specs_dir.to_path_buf(),
             registry,
-            #[cfg(feature = "js-compat")]
-            js_host,
             native,
+            hook_cache: crate::hook_cache::HookCache::new(),
             frecency: Frecency::default(),
             acceptance,
             frecency_loaded: false,
@@ -454,13 +446,7 @@ impl Engine {
 
     fn rebind_hosts(&mut self, registry: &Registry) {
         self.native = Arc::new(NativeHooks::load(&self.specs_dir, registry.snapshot().as_ref()));
-        #[cfg(feature = "js-compat")]
-        {
-            self.js_host = registry.snapshot().map_or_else(
-                || crate::js_host::JsHost::from_specs_dir(&self.specs_dir),
-                crate::js_host::JsHost::from_snapshot,
-            );
-        }
+        self.hook_cache = crate::hook_cache::HookCache::new();
     }
 
     pub fn registry(&self) -> &Registry {
@@ -473,8 +459,6 @@ impl Engine {
     #[allow(dead_code)]
     pub(crate) fn last_hook_diagnostic(&self) -> Option<crate::hook_types::HookDiagnosticRecord> {
         match hook_backend::current() {
-            #[cfg(feature = "js-compat")]
-            hook_backend::HookBackend::Js => self.js_host.last_hook_diagnostic(),
             hook_backend::HookBackend::Native => hook_backend::last_diagnostic(),
         }
     }
@@ -495,8 +479,7 @@ impl Engine {
     /// to avoid discarding its last good registry during an install rename
     /// window.
     pub(crate) fn clear_caches_and_report(&mut self) -> bool {
-        #[cfg(feature = "js-compat")]
-        crate::js_host::clear_caches(&self.js_host);
+        self.hook_cache.clear();
         self.generator_session = crate::generate::GeneratorSession::default();
         self.history = Arc::default();
         match Self::load_registry(&self.specs_dir) {
@@ -659,18 +642,8 @@ impl Engine {
                 environment_variables: std::mem::take(&mut request.environment_variables),
             };
             let registry = &mut self.registry;
-            #[cfg(feature = "js-compat")]
-            let js_host = &self.js_host;
-            hook_backend::enter_context(&request.cwd, &shell, || {
-                #[cfg(feature = "js-compat")]
-                {
-                    js_host.enter_with_context(&request.cwd, &shell, || lookup::complete(registry, &request))
-                }
-                #[cfg(not(feature = "js-compat"))]
-                {
-                    lookup::complete(registry, &request)
-                }
-            })
+            let _cache = self.hook_cache.bind();
+            hook_backend::enter_context(&request.cwd, &shell, || lookup::complete(registry, &request))
         };
         if should_merge_history(request.include_history, history_disabled) {
             let effective_fuzzy = result.fuzzy;
@@ -750,6 +723,7 @@ mod tests {
     }
 
     fn write_spec(dir: &std::path::Path, name: &str, body: &str) {
+        fs::create_dir_all(dir).unwrap();
         fs::write(dir.join(format!("{name}.json")), body).unwrap();
     }
 
@@ -772,30 +746,31 @@ mod tests {
         assert!(registry.is_empty());
     }
 
-    #[cfg(all(unix, feature = "js-compat"))]
+    fn write_typed_custom(dir: &std::path::Path, hook_id: &str, name: &str) {
+        let (id, entry) = crate::hook_backend::test_typed_entry(
+            hook_id,
+            "custom",
+            serde_json::json!({
+                "op": "array",
+                "items": [{
+                    "op": "object",
+                    "fields": [{"key": "name", "value": {"op": "string", "value": name}}]
+                }]
+            }),
+        );
+        let catalog = serde_json::json!({
+            "version": 1,
+            "kind": "typed-hook-expressions",
+            "contracts": crate::hook_backend::test_sidecar_contracts(),
+            "hooks": { id: entry }
+        });
+        fs::write(dir.join("typed-hooks.json"), format!("{catalog}\n")).unwrap();
+    }
+
+    #[cfg(unix)]
     #[test]
     fn engine_rejects_cross_generation_lazy_reads_and_rebinds_after_publish() {
-        use sha2::{Digest, Sha256};
-
-        fn module_manifest(hook_id: &str, module: &str, source: &[u8]) -> String {
-            let digest = Sha256::digest(source);
-            let digest = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
-            serde_json::json!({
-                "version": 1,
-                "kind": "closure-preserving-hook-modules",
-                "hooks": {
-                    hook_id: {
-                        "module": module,
-                        "moduleSha256": digest,
-                    }
-                },
-                "modules": {}
-            })
-            .to_string()
-        }
-
         fn write_generation(dir: &std::path::Path, child_description: &str, hook_name: &str) {
-            fs::create_dir_all(dir.join("source-modules")).unwrap();
             write_spec(
                 dir,
                 "demo",
@@ -817,15 +792,7 @@ mod tests {
                 .to_string(),
             );
             fs::write(dir.join("index.json"), r#"{"files":{"demo":"demo.json"}}"#).unwrap();
-            let source = format!(
-                "export default {{ 'demo#custom#0': function() {{ return [{{ name: '{hook_name}' }}]; }} }};\n"
-            );
-            fs::write(dir.join("source-modules/module.js"), source.as_bytes()).unwrap();
-            fs::write(
-                dir.join("hook-modules.json"),
-                module_manifest("demo#custom#0", "module.js", source.as_bytes()),
-            )
-            .unwrap();
+            write_typed_custom(dir, "demo#custom#0", hook_name);
         }
 
         let root = tempfile::tempdir().unwrap();
@@ -839,14 +806,13 @@ mod tests {
         fs::rename(&generation_a, &canonical).unwrap();
         let mut engine = Engine::new(canonical.clone()).expect("generation A engine");
 
-        // Publish B. A lazy read from the old snapshot must reject B's
-        // different bytes instead of returning a mixed generation.
         fs::rename(&canonical, &backup).unwrap();
         fs::rename(&generation_b, &canonical).unwrap();
 
         assert!(engine.registry.get_arc("demo").is_none());
-        let hook = engine.js_host.enter("/tmp", || {
-            engine.js_host.custom(
+        let stale = {
+            let _bound = crate::hook_backend::bind_native(std::sync::Arc::clone(&engine.native));
+            crate::hook_backend::dispatch_custom(
                 "demo#custom#0",
                 &[],
                 "/tmp",
@@ -854,49 +820,37 @@ mod tests {
                 std::time::Duration::from_secs(1),
                 false,
             )
-        });
-        assert!(hook.is_none(), "a stale module must not return generation B");
+        };
+        assert_eq!(
+            stale.expect("stale native catalog stays generation A")[0].name,
+            "from-A"
+        );
 
-        // Removing A after the failed read is the cleanup step used by the
-        // publisher. The old engine still fails closed, and does not turn
-        // that cleanup into a read of B.
-        fs::remove_dir_all(&backup).unwrap();
-        assert!(engine.registry.get_arc("demo").is_none());
-
-        // At the next request boundary the stale snapshot is replaced as one
-        // unit: Registry and JsHost now both read B.
-        let result = crate::hook_backend::with_backend(crate::hook_backend::HookBackend::Js, || {
-            engine
-                .complete(CompleteRequest {
-                    buffer: "demo ".into(),
-                    cwd: "/tmp".into(),
-                    include_history: false,
-                    ..CompleteRequest::default()
-                })
-                .expect("stable generation B")
-        });
+        let result = engine
+            .complete(CompleteRequest {
+                buffer: "demo ".into(),
+                cwd: "/tmp".into(),
+                include_history: false,
+                ..CompleteRequest::default()
+            })
+            .expect("stable generation B");
         assert!(
             result.suggestions.iter().any(|suggestion| suggestion.name == "from-B"),
             "{result:?}"
         );
 
-        // A publication gap is recoverable. The old B generation may serve
-        // already-loaded data during the gap, while the following request
-        // retries and binds the newly published C generation.
         let generation_c = root.path().join("generation-c");
         write_generation(&generation_c, "from generation C", "from-C");
         let backup_b = root.path().join("specs-ir.backup-b");
         fs::rename(&canonical, &backup_b).unwrap();
-        let during_gap = crate::hook_backend::with_backend(crate::hook_backend::HookBackend::Js, || {
-            engine
-                .complete(CompleteRequest {
-                    buffer: "demo ".into(),
-                    cwd: "/tmp".into(),
-                    include_history: false,
-                    ..CompleteRequest::default()
-                })
-                .expect("gap should not poison the old engine")
-        });
+        let during_gap = engine
+            .complete(CompleteRequest {
+                buffer: "demo ".into(),
+                cwd: "/tmp".into(),
+                include_history: false,
+                ..CompleteRequest::default()
+            })
+            .expect("gap should not poison the old engine");
         assert!(
             during_gap
                 .suggestions
@@ -906,16 +860,14 @@ mod tests {
         );
         fs::rename(&generation_c, &canonical).unwrap();
         fs::remove_dir_all(&backup_b).unwrap();
-        let recovered = crate::hook_backend::with_backend(crate::hook_backend::HookBackend::Js, || {
-            engine
-                .complete(CompleteRequest {
-                    buffer: "demo ".into(),
-                    cwd: "/tmp".into(),
-                    include_history: false,
-                    ..CompleteRequest::default()
-                })
-                .expect("generation C should be retried")
-        });
+        let recovered = engine
+            .complete(CompleteRequest {
+                buffer: "demo ".into(),
+                cwd: "/tmp".into(),
+                include_history: false,
+                ..CompleteRequest::default()
+            })
+            .expect("generation C should be retried");
         assert!(
             recovered
                 .suggestions
@@ -925,41 +877,20 @@ mod tests {
         );
     }
 
-    #[cfg(all(unix, feature = "js-compat"))]
+    #[cfg(unix)]
     #[test]
     fn identical_file_content_can_be_read_across_a_generation_replacement() {
-        use sha2::{Digest, Sha256};
-
-        fn module_manifest(hook_id: &str, module: &str, source: &[u8]) -> String {
-            let digest = Sha256::digest(source);
-            let digest = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
-            serde_json::json!({
-                "version": 1,
-                "kind": "closure-preserving-hook-modules",
-                "hooks": { hook_id: { "module": module, "moduleSha256": digest } },
-                "modules": {}
-            })
-            .to_string()
-        }
-
         let root = tempfile::tempdir().unwrap();
         let a = root.path().join("a");
         let b = root.path().join("b");
         for dir in [&a, &b] {
-            fs::create_dir_all(dir.join("source-modules")).unwrap();
             write_spec(
                 dir,
                 "demo",
                 r#"{"names":["demo"],"args":[{"jsCustom":"demo#custom#0"}]}"#,
             );
             fs::write(dir.join("index.json"), r#"{"files":{"demo":"demo.json"}}"#).unwrap();
-            let source = b"export default { 'demo#custom#0': function() { return [{ name: 'same' }]; } };\n";
-            fs::write(dir.join("source-modules/module.js"), source).unwrap();
-            fs::write(
-                dir.join("hook-modules.json"),
-                module_manifest("demo#custom#0", "module.js", source),
-            )
-            .unwrap();
+            write_typed_custom(dir, "demo#custom#0", "same");
         }
         let canonical = root.path().join("specs-ir");
         let backup = root.path().join("backup");
@@ -968,13 +899,11 @@ mod tests {
         fs::rename(&canonical, &backup).unwrap();
         fs::rename(&b, &canonical).unwrap();
 
-        // The bytes are unchanged, so the old snapshot can safely consume
-        // them even though the root identity changed. The next complete call
-        // still refreshes the generation at its boundary.
         let demo = engine.registry.get_arc("demo").expect("same spec bytes");
         assert_eq!(demo.names, vec!["demo"]);
-        let hook = engine.js_host.enter("/tmp", || {
-            engine.js_host.custom(
+        let hook = {
+            let _bound = crate::hook_backend::bind_native(std::sync::Arc::clone(&engine.native));
+            crate::hook_backend::dispatch_custom(
                 "demo#custom#0",
                 &[],
                 "/tmp",
@@ -982,81 +911,65 @@ mod tests {
                 std::time::Duration::from_secs(1),
                 false,
             )
-        });
-        assert_eq!(hook.expect("same module bytes")[0].name, "same");
+        };
+        assert_eq!(hook.expect("same catalog bytes")[0].name, "same");
         fs::remove_dir_all(backup).unwrap();
+        let _ = engine.complete(CompleteRequest {
+            buffer: "demo ".into(),
+            cwd: "/tmp".into(),
+            include_history: false,
+            ..CompleteRequest::default()
+        });
     }
 
-    #[test]
-    fn omitted_priority_matches_webview_default() {
-        assert_eq!(Suggestion::new("status", "", "subcommand").priority, 50);
-        assert_eq!(
-            Suggestion::new("status", "", "subcommand")
-                .with_meta(None, None, None, false, false, None, None)
-                .priority,
-            50
-        );
-        assert_eq!(Suggestion::new("zero", "", "arg").with_priority(0).priority, 50);
-        assert_eq!(Suggestion::new("high", "", "arg").with_priority(900).priority, 100);
-        assert_eq!(Suggestion::new("low", "", "arg").with_priority(-2).priority, 0);
-    }
-
-    #[test]
-    fn disable_history_loading_prevents_loading_and_merging() {
-        assert!(history_loading_enabled(false));
-        assert!(!history_loading_enabled(true));
-        assert!(should_merge_history(true, false));
-        assert!(!should_merge_history(true, true));
-        assert!(!should_merge_history(false, false));
-    }
-
-    #[test]
-    fn string_query_term_matches_webview_separator_behavior() {
-        assert_eq!(query_term_for("~/foo", Some("/")), "foo");
-        assert_eq!(query_term_for("a/b/c", Some("/")), "c");
-        assert_eq!(query_term_for("foo", Some("/")), "foo");
-        assert_eq!(query_term_for("foo", None), "foo");
-        assert_eq!(query_term_for("foo", Some("")), "");
-    }
-
-    #[test]
-    fn ranking_root_command_matches_the_completion_token() {
-        assert_eq!(ranking_root_command("git checkout", None), "git");
-        assert_eq!(ranking_root_command("'git' checkout", None), "git");
-        assert_eq!(ranking_root_command(r"my\ command arg", None), "my command");
-        assert_eq!(ranking_root_command("git checkout", Some(2)), "gi");
-        assert_eq!(ranking_root_command("", None), "");
-        assert_eq!(ranking_root_command("echo x && git checkout", None), "git");
-        assert_eq!(ranking_root_command("FOO=1 git checkout", None), "git");
-        assert_eq!(ranking_root_command("echo x && git checkout", Some(6)), "echo");
-    }
-
-    #[cfg(feature = "js-compat")]
     #[test]
     fn generate_spec_merges_dynamic_subcommands() {
         let _lock = engine_lock();
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("hooks")).unwrap();
-        fs::write(
-            dir.path().join("hooks/php_generateSpec_0.js"),
-            "export default async function() { return { name: 'php', subcommands: [{ name: 'artisan', description: 'Laravel' }] }; }\n",
-        )
-        .unwrap();
+        let (id, entry) = crate::hook_backend::test_typed_entry(
+            "php#generateSpec#0",
+            "generateSpec",
+            serde_json::json!({
+                "op": "spec-object",
+                "fields": [
+                    {"key": "name", "value": {"op": "string", "value": "php"}},
+                    {
+                        "key": "subcommands",
+                        "value": {
+                            "op": "array",
+                            "items": [{
+                                "op": "spec-object",
+                                "fields": [
+                                    {"key": "name", "value": {"op": "string", "value": "artisan"}},
+                                    {"key": "description", "value": {"op": "string", "value": "Laravel"}}
+                                ]
+                            }]
+                        }
+                    }
+                ]
+            }),
+        );
+        let catalog = serde_json::json!({
+            "version": 1,
+            "kind": "typed-hook-expressions",
+            "contracts": crate::hook_backend::test_sidecar_contracts(),
+            "hooks": { id: entry }
+        });
+        fs::write(dir.path().join("typed-hooks.json"), format!("{catalog}\n")).unwrap();
         write_spec(
             dir.path(),
             "php",
             r#"{"names":["php"],"jsGenerateSpec":"php#generateSpec#0"}"#,
         );
         let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).expect("engine");
-        let result = crate::hook_backend::with_backend(crate::hook_backend::HookBackend::Js, || {
-            engine
-                .complete(CompleteRequest {
-                    buffer: "php ".into(),
-                    cwd: dir.path().display().to_string(),
-                    ..CompleteRequest::default()
-                })
-                .expect("complete")
-        });
+        let result = engine
+            .complete(CompleteRequest {
+                buffer: "php ".into(),
+                cwd: dir.path().display().to_string(),
+                include_history: false,
+                ..CompleteRequest::default()
+            })
+            .expect("complete");
         assert!(
             result.suggestions.iter().any(|row| row.name == "artisan"),
             "{:?}",

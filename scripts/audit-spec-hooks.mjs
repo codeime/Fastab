@@ -69,6 +69,10 @@ import {
   typedHookSidecarContracts,
   validateTypedHookIr,
 } from "./typed-hook-ir.mjs";
+import {
+  isRegisteredNativeAdapter,
+  loadNativeHookAdapters,
+} from "./native-hook-adapters.mjs";
 
 const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceDir = process.env.EC_SPECS_SRC || join(repoDir, "bundle", "specs");
@@ -93,6 +97,9 @@ const KNOWN_SYSTEM_ALIASES = new Map(
 const NATIVE_HELPER_FIELDS = new Set(["custom", "trigger", "getQueryTerm"]);
 const SOURCE_FIELDS = Object.keys(SUPPORTED_HOOK_FIELDS);
 const SOURCE_TO_IR = SUPPORTED_HOOK_FIELDS;
+const IR_TO_SOURCE = Object.fromEntries(
+  Object.entries(SUPPORTED_HOOK_FIELDS).map(([source, ir]) => [ir, source]),
+);
 const RISK_PATTERNS = [
   ["fig-global", /\bfig\./],
   ["require", /\brequire\s*\(/],
@@ -755,6 +762,59 @@ function validateTypedHookEntryShape(id, entry, errors) {
   return true;
 }
 
+function validateTypedHookAdapterShape(id, entry, errors) {
+  const idError = typedHookStringError(
+    id,
+    "typed hook adapter id",
+    TYPED_HOOK_ID_MAX_BYTES,
+  );
+  if (idError || !id || id.includes("\\")) {
+    errors.invalidTypedHookSidecar.push({
+      field: `adapters.${id}`,
+      reason: idError ?? "typed hook adapter id must not contain a backslash",
+    });
+  }
+  if (!isRecord(entry)) {
+    errors.invalidTypedHookSidecar.push({
+      field: `adapters.${id}`,
+      reason: "adapter binding must be an object",
+    });
+    return false;
+  }
+  rejectUnknownFields(
+    errors,
+    `typed adapters.${id}`,
+    entry,
+    ["path", "sourceField", "functionBodySha256"],
+    "invalidTypedHookSidecar",
+  );
+  if (!isSha256(entry.functionBodySha256)) {
+    errors.invalidTypedHookSidecar.push({
+      field: `adapters.${id}.functionBodySha256`,
+      reason: "functionBodySha256 must be a lowercase SHA-256 digest",
+    });
+  }
+  const pathError = typedHookStringError(
+    entry.path,
+    `typed hook adapter ${id} path`,
+    TYPED_HOOK_PATH_MAX_BYTES,
+  );
+  if (pathError || !isSafeSourceHookPath(entry.path)) {
+    errors.invalidTypedHookSidecar.push({
+      field: `adapters.${id}.path`,
+      reason:
+        pathError ?? "path must be a normalized source object property path",
+    });
+  }
+  if (!TYPED_HOOK_SIDECAR_FIELDS.includes(entry.sourceField)) {
+    errors.invalidTypedHookSidecar.push({
+      field: `adapters.${id}.sourceField`,
+      reason: `sourceField must be one of ${TYPED_HOOK_SIDECAR_FIELDS.join(", ")}`,
+    });
+  }
+  return true;
+}
+
 async function validateTypedHookSidecar({
   irRoot,
   sourceRecords,
@@ -854,7 +914,7 @@ async function validateTypedHookSidecar({
     errors,
     "typed hook sidecar",
     sidecar,
-    ["version", "kind", "contracts", "hooks"],
+    ["version", "kind", "contracts", "hooks", "adapters"],
     "invalidTypedHookSidecar",
   );
   if (sidecar.version !== TYPED_HOOK_SIDECAR_VERSION) {
@@ -911,9 +971,19 @@ async function validateTypedHookSidecar({
     });
     return summary;
   }
+  const actualAdapters = isRecord(sidecar.adapters) ? sidecar.adapters : {};
+  if (sidecar.adapters != null && !isRecord(sidecar.adapters)) {
+    errors.invalidTypedHookSidecar.push({
+      field: "adapters",
+      reason: "sidecar adapters must be an object",
+    });
+    return summary;
+  }
   const actualEntries = Object.entries(actualHooks);
+  const actualAdapterEntries = Object.entries(actualAdapters);
   summary.hooks = actualEntries.length;
-  if (summary.hooks > TYPED_HOOK_CATALOG_MAX_HOOKS) {
+  summary.adapters = actualAdapterEntries.length;
+  if (summary.hooks + summary.adapters > TYPED_HOOK_CATALOG_MAX_HOOKS) {
     errors.invalidTypedHookSidecar.push({
       field: "hooks",
       reason: `sidecar exceeds the ${TYPED_HOOK_CATALOG_MAX_HOOKS}-hook limit`,
@@ -922,103 +992,117 @@ async function validateTypedHookSidecar({
   for (const [id, entry] of actualEntries) {
     validateTypedHookEntryShape(id, entry, errors);
   }
+  for (const [id, entry] of actualAdapterEntries) {
+    validateTypedHookAdapterShape(id, entry, errors);
+    if (Object.hasOwn(actualHooks, id)) {
+      errors.invalidTypedHookSidecar.push({
+        id,
+        reason: "hook cannot be both a typed descriptor and an adapter binding",
+      });
+    }
+  }
 
-  const expected = new Map();
+  const adapterCatalog = await loadNativeHookAdapters();
+  const sidecarIrFields = new Set(
+    TYPED_HOOK_SIDECAR_FIELDS.map((field) => SUPPORTED_HOOK_FIELDS[field]),
+  );
   let unsupportedHooks = 0;
-  const moduleSources = new Map();
-  if (manifestHooks) {
-    const sidecarIrFields = new Set(
-      TYPED_HOOK_SIDECAR_FIELDS.map((field) => SUPPORTED_HOOK_FIELDS[field]),
+  for (const [id, ref] of refsById) {
+    if (!sidecarIrFields.has(ref.field)) continue;
+    const typed = Object.hasOwn(actualHooks, id) ? actualHooks[id] : undefined;
+    const adapter = Object.hasOwn(actualAdapters, id)
+      ? actualAdapters[id]
+      : undefined;
+    if (!isRecord(typed) && !isRecord(adapter)) {
+      unsupportedHooks += 1;
+      continue;
+    }
+    const entry = isRecord(typed) ? typed : adapter;
+    const sourceField = IR_TO_SOURCE[ref.field] ?? null;
+    if (!TYPED_HOOK_SIDECAR_FIELDS.includes(sourceField)) continue;
+    const source = sourceRelForIr(ref.ir);
+    const sourceRecord = sourceRecords.get(source);
+    const sourceFunction = findSourceFunction(
+      sourceRecord,
+      sourceField,
+      entry.path,
+      entry.functionBodySha256,
     );
-    for (const [id, ref] of refsById) {
-      if (!sidecarIrFields.has(ref.field)) continue;
-      const manifestEntry = Object.hasOwn(manifestHooks, id)
-        ? manifestHooks[id]
-        : undefined;
-      if (!isRecord(manifestEntry)) continue;
-      const sourceField =
-        Object.entries(SUPPORTED_HOOK_FIELDS).find(
-          ([, irField]) => irField === ref.field,
-        )?.[0] ?? null;
-      if (!TYPED_HOOK_SIDECAR_FIELDS.includes(sourceField)) continue;
-      const source = sourceRelForIr(ref.ir);
-      const sourceRecord = sourceRecords.get(source);
-      const sourceFunction = findSourceFunction(
-        sourceRecord,
-        sourceField,
-        manifestEntry.path,
-        manifestEntry.functionBodySha256,
-      );
-      if (!sourceFunction) continue;
-      const body = functionSource(sourceFunction.identity);
-      if (!body) continue;
-      let moduleSource = "";
-      if (isSafeModuleFile(manifestEntry.module)) {
-        if (!moduleSources.has(manifestEntry.module)) {
-          try {
-            moduleSources.set(
-              manifestEntry.module,
-              await safeReadRegularFile(
-                join(irRoot, HOOK_MODULES_DIR, manifestEntry.module),
-                `closure-preserving hook module ${manifestEntry.module}`,
-                { root: irRoot },
-              ),
-            );
-          } catch {
-            moduleSources.set(manifestEntry.module, "");
-          }
-        }
-        moduleSource = moduleSources.get(manifestEntry.module) ?? "";
-      }
-      const descriptor = tryCompileTypedHook({
+    if (!sourceFunction) {
+      errors.typedHookMismatches.push({
+        id,
+        reason: "sidecar path does not resolve to a source function",
+        path: entry.path ?? null,
+      });
+      continue;
+    }
+    if (entry.sourceField !== sourceField) {
+      errors.typedHookMismatches.push({
+        id,
+        reason: "sidecar sourceField does not match the IR hook field",
+        expected: sourceField,
+        actual: entry.sourceField ?? null,
+      });
+    }
+    if (entry.functionBodySha256 !== sourceFunction.sha256) {
+      errors.typedHookMismatches.push({
+        id,
+        reason: "sidecar function body SHA-256 does not match source",
+        expected: sourceFunction.sha256,
+        actual: entry.functionBodySha256 ?? null,
+      });
+    }
+    const body = sourceFunction.source ?? functionSource(sourceFunction.identity);
+    if (isRecord(typed) && body) {
+      const recomputed = tryCompileTypedHook({
         body,
         sourceField,
-        moduleSource,
+        moduleSource: "",
       });
-      if (!descriptor) {
-        unsupportedHooks += 1;
-        continue;
+      if (
+        recomputed &&
+        canonicalJson(recomputed) !== canonicalJson(typed.descriptor)
+      ) {
+        errors.typedHookMismatches.push({
+          id,
+          reason:
+            "sidecar provenance or descriptor does not match the compiler identity binding",
+          expected: recomputed,
+          actual: typed.descriptor,
+        });
       }
-      expected.set(id, {
-        module: manifestEntry.module,
-        moduleSha256: manifestEntry.moduleSha256,
-        path: manifestEntry.path,
-        sourceField: manifestEntry.sourceField,
-        functionBodySha256: manifestEntry.functionBodySha256,
-        descriptor,
+    }
+    if (
+      isRecord(adapter) &&
+      !isRegisteredNativeAdapter(
+        adapter.functionBodySha256,
+        sourceField,
+        adapterCatalog,
+      )
+    ) {
+      errors.typedHookMismatches.push({
+        id,
+        reason: "sidecar adapter is not a registered native adapter",
+        functionBodySha256: adapter.functionBodySha256 ?? null,
       });
     }
   }
-  summary.eligibleHooks = expected.size;
+  summary.eligibleHooks = summary.hooks;
   summary.unsupportedHooks = unsupportedHooks;
 
-  const actualIds = new Set(Object.keys(actualHooks));
-  for (const id of expected.keys()) {
-    if (!actualIds.has(id)) {
-      errors.missingTypedHooks.push({
-        id,
-        reason: "typed hook is compilable but missing from sidecar",
-      });
-    }
-  }
-  for (const id of actualIds) {
-    if (!expected.has(id)) {
+  for (const id of Object.keys(actualHooks)) {
+    if (!refsById.has(id)) {
       errors.orphanTypedHooks.push({
         id,
         reason: "sidecar hook is not an eligible audited typed binding",
       });
     }
   }
-  for (const [id, expectedEntry] of expected) {
-    const actual = actualHooks[id];
-    if (!isRecord(actual)) continue;
-    if (canonicalJson(actual) !== canonicalJson(expectedEntry)) {
-      errors.typedHookMismatches.push({
+  for (const id of Object.keys(actualAdapters)) {
+    if (!refsById.has(id)) {
+      errors.orphanTypedHooks.push({
         id,
-        reason:
-          "sidecar provenance or descriptor does not match the compiler identity binding and closure module manifest",
-        expected: expectedEntry,
-        actual,
+        reason: "sidecar adapter is not an eligible audited hook binding",
       });
     }
   }
@@ -1270,6 +1354,7 @@ function sourceFunctionRecord(item) {
     field: item.field,
     path: item.path,
     sha256: source ? sha256(source) : null,
+    source: source || null,
     extractable: Boolean(source),
     nativeRewrite: item.nativeRewrite,
     compilerExtractionCount,
@@ -1550,502 +1635,73 @@ function addHookModuleMismatch(errors, entry) {
   errors.hookModuleMismatches.push(entry);
 }
 
-async function validateHookModules({
-  irRoot,
-  sourceRecords,
-  refsById,
-  hookFiles,
-  errors,
-  enabled,
-}) {
-  const modulesRoot = join(irRoot, HOOK_MODULES_DIR);
-  const summary = {
-    validated: Boolean(enabled),
-    manifest: HOOK_MODULE_MANIFEST,
-    directory: HOOK_MODULES_DIR,
-    manifestHooks: 0,
-    manifestModules: 0,
-    filesOnDisk: 0,
-    manifestSha256: null,
-  };
-  if (!enabled) return summary;
-
-  let moduleFilesOnDisk = [];
+async function leftoverPathExists(path) {
   try {
-    moduleFilesOnDisk = await walkFiles(modulesRoot, ".js");
+    await lstat(path);
+    return true;
   } catch (error) {
-    if (error.cause?.code === "ENOENT") {
-      errors.missingHookModules.push({
-        directory: HOOK_MODULES_DIR,
-        reason: "source-modules directory is missing",
-      });
-    } else {
-      errors.invalidHookModuleManifest.push({
-        directory: HOOK_MODULES_DIR,
-        reason: "cannot read source-modules directory",
-        message: error.message,
-      });
-    }
+    if (error?.code === "ENOENT") return false;
+    throw error;
   }
-  moduleFilesOnDisk = moduleFilesOnDisk.map(normalizeRelativePath);
-  summary.filesOnDisk = moduleFilesOnDisk.length;
-  const moduleFiles = new Set(moduleFilesOnDisk);
+}
 
-  const manifestPath = join(irRoot, HOOK_MODULE_MANIFEST);
-  let manifestText;
+async function rejectLeftoverRuntimeJs(irRoot, errors) {
+  if (await leftoverPathExists(join(irRoot, HOOK_MODULE_MANIFEST))) {
+    errors.leftoverHookModuleManifest.push({
+      file: HOOK_MODULE_MANIFEST,
+      reason: "runtime JS hook manifest must not be published",
+    });
+  }
+  if (await leftoverPathExists(join(irRoot, HOOK_MODULES_DIR))) {
+    errors.leftoverHookModules.push({
+      directory: HOOK_MODULES_DIR,
+      reason: "runtime JS source-modules directory must not be published",
+    });
+  }
+  if (await leftoverPathExists(join(irRoot, "hooks"))) {
+    errors.leftoverHookFiles.push({
+      directory: "hooks",
+      reason: "runtime JS hooks directory must not be published",
+    });
+  }
+}
+
+async function readSidecarMapping(irRoot) {
   try {
-    manifestText = await safeReadRegularFile(
-      manifestPath,
-      "closure-preserving hook module manifest",
+    const text = await safeReadRegularFile(
+      join(irRoot, TYPED_HOOK_SIDECAR),
+      "typed hook sidecar",
       { root: irRoot },
     );
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      errors.missingHookModuleManifest.push({
-        file: HOOK_MODULE_MANIFEST,
-        reason: "closure-preserving hook module manifest is missing",
-      });
-    } else {
-      errors.invalidHookModuleManifest.push({
-        file: HOOK_MODULE_MANIFEST,
-        reason: "cannot read closure-preserving hook module manifest",
-        message: error.message,
-      });
+    const sidecar = JSON.parse(text);
+    if (!isRecord(sidecar)) return null;
+    const mapping = {};
+    for (const [id, entry] of Object.entries(sidecar.hooks ?? {})) {
+      if (isRecord(entry)) mapping[id] = entry;
     }
-    for (const file of moduleFilesOnDisk) {
-      errors.orphanHookModules.push({
-        file,
-        reason: "module is not described by a readable manifest",
-      });
+    for (const [id, entry] of Object.entries(sidecar.adapters ?? {})) {
+      if (isRecord(entry) && !Object.hasOwn(mapping, id)) mapping[id] = entry;
     }
-    return summary;
+    return mapping;
+  } catch {
+    return null;
   }
+}
 
-  let manifest;
-  summary.manifestSha256 = sha256(manifestText);
-  try {
-    manifest = JSON.parse(manifestText);
-  } catch (error) {
-    errors.invalidHookModuleManifest.push({
-      file: HOOK_MODULE_MANIFEST,
-      reason: "manifest is not valid JSON",
-      message: error.message,
-    });
-    for (const file of moduleFilesOnDisk) {
-      errors.orphanHookModules.push({
-        file,
-        reason: "module is not described by a parseable manifest",
-      });
-    }
-    return summary;
-  }
-
-  const manifestIsRecord = isRecord(manifest);
-  if (!manifestIsRecord) {
-    errors.invalidHookModuleManifest.push({
-      file: HOOK_MODULE_MANIFEST,
-      reason: "manifest root must be an object",
-    });
-    return summary;
-  }
-  rejectUnknownFields(errors, "manifest", manifest, [
-    "version",
-    "kind",
-    "hooks",
-    "modules",
-  ]);
-  if (manifest.version !== 1) {
-    errors.invalidHookModuleManifest.push({
-      file: HOOK_MODULE_MANIFEST,
-      reason: "manifest version must be 1",
-      value: manifest.version ?? null,
-    });
-  }
-  if (manifest.kind !== "closure-preserving-hook-modules") {
-    errors.invalidHookModuleManifest.push({
-      file: HOOK_MODULE_MANIFEST,
-      reason: "manifest kind is unsupported",
-      value: manifest.kind ?? null,
-    });
-  }
-
-  const manifestHooks = isRecord(manifest.hooks) ? manifest.hooks : null;
-  const manifestModules = isRecord(manifest.modules) ? manifest.modules : null;
-  if (!manifestHooks) {
-    errors.invalidHookModuleManifest.push({
-      file: HOOK_MODULE_MANIFEST,
-      field: "hooks",
-      reason: "manifest hooks must be an object",
-    });
-  }
-  if (!manifestModules) {
-    errors.invalidHookModuleManifest.push({
-      file: HOOK_MODULE_MANIFEST,
-      field: "modules",
-      reason: "manifest modules must be an object",
-    });
-  }
-  if (!manifestHooks || !manifestModules) return summary;
-
-  summary.manifestHooks = Object.keys(manifestHooks).length;
-  summary.manifestModules = Object.keys(manifestModules).length;
-
-  // Source provenance is derived from the IR reference itself, not from the
-  // sourceToIr report (which is a consumer-facing projection). This keeps the
-  // strict published audit independent of the compiler's former body-hash
-  // matching algorithm.
-  const expectedById = new Map();
-  for (const [id, ref] of refsById) {
-    const source = sourceRelForIr(ref.ir);
-    const sourceRecord = sourceRecords.get(source);
-    expectedById.set(id, {
-      source,
-      sourceSha256: sourceRecord?.sourceSha256 ?? null,
-      sourceRecord,
-      sourceField:
-        Object.entries(SUPPORTED_HOOK_FIELDS).find(
-          ([, irField]) => irField === ref.field,
-        )?.[0] ?? null,
-      irField: ref.field,
-    });
-  }
-
-  for (const id of refsById.keys()) {
-    if (!expectedById.has(id)) {
-      addHookModuleMismatch(errors, {
-        id,
-        reason: "audit hook has no source-module provenance",
-      });
-    }
-  }
-  for (const id of expectedById.keys()) {
-    if (!refsById.has(id)) {
-      addHookModuleMismatch(errors, {
-        id,
-        reason: "source-module manifest would contain an unreferenced hook",
-      });
-    }
-  }
-
-  const manifestHookIds = new Set(Object.keys(manifestHooks));
-  for (const id of refsById.keys()) {
-    if (!manifestHookIds.has(id)) {
-      addHookModuleMismatch(errors, {
-        id,
-        reason: "audit hook is missing from manifest hooks",
-      });
-    }
-  }
-  for (const id of manifestHookIds) {
-    if (!refsById.has(id)) {
-      addHookModuleMismatch(errors, {
-        id,
-        reason: "manifest contains an orphan hook entry",
-      });
-    }
-  }
-
-  const hookEntriesByModule = new Map();
-  for (const [id, descriptor] of Object.entries(manifestHooks)) {
-    if (!isRecord(descriptor)) {
-      errors.invalidHookModuleManifest.push({
-        field: `hooks.${id}`,
-        reason: "hook descriptor must be an object",
-      });
-      continue;
-    }
-    rejectUnknownFields(errors, `hooks.${id}`, descriptor, [
-      "module",
-      "moduleSha256",
-      "path",
-      "sourceField",
-      "functionBodySha256",
-    ]);
-    if (!isSafeModuleFile(descriptor.module)) {
-      errors.invalidHookModuleManifest.push({
-        field: `hooks.${id}.module`,
-        value: descriptor.module ?? null,
-        reason: "module path must be a root-relative .js filename",
-      });
-      continue;
-    }
-    if (!isSha256(descriptor.moduleSha256)) {
-      errors.invalidHookModuleManifest.push({
-        field: `hooks.${id}.moduleSha256`,
-        reason: "moduleSha256 must be a lowercase SHA-256 digest",
-      });
-    }
-    if (!isSafeSourceHookPath(descriptor.path)) {
-      errors.invalidHookModuleManifest.push({
-        field: `hooks.${id}.path`,
-        value: descriptor.path ?? null,
-        reason: "hook path must be a normalized source object path",
-      });
-    }
-    if (!SOURCE_FIELDS.includes(descriptor.sourceField)) {
-      errors.invalidHookModuleManifest.push({
-        field: `hooks.${id}.sourceField`,
-        value: descriptor.sourceField ?? null,
-        reason: "sourceField is not a supported source hook field",
-      });
-    }
-    if (!isSha256(descriptor.functionBodySha256)) {
-      errors.invalidHookModuleManifest.push({
-        field: `hooks.${id}.functionBodySha256`,
-        reason: "functionBodySha256 must be a lowercase SHA-256 digest",
-      });
-    }
-    const expected = expectedById.get(id);
-    if (expected) {
-      if (descriptor.sourceField !== expected.sourceField) {
-        addHookModuleMismatch(errors, {
-          id,
-          reason: "hook descriptor sourceField does not match IR field",
-          expected: expected.sourceField,
-          actual: descriptor.sourceField ?? null,
-        });
-      }
-      const sourceFunction = findSourceFunction(
-        expected.sourceRecord,
-        descriptor.sourceField,
-        descriptor.path,
-        descriptor.functionBodySha256,
-      );
-      if (!sourceFunction) {
-        addHookModuleMismatch(errors, {
-          id,
-          reason: "hook descriptor path does not resolve to a source function",
-          source: expected.source,
-          path: descriptor.path ?? null,
-        });
-      } else if (descriptor.functionBodySha256 !== sourceFunction.sha256) {
-        addHookModuleMismatch(errors, {
-          id,
-          reason: "hook descriptor function body SHA-256 does not match source",
-          expected: sourceFunction.sha256,
-          actual: descriptor.functionBodySha256 ?? null,
-        });
-      }
-    }
-    const standaloneHook = hookFiles.get(hookFileName(id));
-    if (!standaloneHook) {
-      addHookModuleMismatch(errors, {
-        id,
-        reason: "hook descriptor has no standalone hook file",
-      });
-    } else if (
-      isSha256(descriptor.functionBodySha256) &&
-      sha256(standaloneHook.body) !== descriptor.functionBodySha256
-    ) {
-      addHookModuleMismatch(errors, {
-        id,
-        reason: "standalone hook body SHA-256 does not match descriptor",
-        expected: descriptor.functionBodySha256,
-        actual: sha256(standaloneHook.body),
-      });
-    }
-    const entries = hookEntriesByModule.get(descriptor.module) ?? [];
-    entries.push({ id, descriptor });
-    hookEntriesByModule.set(descriptor.module, entries);
-  }
-
-  const manifestModuleFiles = new Set(Object.keys(manifestModules));
-  for (const file of manifestModuleFiles) {
-    if (!isSafeModuleFile(file)) {
-      errors.invalidHookModuleManifest.push({
-        field: `modules.${file}`,
-        reason: "module path must be a root-relative .js filename",
-      });
-    }
-  }
-  for (const file of moduleFilesOnDisk) {
-    if (!manifestModuleFiles.has(file)) {
-      errors.orphanHookModules.push({
-        file,
-        reason: "module file is not described by manifest modules",
-      });
-    }
-  }
-  for (const file of manifestModuleFiles) {
-    if (!moduleFiles.has(file)) {
-      errors.missingHookModules.push({
-        file,
-        reason: "manifest module file does not exist",
-      });
-    }
-  }
-  for (const [file, entries] of hookEntriesByModule) {
-    if (!manifestModuleFiles.has(file)) {
-      for (const { id } of entries) {
-        addHookModuleMismatch(errors, {
-          id,
-          file,
-          reason:
-            "hook descriptor references a module missing from manifest modules",
-        });
-      }
-    }
-  }
-
-  for (const [file, metadata] of Object.entries(manifestModules)) {
-    const entries = hookEntriesByModule.get(file) ?? [];
-    const expectedIds = entries.map(({ id }) => id);
-    if (entries.length === 0) {
-      errors.orphanHookModules.push({
-        file,
-        reason: "manifest module is not referenced by any hook",
-      });
-    }
-    if (!isRecord(metadata)) {
-      errors.invalidHookModuleManifest.push({
-        field: `modules.${file}`,
-        reason: "module metadata must be an object",
-      });
-      continue;
-    }
-    rejectUnknownFields(errors, `modules.${file}`, metadata, [
-      "source",
-      "sourceSha256",
-      "moduleSha256",
-      "hookIds",
-    ]);
-    if (!isSafeRelativeSource(metadata.source)) {
-      errors.invalidHookModuleManifest.push({
-        field: `modules.${file}.source`,
-        value: metadata.source ?? null,
-        reason: "source path must be a normalized relative path",
-      });
-    }
-    if (!isSha256(metadata.sourceSha256)) {
-      errors.invalidHookModuleManifest.push({
-        field: `modules.${file}.sourceSha256`,
-        reason: "sourceSha256 must be a lowercase SHA-256 digest",
-      });
-    }
-    if (!isSha256(metadata.moduleSha256)) {
-      errors.invalidHookModuleManifest.push({
-        field: `modules.${file}.moduleSha256`,
-        reason: "moduleSha256 must be a lowercase SHA-256 digest",
-      });
-    }
-    if (
-      !Array.isArray(metadata.hookIds) ||
-      metadata.hookIds.some((id) => typeof id !== "string" || !id)
-    ) {
-      errors.invalidHookModuleManifest.push({
-        field: `modules.${file}.hookIds`,
-        reason: "hookIds must be an array of non-empty strings",
-      });
-    }
-    const metadataHookIds = Array.isArray(metadata.hookIds)
-      ? metadata.hookIds
-      : [];
-    if (new Set(metadataHookIds).size !== metadataHookIds.length) {
-      addHookModuleMismatch(errors, {
-        file,
-        reason: "module metadata hookIds contains duplicates",
-      });
-    }
-    if (!sameStringSet(metadataHookIds, expectedIds)) {
-      addHookModuleMismatch(errors, {
-        file,
-        reason: "module metadata hookIds do not match manifest hooks",
-        expected: sortedStrings(expectedIds),
-        actual: sortedStrings(metadataHookIds),
-      });
-    }
-
-    const expectedSources = [
-      ...new Set(
-        entries
-          .map(({ id }) => expectedById.get(id)?.source)
-          .filter((source) => typeof source === "string"),
-      ),
-    ];
-    const expectedSourceHashes = [
-      ...new Set(
-        entries
-          .map(({ id }) => expectedById.get(id)?.sourceSha256)
-          .filter((sourceSha256) => typeof sourceSha256 === "string"),
-      ),
-    ];
-    if (
-      expectedSources.length !== 1 ||
-      metadata.source !== expectedSources[0]
-    ) {
-      addHookModuleMismatch(errors, {
-        file,
-        reason: "module metadata source does not match audited source",
-        expected: expectedSources,
-        actual: metadata.source ?? null,
-      });
-    }
-    if (
-      expectedSourceHashes.length !== 1 ||
-      metadata.sourceSha256 !== expectedSourceHashes[0]
-    ) {
-      addHookModuleMismatch(errors, {
-        file,
-        reason: "module metadata sourceSha256 does not match audited source",
-        expected: expectedSourceHashes,
-        actual: metadata.sourceSha256 ?? null,
-      });
-    }
-
-    for (const { id, descriptor } of entries) {
-      if (descriptor.moduleSha256 !== metadata.moduleSha256) {
-        addHookModuleMismatch(errors, {
-          id,
-          file,
-          reason: "hook descriptor moduleSha256 differs from module metadata",
-          expected: metadata.moduleSha256 ?? null,
-          actual: descriptor.moduleSha256 ?? null,
-        });
-      }
-    }
-
-    if (!moduleFiles.has(file)) continue;
-    const moduleText = await safeReadRegularFile(
-      join(modulesRoot, file),
-      `source module ${file}`,
-      { root: modulesRoot },
-    ).catch((error) => {
-      errors.missingHookModules.push({
-        file,
-        reason: "module file cannot be read",
-        message: error.message,
-      });
-      return null;
-    });
-    if (moduleText == null) continue;
-    const actualSha256 = sha256(moduleText);
-    if (
-      isSha256(metadata.moduleSha256) &&
-      actualSha256 !== metadata.moduleSha256
-    ) {
-      addHookModuleMismatch(errors, {
-        file,
-        reason: "module file SHA-256 does not match metadata",
-        expected: metadata.moduleSha256,
-        actual: actualSha256,
-      });
-    }
-    for (const { id, descriptor } of entries) {
-      if (
-        isSha256(descriptor.moduleSha256) &&
-        actualSha256 !== descriptor.moduleSha256
-      ) {
-        addHookModuleMismatch(errors, {
-          id,
-          file,
-          reason: "module file SHA-256 does not match hook descriptor",
-          expected: descriptor.moduleSha256,
-          actual: actualSha256,
-        });
-      }
-    }
-  }
-
+async function validateHookModules({ irRoot, errors, enabled }) {
+  const summary = {
+    validated: Boolean(enabled),
+    leftoverRuntimeJs: false,
+    leftoverHookFiles: errors.leftoverHookFiles.length,
+    leftoverHookModules: errors.leftoverHookModules.length,
+    leftoverHookModuleManifest: errors.leftoverHookModuleManifest.length,
+  };
+  if (!enabled) return summary;
+  summary.leftoverRuntimeJs =
+    summary.leftoverHookFiles +
+      summary.leftoverHookModules +
+      summary.leftoverHookModuleManifest >
+    0;
   return summary;
 }
 
@@ -2078,6 +1734,9 @@ async function auditSpecsHooksUnlocked({
     missingHookModules: [],
     orphanHookModules: [],
     hookModuleMismatches: [],
+    leftoverHookFiles: [],
+    leftoverHookModules: [],
+    leftoverHookModuleManifest: [],
     missingTypedHookSidecar: [],
     invalidTypedHookSidecar: [],
     missingTypedHooks: [],
@@ -2108,6 +1767,7 @@ async function auditSpecsHooksUnlocked({
       });
     }
   }
+  await rejectLeftoverRuntimeJs(irRoot, errors);
 
   async function readTree(root, extension, options, label) {
     try {
@@ -2135,7 +1795,7 @@ async function auditSpecsHooksUnlocked({
       file !== PAIR_MARKER_NAME &&
       file !== TYPED_HOOK_SIDECAR,
   );
-  const hookFilesOnDisk = await readTree(hooksRoot, ".js", {}, "hooksRoot");
+  const hookFilesOnDisk = [];
   const sourceIndex = await validateSourceIndex(sourceRoot, errors);
 
   if (!sourceFiles.length) {
@@ -2378,9 +2038,6 @@ async function auditSpecsHooksUnlocked({
       });
     }
     refsById.set(ref.id, ref);
-    if (!hookFiles.has(filename)) {
-      errors.missingHookFiles.push({ id: ref.id, file: filename, ir: ref.ir });
-    }
   }
 
   for (const [id, locations] of locationsById) {
@@ -2406,18 +2063,57 @@ async function auditSpecsHooksUnlocked({
     if (!expectedHookFiles.has(file)) errors.orphanHookFiles.push(file);
   }
 
-  const hookBodiesById = new Map();
-  for (const [id] of refsById) {
-    hookBodiesById.set(id, hookFiles.get(hookFileName(id)) ?? { body: null });
-  }
-  const manifestHooksForMapping = validateHookModulesEnabled
-    ? await readManifestHooksForMapping(irRoot)
+  const sidecarMapping = validateTypedHooksEnabled
+    ? await readSidecarMapping(irRoot)
     : null;
+  const fallbackBodies = new Map();
+  for (const [source, record] of sourceRecords) {
+    if (record.allowlisted || !record.isSpec) continue;
+    const familyRefs = uniqueFamilyRefs(irRecordsForSource(irRecords, source));
+    for (const sourceField of SOURCE_FIELDS) {
+      const irField = SOURCE_TO_IR[sourceField];
+      const candidates = [
+        ...new Map(
+          familyRefs
+            .filter((ref) => ref.field === irField)
+            .map((ref) => [ref.id, ref]),
+        ).values(),
+      ];
+      const baseInstances = compilerFunctionInstances(
+        record.functions[sourceField] ?? [],
+        { includeNative: false },
+      );
+      if (candidates.length !== baseInstances.length) continue;
+      candidates.forEach((ref, index) => {
+        fallbackBodies.set(ref.id, baseInstances[index]);
+      });
+    }
+  }
+  const hookBodiesById = new Map();
+  for (const [id, ref] of refsById) {
+    const mapping = sidecarMapping?.[id];
+    const sourceFunction =
+      findSourceFunction(
+        sourceRecords.get(sourceRelForIr(ref.ir)),
+        IR_TO_SOURCE[ref.field],
+        mapping?.path ?? null,
+        mapping?.functionBodySha256 ?? null,
+      ) ?? fallbackBodies.get(id);
+    const body = sourceFunction?.source ?? null;
+    hookBodiesById.set(id, {
+      body,
+      sha256: body ? sha256(`export default ${body};\n`) : null,
+      path: mapping?.path ?? sourceFunction?.path ?? null,
+      functionBodySha256:
+        mapping?.functionBodySha256 ?? (body ? sha256(body) : null),
+      module: mapping?.module ?? null,
+      moduleSha256: mapping?.moduleSha256 ?? null,
+    });
+  }
   const typedHooks = await validateTypedHookSidecar({
     irRoot,
     sourceRecords,
     refsById,
-    manifestHooks: manifestHooksForMapping,
     errors,
     enabled: validateTypedHooksEnabled,
   });
@@ -2489,7 +2185,6 @@ async function auditSpecsHooksUnlocked({
           refsByFieldRecords[irField].map((ref) => [ref.id, ref]),
         ).values(),
       ];
-      const used = new Set();
       const sourceInstances = familySourceInstances(record, sourceField);
       const baseInstances = compilerFunctionInstances(
         record.functions[sourceField] ?? [],
@@ -2510,31 +2205,34 @@ async function auditSpecsHooksUnlocked({
           reason: `compiler hook instances (${baseInstances.length}) do not match IR hook ids (${candidates.length})`,
         });
       }
-      if (manifestHooksForMapping) {
-        for (const ref of candidates) {
-          const descriptor = Object.hasOwn(manifestHooksForMapping, ref.id)
-            ? manifestHooksForMapping[ref.id]
+      if (sidecarMapping) {
+        for (const [index, ref] of candidates.entries()) {
+          const descriptor = Object.hasOwn(sidecarMapping, ref.id)
+            ? sidecarMapping[ref.id]
             : undefined;
+          if (!descriptor || !isRecord(descriptor)) {
+            // Factory leftovers and unregistered bodies stay off the sidecar.
+            // Bind them from the compiler's source-order zip so capture and
+            // classify still see a path and body SHA.
+            const functionRecord = sourceInstances[index];
+            hookInstances[sourceField].push({
+              path: functionRecord?.path ?? null,
+              sha256: functionRecord?.sha256 ?? null,
+              functionBodySha256: functionRecord?.sha256 ?? null,
+              sourceField,
+              id: ref.id,
+              file: hookFileName(ref.id),
+            });
+            continue;
+          }
           const instance = {
-            path: descriptor?.path ?? null,
-            sha256: descriptor?.functionBodySha256 ?? null,
-            functionBodySha256: descriptor?.functionBodySha256 ?? null,
+            path: descriptor.path ?? null,
+            sha256: descriptor.functionBodySha256 ?? null,
+            functionBodySha256: descriptor.functionBodySha256 ?? null,
             sourceField,
             id: ref.id,
             file: hookFileName(ref.id),
           };
-          if (!descriptor || !isRecord(descriptor)) {
-            errors.sourceHookMismatches.push({
-              source,
-              ir,
-              field: sourceField,
-              irField,
-              id: ref.id,
-              reason: "strict manifest has no hook descriptor",
-            });
-            hookInstances[sourceField].push(instance);
-            continue;
-          }
           if (descriptor.sourceField !== sourceField) {
             errors.sourceHookMismatches.push({
               source,
@@ -2542,7 +2240,7 @@ async function auditSpecsHooksUnlocked({
               field: sourceField,
               irField,
               id: ref.id,
-              reason: "manifest sourceField does not match source field",
+              reason: "sidecar sourceField does not match source field",
               expected: sourceField,
               actual: descriptor.sourceField ?? null,
             });
@@ -2561,7 +2259,7 @@ async function auditSpecsHooksUnlocked({
               irField,
               id: ref.id,
               path: descriptor.path ?? null,
-              reason: "manifest path does not resolve to a source function",
+              reason: "sidecar path does not resolve to a source function",
             });
           } else if (descriptor.functionBodySha256 !== sourceFunction.sha256) {
             errors.sourceHookMismatches.push({
@@ -2571,7 +2269,7 @@ async function auditSpecsHooksUnlocked({
               irField,
               id: ref.id,
               path: descriptor.path,
-              reason: "manifest function body SHA-256 does not match source",
+              reason: "sidecar function body SHA-256 does not match source",
               expected: sourceFunction.sha256,
               actual: descriptor.functionBodySha256 ?? null,
             });
@@ -2581,46 +2279,11 @@ async function auditSpecsHooksUnlocked({
         continue;
       }
       if (hasDerivedFamily) {
-        // Diff snapshots re-collect every surviving function after each
-        // applySpecDiff. Matching those path+sha rows 1:1 against unique
-        // hook ids false-fails when a reused body moves. Drive the
-        // pre-manifest pass from IR hook ids and resolve by body hash.
         for (const ref of candidates) {
-          const hook = hookBodiesById.get(ref.id);
-          const functionBodySha256 = hook?.body ? sha256(hook.body) : null;
-          const sourceFunction = functionBodySha256
-            ? findSourceFunction(
-                record,
-                sourceField,
-                null,
-                functionBodySha256,
-              )
-            : undefined;
-          if (!sourceFunction) {
-            errors.sourceHookMismatches.push({
-              source,
-              ir,
-              field: sourceField,
-              irField,
-              id: ref.id,
-              sha256: functionBodySha256,
-              reason:
-                "derived IR hook has no merged source function with the same body",
-            });
-            hookInstances[sourceField].push({
-              path: null,
-              sha256: functionBodySha256,
-              functionBodySha256,
-              sourceField,
-              id: ref.id,
-              file: hookFileName(ref.id),
-            });
-            continue;
-          }
           hookInstances[sourceField].push({
-            path: sourceFunction.path,
-            sha256: sourceFunction.sha256,
-            functionBodySha256: sourceFunction.sha256,
+            path: null,
+            sha256: null,
+            functionBodySha256: null,
             sourceField,
             id: ref.id,
             file: hookFileName(ref.id),
@@ -2628,32 +2291,9 @@ async function auditSpecsHooksUnlocked({
         }
         continue;
       }
-      for (const functionRecord of sourceInstances) {
-        const candidateIndex = candidates.findIndex((candidate, index) => {
-          if (used.has(index)) return false;
-          const hook = hookBodiesById.get(candidate.id);
-          return hook?.body && sha256(hook.body) === functionRecord.sha256;
-        });
-        if (candidateIndex < 0) {
-          errors.sourceHookMismatches.push({
-            source,
-            ir,
-            field: sourceField,
-            irField,
-            path: functionRecord.path,
-            sha256: functionRecord.sha256,
-          });
-          hookInstances[sourceField].push({
-            path: functionRecord.path,
-            sha256: functionRecord.sha256,
-            functionBodySha256: functionRecord.sha256,
-            sourceField,
-            id: null,
-            file: null,
-          });
-        } else {
-          used.add(candidateIndex);
-          const id = candidates[candidateIndex].id;
+      if (candidates.length === sourceInstances.length) {
+        for (const [index, functionRecord] of sourceInstances.entries()) {
+          const id = candidates[index].id;
           hookInstances[sourceField].push({
             path: functionRecord.path,
             sha256: functionRecord.sha256,
@@ -2661,6 +2301,17 @@ async function auditSpecsHooksUnlocked({
             sourceField,
             id,
             file: hookFileName(id),
+          });
+        }
+      } else {
+        for (const functionRecord of sourceInstances) {
+          hookInstances[sourceField].push({
+            path: functionRecord.path,
+            sha256: functionRecord.sha256,
+            functionBodySha256: functionRecord.sha256,
+            sourceField,
+            id: null,
+            file: null,
           });
         }
       }
@@ -2698,9 +2349,6 @@ async function auditSpecsHooksUnlocked({
 
   const hookModules = await validateHookModules({
     irRoot,
-    sourceRecords,
-    refsById,
-    hookFiles,
     errors,
     enabled: validateHookModulesEnabled,
   });
@@ -2723,8 +2371,8 @@ async function auditSpecsHooksUnlocked({
   const riskHooks = [];
   for (const [id, ref] of refsById) {
     const file = hookFileName(id);
-    const hook = hookFiles.get(file);
-    if (!hook) continue;
+    const hook = hookBodiesById.get(id);
+    if (!hook?.body) continue;
     const hits = RISK_PATTERNS.filter(([, pattern]) =>
       pattern.test(hook.body),
     ).map(([name]) => name);
@@ -2825,13 +2473,18 @@ async function auditSpecsHooksUnlocked({
       .sort(comparePath)
       .map((id) => {
         const ref = refsById.get(id);
-        const file = hookFileName(id);
+        const hook = hookBodiesById.get(id) ?? {};
         return {
           id,
-          file,
+          file: hookFileName(id),
           field: ref.field,
           ir: ref.ir,
-          sha256: hookFiles.get(file)?.sha256 ?? null,
+          sha256: hook.sha256 ?? null,
+          functionBodySha256: hook.functionBodySha256 ?? null,
+          path: hook.path ?? null,
+          body: hook.body ?? null,
+          module: hook.module ?? null,
+          moduleSha256: hook.moduleSha256 ?? null,
         };
       }),
     sourceToIr,

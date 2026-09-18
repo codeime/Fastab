@@ -6,10 +6,9 @@
 //! Document vs code, code wins:
 //! - [`crate::runtime::CompleteResult`] has no `files` / `diagnostics` fields.
 //!   Timeout / invoke outcomes are read from [`crate::runtime::Engine::last_hook_diagnostic`].
-//! - `executeCommand` timeout is `CommandError::TimedOut` → JS throw, usually
-//!   [`crate::js_host::HookDiagnostic::PromiseRejected`] or `InvokeError`.
-//!   [`crate::js_host::HookDiagnostic::Timeout`] is the interrupt path (JS
-//!   infinite loop).
+//! - `executeCommand` timeout is `CommandError::TimedOut` → typed/adapter
+//!   error, usually [`crate::hook_types::HookDiagnostic::InvokeError`].
+//!   [`crate::hook_types::HookDiagnostic::Timeout`] is a wall-clock abort.
 //! - SWR after TTL expiry refetches; it does not serve the stale rows.
 
 use std::collections::BTreeMap;
@@ -85,13 +84,13 @@ fn updating() -> bool {
     matches!(std::env::var("EC_ENGINE_GOLDEN_UPDATE").as_deref(), Ok("1"))
 }
 
-/// JS `executeCommand` timeout becomes PromiseRejected; Native records InvokeError
-/// or Timeout. Same empty overlay; do not treat the diagnostic name as a drop.
+/// Native `executeCommand` timeout records InvokeError or Timeout. Same empty
+/// overlay; do not treat the diagnostic name as a drop.
 fn timeout_diagnostic_matches(actual: Option<&str>, expected: &str) -> bool {
     if actual == Some(expected) {
         return true;
     }
-    const TIMEOUT_FAMILY: &[&str] = &["PromiseRejected", "InvokeError", "Timeout"];
+    const TIMEOUT_FAMILY: &[&str] = &["InvokeError", "Timeout", "PromiseRejected"];
     actual.is_some_and(|actual| TIMEOUT_FAMILY.contains(&actual) && TIMEOUT_FAMILY.contains(&expected))
 }
 

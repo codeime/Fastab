@@ -4,23 +4,18 @@
 //! generators run in Rust.
 
 mod cobra;
-#[cfg(all(test, feature = "js-compat"))]
-mod dual_path;
-mod dual_path_compare;
-#[cfg(all(test, feature = "js-compat"))]
-mod dual_path_session;
-#[cfg(all(test, feature = "js-compat"))]
+#[cfg(test)]
 mod engine_golden;
+mod fig_spec;
 mod filegen;
 mod generate;
 mod history;
 mod hook_backend;
 #[cfg(test)]
 mod hook_baseline;
+mod hook_cache;
 mod hook_types;
 mod ir;
-#[cfg(feature = "js-compat")]
-mod js_host;
 mod lookup;
 mod native_adapters;
 mod process;
@@ -33,7 +28,6 @@ mod typed_hook;
 mod versioned;
 mod worker;
 
-pub use dual_path_compare::{complete_result_diffs, normalise_complete_result};
 pub use hook_backend::{HookBackend, with_backend};
 pub use ir::{ArgSpec, Builtin, OptionSpec, Registry, Spec, Template};
 pub use lookup::{completion_buffer, current_command_slice, tokenize};

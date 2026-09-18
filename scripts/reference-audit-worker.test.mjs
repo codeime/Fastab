@@ -12,11 +12,14 @@ import {
   PAIR_LOCK_NAME,
   writePairMarker,
 } from "./spec-pair.mjs";
+import { defaultAdaptersPath } from "./native-hook-adapters.mjs";
 import {
+  adapterCatalogReadRoots,
   generateReferenceAudit,
   MAX_AUDIT_REPORT_BYTES,
   permissionGrants,
   REFERENCE_AUDIT_TIMEOUT_MS,
+  referenceAuditReadRoots,
   withReferenceAudit,
 } from "./reference-audit-worker.mjs";
 
@@ -83,6 +86,18 @@ test("permission grants widen only a root shadowed by a same-prefix sibling", ()
     ["/tmp/audit-src-a1", "/tmp/audit-ir-b2", "/tmp/audit-ir-b2/hooks"],
   );
   assert.deepEqual(permissionGrants(["/a", "/a"]), ["/a"]);
+});
+
+test("restricted audit grants the adapter catalog file, not testdata/", () => {
+  assert.deepEqual(adapterCatalogReadRoots(), [defaultAdaptersPath]);
+  const roots = referenceAuditReadRoots({
+    sourceRoot: "/tmp/audit-src",
+    irRoot: "/tmp/audit-ir",
+    hooksRoot: "/tmp/audit-ir/hooks",
+  });
+  assert.equal(roots.has(defaultAdaptersPath), true);
+  assert.equal(roots.has(dirname(defaultAdaptersPath)), false);
+  assert.equal(roots.has(join(dirname(defaultAdaptersPath), "..")), false);
 });
 
 test("restricted audit reads a source root whose sibling IR root shares its name prefix", async () => {

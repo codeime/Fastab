@@ -644,11 +644,25 @@ pub(crate) struct TypedHookCatalogEntry {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct TypedHookAdapterBinding {
+    pub(crate) path: String,
+    #[serde(rename = "sourceField")]
+    pub(crate) source_field: String,
+    #[serde(rename = "functionBodySha256")]
+    pub(crate) function_body_sha256: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct TypedHookCatalog {
     version: u64,
     kind: String,
     contracts: TypedHookContracts,
     pub(crate) hooks: BTreeMap<String, TypedHookCatalogEntry>,
+    /// Named native adapters that compiled typed IR cannot represent.
+    /// Absent from older sidecars; empty means every hook is typed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) adapters: BTreeMap<String, TypedHookAdapterBinding>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -1432,7 +1446,7 @@ fn validate_typed_hook_catalog(catalog: &TypedHookCatalog) -> TypedHookResult<()
         TypedValueType::SuggestionArray,
         "filterTemplateSuggestions",
     )?;
-    if catalog.hooks.len() > MAX_CATALOG_HOOKS {
+    if catalog.hooks.len() + catalog.adapters.len() > MAX_CATALOG_HOOKS {
         return Err(TypedHookError::new(format!(
             "typed hook catalog contains more than {MAX_CATALOG_HOOKS} hooks"
         )));
@@ -1453,6 +1467,21 @@ fn validate_typed_hook_catalog(catalog: &TypedHookCatalog) -> TypedHookResult<()
         let descriptor_value = serde_json::to_value(&entry.descriptor)
             .map_err(|error| TypedHookError::new(format!("typed hook descriptor schema: {error}")))?;
         ensure_descriptor_size(&descriptor_value)?;
+    }
+    for (id, entry) in &catalog.adapters {
+        validate_hook_id(id)?;
+        if catalog.hooks.contains_key(id) {
+            return Err(TypedHookError::new(format!(
+                "typed hook {id:?} cannot be both a typed descriptor and an adapter binding"
+            )));
+        }
+        validate_source_hook_path(&entry.path)?;
+        validate_sha256(&entry.function_body_sha256, "functionBodySha256")?;
+        if !SIDECAR_SOURCE_FIELDS.contains(&entry.source_field.as_str()) {
+            return Err(TypedHookError::new(format!(
+                "typed hook adapter {id:?} sourceField must be one of the sidecar contracts"
+            )));
+        }
     }
     Ok(())
 }
@@ -4344,6 +4373,7 @@ mod tests {
             kind: CATALOG_KIND.to_owned(),
             contracts: sidecar_contracts(),
             hooks: too_many,
+            adapters: BTreeMap::new(),
         };
         assert!(validate_typed_hook_catalog(&catalog).is_err());
     }
@@ -4624,16 +4654,6 @@ mod tests {
         name
     }
 
-    fn closure_function_body_sha256(bytes: &[u8]) -> Result<String, String> {
-        let text = std::str::from_utf8(bytes).map_err(|error| format!("hook artifact is not UTF-8: {error}"))?;
-        let text = text.trim();
-        let body = text
-            .strip_prefix("export default ")
-            .ok_or_else(|| "hook artifact has no standalone export default body".to_owned())?;
-        let body = body.strip_suffix(';').unwrap_or(body).trim();
-        Ok(sha256_hex(body.as_bytes()))
-    }
-
     fn json_string<'a>(value: &'a JsonValue, field: &str) -> Result<&'a str, String> {
         value
             .get(field)
@@ -4683,20 +4703,16 @@ mod tests {
             return Err("harnessSha256 differs from the current reference harness".to_owned());
         }
 
-        let hook_manifest = read_reference_file(&repo_root, "bundle/specs-ir", "hook-modules.json")?;
-        if sha256_hex(&hook_manifest) != baseline.hook_manifest_sha256 {
-            return Err("hookManifestSha256 differs from hook-modules.json".to_owned());
+        let sidecar = read_reference_file(&repo_root, "bundle/specs-ir", "typed-hooks.json")?;
+        if sha256_hex(&sidecar) != baseline.hook_manifest_sha256 {
+            return Err("hookManifestSha256 differs from typed-hooks.json".to_owned());
         }
-        let hook_manifest: JsonValue = serde_json::from_slice(&hook_manifest)
-            .map_err(|error| format!("hook-modules.json is invalid JSON: {error}"))?;
-        let manifest_hooks = hook_manifest
+        let sidecar: JsonValue =
+            serde_json::from_slice(&sidecar).map_err(|error| format!("typed-hooks.json is invalid JSON: {error}"))?;
+        let sidecar_hooks = sidecar
             .get("hooks")
             .and_then(JsonValue::as_object)
-            .ok_or_else(|| "hook-modules.json has no hooks object".to_owned())?;
-        let manifest_modules = hook_manifest
-            .get("modules")
-            .and_then(JsonValue::as_object)
-            .ok_or_else(|| "hook-modules.json has no modules object".to_owned())?;
+            .ok_or_else(|| "typed-hooks.json has no hooks object".to_owned())?;
 
         for id in ASDF_GET_QUERY_TERM_CANDIDATE_IDS {
             let candidate = baseline
@@ -4714,21 +4730,10 @@ mod tests {
             if sha256_hex(&ir) != candidate.ir_sha256 {
                 return Err(format!("candidate {id:?} IR bytes drifted"));
             }
-            let module = read_reference_file(&repo_root, "bundle/specs-ir/source-modules", &candidate.module)?;
-            if sha256_hex(&module) != candidate.module_sha256 {
-                return Err(format!("candidate {id:?} closure module bytes drifted"));
-            }
-            let hook = read_reference_file(&repo_root, "bundle/specs-ir/hooks", &candidate.hook_file)?;
-            if sha256_hex(&hook) != candidate.hook_file_sha256 {
-                return Err(format!("candidate {id:?} hook artifact bytes drifted"));
-            }
-            if closure_function_body_sha256(&hook)? != candidate.function_body_sha256 {
-                return Err(format!("candidate {id:?} function body bytes drifted"));
-            }
 
-            let descriptor = manifest_hooks
+            let descriptor = sidecar_hooks
                 .get(id)
-                .ok_or_else(|| format!("hook manifest entry {id:?} is missing"))?;
+                .ok_or_else(|| format!("typed sidecar entry {id:?} is missing"))?;
             for (field, expected) in [
                 ("module", candidate.module.as_str()),
                 ("moduleSha256", candidate.module_sha256.as_str()),
@@ -4737,20 +4742,11 @@ mod tests {
                 ("functionBodySha256", candidate.function_body_sha256.as_str()),
             ] {
                 if json_string(descriptor, field)? != expected {
-                    return Err(format!("candidate {id:?} differs from hook manifest {field}"));
+                    return Err(format!("candidate {id:?} differs from typed sidecar {field}"));
                 }
             }
-            let module_metadata = manifest_modules
-                .get(candidate.module.as_str())
-                .ok_or_else(|| format!("module manifest entry {:?} is missing", candidate.module))?;
-            for (field, expected) in [
-                ("source", candidate.source.as_str()),
-                ("sourceSha256", candidate.source_sha256.as_str()),
-                ("moduleSha256", candidate.module_sha256.as_str()),
-            ] {
-                if json_string(module_metadata, field)? != expected {
-                    return Err(format!("candidate {id:?} differs from module manifest {field}"));
-                }
+            if json_string(descriptor, "moduleSha256")? != candidate.module_sha256 {
+                return Err(format!("candidate {id:?} typed sidecar moduleSha256 differs"));
             }
         }
         Ok(())
@@ -4808,7 +4804,10 @@ mod tests {
             .module_sha256 = "0".repeat(64);
         let error =
             assert_current_asdf_get_query_term_provenance(&baseline).expect_err("module hash drift must fail closed");
-        assert!(error.contains("closure module bytes drifted"), "{error}");
+        assert!(
+            error.contains("typed sidecar moduleSha256") || error.contains("differs from typed sidecar"),
+            "{error}"
+        );
     }
 
     #[test]

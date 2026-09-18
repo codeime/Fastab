@@ -231,7 +231,7 @@ test("compiles a real helper fixture and reports deterministic native readiness"
   }
 });
 
-test("an orphan extracted file is unclassified and closes the migration gate", async () => {
+test("leftover runtime JS artifacts close the migration gate", async () => {
   const sourceRoot = await mkdtemp(join(tmpdir(), "easy-complete-native-src-"));
   const irRoot = await mkdtemp(join(tmpdir(), "easy-complete-native-ir-"));
   try {
@@ -240,24 +240,15 @@ test("an orphan extracted file is unclassified and closes the migration gate", a
       'export default { name: "fixture", args: [{ name: "value", generators: { trigger: () => !0 } }] };\n',
     );
     await compileSpecsIr({ srcDir: sourceRoot, outDir: irRoot });
+    await mkdir(join(irRoot, "hooks"), { recursive: true });
     await writeFile(
       join(irRoot, "hooks", "orphan.js"),
       "export default () => !0;\n",
     );
     const report = await classifyNativeHooks({ sourceRoot, irRoot });
-    assert.equal(report.coverage.unclassifiedHooks, 1);
     assert.equal(report.gate.classificationComplete, false);
     assert.equal(report.gate.pathSwitchAllowed, false);
-    assert.ok(report.gate.blockers.includes("unclassified"));
-    assert.deepEqual(
-      report.hooks
-        .filter((hook) => hook.file === "orphan.js")
-        .map((hook) => ({
-          status: hook.status,
-          reasonCodes: hook.reasonCodes,
-        })),
-      [{ status: "unclassified", reasonCodes: ["orphan-hook-file"] }],
-    );
+    assert.ok(report.gate.blockers.includes("audit-errors"));
   } finally {
     await Promise.all([
       rm(sourceRoot, { recursive: true, force: true }),
@@ -285,16 +276,16 @@ test("full pinned bundle is covered and stage-2 gate is open", async () => {
   const auditedNativeRewrites = Object.values(
     audit.source.nativeRewriteCounts,
   ).reduce((sum, count) => sum + count, 0);
-  assert.equal(report.coverage.extractedHooks, audit.hooks.files);
+  assert.equal(report.coverage.extractedHooks, audit.hooks.referenced);
   assert.equal(report.coverage.uniqueBodies, auditedUniqueBodies);
-  assert.equal(report.coverage.hookFilesOnDisk, audit.hooks.files);
+  assert.equal(report.coverage.hookFilesOnDisk, 0);
+  assert.equal(audit.hooks.files, 0);
   assert.equal(report.coverage.nativeFilepathsRewrite, auditedNativeRewrites);
   assert.equal(report.coverage.unclassifiedHooks, 0);
   assert.equal(report.gate.classificationComplete, true);
-  // Stage 2 is complete: every unique body is typed-ir or native-adapter,
-  // version diffs are applied, and the output baseline covers all 603
-  // bodies. The inventory gate may open; the product default stays Js
-  // until T3.4 flips HookBackend.
+  // Stage 2/3 are complete and T4.1 removed runtime JS: every unique body
+  // is typed-ir or native-adapter, version diffs are applied, hook files
+  // are gone, and the output baseline covers all 603 bodies.
   assert.equal(report.gate.pathSwitchAllowed, true);
   assert.deepEqual(report.gate.blockers, []);
   assert.equal(report.outputBaseline.status, "established");

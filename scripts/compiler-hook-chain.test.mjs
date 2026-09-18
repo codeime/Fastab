@@ -70,39 +70,25 @@ test("checked-in QuickJS chain fixture is exact current compiler output", async 
     assert.equal(typeof postProcessId, "string");
     assert.equal(typeof customId, "string");
 
-    const manifest = JSON.parse(
-      await readFile(join(committedIrRoot, "hook-modules.json"), "utf8"),
+    const sidecar = JSON.parse(
+      await readFile(join(committedIrRoot, "typed-hooks.json"), "utf8"),
     );
+    const post = sidecar.hooks[postProcessId] ?? sidecar.adapters?.[postProcessId];
+    const custom = sidecar.hooks[customId] ?? sidecar.adapters?.[customId];
+    assert.ok(post, "typed postProcess must land in the sidecar");
     assert.deepEqual(
-      {
-        path: manifest.hooks[postProcessId].path,
-        sourceField: manifest.hooks[postProcessId].sourceField,
-      },
+      { path: post.path, sourceField: post.sourceField },
       {
         path: "root.args[0].generators.postProcess",
         sourceField: "postProcess",
       },
     );
-    assert.deepEqual(
-      {
-        path: manifest.hooks[customId].path,
-        sourceField: manifest.hooks[customId].sourceField,
-      },
-      {
-        path: "root.args[1].generators.custom",
-        sourceField: "custom",
-      },
-    );
-    assert.match(
-      manifest.hooks[postProcessId].functionBodySha256,
-      /^[a-f0-9]{64}$/,
-    );
-    assert.match(manifest.hooks[customId].functionBodySha256, /^[a-f0-9]{64}$/);
-    assert.equal(
-      manifest.hooks[postProcessId].module,
-      manifest.hooks[customId].module,
-      "both hooks must exercise one shared compiler-generated module table",
-    );
+    assert.match(post.functionBodySha256, /^[a-f0-9]{64}$/);
+    // `this.label` custom is not typed IR and is not a registered adapter.
+    // The IR id stays; the sidecar must not invent a binding for it.
+    assert.equal(custom, undefined);
+    assert.equal(sidecar.hooks[customId], undefined);
+    assert.equal(sidecar.adapters?.[customId], undefined);
   } finally {
     await rm(generatedIrRoot, { recursive: true, force: true });
   }
