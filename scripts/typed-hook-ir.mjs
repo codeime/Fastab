@@ -1365,6 +1365,11 @@ function jsReplace(value, needle, replacement, all) {
 function jsPad(value, target, pad, end) {
   if (target <= value.length) return value;
   if (pad.length === 0) return value;
+  if (target > MAX_STRING_CODE_UNITS) {
+    fail("string-pad exceeds the UTF-16 code-unit limit", {
+      code: "complexity",
+    });
+  }
   const needed = target - value.length;
   let fill = "";
   while (fill.length < needed) fill += pad;

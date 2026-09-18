@@ -1862,6 +1862,9 @@ fn js_pad(value: &Utf16String, target: i64, pad: &Utf16String, end: bool) -> Typ
     if target <= length || pad.0.is_empty() {
         return Ok(value.clone());
     }
+    if target > MAX_STRING_LITERAL_UNITS as i64 {
+        return Err(TypedHookError::new("string-pad exceeds the UTF-16 code-unit limit"));
+    }
     let needed = usize::try_from(target - length)
         .map_err(|error| TypedHookError::new(format!("pad target is too large: {error}")))?;
     let mut fill = Vec::with_capacity(needed);
@@ -2531,6 +2534,26 @@ mod tests {
             &[],
         );
         assert!(overflow.is_err());
+
+        let huge_pad = evaluate_expr(
+            &TypedExpr::StringPadStart {
+                value: Box::new(string("x")),
+                target: Box::new(integer((MAX_STRING_LITERAL_UNITS as i64) + 1)),
+                pad: Box::new(string("0")),
+            },
+            &[],
+        );
+        assert!(huge_pad.is_err());
+
+        let empty_last = evaluate_expr(
+            &TypedExpr::StringLastIndexOf {
+                value: Box::new(string("ab")),
+                needle: Box::new(string("")),
+            },
+            &[],
+        )
+        .expect("empty lastIndexOf");
+        assert_eq!(empty_last, TypedValue::Integer(2));
     }
 
     #[test]

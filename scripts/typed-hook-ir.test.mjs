@@ -933,6 +933,15 @@ test("evaluateTypedHook matches JavaScript UTF-16 string and safe-integer arithm
       ),
     (error) => error.code === "input",
   );
+  const hugePad = compileTypedHook({
+    body: `value=>value.padStart(4,"0")`,
+    sourceField: "getQueryTerm",
+  });
+  hugePad.expr.target = { op: "integer", value: 32 * 1024 + 1 };
+  assert.throws(
+    () => evaluateTypedHook(hugePad, ["x"]),
+    (error) => error.code === "complexity",
+  );
 });
 
 test("cross-language v2 op golden matches compile and evaluate", async () => {

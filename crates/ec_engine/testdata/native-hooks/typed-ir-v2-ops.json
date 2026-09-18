@@ -1297,6 +1297,89 @@
       }
     },
     {
+      "id": "trigger-last-index-empty-needle",
+      "sourceField": "trigger",
+      "body": "(a,b)=>a.lastIndexOf(\"\")===a.length",
+      "args": [
+        "ab",
+        "x"
+      ],
+      "expected": true,
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "trigger",
+        "resultType": "bool",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          },
+          {
+            "index": 1,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "strict-eq",
+          "left": {
+            "op": "string-last-index-of",
+            "value": {
+              "op": "arg",
+              "index": 0
+            },
+            "needle": {
+              "op": "string",
+              "value": ""
+            }
+          },
+          "right": {
+            "op": "length",
+            "value": {
+              "op": "arg",
+              "index": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "query-replace-all-empty-needle",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.replaceAll(\"\",\"-\")",
+      "args": [
+        "ab"
+      ],
+      "expected": "-a-b-",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-replace-all",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "needle": {
+            "op": "string",
+            "value": ""
+          },
+          "replacement": {
+            "op": "string",
+            "value": "-"
+          }
+        }
+      }
+    },
+    {
       "id": "script-literal-argv",
       "sourceField": "script",
       "body": "tokens=>[\"echo\",\"-n\"]",

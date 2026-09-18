@@ -231,6 +231,18 @@ export const TYPED_IR_V2_OPS_CASES = Object.freeze([
     args: ["a/b", "ab"],
   },
   {
+    id: "trigger-last-index-empty-needle",
+    sourceField: "trigger",
+    body: '(a,b)=>a.lastIndexOf("")===a.length',
+    args: ["ab", "x"],
+  },
+  {
+    id: "query-replace-all-empty-needle",
+    sourceField: "getQueryTerm",
+    body: 'value=>value.replaceAll("","-")',
+    args: ["ab"],
+  },
+  {
     id: "script-literal-argv",
     sourceField: "script",
     body: 'tokens=>["echo","-n"]',
