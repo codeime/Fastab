@@ -314,6 +314,10 @@ function addFallbackLicense(component) {
   return component;
 }
 
+function normalizeNewlines(text) {
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
 function displayAuthors(authors) {
   if (!authors) return undefined;
   if (typeof authors === "string") return authors;
@@ -331,9 +335,12 @@ function renderComponent(component) {
   const fileEntries = [
     ...(component.files ?? []).map((filePath) => ({
       name: basename(filePath),
-      content: readFileSync(filePath, "utf8"),
+      content: normalizeNewlines(readFileSync(filePath, "utf8")),
     })),
-    ...(component.inlineFiles ?? []),
+    ...(component.inlineFiles ?? []).map((file) => ({
+      ...file,
+      content: normalizeNewlines(file.content),
+    })),
   ];
   const lines = [
     "=".repeat(80),

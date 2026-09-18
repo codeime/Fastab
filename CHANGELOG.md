@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- change: product name and identity are now Fastab (`app.fastab`, `Fastab.app`, CLI `ftab`, PTY `fastabterm`). Easy Complete settings and history migrate into the Fastab data directory when that directory is absent. Telemetry UI is hidden and reporting stays unconfigured.
+- change: product name and identity are now Fastab (`app.fastab`, `Fastab.app`, CLI `ftab`, PTY `fastabterm`). Easy Complete settings and history migrate into the Fastab data directory when that directory is absent. The old IME palette entry is dropped on install. Telemetry UI is hidden and reporting stays unconfigured.
 
 ## v3.0.0-beta.16
 

@@ -1572,7 +1572,7 @@ fn about_page(zh: bool, chrome: Chrome, entity: Entity<SettingsWindow>, copied_d
                 })
                 .child(link_row(
                     "Easy Complete",
-                    "https://github.com/codeime/easy-complete",
+                    "https://github.com/chen86860/easy-complete",
                     chrome,
                     false,
                 ))

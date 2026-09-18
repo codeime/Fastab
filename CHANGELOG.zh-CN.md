@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- 变更：产品名与身份改为 Fastab（`app.fastab`、`Fastab.app`、CLI `ftab`、PTY `fastabterm`）。若尚无 Fastab 数据目录，会把 Easy Complete 的设置和历史迁过去。遥测开关已从界面隐藏，上报保持未配置。
+- 变更：产品名与身份改为 Fastab（`app.fastab`、`Fastab.app`、CLI `ftab`、PTY `fastabterm`）。若尚无 Fastab 数据目录，会把 Easy Complete 的设置和历史迁过去。安装时会清掉旧输入法条目。遥测开关已从界面隐藏，上报保持未配置。
 
 ## v3.0.0-beta.16
 

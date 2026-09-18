@@ -541,6 +541,7 @@ mod linux_tests {
         assert!(manifest_path().is_ok());
         assert!(backups_dir().is_ok());
         assert!(logs_dir().is_ok());
+        assert!(previous_product_data_dir().is_ok());
         assert!(settings_path().is_ok());
         assert!(update_lock_path(&ctx).is_ok());
     }
@@ -667,6 +668,16 @@ mod tests {
         linux!(fig_data_dir(), @"$HOME/.local/share/fastab");
         macos!(fig_data_dir(), @"$HOME/Library/Application Support/fastab");
         windows!(fig_data_dir(), @r"C:\Users\$USER\AppData\Local\AmazonQ");
+    }
+
+    #[test]
+    fn snapshot_previous_product_data_dir() {
+        linux!(previous_product_data_dir(), @"$HOME/.local/share/easy-complete");
+        macos!(previous_product_data_dir(), @"$HOME/Library/Application Support/easy-complete");
+        windows!(
+            previous_product_data_dir(),
+            @r"C:\Users\$USER\AppData\Local\easy-complete"
+        );
     }
 
     #[test]
