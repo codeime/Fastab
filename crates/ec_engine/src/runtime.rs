@@ -66,7 +66,7 @@ pub struct CompleteRequest {
     pub alias: Option<String>,
     /// Dual-path / `ec engine complete --compare` override. The overlay leaves
     /// this `None` so [`hook_backend::current`] (env, then settings, default
-    /// Js until T3.4) still owns the product path.
+    /// Native after T3.4) owns the product path.
     #[serde(skip)]
     pub backend_override: Option<hook_backend::HookBackend>,
 }

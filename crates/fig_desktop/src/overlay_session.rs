@@ -2,7 +2,8 @@
 //!
 //! Handshake `remote.sock`, then stream `EditBufferHook` frames plus the
 //! `fig_input_method` caret wire on `desktop.sock`. Live sockets are optional;
-//! unit tests cover session shape and caret framing. Product default stays Js.
+//! unit tests cover session shape and caret framing. After T3.4 the product
+//! default is Native; live replay can still set `EC_HOOK_BACKEND=js`.
 
 use fig_proto::FigProtobufEncodable;
 use fig_proto::hooks::{hook_to_message, new_caret_position_hook};

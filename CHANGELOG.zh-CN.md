@@ -2,6 +2,7 @@
 
 ## v3.0.0-beta.14
 
+- 功能：补全 hook 默认走原生后端；QuickJS 仍保留一个版本，可通过 `EC_HOOK_BACKEND=js` 或 `autocomplete.hookBackend=js` 回退
 - 修复：生成器的 `splitOn: ""` 不再按行切分脚本输出；切分出的每一段保留原文，不再逐段去空白
 - 修复：动态的 `alias` / `loadSpec` / `generateSpec` hook 使用实时的 `autocomplete.scriptTimeout` 设置，不再固定 5 秒
 - 修复：`specs-ir` 目录缺失时直接报错，不再静默变成空的 spec 注册表；安装后引擎会把 spec 与 hook 模块一起重新绑定，进行中的请求不会读到混合的两代数据

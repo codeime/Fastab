@@ -1,7 +1,6 @@
 //! Native vs QuickJS dual-path compare (T3.2).
 //!
-//! Test-only. The product default stays [`crate::hook_backend::HookBackend::Js`]
-//! until T3.4. Failures write `target/dual-path-report.json`.
+//! Test-only. Failures write `target/dual-path-report.json`.
 
 use std::fs;
 use std::path::PathBuf;

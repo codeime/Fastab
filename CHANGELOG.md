@@ -2,6 +2,7 @@
 
 ## v3.0.0-beta.14
 
+- feat: completion hooks default to the native backend; QuickJS stays available for one version via `EC_HOOK_BACKEND=js` or `autocomplete.hookBackend=js`
 - fix: generator `splitOn: ""` no longer splits script output into lines, and split pieces keep their exact text instead of being trimmed one by one
 - fix: dynamic `alias` / `loadSpec` / `generateSpec` hooks honour the live `autocomplete.scriptTimeout` setting instead of a fixed 5 s
 - fix: a missing `specs-ir` directory fails closed instead of silently serving an empty spec registry; the engine rebinds specs and hook modules together after an install so an in-flight request cannot read a mixed generation

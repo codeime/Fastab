@@ -1,8 +1,9 @@
 //! Runtime hook backend: QuickJS or native (typed IR + named adapters).
 //!
-//! Dual-path compare is test-only until T3.4. The product default stays `Js`
-//! while `js-compat` is on. Native misses record a [`HookDiagnostic`] and do
-//! **not** fall back to QuickJS.
+//! Dual-path compare is test-only. After T3.4 the product default is `Native`
+//! while `js-compat` remains for one version (`EC_HOOK_BACKEND=js` /
+//! `autocomplete.hookBackend=js`). Native misses record a [`HookDiagnostic`]
+//! and do **not** fall back to QuickJS.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -164,7 +165,7 @@ pub fn current_from_settings(settings: &fig_settings::settings::Settings) -> Hoo
         if let Some(backend) = parse_backend_name(settings.get_string_opt("autocomplete.hookBackend").as_deref()) {
             return backend;
         }
-        HookBackend::Js
+        HookBackend::Native
     }
 }
 
@@ -727,7 +728,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_backend_is_js_when_compat_is_on() {
+    fn default_backend_is_native() {
         let settings = fig_settings::settings::Settings::from_slice(&[]);
         #[cfg(feature = "js-compat")]
         {
@@ -736,10 +737,10 @@ mod tests {
             assert_eq!(parse_backend_name(Some("native")), Some(HookBackend::Native));
             assert_eq!(
                 current_from_settings(&settings),
-                parse_backend_name(std::env::var("EC_HOOK_BACKEND").ok().as_deref()).unwrap_or(HookBackend::Js)
+                parse_backend_name(std::env::var("EC_HOOK_BACKEND").ok().as_deref()).unwrap_or(HookBackend::Native)
             );
-            with_backend(HookBackend::Js, || {
-                assert_eq!(current(), HookBackend::Js);
+            with_backend(HookBackend::Native, || {
+                assert_eq!(current(), HookBackend::Native);
             });
         }
         #[cfg(not(feature = "js-compat"))]

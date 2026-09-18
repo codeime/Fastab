@@ -63,6 +63,25 @@ jobs:
       - name: Verify native hook inventory
         run: node scripts/classify-native-hooks.mjs --check
 
+      - name: Assert path-switch gate
+        run: |
+          node -e '
+            const expected = process.env.EC_GATE_PATH_SWITCH_EXPECTED;
+            const inventory = require("./crates/ec_engine/testdata/native-hooks/inventory.json");
+            const allowed = inventory.gate && inventory.gate.pathSwitchAllowed === true;
+            if (expected === "false") {
+              if (allowed) {
+                console.error("EC_GATE_PATH_SWITCH_EXPECTED=false but gate.pathSwitchAllowed is true");
+                process.exit(1);
+              }
+              process.exit(0);
+            }
+            if (!allowed) {
+              console.error("T3.4 requires inventory.json gate.pathSwitchAllowed === true");
+              process.exit(1);
+            }
+          '
+
       - name: Test hook output baselines
         run: node --test --test-concurrency=1 scripts/hook-baseline-contract.test.mjs scripts/capture-hook-baseline.test.mjs scripts/record-cli-output.test.mjs
 
