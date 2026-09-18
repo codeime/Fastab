@@ -8,7 +8,7 @@ use serde_json::{Value as JsonValue, json};
 use crate::hook_types::HookContext;
 
 use super::effect::{
-    AdapterExec, AdapterExecRequest, adapter_list, catch_empty, env_var, exec_object, key_value, key_value_list,
+    AdapterExec, AdapterExecRequest, JsMap, adapter_list, catch_empty, env_var, exec_object, key_value, key_value_list,
     last_token, parse_json, value_list,
 };
 use super::eval::{AdapterError, AdapterResult, js_split_lines, suggestion_object, throw};
@@ -173,7 +173,7 @@ fn make_targets(exec: &AdapterExec<'_>) -> AdapterResult {
             "make -qp | awk -F':' '/^[a-zA-Z0-9][^$#\\/\\t=]*:([^=]|$)/ {split($1,A,/ /);for(i in A)print A[i]}' | sort -u",
         ],
     )?;
-    let mut targets = HashMap::<String, JsonValue>::new();
+    let mut targets = JsMap::<JsonValue>::new();
     for line in js_split_lines(&first.stdout) {
         if line == "Makefile" {
             continue;
@@ -244,7 +244,7 @@ fn make_targets(exec: &AdapterExec<'_>) -> AdapterResult {
             }),
         );
     }
-    Ok(JsonValue::Array(targets.into_values().collect()))
+    Ok(JsonValue::Array(targets.into_values()))
 }
 
 fn scc_key_value_list(tokens: &[String], exec: &AdapterExec<'_>) -> AdapterResult {
@@ -294,16 +294,16 @@ fn pkgutil_files(tokens: &[String], exec: &AdapterExec<'_>) -> AdapterResult {
 }
 
 struct NxGraph {
-    projects: HashMap<String, Vec<String>>,
+    projects: JsMap<Vec<String>>,
     configurations: HashMap<String, Vec<String>>,
-    targets: HashMap<String, Vec<String>>,
+    targets: JsMap<Vec<String>>,
 }
 
 fn nx_graph(exec: &AdapterExec<'_>) -> NxGraph {
     let mut graph = NxGraph {
-        projects: HashMap::new(),
+        projects: JsMap::new(),
         configurations: HashMap::new(),
-        targets: HashMap::new(),
+        targets: JsMap::new(),
     };
     let Ok(nx_json) = exec_object(exec, "cat", ["nx.json"]) else {
         return graph;
@@ -352,7 +352,7 @@ fn nx_graph(exec: &AdapterExec<'_>) -> NxGraph {
                     configurations.extend(object.keys().cloned());
                 }
                 graph.configurations.insert(format!("{name}:{target}"), configurations);
-                graph.targets.entry(target.clone()).or_default().push(name.clone());
+                graph.targets.entry_or_default(target.clone()).push(name.clone());
             }
         }
         graph.projects.insert(name, target_names);
@@ -980,7 +980,7 @@ fn oxlint_rules(tokens: &[String], exec: &AdapterExec<'_>) -> AdapterResult {
 fn goto_aliases(exec: &AdapterExec<'_>, context: &HookContext) -> AdapterResult {
     let home = env_var(context, "HOME");
     let result = exec_object(exec, "cat", [format!("{home}/.config/goto")])?;
-    let mut seen = HashMap::new();
+    let mut seen = JsMap::new();
     for line in js_split_lines(&result.stdout) {
         let mut parts = line.split(' ');
         let name = parts.next().unwrap_or("").to_owned();
@@ -995,7 +995,7 @@ fn goto_aliases(exec: &AdapterExec<'_>, context: &HookContext) -> AdapterResult 
             }),
         );
     }
-    Ok(JsonValue::Array(seen.into_values().collect()))
+    Ok(JsonValue::Array(seen.into_values()))
 }
 
 fn git_flow_branches(tokens: &[String], exec: &AdapterExec<'_>) -> AdapterResult {

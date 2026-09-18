@@ -27,6 +27,60 @@ pub(crate) struct AdapterExecResult {
 
 pub(crate) type AdapterExec<'a> = dyn Fn(AdapterExecRequest) -> Result<AdapterExecResult, AdapterError> + 'a;
 
+/// A JS `Map` with string keys. `Map.prototype.keys` / `values` enumerate
+/// in insertion order and `set` on an existing key keeps its position; a
+/// `HashMap` here would hand the ranker a different candidate order on
+/// every run, and `BTreeMap` would sort what the hook never sorted. Plain
+/// objects (`Object.keys` on a `JSON.parse` result) go through
+/// `serde_json::Map`, which the workspace builds with `preserve_order`.
+#[derive(Debug, Default)]
+pub(super) struct JsMap<V> {
+    entries: Vec<(String, V)>,
+}
+
+impl<V> JsMap<V> {
+    pub(super) fn new() -> Self {
+        Self { entries: Vec::new() }
+    }
+
+    fn position(&self, key: &str) -> Option<usize> {
+        self.entries.iter().position(|(existing, _)| existing == key)
+    }
+
+    pub(super) fn insert(&mut self, key: String, value: V) {
+        match self.position(&key) {
+            Some(index) => self.entries[index].1 = value,
+            None => self.entries.push((key, value)),
+        }
+    }
+
+    pub(super) fn get(&self, key: &str) -> Option<&V> {
+        self.position(key).map(|index| &self.entries[index].1)
+    }
+
+    pub(super) fn entry_or_default(&mut self, key: String) -> &mut V
+    where
+        V: Default,
+    {
+        let index = match self.position(&key) {
+            Some(index) => index,
+            None => {
+                self.entries.push((key, V::default()));
+                self.entries.len() - 1
+            },
+        };
+        &mut self.entries[index].1
+    }
+
+    pub(super) fn keys(&self) -> impl Iterator<Item = &String> {
+        self.entries.iter().map(|(key, _)| key)
+    }
+
+    pub(super) fn into_values(self) -> Vec<V> {
+        self.entries.into_iter().map(|(_, value)| value).collect()
+    }
+}
+
 pub(super) fn last_token(tokens: &[String]) -> String {
     tokens.last().cloned().unwrap_or_default()
 }

@@ -706,6 +706,63 @@ pub(crate) fn test_native_hooks(entries: Vec<(String, JsonValue)>) -> NativeHook
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::process::mock::{self, ExecRule};
+
+    const MAKE_TARGETS_SHA: &str = "03b126c52218b618b258b4113e23cf47ef5a0197646c1f48f7983f6bf146ead8";
+
+    fn adapter_only_hooks(id: &str, field: &str, sha: &str) -> NativeHooks {
+        use crate::typed_hook::parse_typed_hook_catalog;
+        let catalog = serde_json::json!({
+            "version": 1,
+            "kind": "typed-hook-expressions",
+            "contracts": test_sidecar_contracts(),
+            "hooks": {},
+            "adapters": {
+                id: {
+                    "path": "root.args[0].generators[0]",
+                    "sourceField": field,
+                    "functionBodySha256": sha,
+                }
+            }
+        });
+        NativeHooks::from_catalog(parse_typed_hook_catalog(&catalog).expect("adapter catalog"))
+    }
+
+    #[test]
+    fn make_targets_keep_the_order_the_makefile_listed_them_in() {
+        // `make` collects targets in a JS `Map`; its `values()` are insertion
+        // ordered and the ranker's stable sort preserves generator order on
+        // equal priority, so a HashMap here would reshuffle the list per run.
+        let _guard = mock::install(vec![
+            ExecRule {
+                command: Some("bash".into()),
+                stdout: "zeta\nalpha\nmid\n".into(),
+                ..ExecRule::default()
+            },
+            ExecRule {
+                command: Some("cat".into()),
+                stdout: "alpha: ## first\nzeta:\n\tgo\nomega: ## last\n".into(),
+                ..ExecRule::default()
+            },
+        ]);
+        let native = Arc::new(adapter_only_hooks("make#custom#0", "custom", MAKE_TARGETS_SHA));
+        let _bound = bind_native(Arc::clone(&native));
+        let rows = dispatch_custom(
+            "make#custom#0",
+            &["make".into()],
+            "/",
+            "",
+            Duration::from_secs(5),
+            false,
+        )
+        .expect("make targets");
+        let names: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
+        assert_eq!(names, ["zeta", "alpha", "mid", "omega"]);
+        assert_eq!(
+            rows[1].description, "first",
+            "a re-set key keeps its slot and takes the new value"
+        );
+    }
 
     #[test]
     fn native_miss_records_source_missing_and_returns_empty() {
