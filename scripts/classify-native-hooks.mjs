@@ -593,7 +593,7 @@ function analyzeAst(ast, field, body) {
       status: FAILURE_STATUS,
       failureKind: "unsupported-runtime-syntax",
       analysisError:
-        "runtime syntax is not supported by the phase-1 QuickJS gate",
+        "runtime syntax the typed-IR compiler cannot represent",
       researchCandidate: false,
       nativeExecutable: false,
       buildTimePureStatic: false,

@@ -932,8 +932,7 @@ pub(crate) fn parse_typed_trigger_reference_bytes(bytes: &[u8]) -> TypedHookResu
 }
 
 /// Parse the isolated asdf getQueryTerm differential baseline.  This is
-/// research/test data only; production never loads this artifact or selects
-/// this evaluator in place of QuickJS.
+/// research/test data only; production never loads this artifact.
 pub(crate) fn parse_typed_get_query_term_reference(
     value: &JsonValue,
 ) -> TypedHookResult<TypedGetQueryTermReferenceBaseline> {
@@ -2383,9 +2382,7 @@ pub(crate) fn evaluate_typed_trigger(
     }
 }
 
-/// Evaluate a getQueryTerm descriptor.  This helper is intentionally not
-/// called by the completion runtime; the production path continues to use
-/// its existing QuickJS adapter until the path switch is allowed.
+/// Evaluate a getQueryTerm descriptor.
 pub(crate) fn evaluate_typed_get_query_term(descriptor: &TypedHookIr, search_term: &str) -> TypedHookResult<String> {
     validate_typed_hook_ir(descriptor)?;
     if descriptor.source_field != GET_QUERY_TERM_SOURCE_FIELD {
@@ -2402,8 +2399,7 @@ pub(crate) fn evaluate_typed_get_query_term(descriptor: &TypedHookIr, search_ter
         .map_err(|error| TypedHookError::new(format!("getQueryTerm returned invalid UTF-16: {error}")))
 }
 
-/// Evaluate a postProcess descriptor. Test-only until T3.1; production still
-/// uses QuickJS.
+/// Evaluate a postProcess descriptor.
 pub(crate) fn evaluate_typed_post_process(
     descriptor: &TypedHookIr,
     stdout: &str,

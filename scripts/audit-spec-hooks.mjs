@@ -199,7 +199,7 @@ function analyzeHookBody(body) {
     }
     if (node.type === "Literal" && node.regex?.flags?.includes("v")) {
       unsupportedRuntimeSyntax.push(
-        "RegExp v flag is not supported by QuickJS",
+        "RegExp v flag is not supported by the typed-IR regex evaluator",
       );
     }
     for (const value of Object.values(node)) visit(value);

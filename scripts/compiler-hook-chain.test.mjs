@@ -49,7 +49,7 @@ async function assertTreesEqual(actualRoot, expectedRoot) {
   }
 }
 
-test("checked-in QuickJS chain fixture is exact current compiler output", async () => {
+test("checked-in hook chain fixture is exact current compiler output", async () => {
   const generatedIrRoot = await mkdtemp(
     join(tmpdir(), "easy-complete-compiler-hook-chain-"),
   );

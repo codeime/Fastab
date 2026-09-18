@@ -41,9 +41,10 @@ Mac。应用会收集匿名使用统计（打开次数、每日补全次数—�
 
 ## Native
 
-补全浮层和设置窗口是 GPUI 视图（Zed 的 UI 工具包）。补全本身从不进 WebView：
-`ec_engine` 查的是构建期编好的 JSON IR，QuickJS 只在 spec hook 需要时运行
-（`postProcess`、`script`、`custom`、`generateSpec`）。
+补全浮层和设置窗口是 GPUI 视图（Zed 的 UI 工具包）。补全本身从不进 WebView，
+应用里也没有 JavaScript 运行时：`ec_engine` 查的是构建期编好的 JSON IR，
+spec hook（`postProcess`、`script`、`custom`、`generateSpec`）同样在构建期
+编译成 typed IR 或具名 Rust 适配器。
 
 ## 目录
 
@@ -236,7 +237,7 @@ pnpm test                                   # 运行 Vitest
 | ----------------------- | ------------------------------------------------------- |
 | `fig_desktop`           | 原生应用宿主：GPUI 浮层与设置、托盘、引擎客户端         |
 | `ec_gpui`               | 补全列表、主题、macOS 窗口定位                          |
-| `ec_engine`             | 无界面补全：IR 查找、生成器、QuickJS hook               |
+| `ec_engine`             | 无界面补全：IR 查找、生成器、typed hook IR              |
 | `figterm`               | PTY 拦截、shell 编辑缓冲区追踪                          |
 | `ec_cli`                | CLI crate，提供 `ec` 二进制及其所有子命令               |
 | `fig_input_method`      | macOS 输入法辅助应用（光标追踪）                        |

@@ -397,9 +397,9 @@ export function closurePreservingHookModule(source, sourcePath, instances) {
       return `${JSON.stringify(instance.id)}: (...${args}) => Reflect.apply(${target}, ${owner}, ${args})`;
     });
   const prefix = needsMergedRoot ? `${applySpecDiffModuleSource()}\n` : "";
-  // QuickJS strips `export default` and evaluates the remaining expression as
-  // a script. An explicit strict function preserves the original ESM module's
-  // top-level semantics in both loaders: `this` is undefined and accidental
+  // The typed compiler strips `export default` and reads the remaining
+  // expression as a script. An explicit strict function preserves the original
+  // ESM module's top-level semantics: `this` is undefined and accidental
   // globals are rejected.
   return `export default (function () {\n"use strict";\n${prefix}${body}\nreturn Object.freeze({\n${entries.join(",\n")}\n});\n})();\n`;
 }
