@@ -669,6 +669,17 @@ fn generated_row_matches_query(suggestion: &Suggestion, query: &str, fuzzy: bool
             .is_some_and(|basename| matches_query(basename, query, fuzzy))
 }
 
+fn hook_session_cwd() -> Option<String> {
+    if let Some(cwd) = crate::hook_backend::current_cwd() {
+        return Some(cwd);
+    }
+    #[cfg(feature = "js-compat")]
+    if let Some((_, cwd)) = crate::js_host::current() {
+        return Some(cwd.to_string());
+    }
+    None
+}
+
 #[allow(clippy::too_many_arguments)]
 fn generate_from_generator(
     arg: &ArgSpec,
@@ -719,21 +730,20 @@ fn generate_from_generator(
     let snapshot = arg_snapshot_for_generator(arg, generator);
     // Fig's script and custom generators both bail on `haveContextForGenerator`
     // — no cwd, no run — so an empty cwd yields no rows from either.
-    let cwd = crate::hook_backend::current_cwd()
-        .filter(|_| cwd.is_empty())
-        .unwrap_or_else(|| cwd.to_string());
-    let cwd = cwd.as_str();
-    if !cwd.is_empty() {
+    // A live session comes from `hook_backend::enter_context` (Engine::complete)
+    // or, in js-compat tests, `JsHost::enter`.
+    if let Some(session_cwd) = hook_session_cwd() {
+        let cwd = if cwd.is_empty() { session_cwd } else { cwd.to_string() };
         out.extend(run_js_generators(
             &snapshot,
             tokens,
             query,
             raw_search_term,
-            cwd,
+            &cwd,
             fuzzy,
             timeout,
         ));
-    } else if !snapshot.script.is_empty() {
+    } else if !snapshot.script.is_empty() && !cwd.is_empty() {
         out.extend(run_script(
             &snapshot.script,
             query,
