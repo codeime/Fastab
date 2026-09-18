@@ -25,11 +25,6 @@ use crate::typed_hook::{
 
 const TYPED_HOOKS_FILE: &str = "typed-hooks.json";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HookBackend {
-    Native,
-}
-
 #[derive(Debug, Clone)]
 struct HookMeta {
     field: String,
@@ -115,42 +110,10 @@ fn read_sidecar(specs_dir: &Path, snapshot: Option<&DirectorySnapshot>, relative
 
 thread_local! {
     static SKIP_HOOKS: Cell<bool> = const { Cell::new(false) };
-    static OVERRIDE: Cell<Option<HookBackend>> = const { Cell::new(None) };
     static NATIVE: RefCell<Option<Arc<NativeHooks>>> = const { RefCell::new(None) };
     static CWD: RefCell<Option<String>> = const { RefCell::new(None) };
     static SHELL: RefCell<Option<ShellContext>> = const { RefCell::new(None) };
     static LAST_DIAGNOSTIC: RefCell<Option<HookDiagnosticRecord>> = const { RefCell::new(None) };
-}
-
-pub fn current() -> HookBackend {
-    if let Some(backend) = OVERRIDE.get() {
-        return backend;
-    }
-    current_from_settings(&fig_settings::settings::Settings::new())
-}
-
-/// Force one backend for the duration of `f`.
-#[allow(dead_code)]
-pub fn with_backend<R>(backend: HookBackend, f: impl FnOnce() -> R) -> R {
-    OVERRIDE.with(|cell| {
-        let previous = cell.replace(Some(backend));
-        let result = f();
-        cell.set(previous);
-        result
-    })
-}
-
-pub fn current_from_settings(settings: &fig_settings::settings::Settings) -> HookBackend {
-    let _ = settings;
-    HookBackend::Native
-}
-
-#[cfg(test)]
-fn parse_backend_name(value: Option<&str>) -> Option<HookBackend> {
-    match value?.trim().to_ascii_lowercase().as_str() {
-        "native" => Some(HookBackend::Native),
-        _ => None,
-    }
 }
 
 pub fn bind_native(native: Arc<NativeHooks>) -> BoundNative {
@@ -271,45 +234,35 @@ pub fn dispatch_trigger(hook_id: &str, search_term: &str, previous: &str) -> Opt
     if hooks_skipped() {
         return None;
     }
-    match current() {
-        HookBackend::Native => native_trigger(hook_id, search_term, previous),
-    }
+    native_trigger(hook_id, search_term, previous)
 }
 
 pub fn dispatch_get_query_term(hook_id: &str, search_term: &str) -> Option<String> {
     if hooks_skipped() {
         return None;
     }
-    match current() {
-        HookBackend::Native => native_get_query_term(hook_id, search_term),
-    }
+    native_get_query_term(hook_id, search_term)
 }
 
 pub fn dispatch_post_process(hook_id: &str, stdout: &str, tokens: &[String]) -> Option<Vec<Suggestion>> {
     if hooks_skipped() {
         return None;
     }
-    match current() {
-        HookBackend::Native => native_post_process(hook_id, stdout, tokens),
-    }
+    native_post_process(hook_id, stdout, tokens)
 }
 
 pub fn dispatch_script_command(hook_id: &str, tokens: &[String]) -> Option<ScriptCommand> {
     if hooks_skipped() {
         return None;
     }
-    match current() {
-        HookBackend::Native => native_script(hook_id, tokens),
-    }
+    native_script(hook_id, tokens)
 }
 
 pub fn dispatch_filter_template_suggestions(hook_id: &str, suggestions: &[Suggestion]) -> Option<Vec<Suggestion>> {
     if hooks_skipped() {
         return None;
     }
-    match current() {
-        HookBackend::Native => native_filter(hook_id, suggestions),
-    }
+    native_filter(hook_id, suggestions)
 }
 
 pub fn dispatch_custom(
@@ -323,36 +276,28 @@ pub fn dispatch_custom(
     if hooks_skipped() {
         return None;
     }
-    match current() {
-        HookBackend::Native => native_custom(hook_id, tokens, cwd, search_term, timeout, is_dangerous),
-    }
+    native_custom(hook_id, tokens, cwd, search_term, timeout, is_dangerous)
 }
 
 pub fn dispatch_alias(hook_id: &str, token: &str, cwd: &str, timeout: Duration) -> Option<String> {
     if hooks_skipped() {
         return None;
     }
-    match current() {
-        HookBackend::Native => native_alias(hook_id, token, cwd, timeout),
-    }
+    native_alias(hook_id, token, cwd, timeout)
 }
 
 pub fn dispatch_load_spec(hook_id: &str, token: &str, cwd: &str, timeout: Duration) -> Option<Spec> {
     if hooks_skipped() {
         return None;
     }
-    match current() {
-        HookBackend::Native => native_load_spec(hook_id, token, cwd, timeout),
-    }
+    native_load_spec(hook_id, token, cwd, timeout)
 }
 
 pub fn dispatch_generate_spec(hook_id: &str, tokens: &[String], cwd: &str, timeout: Duration) -> Option<Spec> {
     if hooks_skipped() {
         return None;
     }
-    match current() {
-        HookBackend::Native => native_generate_spec(hook_id, tokens, cwd, timeout),
-    }
+    native_generate_spec(hook_id, tokens, cwd, timeout)
 }
 
 fn typed_entry<'a>(native: &'a NativeHooks, hook_id: &str) -> Option<&'a TypedHookIr> {
@@ -763,37 +708,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_backend_is_native() {
-        let settings = fig_settings::settings::Settings::from_slice(&[]);
-        let _ = settings;
-        assert_eq!(current(), HookBackend::Native);
-        assert_eq!(
-            current_from_settings(&fig_settings::settings::Settings::from_slice(&[])),
-            HookBackend::Native
-        );
-        assert_eq!(parse_backend_name(Some("native")), Some(HookBackend::Native));
-        assert_eq!(parse_backend_name(Some("js")), None);
-    }
-
-    #[test]
-    fn override_selects_native_without_touching_process_env() {
-        with_backend(HookBackend::Native, || {
-            assert_eq!(current(), HookBackend::Native);
-        });
-    }
-
-    #[test]
-    fn native_miss_records_source_missing_and_does_not_run_js() {
+    fn native_miss_records_source_missing_and_returns_empty() {
         let native = Arc::new(NativeHooks {
             catalog: None,
             hooks: HashMap::new(),
         });
         let _bound = bind_native(Arc::clone(&native));
-        with_backend(HookBackend::Native, || {
-            assert!(dispatch_trigger("missing#trigger#0", "a", "b").is_none());
-            let record = last_diagnostic().expect("native miss records a diagnostic");
-            assert_eq!(record.hook_id, "missing#trigger#0");
-            assert_eq!(record.outcome, HookDiagnostic::SourceMissing);
-        });
+        assert!(dispatch_trigger("missing#trigger#0", "a", "b").is_none());
+        let record = last_diagnostic().expect("native miss records a diagnostic");
+        assert_eq!(record.hook_id, "missing#trigger#0");
+        assert_eq!(record.outcome, HookDiagnostic::SourceMissing);
     }
 }

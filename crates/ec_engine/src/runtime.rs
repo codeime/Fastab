@@ -64,10 +64,6 @@ pub struct CompleteRequest {
     /// from this map before walking specs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
-    /// Test override. The overlay leaves this `None` so [`hook_backend::current`]
-    /// owns the product path (always Native after T4.1).
-    #[serde(skip)]
-    pub backend_override: Option<hook_backend::HookBackend>,
 }
 
 fn empty_env(value: &Arc<Vec<(String, String)>>) -> bool {
@@ -88,7 +84,6 @@ impl Default for CompleteRequest {
             current_process: None,
             environment_variables: Arc::new(Vec::new()),
             alias: None,
-            backend_override: None,
         }
     }
 }
@@ -453,15 +448,6 @@ impl Engine {
         &self.registry
     }
 
-    /// Test helper for T1.5 engine golden: the latest hook outcome on this
-    /// engine's host. `CompleteResult` does not carry diagnostics.
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub(crate) fn last_hook_diagnostic(&self) -> Option<crate::hook_types::HookDiagnosticRecord> {
-        match hook_backend::current() {
-            hook_backend::HookBackend::Native => hook_backend::last_diagnostic(),
-        }
-    }
 
     /// The WebView's `clear-cache` event (`ec hook clear-autocomplete-cache`):
     /// `resetCaches()` dropped every loaded and generated spec, and
@@ -562,14 +548,6 @@ impl Engine {
     }
 
     pub fn complete(&mut self, request: CompleteRequest) -> anyhow::Result<CompleteResult> {
-        let backend = request.backend_override;
-        match backend {
-            Some(backend) => hook_backend::with_backend(backend, || self.complete_inner(request)),
-            None => self.complete_inner(request),
-        }
-    }
-
-    fn complete_inner(&mut self, request: CompleteRequest) -> anyhow::Result<CompleteResult> {
         self.refresh_specs_generation();
         crate::generate::install_session(std::mem::take(&mut self.generator_session));
         let result = self.complete_with_thread_session(request);

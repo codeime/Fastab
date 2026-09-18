@@ -28,7 +28,6 @@ mod typed_hook;
 mod versioned;
 mod worker;
 
-pub use hook_backend::{HookBackend, with_backend};
 pub use ir::{ArgSpec, Builtin, OptionSpec, Registry, Spec, Template};
 pub use lookup::{completion_buffer, current_command_slice, tokenize};
 pub use native_adapters::{dump_native_adapter_catalog, native_adapter_catalog_path};

@@ -5,7 +5,7 @@
 //!
 //! Document vs code, code wins:
 //! - [`crate::runtime::CompleteResult`] has no `files` / `diagnostics` fields.
-//!   Timeout / invoke outcomes are read from [`crate::runtime::Engine::last_hook_diagnostic`].
+//!   Timeout / invoke outcomes are read from [`crate::hook_backend::last_diagnostic`].
 //! - `executeCommand` timeout is `CommandError::TimedOut` → typed/adapter
 //!   error, usually [`crate::hook_types::HookDiagnostic::InvokeError`].
 //!   [`crate::hook_types::HookDiagnostic::Timeout`] is a wall-clock abort.
@@ -133,10 +133,10 @@ fn serialize_result(result: &crate::runtime::CompleteResult) -> Value {
     serde_json::to_value(result).expect("serialize CompleteResult")
 }
 
-fn diagnostic_label(engine: &Engine) -> Option<String> {
-    engine
-        .last_hook_diagnostic()
-        .map(|record| format!("{:?}", record.outcome))
+/// The latest hook outcome on this thread's backend. `CompleteResult` does
+/// not carry diagnostics.
+fn diagnostic_label() -> Option<String> {
+    crate::hook_backend::last_diagnostic().map(|record| format!("{:?}", record.outcome))
 }
 
 fn has_second_step(case: &EngineGoldenCase) -> bool {
@@ -165,7 +165,7 @@ pub(crate) fn run_case(
     let first_json = serialize_result(&first);
 
     if !has_second_step(case) {
-        return (first_json, None, diagnostic_label(&engine), first_calls, 0);
+        return (first_json, None, diagnostic_label(), first_calls, 0);
     }
 
     if let Some(sleep_ms) = case.sleep_ms {
@@ -186,7 +186,7 @@ pub(crate) fn run_case(
     (
         serialize_result(&second),
         Some(first_json),
-        diagnostic_label(&engine),
+        diagnostic_label(),
         first_calls,
         second_calls,
     )

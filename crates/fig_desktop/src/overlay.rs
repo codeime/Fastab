@@ -691,7 +691,6 @@ impl OverlayController {
             current_process,
             environment_variables,
             alias,
-            backend_override: None,
         };
         let engine = self.engine.clone();
         let proxy = self.proxy.clone();
