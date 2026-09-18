@@ -46,7 +46,7 @@ const featureDataZh: Array<Omit<Feature, "glyph">> = [
   },
   {
     title: "一条命令装好",
-    desc: "./install.sh 完成构建、安装并接好 Shell 集成——之后直接开始输入即可",
+    desc: "./scripts/install.sh 完成构建、安装并接好 Shell 集成——之后直接开始输入即可",
   },
 ];
 

@@ -55,7 +55,7 @@ const featureData: Omit<Feature, "glyph">[] = [
   },
   {
     title: "One-command setup",
-    desc: "./install.sh builds, installs and wires up shell integration — then just start typing.",
+    desc: "./scripts/install.sh builds, installs and wires up shell integration — then just start typing.",
   },
 ];
 
