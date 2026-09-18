@@ -2778,6 +2778,7 @@ fn evaluate_expr_with_effects(
     eval::evaluate_with_effects(expression, arguments, Some(effects))
 }
 
+#[allow(dead_code)]
 fn safe_length(length: usize) -> TypedHookResult<TypedValue> {
     let value = i64::try_from(length).map_err(|error| TypedHookError::new(format!("length is too large: {error}")))?;
     ensure_safe_integer(value, "length")?;
