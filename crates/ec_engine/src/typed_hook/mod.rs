@@ -5330,22 +5330,31 @@ mod tests {
         );
     }
 
+    /// `emit-typed-hook-descriptors` takes the spec-pair publication lock, so
+    /// two tests running it at once fail on the lock instead of on a real
+    /// difference. Emit once per test binary and share the catalog.
+    fn typed_baseline_descriptors() -> &'static TypedBaselineDescriptors {
+        static CATALOG: std::sync::OnceLock<TypedBaselineDescriptors> = std::sync::OnceLock::new();
+        CATALOG.get_or_init(|| {
+            let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+            let script = repo.join("scripts/emit-typed-hook-descriptors.mjs");
+            let output = std::process::Command::new("node")
+                .arg(&script)
+                .current_dir(&repo)
+                .output()
+                .expect("emit typed hook descriptors");
+            assert!(
+                output.status.success(),
+                "emit-typed-hook-descriptors failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            serde_json::from_slice(&output.stdout).expect("typed baseline descriptor catalog")
+        })
+    }
+
     #[test]
     fn typed_hook_baseline_parity() {
-        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let script = repo.join("scripts/emit-typed-hook-descriptors.mjs");
-        let output = std::process::Command::new("node")
-            .arg(&script)
-            .current_dir(&repo)
-            .output()
-            .expect("emit typed hook descriptors");
-        assert!(
-            output.status.success(),
-            "emit-typed-hook-descriptors failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let catalog: TypedBaselineDescriptors =
-            serde_json::from_slice(&output.stdout).expect("typed baseline descriptor catalog");
+        let catalog = typed_baseline_descriptors();
         let require = |field: &str, minimum: u64, exact_total: u64| {
             let count = catalog.counts.get(field).expect(field);
             assert_eq!(count.total, exact_total, "{field} unique-body total");
@@ -5460,20 +5469,7 @@ mod tests {
 
     #[test]
     fn typed_effect_baseline_parity() {
-        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let script = repo.join("scripts/emit-typed-hook-descriptors.mjs");
-        let output = std::process::Command::new("node")
-            .arg(&script)
-            .current_dir(&repo)
-            .output()
-            .expect("emit typed hook descriptors");
-        assert!(
-            output.status.success(),
-            "emit-typed-hook-descriptors failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let catalog: TypedBaselineDescriptors =
-            serde_json::from_slice(&output.stdout).expect("typed baseline descriptor catalog");
+        let catalog = typed_baseline_descriptors();
         let adapter_keys = registered_adapter_keys();
         let baselines = crate::hook_baseline::load_all().expect("T1.2 baselines");
         let mut compared = 0usize;
