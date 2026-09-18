@@ -92,7 +92,7 @@ pub(crate) fn verify_if_present(ir_root: &Path) -> anyhow::Result<()> {
 
 /// Snapshot-backed equivalent of [`verify_if_present`]. The marker and every
 /// tree file are checked against the same captured generation that `Registry`
-/// and `JsHost` share for lazy loading. A later canonical replacement can
+/// and `NativeHooks` share for lazy loading. A later canonical replacement can
 /// therefore only be consumed when its bytes are identical.
 pub(crate) fn verify_if_present_snapshot(snapshot: &DirectorySnapshot) -> anyhow::Result<()> {
     let marker = Path::new(PAIR_MARKER_NAME);

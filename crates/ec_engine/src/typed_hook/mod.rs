@@ -680,10 +680,21 @@ impl Clone for LazyTypedHookIr {
 
 impl PartialEq for LazyTypedHookIr {
     fn eq(&self, other: &Self) -> bool {
-        match (self.get(), other.get()) {
-            (Ok(left), Ok(right)) => left == right,
-            _ => self.raw.get() == other.raw.get(),
+        match (self.parsed.get(), other.parsed.get()) {
+            (Some(left), Some(right)) => left == right,
+            (Some(left), None) => parsed_eq_raw(left, &other.raw),
+            (None, Some(right)) => parsed_eq_raw(right, &self.raw),
+            (None, None) => self.raw.get() == other.raw.get(),
         }
+    }
+}
+
+/// Semantic equality that must not write `parsed`. Catalog `assert_eq!` used
+/// to call [`LazyTypedHookIr::get`] and materialize every descriptor (G1).
+fn parsed_eq_raw(parsed: &TypedHookIr, raw: &RawValue) -> bool {
+    match parse_typed_hook_ir_bytes(raw.get().as_bytes()) {
+        Ok(other) => parsed == &other,
+        Err(_) => false,
     }
 }
 
@@ -744,6 +755,54 @@ pub(crate) struct TypedHookCatalog {
 impl TypedHookCatalog {
     pub(crate) fn parsed_descriptor_count(&self) -> usize {
         self.hooks.values().filter(|entry| entry.descriptor.is_parsed()).count()
+    }
+
+    /// Drop compile-time provenance that the engine never reads again.
+    ///
+    /// `module` / `moduleSha256` / `path` / per-hook `functionBodySha256` and
+    /// the catalog `sourceField` exist so compile and `--check` can pin a
+    /// body to a file. After index validation the worker only needs the
+    /// lazy descriptor and the adapter SHA map (G2).
+    pub(crate) fn into_runtime(self) -> RuntimeTypedHookCatalog {
+        RuntimeTypedHookCatalog {
+            hooks: self
+                .hooks
+                .into_iter()
+                .map(|(id, entry)| (id, entry.descriptor))
+                .collect(),
+            adapters: self
+                .adapters
+                .into_iter()
+                .map(|(id, entry)| {
+                    (
+                        id,
+                        RuntimeTypedHookAdapter {
+                            source_field: entry.source_field,
+                            function_body_sha256: entry.function_body_sha256,
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Production view of [`TypedHookCatalog`]: typed bodies plus adapter SHAs.
+#[derive(Debug)]
+pub(crate) struct RuntimeTypedHookCatalog {
+    pub(crate) hooks: BTreeMap<String, LazyTypedHookIr>,
+    pub(crate) adapters: BTreeMap<String, RuntimeTypedHookAdapter>,
+}
+
+#[derive(Debug)]
+pub(crate) struct RuntimeTypedHookAdapter {
+    pub(crate) source_field: String,
+    pub(crate) function_body_sha256: String,
+}
+
+impl RuntimeTypedHookCatalog {
+    pub(crate) fn parsed_descriptor_count(&self) -> usize {
+        self.hooks.values().filter(|descriptor| descriptor.is_parsed()).count()
     }
 }
 
@@ -2532,8 +2591,8 @@ pub(crate) fn evaluate_typed_post_process(
     suggestions_from_typed_json(&json)
 }
 
-/// Evaluate a script descriptor to the same `ScriptCommand` shape `JsHost`
-/// returns. Test-only until T3.1.
+/// Evaluate a script descriptor to the same `ScriptCommand` shape the native
+/// backend returns.
 pub(crate) fn evaluate_typed_script(descriptor: &TypedHookIr, tokens: &[String]) -> TypedHookResult<ScriptCommand> {
     validate_typed_hook_ir(descriptor)?;
     if descriptor.source_field != SCRIPT_SOURCE_FIELD {
@@ -4350,7 +4409,11 @@ mod tests {
         let from_bytes = parse_typed_hook_catalog_bytes(&bytes).expect("catalog bytes");
         assert_eq!(from_bytes.parsed_descriptor_count(), 0);
         assert_eq!(from_bytes, catalog);
-        assert_eq!(from_bytes.parsed_descriptor_count(), 2);
+        assert_eq!(
+            from_bytes.parsed_descriptor_count(),
+            0,
+            "catalog equality must not materialize lazy descriptors"
+        );
 
         let descriptor = parse_expression(bool_value(true));
         let descriptor_bytes = serde_json::to_vec(&descriptor).expect("descriptor JSON");
@@ -4520,10 +4583,50 @@ mod tests {
             0,
             "loading typed-hooks.json must not materialize every IR tree"
         );
+        let hook_count = catalog.hooks.len();
         let hook_id = catalog.hooks.keys().next().expect("catalog is non-empty").clone();
-        let entry = catalog.hooks.get(&hook_id).expect("first hook");
-        let _ = entry.descriptor.get();
-        assert_eq!(catalog.parsed_descriptor_count(), 1);
+        let runtime = catalog.into_runtime();
+        assert_eq!(runtime.hooks.len(), hook_count);
+        assert_eq!(
+            runtime.parsed_descriptor_count(),
+            0,
+            "into_runtime must not parse descriptors"
+        );
+        let descriptor = runtime.hooks.get(&hook_id).expect("first hook");
+        let _ = descriptor.get();
+        assert_eq!(runtime.parsed_descriptor_count(), 1);
+    }
+
+    #[test]
+    fn runtime_catalog_drops_compile_time_provenance_without_parsing() {
+        let mut hooks = serde_json::Map::new();
+        hooks.insert("hook#one".to_owned(), catalog_entry(bool_value(true)));
+        let bytes = serde_json::to_vec(&catalog_value(hooks)).expect("catalog JSON");
+        let catalog = parse_typed_hook_catalog_bytes(&bytes).expect("index");
+        let entry = catalog.hooks.get("hook#one").expect("entry");
+        assert_eq!(entry.module, "typed-hooks.js");
+        assert!(!entry.module_sha256.is_empty());
+        assert!(!entry.path.is_empty());
+        assert_eq!(catalog.parsed_descriptor_count(), 0);
+
+        let runtime = catalog.into_runtime();
+        assert_eq!(runtime.hooks.len(), 1);
+        assert_eq!(runtime.parsed_descriptor_count(), 0);
+        assert!(evaluate_typed_hook_by_id_runtime(&runtime, "hook#one", "", "").expect("runtime evaluate"));
+        assert_eq!(runtime.parsed_descriptor_count(), 1);
+    }
+
+    fn evaluate_typed_hook_by_id_runtime(
+        catalog: &RuntimeTypedHookCatalog,
+        hook_id: &str,
+        search_term: &str,
+        previous_search_term: &str,
+    ) -> TypedHookResult<bool> {
+        let descriptor = catalog
+            .hooks
+            .get(hook_id)
+            .ok_or_else(|| TypedHookError::new(format!("typed hook id {hook_id:?} is missing")))?;
+        evaluate_typed_trigger(descriptor.get()?, search_term, previous_search_term)
     }
 
     fn typed_trigger_reference_value() -> JsonValue {

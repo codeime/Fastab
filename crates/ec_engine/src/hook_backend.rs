@@ -16,23 +16,24 @@ use crate::process::{self, CommandError};
 use crate::runtime::Suggestion;
 use crate::snapshot::DirectorySnapshot;
 use crate::typed_hook::{
-    TypedExecRequest, TypedExecResult, TypedHookCatalog, TypedHookContext, TypedHookError, TypedHookIr,
+    RuntimeTypedHookCatalog, TypedExecRequest, TypedExecResult, TypedHookContext, TypedHookError, TypedHookIr,
     evaluate_typed_alias, evaluate_typed_custom, evaluate_typed_filter_template_suggestions,
     evaluate_typed_generate_spec, evaluate_typed_get_query_term, evaluate_typed_load_spec, evaluate_typed_post_process,
-    evaluate_typed_script, evaluate_typed_trigger, lookup_typed_hook, parse_typed_hook_catalog_bytes,
-    suggestions_from_typed_json,
+    evaluate_typed_script, evaluate_typed_trigger, parse_typed_hook_catalog_bytes, suggestions_from_typed_json,
 };
 
 const TYPED_HOOKS_FILE: &str = "typed-hooks.json";
 
 pub struct NativeHooks {
-    catalog: Option<TypedHookCatalog>,
+    catalog: Option<RuntimeTypedHookCatalog>,
 }
 
 impl NativeHooks {
     #[cfg(test)]
     pub(crate) fn from_catalog(catalog: crate::typed_hook::TypedHookCatalog) -> Self {
-        Self { catalog: Some(catalog) }
+        Self {
+            catalog: Some(catalog.into_runtime()),
+        }
     }
 
     pub fn load(specs_dir: &Path, snapshot: Option<&DirectorySnapshot>) -> Self {
@@ -40,7 +41,7 @@ impl NativeHooks {
         let catalog = typed_bytes
             .as_deref()
             .and_then(|bytes| match parse_typed_hook_catalog_bytes(bytes) {
-                Ok(catalog) => Some(catalog),
+                Ok(catalog) => Some(catalog.into_runtime()),
                 Err(error) => {
                     tracing::warn!(%error, "typed hook catalog rejected");
                     None
@@ -52,7 +53,11 @@ impl NativeHooks {
 
 fn read_sidecar(specs_dir: &Path, snapshot: Option<&DirectorySnapshot>, relative: &str) -> Option<Vec<u8>> {
     if let Some(snapshot) = snapshot {
-        return snapshot.read_optional_file(Path::new(relative)).ok().flatten();
+        let path = Path::new(relative);
+        if let Some(bytes) = snapshot.take_captured_file(path) {
+            return Some(bytes);
+        }
+        return snapshot.read_optional_file(path).ok().flatten();
     }
     let path = specs_dir.join(relative);
     path.is_file().then(|| std::fs::read(path).ok()).flatten()
@@ -290,8 +295,8 @@ fn typed_entry<'a>(native: &'a NativeHooks, hook_id: &str) -> Result<Option<&'a 
     let Some(catalog) = native.catalog.as_ref() else {
         return Ok(None);
     };
-    match lookup_typed_hook(catalog, hook_id) {
-        Some(entry) => entry.descriptor.get().map(Some),
+    match catalog.hooks.get(hook_id) {
+        Some(descriptor) => descriptor.get().map(Some),
         None => Ok(None),
     }
 }

@@ -53,15 +53,12 @@ enum JobKind {
 // configured budget.
 const MIN_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Stack for the worker and every attempt thread. Both recurse over typed
-/// hook IR: the worker deserializes `typed-hooks.json` (nesting up to 32
-/// JSON levels for `git#generateSpec`) and an attempt walks the same trees
-/// in `evaluate_inner`. macOS gives a secondary thread 512 KB by default,
-/// and with `serde_json`'s `preserve_order` a *debug* build spends over
-/// 20 KB of stack per nesting level in `from_slice` — a dev `easy-complete`
-/// would overflow while loading the catalog. Release frames are far
-/// smaller, but the reservation is virtual and costs nothing unless
-/// touched, so both builds get the same headroom.
+/// Stack for the worker and every attempt thread. Catalog load now keeps
+/// each descriptor as `RawValue` (no deep `from_slice` of the IR trees).
+/// Attempt threads still walk those trees in `evaluate_inner`, including
+/// `git#generateSpec`. macOS gives a secondary thread 512 KB by default;
+/// the reservation is virtual and costs nothing unless touched, so both
+/// builds keep the same headroom.
 const ENGINE_THREAD_STACK: usize = 16 * 1024 * 1024;
 
 /// Slack added to the user's script budget before the UI stops waiting, so a
