@@ -230,6 +230,31 @@ fn eval_err<T>(hook_id: &str, error: &crate::typed_hook::TypedHookError) -> Opti
     invoke_err(hook_id)
 }
 
+/// Every effectful hook runs under its script budget plus this margin, the
+/// same window the QuickJS interrupt handler enforced.
+const HOOK_DEADLINE_MARGIN: Duration = Duration::from_secs(2);
+
+fn hook_deadline(timeout: Duration) -> Instant {
+    Instant::now() + timeout + HOOK_DEADLINE_MARGIN
+}
+
+fn deadline_expired(deadline: Instant) -> bool {
+    deadline.checked_duration_since(Instant::now()).is_none()
+}
+
+/// The old host's `hook_error`: a failure reported after the deadline has
+/// passed is a timeout, whatever the hook threw on its way out. A named
+/// adapter's exec throws a catchable `Error` on timeout, exactly as
+/// `executeCommand` rejected, so this is the only place that can tell the
+/// two apart.
+fn adapter_err<T>(hook_id: &str, deadline: Option<Instant>) -> Option<T> {
+    if deadline.is_some_and(deadline_expired) {
+        record(hook_id, HookDiagnostic::Timeout);
+        return None;
+    }
+    invoke_err(hook_id)
+}
+
 pub fn dispatch_trigger(hook_id: &str, search_term: &str, previous: &str) -> Option<bool> {
     if hooks_skipped() {
         return None;
@@ -341,7 +366,7 @@ fn native_post_process(hook_id: &str, stdout: &str, tokens: &[String]) -> Option
     if let Some(sha) = adapter_sha(&native, hook_id, "postProcess")
         && let Some(json) = crate::native_adapters::evaluate_post_process(sha, stdout, tokens)
     {
-        return json_suggestions(hook_id, json);
+        return json_suggestions(hook_id, json, None);
     }
     if let Some(descriptor) = typed_entry(&native, hook_id) {
         return match evaluate_typed_post_process(descriptor, stdout, tokens) {
@@ -386,7 +411,7 @@ fn native_filter(hook_id: &str, suggestions: &[Suggestion]) -> Option<Vec<Sugges
             })
             .collect();
         if let Some(json) = crate::native_adapters::evaluate_filter(sha, &payload) {
-            return json_suggestions(hook_id, json);
+            return json_suggestions(hook_id, json, None);
         }
     }
     if let Some(descriptor) = typed_entry(&native, hook_id) {
@@ -410,16 +435,17 @@ fn native_custom(
     let native = native()?;
     let shell = session_shell();
     let context = HookContext::from_shell(cwd, &shell, search_term, is_dangerous);
+    let deadline = hook_deadline(timeout);
     if let Some(sha) = adapter_sha(&native, hook_id, "custom") {
-        let exec = live_adapter_exec(cwd, timeout);
+        let exec = live_adapter_exec(cwd, timeout, deadline);
         if let Some(json) = crate::native_adapters::evaluate_custom(sha, tokens, &exec, &context) {
-            return json_suggestions(hook_id, json);
+            return json_suggestions(hook_id, json, Some(deadline));
         }
     }
     if let Some(descriptor) = typed_entry(&native, hook_id) {
         let typed_ctx = typed_context(&context);
         let exec = live_typed_exec(cwd, timeout);
-        let deadline = Some(Instant::now() + timeout + Duration::from_secs(2));
+        let deadline = Some(deadline);
         return match evaluate_typed_custom(descriptor, tokens, &typed_ctx, &exec, deadline) {
             Ok(value) => finish_option(hook_id, Some(value), Vec::is_empty),
             Err(error) => eval_err(hook_id, &error),
@@ -435,7 +461,7 @@ fn native_alias(hook_id: &str, token: &str, cwd: &str, timeout: Duration) -> Opt
     if let Some(descriptor) = typed_entry(&native, hook_id) {
         let typed_ctx = typed_context(&context);
         let exec = live_typed_exec(cwd, timeout);
-        let deadline = Some(Instant::now() + timeout + Duration::from_secs(2));
+        let deadline = Some(hook_deadline(timeout));
         return match evaluate_typed_alias(descriptor, token, &typed_ctx, &exec, deadline) {
             Ok(value) => finish_option(hook_id, Some(value), String::is_empty),
             Err(error) => eval_err(hook_id, &error),
@@ -451,7 +477,7 @@ fn native_load_spec(hook_id: &str, token: &str, cwd: &str, timeout: Duration) ->
     if let Some(descriptor) = typed_entry(&native, hook_id) {
         let typed_ctx = typed_context(&context);
         let exec = live_typed_exec(cwd, timeout);
-        let deadline = Some(Instant::now() + timeout + Duration::from_secs(2));
+        let deadline = Some(hook_deadline(timeout));
         return match evaluate_typed_load_spec(descriptor, token, &typed_ctx, &exec, deadline) {
             Ok(json) => spec_from_json(hook_id, json),
             Err(error) => eval_err(hook_id, &error),
@@ -464,16 +490,17 @@ fn native_load_spec(hook_id: &str, token: &str, cwd: &str, timeout: Duration) ->
 fn native_generate_spec(hook_id: &str, tokens: &[String], cwd: &str, timeout: Duration) -> Option<Spec> {
     let native = native()?;
     let context = HookContext::from_shell(cwd, &session_shell(), tokens.last().map_or("", String::as_str), false);
+    let deadline = hook_deadline(timeout);
     if let Some(sha) = adapter_sha(&native, hook_id, "generateSpec") {
-        let exec = live_adapter_exec(cwd, timeout);
+        let exec = live_adapter_exec(cwd, timeout, deadline);
         if let Some(json) = crate::native_adapters::evaluate_generate_spec(sha, tokens, &exec, &context) {
-            return spec_from_json_result(hook_id, json);
+            return spec_from_json_result(hook_id, json, Some(deadline));
         }
     }
     if let Some(descriptor) = typed_entry(&native, hook_id) {
         let typed_ctx = typed_context(&context);
         let exec = live_typed_exec(cwd, timeout);
-        let deadline = Some(Instant::now() + timeout + Duration::from_secs(2));
+        let deadline = Some(deadline);
         return match evaluate_typed_generate_spec(descriptor, tokens, &typed_ctx, &exec, deadline) {
             Ok(json) => spec_from_json(hook_id, json),
             Err(error) => eval_err(hook_id, &error),
@@ -483,7 +510,11 @@ fn native_generate_spec(hook_id: &str, tokens: &[String], cwd: &str, timeout: Du
     None
 }
 
-fn json_suggestions(hook_id: &str, result: Result<JsonValue, String>) -> Option<Vec<Suggestion>> {
+fn json_suggestions(
+    hook_id: &str,
+    result: Result<JsonValue, String>,
+    deadline: Option<Instant>,
+) -> Option<Vec<Suggestion>> {
     match result {
         Ok(json) => match suggestions_from_typed_json(&json) {
             Ok(value) => finish_option(hook_id, Some(value), Vec::is_empty),
@@ -492,14 +523,14 @@ fn json_suggestions(hook_id: &str, result: Result<JsonValue, String>) -> Option<
                 None
             },
         },
-        Err(_) => invoke_err(hook_id),
+        Err(_) => adapter_err(hook_id, deadline),
     }
 }
 
-fn spec_from_json_result(hook_id: &str, result: Result<JsonValue, String>) -> Option<Spec> {
+fn spec_from_json_result(hook_id: &str, result: Result<JsonValue, String>, deadline: Option<Instant>) -> Option<Spec> {
     match result {
         Ok(json) => spec_from_json(hook_id, json),
-        Err(_) => invoke_err(hook_id),
+        Err(_) => adapter_err(hook_id, deadline),
     }
 }
 
@@ -561,19 +592,32 @@ fn live_typed_exec(
     }
 }
 
+/// The adapter counterpart of the typed evaluator's exec clamp. A blocking
+/// subprocess cannot be interrupted at the hook deadline, so each call gets
+/// only the time the hook has left, and a call scheduled after the deadline
+/// throws without running — `make`'s two commands and nx's `cat` per
+/// project must not add up to N × `scriptTimeout`.
 fn live_adapter_exec(
     cwd: &str,
     timeout: Duration,
+    deadline: Instant,
 ) -> impl Fn(
     crate::native_adapters::AdapterExecRequest,
 ) -> Result<crate::native_adapters::AdapterExecResult, crate::native_adapters::AdapterError>
 + '_ {
     move |request| {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return Err(crate::native_adapters::adapter_throw("Error"));
+        };
+        if remaining.is_zero() {
+            return Err(crate::native_adapters::adapter_throw("Error"));
+        }
         let command_cwd = request.cwd.as_deref().filter(|value| !value.is_empty()).unwrap_or(cwd);
         let command_timeout = request
             .timeout
             .and_then(|ms| u64::try_from(ms).ok())
-            .map_or(timeout, Duration::from_millis);
+            .map_or(timeout, Duration::from_millis)
+            .min(remaining);
         let args: Vec<String> = request
             .args
             .iter()
@@ -706,6 +750,7 @@ pub(crate) fn test_native_hooks(entries: Vec<(String, JsonValue)>) -> NativeHook
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_adapters::AdapterExecRequest;
     use crate::process::mock::{self, ExecRule};
 
     const MAKE_TARGETS_SHA: &str = "03b126c52218b618b258b4113e23cf47ef5a0197646c1f48f7983f6bf146ead8";
@@ -726,6 +771,101 @@ mod tests {
             }
         });
         NativeHooks::from_catalog(parse_typed_hook_catalog(&catalog).expect("adapter catalog"))
+    }
+
+    fn sleep_request(timeout_ms: i64) -> AdapterExecRequest {
+        AdapterExecRequest {
+            command: "sleep".into(),
+            args: vec![JsonValue::String("5".into())],
+            cwd: None,
+            env: None,
+            timeout: Some(timeout_ms),
+        }
+    }
+
+    #[test]
+    fn adapter_exec_is_clamped_to_the_time_the_hook_has_left() {
+        // The mock times out any rule whose delay exceeds the timeout the
+        // caller hands it, without sleeping. A 200ms command under a 5s
+        // request timeout only fails if the exec clamped that request to the
+        // ~100ms the hook had left.
+        let _guard = mock::install(vec![ExecRule {
+            command: Some("sleep".into()),
+            delay_ms: Some(200),
+            ..ExecRule::default()
+        }]);
+        let deadline = Instant::now() + Duration::from_millis(100);
+        let exec = live_adapter_exec("/", Duration::from_secs(5), deadline);
+        assert!(
+            exec(sleep_request(5_000)).is_err(),
+            "exec must be clamped to the deadline"
+        );
+        assert_eq!(mock::calls().len(), 1);
+    }
+
+    #[test]
+    fn adapter_exec_after_the_deadline_throws_without_running() {
+        let _guard = mock::install(vec![ExecRule {
+            command: Some("sleep".into()),
+            ..ExecRule::default()
+        }]);
+        let deadline = Instant::now() - Duration::from_millis(1);
+        let exec = live_adapter_exec("/", Duration::from_secs(5), deadline);
+        assert!(exec(sleep_request(5_000)).is_err());
+        assert!(
+            mock::calls().is_empty(),
+            "a command scheduled after the deadline must not spawn"
+        );
+    }
+
+    #[test]
+    fn adapter_exec_within_budget_runs_with_its_own_timeout() {
+        let _guard = mock::install(vec![ExecRule {
+            command: Some("sleep".into()),
+            stdout: "done".into(),
+            delay_ms: Some(200),
+            ..ExecRule::default()
+        }]);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let exec = live_adapter_exec("/", Duration::from_secs(5), deadline);
+        let result = exec(sleep_request(5_000)).expect("a command inside the budget runs");
+        assert_eq!(result.stdout, "done");
+    }
+
+    #[test]
+    fn adapter_failure_after_the_deadline_is_a_timeout() {
+        let expired = Some(Instant::now() - Duration::from_millis(1));
+        assert!(adapter_err::<()>("make#custom#0", expired).is_none());
+        assert_eq!(last_diagnostic().map(|r| r.outcome), Some(HookDiagnostic::Timeout));
+
+        let live = Some(Instant::now() + Duration::from_secs(10));
+        assert!(adapter_err::<()>("make#custom#0", live).is_none());
+        assert_eq!(last_diagnostic().map(|r| r.outcome), Some(HookDiagnostic::InvokeError));
+
+        assert!(adapter_err::<()>("direnv#filterTemplateSuggestions#0", None).is_none());
+        assert_eq!(last_diagnostic().map(|r| r.outcome), Some(HookDiagnostic::InvokeError));
+    }
+
+    #[test]
+    fn a_named_adapter_whose_command_fails_inside_its_budget_is_an_invoke_error() {
+        // Both of make's commands are unmocked, so the adapter's first exec
+        // throws with the whole budget still ahead of it.
+        let _guard = mock::install(Vec::new());
+        let native = Arc::new(adapter_only_hooks("make#custom#0", "custom", MAKE_TARGETS_SHA));
+        let _bound = bind_native(Arc::clone(&native));
+        let rows = dispatch_custom(
+            "make#custom#0",
+            &["make".into()],
+            "/",
+            "",
+            Duration::from_secs(5),
+            false,
+        );
+        assert!(rows.is_none());
+        let record = last_diagnostic().expect("adapter failure records a diagnostic");
+        assert_eq!(record.hook_id, "make#custom#0");
+        assert_eq!(record.outcome, HookDiagnostic::InvokeError);
+        assert_eq!(mock::calls().len(), 1, "the adapter stops at its first failing command");
     }
 
     #[test]
