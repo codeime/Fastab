@@ -356,20 +356,66 @@ fn utf16_slice_start(value: &str, unit: i64) -> usize {
     value.len()
 }
 
+/// The literal tables the adapters closed over in the spec source (man
+/// sections, esbuild loaders, the `cargo --config` keys, …), compiled into
+/// the binary. These used to be read from `CARGO_MANIFEST_DIR` at call time,
+/// which is the *build* machine's checkout: an installed app whose source
+/// tree had moved panicked inside the attempt thread on `man 3<TAB>`, and a
+/// prebuilt `.app` on another machine never had the files at all. The
+/// directory is the source of truth; `embedded_lists_match_the_directory`
+/// keeps this table in step with it.
+macro_rules! adapter_lists {
+    ($($file:literal),* $(,)?) => {
+        pub(super) const ADAPTER_LIST_FILES: &[&str] = &[$($file),*];
+
+        fn adapter_source(file: &str) -> &'static str {
+            match file {
+                $($file => include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/testdata/native-hooks/adapter-lists/",
+                    $file
+                )),)*
+                other => panic!("adapter list {other} is not embedded; add it to adapter_lists! in effect.rs"),
+            }
+        }
+    };
+}
+
+adapter_lists!(
+    "airflow_custom_0.json",
+    "bun_custom_15.json",
+    "cargo-config-keys.json",
+    "cargo_generateSpec_0.json",
+    "chezmoi-attrs-plus.json",
+    "chezmoi-includes.json",
+    "chezmoi_custom_24.json",
+    "deno-lint-rules.json",
+    "esbuild-loaders.json",
+    "esbuild_custom_4.json",
+    "file_custom_0.json",
+    "kamal_generateSpec_0.json",
+    "man-sections.json",
+    "nx_generateSpec_0.json",
+    "osqueryi-tables.json",
+    "oxlint-categories.json",
+    "php_generateSpec_0.json",
+    "pnpm_generateSpec_19.json",
+    "rails_generateSpec_0.json",
+    "rich-styles.json",
+    "task_generateSpec_0.json",
+    "twilio-resources.json",
+    "z_generateSpec_0.json",
+);
+
 pub(super) fn adapter_list(file: &str) -> Vec<JsonValue> {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("testdata/native-hooks/adapter-lists")
-        .join(file);
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-    serde_json::from_str(&text).unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
+    match adapter_json(file) {
+        JsonValue::Array(items) => items,
+        other => panic!("adapter list {file} is not a JSON array: {other}"),
+    }
 }
 
 pub(super) fn adapter_json(file: &str) -> JsonValue {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("testdata/native-hooks/adapter-lists")
-        .join(file);
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-    serde_json::from_str(&text).unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
+    serde_json::from_str(adapter_source(file)).unwrap_or_else(|error| panic!("parse adapter list {file}: {error}"))
 }
 
 #[allow(dead_code)]
@@ -391,4 +437,46 @@ pub(super) fn parse_json(source: &str) -> Result<JsonValue, AdapterError> {
 #[allow(dead_code)]
 pub(super) fn index_of_sep(value: &str, needle: &str) -> i64 {
     js_index_of(value, needle)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[test]
+    fn embedded_lists_match_the_directory() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/native-hooks/adapter-lists");
+        let on_disk: BTreeSet<String> = std::fs::read_dir(&dir)
+            .expect("adapter-lists directory")
+            .map(|entry| entry.expect("dir entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        let embedded: BTreeSet<String> = ADAPTER_LIST_FILES.iter().map(|file| (*file).to_owned()).collect();
+        assert_eq!(
+            embedded,
+            on_disk,
+            "adapter_lists! in effect.rs must name exactly the files under {}",
+            dir.display()
+        );
+        for file in ADAPTER_LIST_FILES {
+            // Every table parses, and the ones read as lists really are lists.
+            let value = adapter_json(file);
+            if !file.contains("generateSpec") {
+                assert!(
+                    value.is_array(),
+                    "{file} is read with adapter_list and must be an array"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_list_is_served_from_the_binary_not_the_checkout() {
+        // Would panic on a missing file if this were still a runtime read.
+        let sections = adapter_list("man-sections.json");
+        assert!(!sections.is_empty());
+        assert!(adapter_source("man-sections.json").contains("\"name\""));
+    }
 }
