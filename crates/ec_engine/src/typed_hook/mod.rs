@@ -768,7 +768,9 @@ pub(crate) enum TypedValue {
     /// `BTreeMap` would sort keys and scramble `Object.entries` on JSON.parse
     /// results (package.json `scripts` is the bun/postProcess fixture).
     Object(Vec<(String, TypedValue)>),
-    StringSet(BTreeSet<Utf16String>),
+    /// First-seen unique strings, matching JS `Set` enumeration order.
+    /// `BTreeSet` would sort and scramble `Array.from(new Set(lines))`.
+    StringSet(Vec<Utf16String>),
     Regex {
         pattern: String,
         flags: String,
@@ -2784,12 +2786,15 @@ fn json_to_typed_value(value: &JsonValue, expected: TypedValueType) -> TypedHook
             let items = value
                 .as_array()
                 .ok_or_else(|| TypedHookError::new("argument is not a string set"))?;
-            let mut set = BTreeSet::new();
+            let mut set = Vec::new();
             for item in items {
                 let text = item
                     .as_str()
                     .ok_or_else(|| TypedHookError::new("string-set item is not a string"))?;
-                set.insert(Utf16String::from_str(text));
+                let text = Utf16String::from_str(text);
+                if !set.iter().any(|existing| existing == &text) {
+                    set.push(text);
+                }
             }
             Ok(TypedValue::StringSet(set))
         },

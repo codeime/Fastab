@@ -1353,6 +1353,14 @@ test("let bindings restore the outer name after an inner helper reuses it", () =
   ]);
 });
 
+test("null string-method receivers coerce like Rust as_utf16", () => {
+  const includes = compileTypedHook({
+    body: "(tokens) => tokens[1].includes(\"x\") ? [\"echo\", \"x\"] : [\"echo\", tokens[0]]",
+    sourceField: "script",
+  });
+  assert.deepEqual(evaluateTypedHook(includes, [["git"]]), ["echo", "git"]);
+});
+
 test("evaluateTypedHookJson drops empty suggestion fields like Rust", () => {
   const descriptor = compileTypedHook({
     body: '(out) => out.split("\\n").filter(Boolean).map((name) => ({ name, description: "", type: "arg" }))',

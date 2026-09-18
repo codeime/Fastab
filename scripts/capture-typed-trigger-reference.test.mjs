@@ -231,7 +231,7 @@ async function withSidecarFieldFixture(run) {
          name: "fields",
          args: { generators: {
            getQueryTerm: (term) => term.slice(term.lastIndexOf("/") + 1),
-           script: (tokens) => tokens[1].includes("x") ? ["echo", "x"] : ["echo", tokens[0]],
+           script: (tokens) => tokens.length < 2 ? tokens[0].repeat(-1).split("") : ["echo", tokens[0]],
            postProcess: (out) => out.split("\\n").filter(Boolean).map((name) => ({ name })),
            filterTemplateSuggestions: (rows) => rows.filter((row) => row.type === "file"),
          } }

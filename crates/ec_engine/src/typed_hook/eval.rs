@@ -2,7 +2,7 @@
 //! control flow.  String operations stay on the parent UTF-16 helpers so the
 //! T2.1 goldens keep one implementation.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::Deserialize;
@@ -690,9 +690,9 @@ fn evaluate_inner(
             Ok(TypedValue::Integer(max))
         },
         TypedExpr::StringSet { value } => {
-            let mut set = BTreeSet::new();
+            let mut set = Vec::new();
             for item in as_array(&ev(value, locals)?) {
-                set.insert(as_utf16(&item, "string-set")?);
+                string_set_insert(&mut set, as_utf16(&item, "string-set")?);
             }
             Ok(TypedValue::StringSet(set))
         },
@@ -700,13 +700,18 @@ fn evaluate_inner(
             let item = as_utf16(&ev(item, locals)?, "string-set-add")?;
             let mut set = match locals.get(name) {
                 Some(TypedValue::StringSet(set)) => set.clone(),
-                Some(other) => as_array(other)
-                    .into_iter()
-                    .filter_map(|item| as_utf16(&item, "string-set").ok())
-                    .collect(),
-                None => BTreeSet::new(),
+                Some(other) => {
+                    let mut set = Vec::new();
+                    for item in as_array(other) {
+                        if let Ok(text) = as_utf16(&item, "string-set") {
+                            string_set_insert(&mut set, text);
+                        }
+                    }
+                    set
+                },
+                None => Vec::new(),
             };
-            set.insert(item);
+            string_set_insert(&mut set, item);
             locals.insert(name.clone(), TypedValue::StringSet(set.clone()));
             Ok(TypedValue::StringSet(set))
         },
@@ -883,6 +888,12 @@ fn js_locale_compare(left: &str, right: &str) -> i64 {
 fn locale_rank(ch: char) -> (u8, char) {
     let class = if ch.is_ascii_alphanumeric() { 2 } else { 1 };
     (class, ch)
+}
+
+fn string_set_insert(set: &mut Vec<Utf16String>, item: Utf16String) {
+    if !set.iter().any(|existing| existing == &item) {
+        set.push(item);
+    }
 }
 
 fn as_array(value: &TypedValue) -> Vec<TypedValue> {

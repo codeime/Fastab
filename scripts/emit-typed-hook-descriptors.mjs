@@ -3,7 +3,8 @@
  * Emit compiled typed-hook descriptors for every T2.2-contract unique body.
  *
  * Used by `cargo test -p ec_engine typed_hook_baseline_parity`.  Production
- * sidecars stay trigger-only until T2.3; this catalog is test-only.
+ * sidecars now cover the side-effect-free fields; this catalog is still
+ * test-only and may bind factory helpers that the sidecar refused.
  *
  * When a T1.2 baseline names a representative hook, that hook's extracted
  * body and closure module are the ones compiled so factory bindings match
@@ -82,11 +83,21 @@ export async function emitTypedHookDescriptors({
       : text;
     try {
       const moduleSource = await loadModule(entry.module);
-      let descriptor = compileTypedHook({
-        body,
-        sourceField: entry.sourceField,
-        moduleSource,
-      });
+      const tryCompile = (helperLiterals) =>
+        compileTypedHook({
+          body,
+          sourceField: entry.sourceField,
+          moduleSource,
+          ...(helperLiterals ? { helperLiterals } : {}),
+        });
+      let descriptor = null;
+      try {
+        descriptor = tryCompile();
+      } catch {
+        // Shared factories with disagreeing call sites stay out of the
+        // production sidecar. The baseline catalog may still bind one
+        // representative via helperLiterals.
+      }
       let baseline = null;
       try {
         baseline = JSON.parse(
@@ -95,25 +106,22 @@ export async function emitTypedHookDescriptors({
       } catch {
         baseline = null;
       }
-      if (baseline && !descriptorMatchesBaseline(descriptor, baseline)) {
+      if (!descriptor || (baseline && !descriptorMatchesBaseline(descriptor, baseline))) {
         const candidates = factoryHelperCandidates({ body, moduleSource });
         for (const helperLiterals of helperLiteralCombinations(candidates)) {
           try {
-            const retry = compileTypedHook({
-              body,
-              sourceField: entry.sourceField,
-              moduleSource,
-              helperLiterals,
-            });
-            if (descriptorMatchesBaseline(retry, baseline)) {
+            const retry = tryCompile(helperLiterals);
+            if (!baseline || descriptorMatchesBaseline(retry, baseline)) {
               descriptor = retry;
               break;
             }
+            descriptor ??= retry;
           } catch {
-            // Keep the first successful compile.
+            // Keep looking for a representative binding.
           }
         }
       }
+      if (!descriptor) continue;
       descriptors[`${group.field}:${group.sha}`] = descriptor;
       counts[group.field].ok += 1;
     } catch {

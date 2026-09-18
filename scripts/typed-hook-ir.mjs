@@ -4021,6 +4021,14 @@ function safeIntegerResult(value, path) {
   return value;
 }
 
+function asUtf16(value, label = "string") {
+  if (value === undefined || value === null) return "undefined";
+  if (typeof value === "string") return value;
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") return String(value);
+  fail(`${label} is not string-like`, { code: "type-mismatch" });
+}
+
 function jsSlice(value, start) {
   const length = value.length;
   const index = start < 0 ? Math.max(length + start, 0) : Math.min(start, length);
@@ -4168,38 +4176,38 @@ function evaluateExpression(node, args, locals = new Map()) {
       return 0;
     }
     case "string-includes":
-      return ev(node.value).includes(
-        ev(node.needle),
+      return asUtf16(ev(node.value), "string-includes.value").includes(
+        asUtf16(ev(node.needle), "string-includes.needle"),
       );
     case "string-index-of":
-      return ev(node.value).indexOf(
-        ev(node.needle),
+      return asUtf16(ev(node.value), "string-index-of.value").indexOf(
+        asUtf16(ev(node.needle), "string-index-of.needle"),
       );
     case "string-last-index-of":
       return jsLastIndexOf(
-        ev(node.value),
-        ev(node.needle),
+        asUtf16(ev(node.value), "string-last-index-of.value"),
+        asUtf16(ev(node.needle), "string-last-index-of.needle"),
       );
     case "string-slice":
       return jsSlice(
-        ev(node.value),
+        asUtf16(ev(node.value), "string-slice.value"),
         ev(node.start),
       );
     case "string-slice-after-first": {
-      const value = ev(node.value);
-      const needle = ev(node.needle);
+      const value = asUtf16(ev(node.value), "string-slice-after-first.value");
+      const needle = asUtf16(ev(node.needle), "string-slice-after-first.needle");
       const index = value.indexOf(needle);
       return index === -1 ? value : jsSlice(value, index + 1);
     }
     case "string-substring":
       return jsSubstring(
-        ev(node.value),
+        asUtf16(ev(node.value), "string-substring.value"),
         ev(node.start),
         ev(node.end),
       );
     case "string-split":
-      return ev(node.value).split(
-        ev(node.separator),
+      return asUtf16(ev(node.value), "string-split.value").split(
+        asUtf16(ev(node.separator), "string-split.separator"),
       );
     case "string-trim": {
       const value = ev(node.value);
@@ -4215,64 +4223,64 @@ function evaluateExpression(node, args, locals = new Map()) {
     }
     case "string-replace":
       return jsReplace(
-        ev(node.value),
-        ev(node.needle),
-        ev(node.replacement),
+        asUtf16(ev(node.value), "replace.value"),
+        asUtf16(ev(node.needle), "replace.needle"),
+        asUtf16(ev(node.replacement), "replace.replacement"),
         false,
       );
     case "string-replace-all":
       return jsReplace(
-        ev(node.value),
-        ev(node.needle),
-        ev(node.replacement),
+        asUtf16(ev(node.value), "replace-all.value"),
+        asUtf16(ev(node.needle), "replace-all.needle"),
+        asUtf16(ev(node.replacement), "replace-all.replacement"),
         true,
       );
     case "string-starts-with":
-      return ev(node.value).startsWith(
-        ev(node.needle),
+      return asUtf16(ev(node.value), "starts-with.value").startsWith(
+        asUtf16(ev(node.needle), "starts-with.needle"),
       );
     case "string-ends-with":
-      return ev(node.value).endsWith(
-        ev(node.needle),
+      return asUtf16(ev(node.value), "ends-with.value").endsWith(
+        asUtf16(ev(node.needle), "ends-with.needle"),
       );
     case "string-to-lower":
-      return ev(node.value).toLowerCase();
+      return asUtf16(ev(node.value), "to-lower").toLowerCase();
     case "string-to-upper":
-      return ev(node.value).toUpperCase();
+      return asUtf16(ev(node.value), "to-upper").toUpperCase();
     case "string-pad-start":
       return jsPad(
-        ev(node.value),
+        asUtf16(ev(node.value), "pad-start.value"),
         ev(node.target),
-        ev(node.pad),
+        asUtf16(ev(node.pad), "pad-start.pad"),
         false,
       );
     case "string-pad-end":
       return jsPad(
-        ev(node.value),
+        asUtf16(ev(node.value), "pad-end.value"),
         ev(node.target),
-        ev(node.pad),
+        asUtf16(ev(node.pad), "pad-end.pad"),
         true,
       );
     case "string-repeat":
       return jsRepeat(
-        ev(node.value),
+        asUtf16(ev(node.value), "repeat.value"),
         ev(node.count),
       );
     case "string-concat":
       return boundedString(
         node.parts
-          .map((part) => ev(part))
+          .map((part) => asUtf16(ev(part), "concat"))
           .join(""),
         "string-concat",
       );
     case "string-char-at":
       return jsCharAt(
-        ev(node.value),
+        asUtf16(ev(node.value), "char-at.value"),
         ev(node.index),
       );
     case "string-at":
       return jsAt(
-        ev(node.value),
+        asUtf16(ev(node.value), "at.value"),
         ev(node.index),
       );
     case "array-includes": {
@@ -4617,11 +4625,8 @@ function evaluateExpression(node, args, locals = new Map()) {
       for (const field of node.fields) object[field.key] = ev(field.value);
       return object;
     }
-    case "to-string": {
-      const value = ev(node.value);
-      if (value == null) return "";
-      return String(value);
-    }
+    case "to-string":
+      return asUtf16(ev(node.value), "to-string");
     case "json-stringify":
       return JSON.stringify(ev(node.value));
     case "locale-compare":
