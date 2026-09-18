@@ -448,7 +448,6 @@ impl Engine {
         &self.registry
     }
 
-
     /// The WebView's `clear-cache` event (`ec hook clear-autocomplete-cache`):
     /// `resetCaches()` dropped every loaded and generated spec, and
     /// `generatorCache.clear()` every generator result. Re-index the specs
