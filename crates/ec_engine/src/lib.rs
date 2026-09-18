@@ -5,6 +5,8 @@
 
 mod cobra;
 #[cfg(all(test, feature = "js-compat"))]
+mod dual_path;
+#[cfg(all(test, feature = "js-compat"))]
 mod engine_golden;
 mod filegen;
 mod generate;

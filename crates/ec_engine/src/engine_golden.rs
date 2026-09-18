@@ -28,13 +28,13 @@ const CWD_TOKEN: &str = "$CWD";
 const CWD_B_TOKEN: &str = "$CWD_B";
 
 #[derive(Debug, Deserialize)]
-struct EngineGoldenFile {
-    cases: Vec<EngineGoldenCase>,
+pub(crate) struct EngineGoldenFile {
+    pub(crate) cases: Vec<EngineGoldenCase>,
 }
 
 #[derive(Debug, Deserialize)]
-struct EngineGoldenCase {
-    name: String,
+pub(crate) struct EngineGoldenCase {
+    pub(crate) name: String,
     dimension: String,
     #[serde(default)]
     request: CompleteRequest,
@@ -77,7 +77,7 @@ struct GoldenExec {
     delay_ms: Option<u64>,
 }
 
-fn golden_root() -> PathBuf {
+pub(crate) fn golden_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/engine-golden")
 }
 
@@ -148,7 +148,7 @@ fn has_second_step(case: &EngineGoldenCase) -> bool {
         || case.first_result.is_some()
 }
 
-fn run_case(
+pub(crate) fn run_case(
     specs_dir: &Path,
     cwd: &str,
     cwd_b: &str,
@@ -197,7 +197,7 @@ fn count_dimension(cases: &[EngineGoldenCase], dimension: &str) -> usize {
     cases.iter().filter(|case| case.dimension == dimension).count()
 }
 
-fn engine_lock() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn engine_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     LOCK.lock().unwrap_or_else(|error| error.into_inner())
 }

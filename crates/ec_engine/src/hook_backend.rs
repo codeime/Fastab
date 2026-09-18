@@ -47,6 +47,20 @@ pub struct NativeHooks {
 }
 
 impl NativeHooks {
+    #[cfg(test)]
+    pub(crate) fn contains_hook(&self, hook_id: &str) -> bool {
+        self.hooks.contains_key(hook_id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hook_id_for(&self, field: &str, body_sha256: &str) -> Option<&str> {
+        self.hooks
+            .iter()
+            .filter(|(_, meta)| meta.field == field && meta.body_sha256 == body_sha256)
+            .map(|(id, _)| id.as_str())
+            .min()
+    }
+
     pub fn load(specs_dir: &Path, snapshot: Option<&DirectorySnapshot>) -> Self {
         let typed_bytes = read_sidecar(specs_dir, snapshot, TYPED_HOOKS_FILE);
         let catalog = typed_bytes

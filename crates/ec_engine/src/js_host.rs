@@ -1025,6 +1025,22 @@ pub fn custom_cache_fallback(tokens: &[String]) -> String {
 
 /// Drop every cached generator result and generated spec — the WebView's
 /// `clear-cache` event (`generatorCache.clear()` + `clearSpecIndex()`).
+/// Drop generator result caches only. Dual-path (T3.2) reuses one host across
+/// every T1.2 case and must not forget loaded hook sources or the module
+/// manifest the way [`clear_caches`] does.
+#[cfg(test)]
+pub(crate) fn clear_result_caches(host: &JsHost) {
+    host.suggestion_cache
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .clear();
+    host.script_output_cache
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .clear();
+    host.spec_cache.lock().unwrap_or_else(|err| err.into_inner()).clear();
+}
+
 pub fn clear_caches(host: &JsHost) {
     host.suggestion_cache
         .lock()
