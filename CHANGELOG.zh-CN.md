@@ -5,6 +5,7 @@
 - 功能：桌面零运行时 JS——补全 hook 只走 typed IR 或具名原生适配器；QuickJS、`rquickjs` 与 `hooks/` 已删除
 - 修复：生成器的 `splitOn: ""` 不再按行切分脚本输出；切分出的每一段保留原文，不再逐段去空白
 - 修复：动态的 `alias` / `loadSpec` / `generateSpec` hook 使用实时的 `autocomplete.scriptTimeout` 设置，不再固定 5 秒
+- 修复：hook 里的循环在执行过程中就会被脚本预算打断，不必等到下一条命令；超出预算的 hook 记为超时而不是执行失败
 - 修复：`specs-ir` 目录缺失时直接报错，不再静默变成空的 spec 注册表；安装后引擎会把 spec 与 hook 模块一起重新绑定，进行中的请求不会读到混合的两代数据
 - 构建：打包的 spec 源码与编译出的 IR 作为一对经过校验的整体发布；`.app` 只从这对数据的锁定快照组装，并原子替换到位
 - 构建：补全 hook 编译进 `typed-hooks.json`（typed IR + 适配器）；残留的 `hooks/` / `source-modules/` 会让编译、审计和 CI 发布门槛失败

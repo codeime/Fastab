@@ -5,6 +5,7 @@
 - feat: desktop app has zero runtime JavaScript — completion hooks are typed IR or named native adapters; QuickJS, `rquickjs`, and `hooks/` are gone
 - fix: generator `splitOn: ""` no longer splits script output into lines, and split pieces keep their exact text instead of being trimmed one by one
 - fix: dynamic `alias` / `loadSpec` / `generateSpec` hooks honour the live `autocomplete.scriptTimeout` setting instead of a fixed 5 s
+- fix: a hook loop is stopped by the script budget as it runs, not only at its next command, and a hook that runs out of budget is logged as a timeout instead of a failure
 - fix: a missing `specs-ir` directory fails closed instead of silently serving an empty spec registry; the engine rebinds specs and hook modules together after an install so an in-flight request cannot read a mixed generation
 - build: bundled spec source and compiled IR are published as one verified pair; the `.app` is assembled from locked snapshots of that pair and swapped into place atomically
 - build: completion hooks compile to `typed-hooks.json` (typed IR + adapters); leftover `hooks/` / `source-modules/` fail the compile, audit, and CI publish gate
