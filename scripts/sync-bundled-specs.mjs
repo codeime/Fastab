@@ -1424,7 +1424,12 @@ async function checkInstalledDependencyFreshness() {
     throw new Error(`bundle/specs is stale (${mismatches.join(", ")})`);
   }
 
-  await verifyPair({ sourceRoot: outDir, irRoot: irOutDir });
+  // Source freshness does not require a compiled IR tree. CI checkouts
+  // gitignore bundle/specs-ir; compile-spec-ir / spec-pair verify the pair
+  // after they write it. A leftover IR that does exist must still match.
+  if (await pathExists(irOutDir)) {
+    await verifyPair({ sourceRoot: outDir, irRoot: irOutDir });
+  }
 
   process.stdout.write(
     `Bundled specs are fresh: ${SPECS_PACKAGE}@${resolved.version}, ${bundleTree.count} files\n`,

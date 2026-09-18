@@ -245,14 +245,20 @@ impl UIElement {
         Ok(children)
     }
 
+    /// VS Code / Cursor / Windsurf caret is this focused helper field. A
+    /// hit here is the leaf; callers must not walk the window from here.
+    pub fn is_xterm_helper_textarea(&self) -> bool {
+        self.role().map(|role| role == kAXTextFieldRole).unwrap_or(false)
+            && self.is_focused().unwrap_or(false)
+            && self
+                .dom_class_list()
+                .ok()
+                .is_some_and(|classes| classes.iter().any(|cls| cls == "xterm-helper-textarea"))
+    }
+
     pub fn find_x_term_caret_tree(&self) -> Result<Vec<UIElement>> {
-        if self.role().map(|role| role == kAXTextFieldRole).unwrap_or(false) && self.is_focused().unwrap_or(false) {
-            if let Ok(classes) = self.dom_class_list() {
-                if classes.iter().any(|cls| cls == "xterm-helper-textarea") {
-                    // self.print_all_attribute_values();
-                    return Ok(vec![self.clone()]);
-                }
-            }
+        if self.is_xterm_helper_textarea() {
+            return Ok(vec![self.clone()]);
         }
 
         let mut children_with_cursor: Vec<_> = self

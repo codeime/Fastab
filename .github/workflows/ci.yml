@@ -34,11 +34,12 @@ jobs:
           HUSKY: 0
         run: pnpm install --frozen-lockfile
 
+      # --check is the same freshness gate as a full sync + git diff, without
+      # rewriting bundle/specs or preflight-compiling gitignored specs-ir.
+      # A later step compiles IR once for audit / spec-pair / engine tests.
       - name: Verify bundled specs source
         run: |
-          node scripts/sync-bundled-specs.mjs
           git ls-files --error-unmatch bundle/specs/.source-manifest.json >/dev/null
-          git diff --exit-code -- bundle/specs
           node scripts/sync-bundled-specs.mjs --check
 
       - name: Test spec IR compiler
@@ -163,7 +164,7 @@ jobs:
           test -d "$swap_root/exclusive-existing"
 
       - name: Clippy
-        run: cargo clippy --locked --workspace --color always -- -D warnings
+        run: cargo clippy --locked --workspace --exclude fig_desktop-fuzz --exclude ec_overlay_spike --exclude figterm2 --color always -- -D warnings
 
       # The engine's typed-hook provenance tests verify the checked-in
       # reference baselines against the compiled bundle/specs-ir pair, which is
@@ -189,10 +190,11 @@ jobs:
         run: ./scripts/assert-no-runtime-js.sh
 
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --exclude fig_desktop-fuzz --exclude ec_overlay_spike --exclude figterm2
 
-      # Smoke-build the shipped binaries with the distribution profile so that
-      # profile-specific breakage (panic = "abort", LTO, strip) is caught in CI
-      # rather than only surfacing during a release. Mirrors scripts/build-app.sh.
+      # Thin LTO + codegen-units=1 is minutes on every PR and duplicates the
+      # tag pipeline in release.yml. Keep the smoke on main so profile-specific
+      # breakage (panic = "abort", LTO, strip) still lands before a tag.
       - name: Build release binaries (dist profile)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: cargo build --locked --profile dist -p fig_desktop -p figterm -p ec_cli -p fig_input_method

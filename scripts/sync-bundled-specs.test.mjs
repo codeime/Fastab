@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
   copyFile,
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -192,6 +193,19 @@ test("sync guards empty packages, missing icons, and lock drift without replacin
   );
   const pairMarkerPath = join(root, "bundle", "specs-ir", ".spec-pair.json");
   const goodPairMarker = await readFile(pairMarkerPath);
+
+  // CI checkouts gitignore bundle/specs-ir. Source freshness must not
+  // require a compiled pair; a leftover IR is still verified when present.
+  const irDir = join(root, "bundle", "specs-ir");
+  const irBackup = join(root, "ir-backup");
+  await cp(irDir, irBackup, { recursive: true });
+  await rm(irDir, { recursive: true, force: true });
+  assert.equal(
+    run(script, ["--check"]).status,
+    0,
+    "fresh source without compiled IR is still fresh",
+  );
+  await cp(irBackup, irDir, { recursive: true });
 
   // Removed options must fail closed without touching the published pair.
   const removedNoCompile = run(script, ["--no-compile"]);

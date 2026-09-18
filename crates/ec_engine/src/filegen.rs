@@ -1,10 +1,12 @@
 //! Filesystem path generator (IRIS FileGenerator).
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
 use fancy_regex::Regex;
 
@@ -12,6 +14,7 @@ use crate::query::matches_query;
 use crate::runtime::Suggestion;
 
 const MAX_RESULTS: usize = 50;
+const MAX_MATCHES_REGEX_CACHE: usize = 32;
 
 /// Fig `filepaths({ … })` options recovered at compile time. Empty is the
 /// same as a bare `template: "filepaths"` / `"folders"`.
@@ -71,7 +74,7 @@ pub fn complete_path_filtered(prefix: &str, cwd: &str, fuzzy: bool, filter: &Pat
         if name.eq_ignore_ascii_case(".DS_Store") {
             continue;
         }
-        let is_dir = entry.path().is_dir();
+        let is_dir = entry_is_directory(&entry);
         if filter.folders_only && !is_dir {
             continue;
         }
@@ -143,12 +146,26 @@ fn path_name_passes_filter(name: &str, is_dir: bool, filter: &PathFilter<'_>, ma
     extension_matches(name, filter.extensions)
 }
 
+/// `DirEntry::file_type` is the dirent we already have. `Path::is_dir`
+/// follows symlinks and is only needed when the entry itself is a link
+/// (Fig lists `link/` for a symlink to a directory).
+fn entry_is_directory(entry: &fs::DirEntry) -> bool {
+    match entry.file_type() {
+        Ok(file_type) if !file_type.is_symlink() => file_type.is_dir(),
+        _ => entry.path().is_dir(),
+    }
+}
+
 /// Fig `matches` is a JavaScript `RegExp` source. `fancy-regex` keeps
 /// lookarounds such as direnv's `/\.env(?!rc)/` instead of dropping the filter.
 fn compiled_matches(filter: &PathFilter<'_>) -> Option<Regex> {
     let source = filter.matches.filter(|source| !source.is_empty())?;
+    cached_matches_regex(&matches_regex_pattern(source, filter.matches_flags))
+}
+
+fn matches_regex_pattern(source: &str, flags: Option<&str>) -> String {
     let mut prefix = String::new();
-    if let Some(flags) = filter.matches_flags {
+    if let Some(flags) = flags {
         if flags.contains('i') {
             prefix.push('i');
         }
@@ -159,12 +176,25 @@ fn compiled_matches(filter: &PathFilter<'_>) -> Option<Regex> {
             prefix.push('s');
         }
     }
-    let pattern = if prefix.is_empty() {
+    if prefix.is_empty() {
         source.to_string()
     } else {
         format!("(?{prefix}){source}")
-    };
-    Regex::new(&pattern).ok()
+    }
+}
+
+fn cached_matches_regex(pattern: &str) -> Option<Regex> {
+    static CACHE: LazyLock<Mutex<HashMap<String, Option<Regex>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+    let mut cache = CACHE.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(compiled) = cache.get(pattern) {
+        return compiled.clone();
+    }
+    if cache.len() >= MAX_MATCHES_REGEX_CACHE {
+        cache.clear();
+    }
+    let compiled = Regex::new(pattern).ok();
+    cache.insert(pattern.to_owned(), compiled.clone());
+    compiled
 }
 
 /// Fig `filepaths` matches `extensions` against successive suffixes of the
@@ -919,5 +949,25 @@ mod tests {
             expand_home("~ec-filegen-no-such-user-9/"),
             "~ec-filegen-no-such-user-9/"
         );
+    }
+
+    #[test]
+    fn matches_regex_pattern_applies_javascript_flags() {
+        assert_eq!(matches_regex_pattern(r"\.env(?!rc)", None), r"\.env(?!rc)");
+        assert_eq!(matches_regex_pattern(r"\.env", Some("i")), r"(?i)\.env");
+        assert_eq!(matches_regex_pattern("a.b", Some("ims")), "(?ims)a.b");
+    }
+
+    #[test]
+    fn compiled_matches_reuses_the_same_pattern() {
+        let filter = PathFilter {
+            matches: Some(r"\.env(?!rc)"),
+            matches_flags: Some("i"),
+            ..PathFilter::default()
+        };
+        let first = compiled_matches(&filter).expect("compile");
+        let second = compiled_matches(&filter).expect("cache");
+        assert_eq!(first.as_str(), second.as_str());
+        assert_eq!(first.as_str(), r"(?i)\.env(?!rc)");
     }
 }

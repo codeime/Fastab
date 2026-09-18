@@ -38,6 +38,10 @@ use crate::{AUTOCOMPLETE_ID, AUTOCOMPLETE_WINDOW_TITLE, DASHBOARD_ID, EventLoopP
 
 pub const DEFAULT_CARET_WIDTH: f64 = 10.0;
 
+fn should_refresh_x_term_cache(bundle_id: &str) -> bool {
+    Terminal::from_bundle_id(bundle_id).is_some_and(|terminal| terminal.is_xterm())
+}
+
 /// IME-only terminals (Otty, Ghostty, Kitty, …) report the caret through IMK,
 /// not AX, so an in-window focused-element change is noise we cannot follow
 /// rather than a pane switch we should park the list for. No built-in terminal
@@ -208,6 +212,41 @@ impl PlatformWindowImpl {
     /// is stale, and reusing it would anchor the overlay to the pane the user just left.
     pub fn invalidate_x_term_cache(&mut self) {
         self.x_term_tree_cache = None;
+    }
+
+    /// Keep a one-node cache when focus is still this window's xterm helper
+    /// textarea (same pane, or a new pane's caret). A helper in another
+    /// window of the same bundle must not steal the cache. Anything else in
+    /// this window drops it so the next keystroke walks from the window root.
+    pub fn refresh_x_term_cache_from(&mut self, element: &UIElement) {
+        let same_window = unsafe { element.get_window_id() }.ok().map(|id| id == self.window_id);
+        match x_term_cache_update_for_focused_element(element.is_xterm_helper_textarea(), same_window) {
+            XTermCacheUpdate::Retarget => {
+                self.x_term_tree_cache = Some(vec![element.clone()]);
+            },
+            XTermCacheUpdate::Invalidate => self.invalidate_x_term_cache(),
+            XTermCacheUpdate::Leave => {},
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum XTermCacheUpdate {
+    Retarget,
+    Invalidate,
+    Leave,
+}
+
+/// `same_window` is `None` when `_AXUIElementGetWindow` fails: drop the cache
+/// rather than guess. A definite other window leaves the tracked pane alone.
+fn x_term_cache_update_for_focused_element(
+    is_xterm_helper_textarea: bool,
+    same_window: Option<bool>,
+) -> XTermCacheUpdate {
+    match same_window {
+        Some(false) => XTermCacheUpdate::Leave,
+        Some(true) if is_xterm_helper_textarea => XTermCacheUpdate::Retarget,
+        _ => XTermCacheUpdate::Invalidate,
     }
 }
 
@@ -537,11 +576,17 @@ impl PlatformStateImpl {
                     return Ok(());
                 }
 
-                // The overlay is anchored to the caret of one specific pane, so any element-level
-                // focus move invalidates it. Hiding is safe even when focus landed on another
-                // terminal pane: the next keystroke re-shows the overlay against the new caret,
-                // whereas leaving it up would strand it over the pane the user just left.
-                focused_window.invalidate_x_term_cache();
+                // The overlay is anchored to one pane. VS Code / Cursor /
+                // Windsurf: a focused helper textarea is that pane's caret —
+                // keep / retarget the cache instead of a ~60 ms window walk
+                // on the next key. Anything else in that window still drops
+                // it. IME and other AX terminals never use this cache, so
+                // skip the extra AX queries and just clear it.
+                if should_refresh_x_term_cache(focused_window.bundle_id()) {
+                    focused_window.refresh_x_term_cache_from(&element);
+                } else {
+                    focused_window.invalidate_x_term_cache();
+                }
                 // Otty / Ghostty / Kitty do not expose an AX caret. Their IME
                 // controller also fires element-changed noise (palette switch,
                 // IMK activate/deactivate). Hiding here parks the list, and
@@ -677,7 +722,43 @@ pub const fn autocomplete_active() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::hide_overlay_on_element_change;
+    use super::{
+        XTermCacheUpdate, hide_overlay_on_element_change, should_refresh_x_term_cache,
+        x_term_cache_update_for_focused_element,
+    };
+
+    #[test]
+    fn xterm_helper_textarea_keeps_the_caret_cache() {
+        assert_eq!(
+            x_term_cache_update_for_focused_element(true, Some(true)),
+            XTermCacheUpdate::Retarget
+        );
+        assert_eq!(
+            x_term_cache_update_for_focused_element(false, Some(true)),
+            XTermCacheUpdate::Invalidate
+        );
+        assert_eq!(
+            x_term_cache_update_for_focused_element(true, Some(false)),
+            XTermCacheUpdate::Leave
+        );
+        assert_eq!(
+            x_term_cache_update_for_focused_element(false, Some(false)),
+            XTermCacheUpdate::Leave
+        );
+        assert_eq!(
+            x_term_cache_update_for_focused_element(true, None),
+            XTermCacheUpdate::Invalidate
+        );
+    }
+
+    #[test]
+    fn only_xterm_terminals_refresh_the_caret_cache() {
+        assert!(should_refresh_x_term_cache("com.microsoft.VSCode"));
+        assert!(should_refresh_x_term_cache("com.todesktop.230313mzl4w4u92"));
+        assert!(!should_refresh_x_term_cache("io.appmakes.otty"));
+        assert!(!should_refresh_x_term_cache("com.mitchellh.ghostty"));
+        assert!(!should_refresh_x_term_cache("com.googlecode.iterm2"));
+    }
 
     #[test]
     fn ime_terminals_keep_the_overlay_on_element_change() {
