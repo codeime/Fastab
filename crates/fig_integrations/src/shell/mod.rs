@@ -623,27 +623,30 @@ impl DotfileShellIntegration {
     }
 
     fn previous_cli_eval_regex(&self, when: When, old_cli: &str) -> String {
-        let shell = self.shell;
-        let eval_line = match shell {
-            Shell::Fish => format!("eval ({old_cli} init {shell} {when} | string split0)"),
-            _ => format!("eval \"$({old_cli} init {shell} {when})\""),
-        };
-        let old_eval_source = match when {
-            When::Pre => match self.shell {
-                Shell::Fish => format!("set -Ua fish_user_paths $HOME/.local/bin\n{eval_line}"),
-                _ => format!("export PATH=\"${{PATH}}:${{HOME}}/.local/bin\"\n{eval_line}"),
-            },
-            When::Post => eval_line,
-        };
+        let cli = regex::escape(old_cli);
+        let shell = regex::escape(&self.shell.to_string());
+        let when_s = regex::escape(&when.to_string());
         let comments = Self::previous_product_descriptions(when)
             .into_iter()
             .map(|comment| regex::escape(&comment))
             .collect::<Vec<_>>()
             .join("|");
-        format!(
-            r#"(?m)(?:(?:{comments})\n)?^{}\n{{0,2}}"#,
-            regex::escape(&old_eval_source),
-        )
+        let eval_line = match self.shell {
+            Shell::Fish => format!(
+                r"(?:command -qv {cli}; and |command -v {cli} >/dev/null 2>&1; and |test -x ~/\\.local/bin/{cli}; and )?eval \((?:~/\\.local/bin/)?{cli} init {shell} {when_s}(?: --rcfile \S+)? \| string split0\)"
+            ),
+            _ => format!(
+                r#"(?:\[ -n "\$BASH_VERSION" \] && )?(?:command -v {cli} >/dev/null 2>&1 && |\[ -x ~/\\.local/bin/{cli} \] && )?eval "\$\((?:~/\\.local/bin/)?{cli} init {shell} {when_s}(?: --rcfile \S+)?\)""#
+            ),
+        };
+        let path_prefix = match when {
+            When::Pre => match self.shell {
+                Shell::Fish => r"(?:set -Ua fish_user_paths \$HOME/\.local/bin\n)?".to_string(),
+                _ => r#"(?:export PATH="\$\{PATH\}:\$\{HOME\}/\.local/bin"\n)?"#.to_string(),
+            },
+            When::Post => String::new(),
+        };
+        format!(r#"(?m)(?:(?:{comments})\n)?^{path_prefix}{eval_line}\n{{0,2}}"#)
     }
 
     async fn install_inner(&self) -> Result<()> {
@@ -1078,6 +1081,50 @@ mod test {
                 Err(Error::LegacyInstallation(_))
             ),
             "Easy Complete blocks must look like a legacy install so migrate() rewrites them"
+        );
+    }
+
+    #[test]
+    fn test_previous_cli_eval_strips_rcfile_and_guards() {
+        let integration = zshrc_integration();
+        let lines = [
+            r#"eval "$(ec init zsh pre)""#,
+            r#"eval "$(ec init zsh pre --rcfile zshrc)""#,
+            r#"command -v ec >/dev/null 2>&1 && eval "$(ec init zsh pre --rcfile zshrc)""#,
+            r#"[ -x ~/.local/bin/ec ] && eval "$(~/.local/bin/ec init zsh pre --rcfile zshrc)""#,
+            r#"export PATH="${PATH}:${HOME}/.local/bin"
+eval "$(ec init zsh pre --rcfile zshrc)""#,
+        ];
+        for line in lines {
+            let doc =
+                format!("# Easy Complete pre block. Keep at the top of this file.\n{line}\nexport KEEP=/usr/bin\n");
+            let stripped = integration.remove_from_text(&doc, When::Pre).unwrap();
+            assert!(
+                !stripped.contains("ec init"),
+                "legacy eval must be removed: {line} -> {stripped}"
+            );
+            assert!(
+                stripped.contains("export KEEP=/usr/bin"),
+                "foreign lines must stay: {stripped}"
+            );
+            assert!(
+                matches!(
+                    integration.matches_text(&doc, When::Pre),
+                    Err(Error::LegacyInstallation(_))
+                ),
+                "legacy eval must look like a leftover install: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_previous_cli_eval_leaves_ftab() {
+        let integration = zshrc_integration();
+        let line = r#"[ -x ~/.local/bin/ftab ] && eval "$(~/.local/bin/ftab init zsh pre --rcfile zshrc)""#;
+        let stripped = integration.remove_from_text(line, When::Pre).unwrap();
+        assert!(
+            stripped.contains("ftab init"),
+            "current CLI eval must not be treated as leftover: {stripped}"
         );
     }
 

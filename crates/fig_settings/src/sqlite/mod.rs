@@ -232,6 +232,30 @@ impl Db {
         self.all_values(STATE_TABLE_NAME)
     }
 
+    /// Copy state keys from `from` that `into` does not already have.
+    /// Used when Fastab already created `data.sqlite3` (IME hash) before
+    /// the Easy Complete database was merged.
+    pub fn import_missing_state_values(from: &Self, into: &Self) -> Result<usize> {
+        let mut imported = 0;
+        for (key, value) in from.all_state_values()? {
+            if into.get_state_value(&key)?.is_none() {
+                into.set_state_value(&key, value)?;
+                imported += 1;
+            }
+        }
+        Ok(imported)
+    }
+
+    pub fn import_missing_state_from_path(path: &Path) -> Result<usize> {
+        if !path.is_file() {
+            return Ok(0);
+        }
+        let from = Self::open(path)?;
+        from.migrate()?;
+        let into = database()?;
+        Self::import_missing_state_values(&from, into)
+    }
+
     // atomic style operations
 
     fn atomic_op<T: FromSql + ToSql>(
@@ -383,6 +407,20 @@ mod tests {
         let migration_folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/sqlite/migrations");
         let migration_count = std::fs::read_dir(migration_folder).unwrap().count();
         assert_eq!(MIGRATIONS.len(), migration_count);
+    }
+
+    #[test]
+    fn import_missing_state_copies_only_absent_keys() {
+        let from = mock();
+        let into = mock();
+        from.set_state_value("keep-me", true).unwrap();
+        from.set_state_value("already", "old").unwrap();
+        into.set_state_value("already", "new").unwrap();
+
+        let imported = Db::import_missing_state_values(&from, &into).unwrap();
+        assert_eq!(imported, 1);
+        assert_eq!(into.get_state_value("keep-me").unwrap().unwrap(), true);
+        assert_eq!(into.get_state_value("already").unwrap().unwrap(), "new");
     }
 
     #[test]

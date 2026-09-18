@@ -25,20 +25,10 @@ pub fn migrate_data_dir() {
     // Easy Complete users keep their settings/history under the new Fastab dir,
     // including when install.sh already created `fastab/shell/`. The older
     // Fig/CodeWhisperer path is still accepted if that is all they have.
-    migrate_one_data_dir(fig_util::directories::previous_product_data_dir(), fig_data_dir());
-    migrate_one_data_dir(fig_util::directories::old_fig_data_dir(), fig_data_dir());
-}
-
-#[cfg(target_os = "macos")]
-fn migrate_one_data_dir(
-    old: Result<std::path::PathBuf, fig_util::directories::DirectoryError>,
-    new: Result<std::path::PathBuf, fig_util::directories::DirectoryError>,
-) {
-    if let (Ok(old), Ok(new)) = (old, new) {
-        if let Err(err) = fig_util::directories::migrate_product_data_dir(&old, &new) {
-            error!(%err, "Failed to migrate user data dir");
-        }
-    }
+    // Integrations install also calls this pair so IME/sqlite writes land in
+    // the migrated database instead of creating an empty Fastab one first.
+    fig_util::directories::migrate_previous_product_data_dirs();
+    fig_settings::state::import_missing_state_from_previous_product();
 }
 
 /// Tracks whether macOS has ever actually granted us Accessibility, so a grant that silently stops

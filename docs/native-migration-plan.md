@@ -14,6 +14,8 @@
 
 ## 0. 现状快照（v3.0.0-beta.14）
 
+> 这一节是 T4 切换前的基线，不是当前 Fastab 运行时。当前状态见文首：typed IR 已上线，`hookFilesOnDisk = 0`，`pathSwitchAllowed = true`。
+
 源 spec 中共 **4268** 个 hook 函数：
 
 - **576** 个已在编译期被 `filepaths()` helper 的原生重写吃掉（`custom`/`trigger`/`getQueryTerm` 各 192，来自 73 个 spec）。这部分已经是纯原生。

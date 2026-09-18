@@ -1621,9 +1621,9 @@ fn accessibility_hint(zh: bool) -> &'static str {
     #[cfg(not(target_os = "macos"))]
     {
         if zh {
-            "用于读取当前聚焦的终端窗口并定位补全弹窗。点击后打开系统设置；列表里失效的旧条目会先被移除，再把 Fastab 拖进旁边的列表。"
+            "用于读取当前聚焦的终端窗口并定位补全弹窗。点击后打开系统设置；列表里失效的旧条目会先被移除，再把 Fastab 拖进旁边的列表。从 Easy Complete 升级需要重新授权：Fastab 是新的应用身份。"
         } else {
-            "Required to read the focused terminal window and position completions. Click to open System Settings. A stale list row is removed first, then drag Fastab into the list beside the card."
+            "Required to read the focused terminal window and position completions. Click to open System Settings. A stale list row is removed first, then drag Fastab into the list beside the card. Upgrading from Easy Complete needs a new grant — Fastab is a different app identity."
         }
     }
 }

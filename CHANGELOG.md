@@ -3,6 +3,7 @@
 ## Unreleased
 
 - change: product name and identity are now Fastab (`app.fastab`, `Fastab.app`, CLI `ftab`, PTY `fastabterm`). Easy Complete settings and history migrate into the Fastab data directory, including when `shell/` already exists under the new name. Install/repair treats Easy Complete rc blocks as legacy and rewrites them. The old IME palette entry is dropped on install. Telemetry UI is hidden and reporting stays unconfigured. Issue template, SECURITY, NOTICE, and hidden `ftab telemetry status` now use Fastab / default-off.
+- fix: upgrade from Easy Complete now migrates data before integrations write sqlite, copies the IME enabled key, strips leftover `ec init --rcfile` / `command -v ec` eval lines, and does not emit a dead `ftab login`. Doctor drops Auth / WebView host checks, warns about leftover `ec`/`ecterm` binaries, and notes that Accessibility must be re-granted for `app.fastab`.
 
 ## v3.0.0-beta.16
 

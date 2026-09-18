@@ -136,6 +136,10 @@ Settings and click **Grant Accessibility**. That opens:
 and floats a card you can drag **Fastab** from into the list. The app never
 opens that pane on its own.
 
+Upgrading from Easy Complete is a **new TCC identity** (`app.fastab`, not
+`dev.emmmm.easy-complete`). Grant Fastab even if Easy Complete was already
+allowed — the old checkbox does not cover this binary.
+
 If completions never appear, this is almost always the cause. Run the same flow
 again from Settings, or with:
 

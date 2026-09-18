@@ -3,6 +3,7 @@
 ## Unreleased
 
 - 变更：产品名与身份改为 Fastab（`app.fastab`、`Fastab.app`、CLI `ftab`、PTY `fastabterm`）。会把 Easy Complete 的设置和历史迁到 Fastab 数据目录，即使新目录里已经有 `shell/`。安装/修复会把 Easy Complete 的 rc 块当作旧集成并重写。安装时会清掉旧输入法条目。遥测开关已从界面隐藏，上报保持未配置。Issue 模板、SECURITY、NOTICE 以及隐藏的 `ftab telemetry status` 现已使用 Fastab / 默认关闭。
+- 修复：从 Easy Complete 升级会先迁移数据再写 sqlite，复制输入法已启用键，清掉残留的 `ec init --rcfile` / `command -v ec` eval，并且不再输出已失效的 `ftab login`。doctor 去掉 Auth / WebView host 检查，会警告残留的 `ec`/`ecterm`，并说明 `app.fastab` 需要重新授予辅助功能。
 
 ## v3.0.0-beta.16
 

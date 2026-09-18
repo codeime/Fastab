@@ -172,6 +172,31 @@ pub fn migrate_product_data_dir(old: &Path, new: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Move leftover Easy Complete and CodeWhisperer data dirs onto [`fig_data_dir`].
+///
+/// `ftab integrations install` can create `fastab/shell/` (and the IME can
+/// create `data.sqlite3`) before the desktop app launches. Call this from both
+/// the desktop launch path and integrations install so the old tree is merged
+/// first and a later empty-ish Fastab sqlite does not hide the old database.
+pub fn migrate_previous_product_data_dirs() {
+    let Ok(new) = fig_data_dir() else {
+        return;
+    };
+    for old in [previous_product_data_dir(), old_fig_data_dir()] {
+        let Ok(old) = old else {
+            continue;
+        };
+        if let Err(err) = migrate_product_data_dir(&old, &new) {
+            tracing::error!(
+                %err,
+                old = %old.display(),
+                new = %new.display(),
+                "Failed to migrate previous product data dir"
+            );
+        }
+    }
+}
+
 /// The q data directory
 ///
 /// - Linux: `$XDG_DATA_HOME/{data_dir}` or `$HOME/.local/share/{data_dir}`

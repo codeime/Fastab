@@ -164,7 +164,7 @@ strip_shell_integration_fallback() {
   # integration block: the block comment headers and the source lines
   # referencing our shell data directory.
   grep -Ev \
-    'Fastab (pre|post) block|Easy Complete (pre|post) block|(fastab|easy-complete)/shell/(zshrc|zprofile|bashrc|bash_profile)\.(pre|post)\.(zsh|bash)' \
+    'Fastab (pre|post) block|Easy Complete (pre|post) block|(fastab|easy-complete)/shell/(zshrc|zprofile|bashrc|bash_profile)\.(pre|post)\.(zsh|bash)|eval "\$\((~/.local/bin/)?(ftab|ec|q) init |eval \((~/.local/bin/)?(ftab|ec|q) init |\[ -x ~/.local/bin/(ftab|ec|q) \] && eval |command -v (ftab|ec|q) >/dev/null 2>&1 && eval ' \
     "$rc_file" > "$tmp" || true
   mv "$tmp" "$rc_file"
 }
