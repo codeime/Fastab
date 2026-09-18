@@ -2390,21 +2390,36 @@ fn set_intercept(figterm_state: &FigtermState, session_id: Uuid, overlay_visible
     set_intercept_flags(figterm_state, session_id, intercept, intercept_global);
 }
 
+fn desired_intercept_modes(for_this: bool, intercept: bool, intercept_global: bool) -> (InterceptMode, InterceptMode) {
+    (
+        if intercept && for_this {
+            InterceptMode::Locked
+        } else {
+            InterceptMode::Unlocked
+        },
+        if intercept_global && for_this {
+            InterceptMode::Locked
+        } else {
+            InterceptMode::Unlocked
+        },
+    )
+}
+
+fn intercept_modes_need_ipc(current: (InterceptMode, InterceptMode), desired: (InterceptMode, InterceptMode)) -> bool {
+    current != desired
+}
+
 fn set_intercept_flags(figterm_state: &FigtermState, session_id: Uuid, intercept: bool, intercept_global: bool) {
     for session in figterm_state.inner.lock().linked_sessions.values_mut() {
-        let for_this = session.id == session_id;
-        let enable = intercept && for_this;
-        let enable_global = intercept_global && for_this;
-        session.intercept = if enable {
-            InterceptMode::Locked
-        } else {
-            InterceptMode::Unlocked
-        };
-        session.intercept_global = if enable_global {
-            InterceptMode::Locked
-        } else {
-            InterceptMode::Unlocked
-        };
+        let desired = desired_intercept_modes(session.id == session_id, intercept, intercept_global);
+        if !intercept_modes_need_ipc((session.intercept, session.intercept_global), desired) {
+            continue;
+        }
+        let (next_intercept, next_global) = desired;
+        session.intercept = next_intercept;
+        session.intercept_global = next_global;
+        let enable = next_intercept == InterceptMode::Locked;
+        let enable_global = next_global == InterceptMode::Locked;
         let actions = if enable || enable_global {
             overlay_actions()
         } else {
@@ -3093,6 +3108,32 @@ mod tests {
         assert_eq!(intercept_flags(false, true), (false, true));
         assert_eq!(intercept_flags(false, false), (false, false));
         assert_eq!(intercept_flags(true, false), (false, false));
+    }
+
+    #[test]
+    fn other_tabs_unlock_and_unchanged_sessions_need_no_ipc() {
+        assert_eq!(
+            desired_intercept_modes(true, true, true),
+            (InterceptMode::Locked, InterceptMode::Locked)
+        );
+        assert_eq!(
+            desired_intercept_modes(true, true, false),
+            (InterceptMode::Locked, InterceptMode::Unlocked)
+        );
+        assert_eq!(
+            desired_intercept_modes(true, false, false),
+            (InterceptMode::Unlocked, InterceptMode::Unlocked)
+        );
+        assert_eq!(
+            desired_intercept_modes(false, true, true),
+            (InterceptMode::Unlocked, InterceptMode::Unlocked)
+        );
+        let already_unlocked = desired_intercept_modes(false, true, true);
+        assert!(!intercept_modes_need_ipc(already_unlocked, already_unlocked));
+        assert!(intercept_modes_need_ipc(
+            already_unlocked,
+            desired_intercept_modes(true, true, true)
+        ));
     }
 
     #[test]
