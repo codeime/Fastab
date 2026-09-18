@@ -1356,10 +1356,20 @@ function jsLastIndexOf(value, needle) {
   return value.lastIndexOf(needle);
 }
 
+function boundedString(value, path) {
+  if (value.length > MAX_STRING_CODE_UNITS) {
+    fail(`${path} exceeds the UTF-16 code-unit limit`, {
+      code: "complexity",
+    });
+  }
+  return value;
+}
+
 function jsReplace(value, needle, replacement, all) {
-  return all
-    ? value.replaceAll(needle, replacement)
-    : value.replace(needle, replacement);
+  return boundedString(
+    all ? value.replaceAll(needle, replacement) : value.replace(needle, replacement),
+    all ? "string-replace-all" : "string-replace",
+  );
 }
 
 function jsPad(value, target, pad, end) {
@@ -1505,9 +1515,12 @@ function evaluateExpression(node, arguments_) {
         evaluateExpression(node.count, arguments_),
       );
     case "string-concat":
-      return node.parts
-        .map((part) => evaluateExpression(part, arguments_))
-        .join("");
+      return boundedString(
+        node.parts
+          .map((part) => evaluateExpression(part, arguments_))
+          .join(""),
+        "string-concat",
+      );
     case "string-char-at":
       return jsCharAt(
         evaluateExpression(node.value, arguments_),
