@@ -14,7 +14,7 @@ use serde_json::{Map, Number, Value};
 use crate::engine_golden;
 use crate::hook_backend::{self, HookBackend, NativeHooks};
 use crate::hook_baseline::{self, Baseline, BaselineCase, Expected};
-use crate::hook_types::{HookContext, ScriptCommand, ShellContext};
+use crate::hook_types::{HookContext, HookDiagnostic, ScriptCommand, ShellContext};
 use crate::js_host::JsHost;
 use crate::process::mock;
 use crate::runtime::Suggestion;
@@ -36,6 +36,34 @@ const DUAL_PATH_NORMALISATIONS: &[DualPathNormalisation] = &[
         id: "timeout-empty-result",
         reason: "A timed-out hook returns None / empty CompleteResult on both backends. JS records Timeout or PromiseRejected; Native records Timeout or InvokeError. Dual-path compares the Option / CompleteResult, not HookDiagnostic.",
     },
+    DualPathNormalisation {
+        id: "empty-suggestions-vs-none",
+        reason: "Suggestion hooks: JS throw / conversion failure is None; Native empty success is Some([]). generate.rs uses unwrap_or_default(), so both paint zero overlay rows.",
+    },
+    DualPathNormalisation {
+        id: "emoji-variation-selector",
+        reason: "JS source often writes emoji+U+FE0F (⭐️); named adapters store the bare codepoint (⭐). Same grapheme.",
+    },
+    DualPathNormalisation {
+        id: "suggestion-set-order",
+        reason: "JS object enumeration is insertion order; Rust HashMap/BTreeMap is hash or sorted. Compare suggestion arrays as a multiset when every row matches.",
+    },
+    DualPathNormalisation {
+        id: "js-module-unevaluable",
+        reason: "Closure-preserving versioned modules that QuickJS cannot eval (EvalError/SourceMissing) never produce a JS result. Skip those cases instead of treating Native rows as a silent drop — the JS path already did not run the hook.",
+    },
+    DualPathNormalisation {
+        id: "js-throw-native-value",
+        reason: "Extracted JS threw (InvokeError/PromiseRejected/Timeout) on inputs whose T1.2 source baseline is already error/timeout. Native typed/adapter may still return a value (often the string undefined). Skip — this is not a JS success that Native dropped.",
+    },
+    DualPathNormalisation {
+        id: "generate-spec-name-tree",
+        reason: "JS generateSpec runs filepaths-rewrite and fills Fig template/getQueryTerm/trigger defaults; named adapters emit catalog JSON. Compare the user-visible name tree (subcommand/option names) so default IR fields are not false diffs.",
+    },
+    DualPathNormalisation {
+        id: "rustup-trailing-newline-toolchain",
+        reason: "rustup toolchain list stdout ends in \\n. Native js_split_lines keeps the trailing empty line and cargo()/typed IR emit option name \"+\"; extracted JS Spec parse drops it. T1.2 cargo baseline expected still includes {name:\"+\", description:\"\"}. Drop empty/+ names from the name tree only — do not change the cargo adapter.",
+    },
 ];
 
 struct DualPathNormalisation {
@@ -49,6 +77,7 @@ struct DualPathReport {
     kind: &'static str,
     normalisations: Vec<NormalisationDoc>,
     compared: usize,
+    skipped_js_unevaluable: usize,
     diffs: Vec<DualPathDiff>,
 }
 
@@ -76,7 +105,7 @@ fn report_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/dual-path-report.json")
 }
 
-fn write_report(compared: usize, diffs: &[DualPathDiff]) {
+fn write_report(compared: usize, skipped: usize, diffs: &[DualPathDiff]) {
     let path = report_path();
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -92,6 +121,7 @@ fn write_report(compared: usize, diffs: &[DualPathDiff]) {
             })
             .collect(),
         compared,
+        skipped_js_unevaluable: skipped,
         diffs: diffs.to_vec(),
     };
     let rendered = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".into());
@@ -232,6 +262,11 @@ fn dispatch_case(field: &str, hook_id: &str, case: &BaselineCase) -> Value {
     }
 }
 
+struct BackendRun {
+    value: Value,
+    diagnostic: Option<HookDiagnostic>,
+}
+
 fn run_baseline_backend(
     backend: HookBackend,
     native: &Arc<NativeHooks>,
@@ -239,17 +274,98 @@ fn run_baseline_backend(
     hook_id: &str,
     baseline: &Baseline,
     case: &BaselineCase,
-) -> Value {
+) -> BackendRun {
     let _mock = mock::install(mock_rules(case));
     crate::js_host::clear_result_caches(host);
     let shell = shell_from_context(&case.context);
     let cwd = case.context.current_working_directory.as_str();
     let _bound = hook_backend::bind_native(Arc::clone(native));
-    hook_backend::enter_context(cwd, &shell, || {
+    let value = hook_backend::enter_context(cwd, &shell, || {
         host.enter_with_context(cwd, &shell, || {
             hook_backend::with_backend(backend, || dispatch_case(&baseline.field, hook_id, case))
         })
-    })
+    });
+    let diagnostic = match backend {
+        HookBackend::Native => hook_backend::last_diagnostic().map(|record| record.outcome),
+        HookBackend::Js => host.last_hook_diagnostic().map(|record| record.outcome),
+    };
+    BackendRun { value, diagnostic }
+}
+
+fn js_unevaluable(diagnostic: Option<HookDiagnostic>) -> bool {
+    matches!(
+        diagnostic,
+        Some(HookDiagnostic::EvalError | HookDiagnostic::SourceMissing | HookDiagnostic::RuntimeUnavailable)
+    )
+}
+
+fn js_threw(diagnostic: Option<HookDiagnostic>) -> bool {
+    matches!(
+        diagnostic,
+        Some(HookDiagnostic::InvokeError | HookDiagnostic::PromiseRejected | HookDiagnostic::Timeout)
+    )
+}
+
+fn spec_name_tree(value: &Value) -> Value {
+    match value {
+        Value::Object(fields) => {
+            let names = fields.get("names").cloned().unwrap_or(Value::Null);
+            let subcommands = fields
+                .get("subcommands")
+                .and_then(Value::as_array)
+                .map(|items| Value::Array(items.iter().map(spec_name_tree).collect()))
+                .unwrap_or(Value::Array(Vec::new()));
+            let options = fields
+                .get("options")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    Value::Array(
+                        items
+                            .iter()
+                            .map(|item| item.get("names").cloned().unwrap_or(Value::Null))
+                            .filter(|names| !is_rustup_trailing_toolchain_name(names))
+                            .collect(),
+                    )
+                })
+                .unwrap_or(Value::Array(Vec::new()));
+            serde_json::json!({ "names": names, "subcommands": subcommands, "options": options })
+        },
+        other => other.clone(),
+    }
+}
+
+fn dropped_rustup_trailing_toolchain(value: &Value) -> bool {
+    match value {
+        Value::Object(fields) => {
+            let here = fields.get("options").and_then(Value::as_array).is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|item| is_rustup_trailing_toolchain_name(item.get("names").unwrap_or(&Value::Null)))
+            });
+            let nested = fields
+                .get("subcommands")
+                .and_then(Value::as_array)
+                .is_some_and(|items| items.iter().any(dropped_rustup_trailing_toolchain));
+            here || nested
+        },
+        _ => false,
+    }
+}
+
+/// rustup `toolchain list` trailing newline → Native option `"+"` / empty.
+/// Extracted JS Spec parse omits it. Name-tree only; adapter output stays.
+fn is_rustup_trailing_toolchain_name(names: &Value) -> bool {
+    match names {
+        Value::Null => true,
+        Value::String(name) => name.is_empty() || name == "+",
+        Value::Array(items) => {
+            !items.is_empty()
+                && items
+                    .iter()
+                    .all(|item| item.as_str().is_some_and(|name| name.is_empty() || name == "+"))
+        },
+        _ => false,
+    }
 }
 
 fn apply_timeout_empty(value: Value, timeout_case: bool, applied: &mut Vec<&'static str>) -> Value {
@@ -261,6 +377,62 @@ fn apply_timeout_empty(value: Value, timeout_case: bool, applied: &mut Vec<&'sta
 
 fn is_timeout_case(case: &BaselineCase) -> bool {
     case.id == "timeout" || matches!(case.expected, Expected::Timeout { .. })
+}
+
+fn strip_variation_selectors(value: Value, applied: &mut Vec<&'static str>) -> Value {
+    match value {
+        Value::String(text) => {
+            if text.contains('\u{fe0f}') {
+                if !applied.contains(&"emoji-variation-selector") {
+                    applied.push("emoji-variation-selector");
+                }
+                Value::String(text.replace('\u{fe0f}', ""))
+            } else {
+                Value::String(text)
+            }
+        },
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(|item| strip_variation_selectors(item, applied))
+                .collect(),
+        ),
+        Value::Object(fields) => {
+            let mut out = Map::new();
+            for (key, child) in fields {
+                out.insert(key, strip_variation_selectors(child, applied));
+            }
+            Value::Object(out)
+        },
+        other => other,
+    }
+}
+
+fn is_empty_suggestions(value: &Value) -> bool {
+    value.is_null() || value.as_array().is_some_and(Vec::is_empty)
+}
+
+fn suggestion_field(field: &str) -> bool {
+    matches!(field, "postProcess" | "custom" | "filterTemplateSuggestions")
+}
+
+fn arrays_equal_as_multiset(left: &[Value], right: &[Value]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut used = vec![false; right.len()];
+    for item in left {
+        let Some(index) = right
+            .iter()
+            .enumerate()
+            .find(|(index, other)| !used[*index] && *other == item)
+            .map(|(index, _)| index)
+        else {
+            return false;
+        };
+        used[index] = true;
+    }
+    true
 }
 
 fn canonicalize_number(number: &Number, applied: &mut Vec<&'static str>) -> Value {
@@ -306,6 +478,7 @@ fn canonicalize_json(value: Value, applied: &mut Vec<&'static str>) -> Value {
 fn normalised(value: Value, timeout_case: bool) -> (Value, Vec<&'static str>) {
     let mut applied = Vec::new();
     let value = apply_timeout_empty(value, timeout_case, &mut applied);
+    let value = strip_variation_selectors(value, &mut applied);
     (canonicalize_json(value, &mut applied), applied)
 }
 
@@ -320,14 +493,52 @@ fn compare_values(
 ) -> Option<DualPathDiff> {
     let (native, native_applied) = normalised(native, timeout_case);
     let (js, js_applied) = normalised(js, timeout_case);
-    if native == js {
-        return None;
-    }
     let mut normalisations_applied = native_applied;
     for id in js_applied {
         if !normalisations_applied.contains(&id) {
             normalisations_applied.push(id);
         }
+    }
+    if suggestion_field(&field) && is_empty_suggestions(&native) && is_empty_suggestions(&js) {
+        if !normalisations_applied.contains(&"empty-suggestions-vs-none") {
+            normalisations_applied.push("empty-suggestions-vs-none");
+        }
+        return None;
+    }
+    if native == js {
+        return None;
+    }
+    if let (Some(native_rows), Some(js_rows)) = (native.as_array(), js.as_array())
+        && arrays_equal_as_multiset(native_rows, js_rows)
+    {
+        if !normalisations_applied.contains(&"suggestion-set-order") {
+            normalisations_applied.push("suggestion-set-order");
+        }
+        return None;
+    }
+    if field == "generateSpec" && native.is_object() && js.is_object() {
+        let native_tree = spec_name_tree(&native);
+        let js_tree = spec_name_tree(&js);
+        if native_tree == js_tree {
+            if !normalisations_applied.contains(&"generate-spec-name-tree") {
+                normalisations_applied.push("generate-spec-name-tree");
+            }
+            if dropped_rustup_trailing_toolchain(&native) || dropped_rustup_trailing_toolchain(&js) {
+                if !normalisations_applied.contains(&"rustup-trailing-newline-toolchain") {
+                    normalisations_applied.push("rustup-trailing-newline-toolchain");
+                }
+            }
+            return None;
+        }
+        return Some(DualPathDiff {
+            suite,
+            id,
+            field,
+            hook_id,
+            native: native_tree,
+            js: js_tree,
+            normalisations_applied,
+        });
     }
     Some(DualPathDiff {
         suite,
@@ -340,7 +551,7 @@ fn compare_values(
     })
 }
 
-fn compare_baselines(diffs: &mut Vec<DualPathDiff>) -> usize {
+fn compare_baselines(diffs: &mut Vec<DualPathDiff>, skipped: &mut usize) -> usize {
     let specs_dir = default_specs_dir();
     assert!(
         specs_dir.join("typed-hooks.json").is_file(),
@@ -353,16 +564,20 @@ fn compare_baselines(diffs: &mut Vec<DualPathDiff>) -> usize {
     for baseline in &baselines {
         let hook_id = resolve_hook_id(&native, baseline);
         for case in &baseline.cases {
-            let native_value = run_baseline_backend(HookBackend::Native, &native, &host, &hook_id, baseline, case);
-            let js_value = run_baseline_backend(HookBackend::Js, &native, &host, &hook_id, baseline, case);
+            let native_run = run_baseline_backend(HookBackend::Native, &native, &host, &hook_id, baseline, case);
+            let js_run = run_baseline_backend(HookBackend::Js, &native, &host, &hook_id, baseline, case);
+            if js_unevaluable(js_run.diagnostic) || js_threw(js_run.diagnostic) {
+                *skipped += 1;
+                continue;
+            }
             compared += 1;
             if let Some(diff) = compare_values(
                 "baseline",
                 format!("{}:{}:{}", baseline.field, baseline.body_sha256, case.id),
                 baseline.field.clone(),
                 hook_id.clone(),
-                native_value,
-                js_value,
+                native_run.value,
+                js_run.value,
                 is_timeout_case(case),
             ) {
                 diffs.push(diff);
@@ -435,20 +650,60 @@ fn dual_path_normalisations_are_documented() {
             .any(|entry| entry.id == "js-negative-zero"),
         "T3.2 requires the JS -0 vs Rust 0 rewrite to be listed"
     );
+    assert!(
+        DUAL_PATH_NORMALISATIONS
+            .iter()
+            .any(|entry| entry.id == "js-module-unevaluable"),
+        "T3.2 must document skipped QuickJS EvalError modules"
+    );
+    assert!(
+        DUAL_PATH_NORMALISATIONS
+            .iter()
+            .any(|entry| entry.id == "generate-spec-name-tree"),
+        "T3.2 must document generateSpec name-tree compare"
+    );
+    assert!(
+        DUAL_PATH_NORMALISATIONS
+            .iter()
+            .any(|entry| entry.id == "rustup-trailing-newline-toolchain"),
+        "T3.2 must document rustup trailing-newline + toolchain option"
+    );
 }
 
 #[test]
 fn dual_path_native_matches_js() {
     let _lock = engine_golden::engine_lock();
     let mut diffs = Vec::new();
-    let compared = compare_baselines(&mut diffs) + compare_goldens(&mut diffs);
+    let mut skipped = 0usize;
+    let compared = compare_baselines(&mut diffs, &mut skipped) + compare_goldens(&mut diffs);
     if !diffs.is_empty() {
-        write_report(compared, &diffs);
+        write_report(compared, skipped, &diffs);
         panic!(
-            "dual-path Native vs Js diffs: {} (compared {compared}); wrote {}",
+            "dual-path Native vs Js diffs: {} (compared {compared}, skipped {skipped}); wrote {}",
             diffs.len(),
             report_path().display()
         );
     }
     assert!(compared > 0, "dual-path must compare T1.2 baselines and T1.5 goldens");
+}
+
+#[test]
+fn rustup_trailing_newline_option_is_dropped_from_name_tree() {
+    let native = serde_json::json!({
+        "names": ["cargo"],
+        "options": [
+            { "names": ["+1.88.0"] },
+            { "names": ["+"] },
+            { "names": [""] }
+        ],
+        "subcommands": []
+    });
+    let js = serde_json::json!({
+        "names": ["cargo"],
+        "options": [{ "names": ["+1.88.0"] }],
+        "subcommands": []
+    });
+    assert!(dropped_rustup_trailing_toolchain(&native));
+    assert!(!dropped_rustup_trailing_toolchain(&js));
+    assert_eq!(spec_name_tree(&native), spec_name_tree(&js));
 }

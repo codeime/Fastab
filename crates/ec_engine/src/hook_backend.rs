@@ -429,16 +429,19 @@ fn native_get_query_term(hook_id: &str, search_term: &str) -> Option<String> {
 
 fn native_post_process(hook_id: &str, stdout: &str, tokens: &[String]) -> Option<Vec<Suggestion>> {
     let native = native()?;
+    // Named adapters own their body SHA (T2.4). A typed compile of the same
+    // body is a fallback, not a shadow — yarn's package.json parser is the
+    // case that made this order load-bearing.
+    if let Some(sha) = adapter_sha(&native, hook_id, "postProcess")
+        && let Some(json) = crate::native_adapters::evaluate_post_process(sha, stdout, tokens)
+    {
+        return json_suggestions(hook_id, json);
+    }
     if let Some(descriptor) = typed_entry(&native, hook_id) {
         return match evaluate_typed_post_process(descriptor, stdout, tokens) {
             Ok(value) => finish_option(hook_id, Some(value), Vec::is_empty),
             Err(_) => invoke_err(hook_id),
         };
-    }
-    if let Some(sha) = adapter_sha(&native, hook_id, "postProcess")
-        && let Some(json) = crate::native_adapters::evaluate_post_process(sha, stdout, tokens)
-    {
-        return json_suggestions(hook_id, json);
     }
     let _ = missing(hook_id);
     None
@@ -458,12 +461,6 @@ fn native_script(hook_id: &str, tokens: &[String]) -> Option<ScriptCommand> {
 
 fn native_filter(hook_id: &str, suggestions: &[Suggestion]) -> Option<Vec<Suggestion>> {
     let native = native()?;
-    if let Some(descriptor) = typed_entry(&native, hook_id) {
-        return match evaluate_typed_filter_template_suggestions(descriptor, suggestions) {
-            Ok(value) => finish_option(hook_id, Some(value), Vec::is_empty),
-            Err(_) => invoke_err(hook_id),
-        };
-    }
     if let Some(sha) = adapter_sha(&native, hook_id, "filterTemplateSuggestions") {
         let payload: Vec<JsonValue> = suggestions
             .iter()
@@ -486,6 +483,12 @@ fn native_filter(hook_id: &str, suggestions: &[Suggestion]) -> Option<Vec<Sugges
             return json_suggestions(hook_id, json);
         }
     }
+    if let Some(descriptor) = typed_entry(&native, hook_id) {
+        return match evaluate_typed_filter_template_suggestions(descriptor, suggestions) {
+            Ok(value) => finish_option(hook_id, Some(value), Vec::is_empty),
+            Err(_) => invoke_err(hook_id),
+        };
+    }
     let _ = missing(hook_id);
     None
 }
@@ -501,6 +504,12 @@ fn native_custom(
     let native = native()?;
     let shell = session_shell();
     let context = HookContext::from_shell(cwd, &shell, search_term, is_dangerous);
+    if let Some(sha) = adapter_sha(&native, hook_id, "custom") {
+        let exec = live_adapter_exec(cwd, timeout);
+        if let Some(json) = crate::native_adapters::evaluate_custom(sha, tokens, &exec, &context) {
+            return json_suggestions(hook_id, json);
+        }
+    }
     if let Some(descriptor) = typed_entry(&native, hook_id) {
         let typed_ctx = typed_context(&context);
         let exec = live_typed_exec(cwd, timeout);
@@ -509,12 +518,6 @@ fn native_custom(
             Ok(value) => finish_option(hook_id, Some(value), Vec::is_empty),
             Err(_) => invoke_err(hook_id),
         };
-    }
-    if let Some(sha) = adapter_sha(&native, hook_id, "custom") {
-        let exec = live_adapter_exec(cwd, timeout);
-        if let Some(json) = crate::native_adapters::evaluate_custom(sha, tokens, &exec, &context) {
-            return json_suggestions(hook_id, json);
-        }
     }
     let _ = missing(hook_id);
     None
@@ -555,6 +558,12 @@ fn native_load_spec(hook_id: &str, token: &str, cwd: &str, timeout: Duration) ->
 fn native_generate_spec(hook_id: &str, tokens: &[String], cwd: &str, timeout: Duration) -> Option<Spec> {
     let native = native()?;
     let context = HookContext::from_shell(cwd, &session_shell(), tokens.last().map_or("", String::as_str), false);
+    if let Some(sha) = adapter_sha(&native, hook_id, "generateSpec") {
+        let exec = live_adapter_exec(cwd, timeout);
+        if let Some(json) = crate::native_adapters::evaluate_generate_spec(sha, tokens, &exec, &context) {
+            return spec_from_json_result(hook_id, json);
+        }
+    }
     if let Some(descriptor) = typed_entry(&native, hook_id) {
         let typed_ctx = typed_context(&context);
         let exec = live_typed_exec(cwd, timeout);
@@ -563,12 +572,6 @@ fn native_generate_spec(hook_id: &str, tokens: &[String], cwd: &str, timeout: Du
             Ok(json) => spec_from_json(hook_id, json),
             Err(_) => invoke_err(hook_id),
         };
-    }
-    if let Some(sha) = adapter_sha(&native, hook_id, "generateSpec") {
-        let exec = live_adapter_exec(cwd, timeout);
-        if let Some(json) = crate::native_adapters::evaluate_generate_spec(sha, tokens, &exec, &context) {
-            return spec_from_json_result(hook_id, json);
-        }
     }
     let _ = missing(hook_id);
     None
