@@ -3,6 +3,8 @@ mod event;
 mod event_loop;
 mod gpui_host;
 mod overlay;
+#[cfg(test)]
+mod overlay_session;
 mod permissions;
 mod settings_ui;
 // mod figterm;

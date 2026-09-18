@@ -3141,6 +3141,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: None,
+                backend_override: None,
             },
         );
         let names: Vec<_> = result.suggestions.iter().map(|s| s.name.as_str()).collect();
@@ -3167,6 +3168,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: None,
+                backend_override: None,
             },
         );
         let names: Vec<_> = result.suggestions.iter().map(|s| s.name.as_str()).collect();
@@ -3192,6 +3194,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: None,
+                backend_override: None,
             },
         );
         let names: Vec<_> = result.suggestions.iter().map(|s| s.name.as_str()).collect();
@@ -3216,6 +3219,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: None,
+                backend_override: None,
             },
         );
         let names: Vec<_> = result.suggestions.iter().map(|s| s.name.as_str()).collect();
@@ -3240,6 +3244,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: None,
+                backend_override: None,
             },
         );
         let names: Vec<_> = result.suggestions.iter().map(|s| s.name.as_str()).collect();
@@ -3264,6 +3269,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: None,
+                backend_override: None,
             },
         );
         assert!(result.suggestions.iter().any(|s| s.name == "status"));
@@ -3288,6 +3294,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: None,
+                backend_override: None,
             },
         );
         let names: Vec<_> = result.suggestions.iter().map(|s| s.name.as_str()).collect();
@@ -3313,6 +3320,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: None,
+                backend_override: None,
             },
         );
         let names: Vec<_> = result.suggestions.iter().map(|s| s.name.as_str()).collect();
@@ -3337,6 +3345,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: None,
+                backend_override: None,
             },
         );
         assert!(result.suggestions.is_empty(), "{:?}", result.suggestions);
@@ -3360,6 +3369,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: Some("alias g=git\n".into()),
+                backend_override: None,
             },
         );
         assert!(
@@ -3386,6 +3396,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: Some("alias g=git\n".into()),
+                backend_override: None,
             },
         );
         assert!(result.suggestions.is_empty(), "{:?}", result.suggestions);
@@ -3427,6 +3438,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: Some("alias g=git\n".into()),
+                backend_override: None,
             },
         );
         crate::generate::set_history(Arc::default());
@@ -3470,6 +3482,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: None,
+                backend_override: None,
             },
         );
         let names: Vec<_> = result.suggestions.iter().map(|s| s.name.as_str()).collect();
@@ -3501,6 +3514,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: None,
+                backend_override: None,
             },
         );
         assert!(result.suggestions.is_empty(), "{:?}", result.suggestions);
@@ -3534,6 +3548,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: None,
+                backend_override: None,
             },
         );
         assert!(
@@ -3561,6 +3576,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: None,
+                backend_override: None,
             },
         );
         assert!(
@@ -4350,6 +4366,7 @@ mod tests {
                 current_process: None,
                 environment_variables: Default::default(),
                 alias: None,
+                backend_override: None,
             },
         );
         let checkout = result

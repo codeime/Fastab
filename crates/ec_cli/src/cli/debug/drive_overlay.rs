@@ -5,6 +5,7 @@
 //! running (`remote.sock` + `desktop.sock`). Buffers are sent one character
 //! at a time so the overlay does not treat the change as a paste.
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -60,6 +61,9 @@ pub struct DriveOverlayArgs {
     /// Quartz caret Y (top-left, primary display).
     #[arg(long, default_value_t = 700.0)]
     pub y: f64,
+    /// Replay a T3.3 JSONL session (`{buffer, cwd}`) instead of `--buffer`.
+    #[arg(long)]
+    pub session: Option<PathBuf>,
 }
 
 pub async fn execute(args: &DriveOverlayArgs) -> Result<ExitCode> {
@@ -73,11 +77,16 @@ pub async fn execute(args: &DriveOverlayArgs) -> Result<ExitCode> {
         bail!("Easy Complete is not running (missing {remote_path:?} or {desktop_path:?})");
     }
 
+    let session_frames = args.session.as_deref().map(load_session_frames).transpose()?;
     let cwd = args
         .cwd
         .clone()
+        .or_else(|| session_frames.as_ref().and_then(|session| session.cwd.clone()))
         .unwrap_or_else(|| std::env::current_dir().map_or_else(|_err| "/".into(), |path| path.display().to_string()));
-    let frames = frames_for(&args.scenario, args.buffer.as_deref());
+    let frames = match session_frames {
+        Some(session) => session.buffers,
+        None => frames_for(&args.scenario, args.buffer.as_deref()),
+    };
     let delay = Duration::from_millis(args.delay_ms);
     let hold = Duration::from_millis(args.hold_ms);
 
@@ -136,6 +145,43 @@ pub async fn execute(args: &DriveOverlayArgs) -> Result<ExitCode> {
     writer.flush().await.ok();
     eprintln!("Done.");
     Ok(ExitCode::SUCCESS)
+}
+
+struct SessionFrames {
+    buffers: Vec<String>,
+    cwd: Option<String>,
+}
+
+fn load_session_frames(path: &std::path::Path) -> Result<SessionFrames> {
+    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut buffers = Vec::new();
+    let mut cwd = None;
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let row: serde_json::Value =
+            serde_json::from_str(line).with_context(|| format!("{}:{}", path.display(), index + 1))?;
+        let buffer = row
+            .get("buffer")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre::eyre!("{}:{} missing buffer", path.display(), index + 1))?;
+        buffers.push(buffer.to_string());
+        if cwd.is_none() {
+            cwd = row
+                .get("cwd")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned);
+        }
+    }
+    if buffers.len() < 100 {
+        bail!(
+            "session {} has {} buffers; T3.3 requires ≥ 100",
+            path.display(),
+            buffers.len()
+        );
+    }
+    Ok(SessionFrames { buffers, cwd })
 }
 
 fn frames_for(scenario: &OverlayDriveScenario, buffer: Option<&str>) -> Vec<String> {
@@ -226,6 +272,17 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn loads_t3_session_keystroke_frames() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/dual-path/sessions/git.jsonl");
+        let session = load_session_frames(&path).expect("git session");
+        assert!(session.buffers.len() >= 100);
+        assert_eq!(session.cwd.as_deref(), Some("git"));
+        assert_eq!(session.buffers[0], "g");
+        assert_eq!(session.buffers[1], "gi");
+    }
+
+    #[test]
     fn types_one_character_at_a_time() {
         assert_eq!(
             typed_prefixes("git ch"),
@@ -291,6 +348,7 @@ mod tests {
                 cycles: 3,
                 x: 10.0,
                 y: 20.0,
+                session: None,
             }
         );
     }

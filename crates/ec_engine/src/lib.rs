@@ -6,6 +6,9 @@
 mod cobra;
 #[cfg(all(test, feature = "js-compat"))]
 mod dual_path;
+mod dual_path_compare;
+#[cfg(all(test, feature = "js-compat"))]
+mod dual_path_session;
 #[cfg(all(test, feature = "js-compat"))]
 mod engine_golden;
 mod filegen;
@@ -30,6 +33,8 @@ mod typed_hook;
 mod versioned;
 mod worker;
 
+pub use dual_path_compare::{complete_result_diffs, normalise_complete_result};
+pub use hook_backend::{HookBackend, with_backend};
 pub use ir::{ArgSpec, Builtin, OptionSpec, Registry, Spec, Template};
 pub use lookup::{completion_buffer, current_command_slice, tokenize};
 pub use native_adapters::{dump_native_adapter_catalog, native_adapter_catalog_path};
