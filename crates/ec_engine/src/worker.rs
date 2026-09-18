@@ -53,6 +53,17 @@ enum JobKind {
 // configured budget.
 const MIN_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Stack for the worker and every attempt thread. Both recurse over typed
+/// hook IR: the worker deserializes `typed-hooks.json` (nesting up to 32
+/// JSON levels for `git#generateSpec`) and an attempt walks the same trees
+/// in `evaluate_inner`. macOS gives a secondary thread 512 KB by default,
+/// and with `serde_json`'s `preserve_order` a *debug* build spends over
+/// 20 KB of stack per nesting level in `from_slice` — a dev `easy-complete`
+/// would overflow while loading the catalog. Release frames are far
+/// smaller, but the reservation is virtual and costs nothing unless
+/// touched, so both builds get the same headroom.
+const ENGINE_THREAD_STACK: usize = 16 * 1024 * 1024;
+
 /// Slack added to the user's script budget before the UI stops waiting, so a
 /// generator that finishes right on its own deadline still gets rendered.
 const UI_DEADLINE_MARGIN: Duration = Duration::from_secs(1);
@@ -120,6 +131,7 @@ impl EngineClient {
 
         thread::Builder::new()
             .name("ec-engine".into())
+            .stack_size(ENGINE_THREAD_STACK)
             .spawn(move || {
                 // Initialize lazily for the first real request.  A malformed
                 // or temporarily unavailable specs directory must not poison
@@ -354,14 +366,17 @@ where
     F: FnOnce(Engine, CompleteRequest) -> (Engine, anyhow::Result<CompleteResult>) + Send + 'static,
 {
     let (tx, rx) = mpsc::sync_channel(1);
-    let spawn_result = thread::Builder::new().name("ec-engine-attempt".into()).spawn(move || {
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| complete(engine, request)));
-        let message = match outcome {
-            Ok(result) => Ok(result),
-            Err(_) => Err(()),
-        };
-        let _ = tx.send(message);
-    });
+    let spawn_result = thread::Builder::new()
+        .name("ec-engine-attempt".into())
+        .stack_size(ENGINE_THREAD_STACK)
+        .spawn(move || {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| complete(engine, request)));
+            let message = match outcome {
+                Ok(result) => Ok(result),
+                Err(_) => Err(()),
+            };
+            let _ = tx.send(message);
+        });
     if spawn_result.is_err() {
         return Err(AttemptFailure::Panicked);
     }
