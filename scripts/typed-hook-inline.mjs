@@ -282,19 +282,80 @@ function calleeNames(node) {
   return [];
 }
 
+function objectPropertyKey(property) {
+  if (!property || property.type !== "Property" || property.computed) return null;
+  if (property.key.type === "Identifier") return property.key.name;
+  if (property.key.type === "Literal") return property.key.value;
+  return null;
+}
+
 function objectPropertyValue(object, name) {
   if (!object || object.type !== "ObjectExpression") return null;
   for (const property of object.properties) {
-    if (property.type !== "Property" || property.computed) continue;
-    const key =
-      property.key.type === "Identifier"
-        ? property.key.name
-        : property.key.type === "Literal"
-          ? property.key.value
-          : null;
-    if (key === name) return property.value;
+    if (objectPropertyKey(property) === name) return property.value;
   }
   return null;
+}
+
+function astNodesAgree(left, right) {
+  if (!left || !right || left.type !== right.type) return false;
+  if (left.type === "Literal") {
+    return Object.is(left.value, right.value);
+  }
+  if (left.type === "Identifier") {
+    return left.name === right.name;
+  }
+  if (left.type === "ArrayExpression") {
+    return (
+      left.elements.length === right.elements.length &&
+      left.elements.every((item, index) => astNodesAgree(item, right.elements[index]))
+    );
+  }
+  if (left.type === "ObjectExpression") {
+    if (left.properties.length !== right.properties.length) return false;
+    return left.properties.every((property) => {
+      const key = objectPropertyKey(property);
+      return key != null && astNodesAgree(property.value, objectPropertyValue(right, key));
+    });
+  }
+  if (left.type === "UnaryExpression") {
+    return left.operator === right.operator && astNodesAgree(left.argument, right.argument);
+  }
+  return false;
+}
+
+function agreeObjectLiterals(objects) {
+  if (!Array.isArray(objects) || objects.length === 0) return emptyObjectExpression();
+  if (objects.length === 1) return objects[0];
+  const keys = [];
+  for (const property of objects[0].properties) {
+    const key = objectPropertyKey(property);
+    if (key == null || keys.includes(key)) continue;
+    keys.push(key);
+  }
+  const properties = [];
+  for (const key of keys) {
+    const values = objects.map((object) => objectPropertyValue(object, key));
+    if (values.some((value) => !value)) continue;
+    if (!values.every((value) => astNodesAgree(value, values[0]))) continue;
+    properties.push({
+      type: "Property",
+      start: 0,
+      end: 0,
+      method: false,
+      shorthand: false,
+      computed: false,
+      kind: "init",
+      key: { type: "Identifier", start: 0, end: 0, name: String(key) },
+      value: values[0],
+    });
+  }
+  return {
+    type: "ObjectExpression",
+    start: 0,
+    end: 0,
+    properties,
+  };
 }
 
 function argumentForParam(fn, call, name) {
@@ -345,6 +406,10 @@ function emptyObjectExpression() {
   return { type: "ObjectExpression", properties: [], start: 0, end: 2 };
 }
 
+function undefinedLiteral() {
+  return { type: "Literal", start: 0, end: 4, value: null, raw: "null" };
+}
+
 function resolveFactoryArgument(moduleAst, def, name) {
   const fn = definitionFunction(def);
   if (!fn) return null;
@@ -355,29 +420,38 @@ function resolveFactoryArgument(moduleAst, def, name) {
     const called = calleeNames(node.callee);
     if (called.some((callee) => names.has(callee))) calls.push(node);
   });
-  const values = calls
-    .map((call) => argumentForParam(fn, call, name))
-    .filter((value) => value && value.type !== "SpreadElement");
-  if (values.length === 0) {
-    if (parameterLooksLikeObject(fn, name)) return emptyObjectExpression();
-    return null;
+  const fromDefault = parameterDefault(fn, name) ?? undefinedLiteral();
+  if (calls.length === 0) {
+    return fromDefault;
   }
+  const values = calls.map((call) => {
+    const argument = argumentForParam(fn, call, name);
+    if (!argument || argument.type === "SpreadElement") return undefinedLiteral();
+    return argument;
+  });
   if (values.every((value) => value.type === "ObjectExpression")) {
-    if (values.length === 1) return values[0];
-    return emptyObjectExpression();
+    return agreeObjectLiterals(values);
   }
+  const objectValues = values.filter((value) => value.type === "ObjectExpression");
   if (
-    values.every(
-      (value) =>
-        value.type === "Literal" &&
-        values[0].type === "Literal" &&
-        value.value === values[0].value,
-    )
+    objectValues.length > 0 &&
+    values.every((value) => value.type === "ObjectExpression" || isNullishAst(value))
   ) {
+    return agreeObjectLiterals(objectValues);
+  }
+  if (values.every((value) => astNodesAgree(value, values[0]))) {
     return values[0];
   }
-  const fromDefault = parameterDefault(fn, name);
-  return fromDefault ?? values[0];
+  return fromDefault;
+}
+
+function isNullishAst(node) {
+  return (
+    !node ||
+    (node.type === "Identifier" && node.name === "undefined") ||
+    (node.type === "Literal" && (node.value === null || node.value === undefined)) ||
+    (node.type === "UnaryExpression" && node.operator === "void")
+  );
 }
 
 function parameterLooksLikeObject(fn, name) {
@@ -543,7 +617,7 @@ function topLevelFunctionScope(moduleAst, scopeManager) {
  *
  * @returns {{ helpers: Map<string, object>, inlinedNodes: number }}
  */
-export function resolveHookHelpers({ body, moduleSource } = {}) {
+export function resolveHookHelpers({ body, moduleSource, helperLiterals } = {}) {
   if (typeof body !== "string" || !body.trim()) {
     fail("hook body must be a non-empty string", "input");
   }
@@ -562,12 +636,25 @@ export function resolveHookHelpers({ body, moduleSource } = {}) {
 
   const bindName = (name, variable) => {
     if (!variable || helpers.has(name)) return;
+    if (helperLiterals && Object.hasOwn(helperLiterals, name)) {
+      const value = helperLiterals[name];
+      const usable =
+        typeof value === "string" ||
+        typeof value === "boolean" ||
+        (typeof value === "number" && Number.isSafeInteger(value)) ||
+        value === null ||
+        (value && typeof value === "object" && !Array.isArray(value));
+      if (usable) {
+        const record = helperRecord(name, plainToAst(value), JSON.stringify(value));
+        helpers.set(name, record);
+        return;
+      }
+    }
     const def = variable.defs[0];
     const init =
-      definitionInit(def) ??
-      (def?.type === "Parameter"
-        ? resolveFactoryArgument(moduleAst, def, name)
-        : null);
+      def?.type === "Parameter"
+        ? (resolveFactoryArgument(moduleAst, def, name) ?? definitionInit(def))
+        : definitionInit(def);
     const record = helperRecord(name, init, moduleSource);
     inlinedNodes += record.nodes;
     if (inlinedNodes > MAX_INLINE_NODES) {
@@ -601,6 +688,204 @@ export function resolveHookHelpers({ body, moduleSource } = {}) {
     bindName(name, variable);
   }
   return { helpers, inlinedNodes };
+}
+
+const COMMON_SEPARATORS = Object.freeze([":", "=", "/", ",", "."]);
+const COMMON_EXTRAS = Object.freeze([{ isDangerous: true }]);
+
+function objectPatternKeyForParam(fn, name) {
+  if (!fn?.params) return null;
+  for (const param of fn.params) {
+    const object =
+      param.type === "ObjectPattern"
+        ? param
+        : param.type === "AssignmentPattern" && param.left.type === "ObjectPattern"
+          ? param.left
+          : null;
+    if (!object) continue;
+    const key = objectPatternKey(object, name);
+    if (key != null) return key;
+  }
+  return null;
+}
+
+function objectExpressionToPlain(node) {
+  if (!node || node.type !== "ObjectExpression") return undefined;
+  const out = {};
+  for (const property of node.properties) {
+    if (property.type !== "Property" || property.computed) return undefined;
+    const key = objectPropertyKey(property);
+    const value = literalFactoryValue(property.value);
+    if (key == null || value === undefined) return undefined;
+    out[key] = value;
+  }
+  return out;
+}
+
+function literalNode(value) {
+  return {
+    type: "Literal",
+    start: 0,
+    end: 0,
+    value,
+    raw: JSON.stringify(value),
+  };
+}
+
+function plainToAst(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return {
+      type: "ObjectExpression",
+      start: 0,
+      end: 0,
+      properties: Object.entries(value).map(([key, child]) => ({
+        type: "Property",
+        start: 0,
+        end: 0,
+        method: false,
+        shorthand: false,
+        computed: false,
+        kind: "init",
+        key: { type: "Identifier", start: 0, end: 0, name: key },
+        value: plainToAst(child),
+      })),
+    };
+  }
+  return literalNode(value);
+}
+
+function literalFactoryValue(node) {
+  if (!node) return undefined;
+  if (node.type === "Literal") {
+    if (
+      typeof node.value === "string" ||
+      typeof node.value === "boolean" ||
+      node.value === null ||
+      (typeof node.value === "number" && Number.isSafeInteger(node.value))
+    ) {
+      return node.value;
+    }
+    return undefined;
+  }
+  if (
+    node.type === "UnaryExpression" &&
+    node.operator === "!" &&
+    node.argument?.type === "Literal" &&
+    (typeof node.argument.value === "number" || typeof node.argument.value === "boolean")
+  ) {
+    return !node.argument.value;
+  }
+  if (node.type === "UnaryExpression" && node.operator === "void") {
+    return null;
+  }
+  if (node.type === "Identifier" && node.name === "undefined") {
+    return null;
+  }
+  return objectExpressionToPlain(node);
+}
+
+function collectFactoryLiterals(moduleAst, fn, name) {
+  const values = [];
+  const bindingNames = fn ? functionBindingNames(moduleAst, fn) : new Set();
+  if (fn) {
+    walkAst(moduleAst, (node) => {
+      if (node.type !== "CallExpression") return;
+      const called = calleeNames(node.callee);
+      if (!called.some((callee) => bindingNames.has(callee))) return;
+      const argument = argumentForParam(fn, node, name);
+      const value = literalFactoryValue(argument);
+      if (value !== undefined) values.push(value);
+    });
+  }
+  const patternKey = objectPatternKeyForParam(fn, name);
+  if (patternKey) {
+    walkAst(moduleAst, (node) => {
+      if (node.type !== "ObjectExpression") return;
+      const argument = objectPropertyValue(node, patternKey);
+      const value = literalFactoryValue(argument);
+      if (value !== undefined) values.push(value);
+    });
+  }
+  const fromDefault = literalFactoryValue(parameterDefault(fn, name));
+  if (fromDefault !== undefined) values.push(fromDefault);
+  return values;
+}
+
+function uniquePreserve(values) {
+  const seen = new Set();
+  const unique = [];
+  for (const value of values) {
+    const key =
+      value && typeof value === "object"
+        ? `obj:${JSON.stringify(value)}`
+        : `${typeof value}:${String(value)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(value);
+  }
+  return unique;
+}
+
+export function factoryHelperCandidates({ body, moduleSource } = {}) {
+  if (!moduleSource) return {};
+  const names = hookFreeNames(body);
+  if (names.length === 0) return {};
+  const moduleAst = parseModule(moduleSource);
+  const scopeManager = analyzeScope(moduleAst);
+  const occurrences = findHookOccurrences(moduleAst, moduleSource, body);
+  const hookNode = occurrences[0];
+  const scope = hookNode
+    ? scopeForNode(scopeManager, hookNode) ||
+      scopeForNode(scopeManager, hookNode.body) ||
+      scopeManager.globalScope
+    : topLevelFunctionScope(moduleAst, scopeManager);
+  const candidates = {};
+  for (const name of names) {
+    const variable = resolveThroughScope(scope, name);
+    const def = variable?.defs?.[0];
+    if (def?.type !== "Parameter") continue;
+    const fn = definitionFunction(def);
+    const unique = uniquePreserve(collectFactoryLiterals(moduleAst, fn, name));
+    const strings = unique.filter((value) => typeof value === "string");
+    const objectLike = parameterLooksLikeObject(fn, name);
+    const boolLike =
+      unique.some((value) => typeof value === "boolean" || value === null) ||
+      (objectLike && strings.length === 0);
+    if (strings.some((value) => value.length === 1) || (objectLike && strings.length > 0)) {
+      for (const extra of COMMON_SEPARATORS) {
+        if (!strings.includes(extra)) unique.push(extra);
+      }
+    }
+    if (objectLike) {
+      for (const extra of COMMON_EXTRAS) {
+        if (!unique.some((value) => JSON.stringify(value) === JSON.stringify(extra))) {
+          unique.unshift(extra);
+        }
+      }
+    }
+    if (boolLike || unique.length === 0) {
+      for (const extra of [false, true, null]) {
+        if (!unique.some((value) => Object.is(value, extra))) unique.push(extra);
+      }
+    }
+    if (unique.length === 0) {
+      unique.push(...COMMON_SEPARATORS);
+    }
+    const objects = unique.filter((value) => value && typeof value === "object");
+    const rest = unique.filter((value) => !(value && typeof value === "object"));
+    candidates[name] = uniquePreserve([...objects, ...rest]);
+  }
+  return candidates;
+}
+
+export function factoryStringCandidates({ body, moduleSource } = {}) {
+  const candidates = factoryHelperCandidates({ body, moduleSource });
+  const strings = {};
+  for (const [name, values] of Object.entries(candidates)) {
+    const only = values.filter((value) => typeof value === "string");
+    if (only.length > 0) strings[name] = only;
+  }
+  return strings;
 }
 
 export function inlineHookHelpers({ body, moduleSource } = {}) {

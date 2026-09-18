@@ -275,6 +275,8 @@ enum TypedExpr {
     Block { items: Vec<TypedExpr> },
     #[serde(rename = "return")]
     Return { value: Box<TypedExpr> },
+    #[serde(rename = "catch-return")]
+    CatchReturn { body: Box<TypedExpr> },
     #[serde(rename = "break")]
     Break,
     #[serde(rename = "continue")]
@@ -321,6 +323,8 @@ enum TypedExpr {
         value: Box<TypedExpr>,
         fields: Vec<TypedObjectField>,
     },
+    #[serde(rename = "object-assign")]
+    ObjectAssign { parts: Vec<TypedExpr> },
     #[serde(rename = "get")]
     Get { value: Box<TypedExpr>, key: Box<TypedExpr> },
     #[serde(rename = "object-keys")]
@@ -713,9 +717,15 @@ pub(crate) enum TypedValue {
     Integer(i64),
     StringArray(Vec<Utf16String>),
     Array(Vec<TypedValue>),
-    Object(BTreeMap<String, TypedValue>),
+    /// Insertion-ordered own properties, matching JS `Object` enumeration.
+    /// `BTreeMap` would sort keys and scramble `Object.entries` on JSON.parse
+    /// results (package.json `scripts` is the bun/postProcess fixture).
+    Object(Vec<(String, TypedValue)>),
     StringSet(BTreeSet<Utf16String>),
-    Regex { pattern: String, flags: String },
+    Regex {
+        pattern: String,
+        flags: String,
+    },
     Json(JsonValue),
     Null,
 }
@@ -1351,7 +1361,14 @@ fn validate_typed_hook_ir(descriptor: &TypedHookIr) -> TypedHookResult<()> {
     }
 
     let mut state = ValidationState::default();
-    let result_type = validate_expr(&descriptor.expr, &descriptor.params, &mut state, 0, "expr")?;
+    let result_type = validate_expr(
+        &descriptor.expr,
+        &descriptor.params,
+        &mut state,
+        0,
+        "expr",
+        Some(descriptor.result_type),
+    )?;
     if result_type != descriptor.result_type && !types_compatible(result_type, descriptor.result_type) {
         return Err(TypedHookError::new(format!(
             "expression result type {result_type:?} does not match descriptor resultType {:?}",
@@ -1381,6 +1398,18 @@ fn types_compatible(actual: TypedValueType, expected: TypedValueType) -> bool {
         ) | (TypedValueType::Suggestion, TypedValueType::Json)
             | (TypedValueType::StringSet, TypedValueType::StringArray)
             | (TypedValueType::StringArray, TypedValueType::ValueArray)
+            | (
+                TypedValueType::Json | TypedValueType::Null,
+                TypedValueType::String
+                    | TypedValueType::Integer
+                    | TypedValueType::Bool
+                    | TypedValueType::ValueArray
+                    | TypedValueType::JsonArray
+            )
+            | (
+                TypedValueType::String | TypedValueType::Integer | TypedValueType::Bool,
+                TypedValueType::Json
+            )
     )
 }
 
@@ -1417,6 +1446,7 @@ fn validate_expr(
     state: &mut ValidationState,
     depth: usize,
     path: &str,
+    expected: Option<TypedValueType>,
 ) -> TypedHookResult<TypedValueType> {
     state.nodes += 1;
     if state.nodes > MAX_NODES || depth > MAX_DEPTH {
@@ -1429,8 +1459,15 @@ fn validate_expr(
                  name: &str,
                  state: &mut ValidationState|
      -> TypedHookResult<TypedValueType> {
-        let result = validate_expr(expression, params, state, depth + 1, &format!("{path}.{name}"))?;
-        if expected.is_some_and(|expected| expected != result) {
+        let result = validate_expr(
+            expression,
+            params,
+            state,
+            depth + 1,
+            &format!("{path}.{name}"),
+            expected,
+        )?;
+        if expected.is_some_and(|expected| expected != result && !types_compatible(result, expected)) {
             return Err(TypedHookError::new(format!(
                 "{path}.{name} has type {result:?}, expected {expected:?}"
             )));
@@ -1574,7 +1611,7 @@ fn validate_expr(
         },
         TypedExpr::StrictEq { left, right } | TypedExpr::StrictNe { left, right } => {
             let left_type = child(left, None, "left", state)?;
-            child(right, Some(left_type), "right", state)?;
+            child(right, None, "right", state)?;
             if matches!(
                 left_type,
                 TypedValueType::StringArray
@@ -1617,11 +1654,11 @@ fn validate_expr(
         TypedExpr::And { left, right } | TypedExpr::Or { left, right } => {
             let left_type = child(left, None, "left", state)?;
             let right_type = child(right, None, "right", state)?;
-            Ok(if left_type == right_type {
+            Ok(expected.unwrap_or(if left_type == right_type {
                 left_type
             } else {
                 TypedValueType::Json
-            })
+            }))
         },
         TypedExpr::If {
             condition,
@@ -1629,13 +1666,13 @@ fn validate_expr(
             else_branch,
         } => {
             child(condition, None, "condition", state)?;
-            let then_type = child(then_branch, None, "then", state)?;
-            let else_type = child(else_branch, None, "else", state)?;
-            Ok(if then_type == else_type {
+            let then_type = child(then_branch, expected, "then", state)?;
+            let else_type = child(else_branch, expected, "else", state)?;
+            Ok(expected.unwrap_or(if then_type == else_type {
                 then_type
             } else {
                 TypedValueType::Json
-            })
+            }))
         },
         TypedExpr::Lambda { params, body } => {
             if params.iter().any(String::is_empty) {
@@ -1648,27 +1685,28 @@ fn validate_expr(
             if name.is_empty() {
                 return Err(TypedHookError::new(format!("{path}.name must be a non-empty string")));
             }
-            Ok(TypedValueType::Json)
+            Ok(expected.unwrap_or(TypedValueType::Json))
         },
         TypedExpr::Let { name, value, body } => {
             if name.is_empty() {
                 return Err(TypedHookError::new(format!("{path}.name must be a non-empty string")));
             }
             child(value, None, "value", state)?;
-            child(body, None, "body", state)
+            child(body, expected, "body", state)
         },
         TypedExpr::Block { items } | TypedExpr::Seq { items } => {
             let mut result = TypedValueType::Null;
             for (index, item) in items.iter().enumerate() {
                 result = child(item, None, &format!("items[{index}]"), state)?;
             }
-            Ok(result)
+            Ok(expected.unwrap_or(result))
         },
-        TypedExpr::Return { value } => child(value, None, "value", state),
+        TypedExpr::Return { value } => child(value, expected, "value", state),
+        TypedExpr::CatchReturn { body } => child(body, expected, "body", state),
         TypedExpr::Break | TypedExpr::Continue => Ok(TypedValueType::Null),
         TypedExpr::Try { body, catch } => {
-            child(body, None, "body", state)?;
-            child(catch, None, "catch", state)
+            child(body, expected, "body", state)?;
+            child(catch, expected, "catch", state)
         },
         TypedExpr::ForOf { names, value, body } => {
             if names.is_empty() || names.iter().any(String::is_empty) {
@@ -1721,10 +1759,16 @@ fn validate_expr(
             }
             Ok(TypedValueType::Suggestion)
         },
+        TypedExpr::ObjectAssign { parts } => {
+            for (index, part) in parts.iter().enumerate() {
+                child(part, None, &format!("parts[{index}]"), state)?;
+            }
+            Ok(expected.unwrap_or(TypedValueType::Suggestion))
+        },
         TypedExpr::Get { value, key } | TypedExpr::JsonGet { value, key } => {
             child(value, None, "value", state)?;
             child(key, None, "key", state)?;
-            Ok(TypedValueType::Json)
+            Ok(expected.unwrap_or(TypedValueType::Json))
         },
         TypedExpr::ObjectKeys { value } => {
             child(value, None, "value", state)?;
@@ -1744,7 +1788,7 @@ fn validate_expr(
         | TypedExpr::ArraySort { value, callback } => {
             child(value, None, "value", state)?;
             child(callback, None, "fn", state)?;
-            Ok(TypedValueType::ValueArray)
+            Ok(expected.unwrap_or(TypedValueType::ValueArray))
         },
         TypedExpr::ArraySome { value, callback } | TypedExpr::ArrayEvery { value, callback } => {
             child(value, None, "value", state)?;
@@ -1765,7 +1809,7 @@ fn validate_expr(
             child(value, None, "value", state)?;
             child(start, None, "start", state)?;
             child(end, None, "end", state)?;
-            Ok(TypedValueType::ValueArray)
+            Ok(expected.unwrap_or(TypedValueType::ValueArray))
         },
         TypedExpr::ArrayJoin { value, separator } => {
             child(value, None, "value", state)?;
@@ -1787,16 +1831,20 @@ fn validate_expr(
             for (index, part) in parts.iter().enumerate() {
                 child(part, None, &format!("parts[{index}]"), state)?;
             }
-            Ok(TypedValueType::ValueArray)
+            Ok(expected.unwrap_or(TypedValueType::ValueArray))
         },
-        TypedExpr::ArrayReverse { value } | TypedExpr::ArrayPop { value } => {
+        TypedExpr::ArrayReverse { value } => {
             child(value, None, "value", state)?;
-            Ok(TypedValueType::ValueArray)
+            Ok(expected.unwrap_or(TypedValueType::ValueArray))
+        },
+        TypedExpr::ArrayPop { value } => {
+            child(value, None, "value", state)?;
+            Ok(expected.unwrap_or(TypedValueType::Json))
         },
         TypedExpr::ArrayIndex { value, index } => {
             child(value, None, "value", state)?;
             child(index, None, "index", state)?;
-            Ok(TypedValueType::Json)
+            Ok(expected.unwrap_or(TypedValueType::Json))
         },
         TypedExpr::ArrayPush { name, item } | TypedExpr::StringSetAdd { name, item } => {
             if name.is_empty() {
@@ -2419,7 +2467,53 @@ pub(crate) fn evaluate_typed_hook_json(descriptor: &TypedHookIr, args: &[JsonVal
         .zip(args)
         .map(|(param, value)| json_to_typed_value(value, param.value_type))
         .collect::<TypedHookResult<Vec<_>>>()?;
-    typed_value_to_json(&evaluate_expr(&descriptor.expr, &arguments)?)
+    let value = typed_value_to_json(&evaluate_expr(&descriptor.expr, &arguments)?)?;
+    Ok(match descriptor.result_type {
+        TypedValueType::SuggestionArray => normalize_suggestion_array(value),
+        TypedValueType::Suggestion => normalize_suggestion_value(value),
+        _ => value,
+    })
+}
+
+fn normalize_suggestion_array(value: JsonValue) -> JsonValue {
+    match value {
+        JsonValue::Array(items) => JsonValue::Array(
+            items
+                .into_iter()
+                .map(normalize_suggestion_value)
+                .filter(|item| match item.get("name") {
+                    Some(JsonValue::String(name)) => name != "undefined",
+                    Some(JsonValue::Array(names)) => !names.is_empty(),
+                    Some(_) => true,
+                    None => false,
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+fn normalize_suggestion_value(value: JsonValue) -> JsonValue {
+    let JsonValue::Object(fields) = value else {
+        return value;
+    };
+    let mut out = serde_json::Map::new();
+    for (key, child) in fields {
+        if child.is_null() {
+            continue;
+        }
+        if key == "priority" && !child.is_number() {
+            continue;
+        }
+        if child.as_array().is_some_and(Vec::is_empty) {
+            continue;
+        }
+        if key != "name" && child.as_str().is_some_and(str::is_empty) {
+            continue;
+        }
+        out.insert(key, child);
+    }
+    JsonValue::Object(out)
 }
 
 fn utf16_index_of(value: &Utf16String, needle: &Utf16String) -> Option<usize> {
@@ -2444,6 +2538,27 @@ fn js_slice(value: &Utf16String, start: i64) -> TypedHookResult<Utf16String> {
         start.min(length)
     } as usize;
     Ok(Utf16String::from_units(value.0[index..].to_vec()))
+}
+
+/// JavaScript `String.prototype.slice(start, end)` — negative indexes count
+/// from the end, and a reversed range is empty rather than swapped.
+fn js_slice_range(value: &Utf16String, start: i64, end: i64) -> TypedHookResult<Utf16String> {
+    let length =
+        i64::try_from(value.len()).map_err(|error| TypedHookError::new(format!("string is too long: {error}")))?;
+    let from = if start < 0 {
+        (length + start).max(0)
+    } else {
+        start.min(length)
+    };
+    let to = if end < 0 {
+        (length + end).max(0)
+    } else {
+        end.min(length)
+    };
+    if to <= from {
+        return Ok(Utf16String::from_units(Vec::new()));
+    }
+    Ok(Utf16String::from_units(value.0[from as usize..to as usize].to_vec()))
 }
 
 fn js_split(value: &Utf16String, separator: &Utf16String) -> Vec<Utf16String> {
@@ -3954,6 +4069,155 @@ mod tests {
             crate::hook_baseline::Expected::Spec { value } => Some(value.clone()),
             crate::hook_baseline::Expected::Error { .. } | crate::hook_baseline::Expected::Timeout { .. } => None,
         }
+    }
+
+    #[test]
+    fn array_map_callbacks_keep_outer_array_pushes() {
+        let descriptor = parse_typed_hook_ir(&json!({
+            "version": IR_VERSION,
+            "kind": IR_KIND,
+            "sourceField": "postProcess",
+            "resultType": "suggestion-array",
+            "params": [{"index": 0, "type": "string"}, {"index": 1, "type": "string-array"}],
+            "expr": {
+                "op": "let",
+                "name": "a",
+                "value": {"op": "array", "items": []},
+                "body": {
+                    "op": "seq",
+                    "items": [
+                        {
+                            "op": "array-map",
+                            "value": {
+                                "op": "string-split",
+                                "value": {"op": "arg", "index": 0},
+                                "separator": {"op": "string", "value": "\n"}
+                            },
+                            "fn": {
+                                "op": "lambda",
+                                "params": ["s"],
+                                "body": {
+                                    "op": "if",
+                                    "condition": {"op": "truthy", "value": {"op": "var", "name": "s"}},
+                                    "then": {
+                                        "op": "array-push",
+                                        "name": "a",
+                                        "item": {
+                                            "op": "object",
+                                            "fields": [{"key": "name", "value": {"op": "var", "name": "s"}}]
+                                        }
+                                    },
+                                    "else": {"op": "null"}
+                                }
+                            }
+                        },
+                        {"op": "var", "name": "a"}
+                    ]
+                }
+            }
+        }))
+        .expect("foreach descriptor");
+        assert_eq!(
+            evaluate_typed_hook_json(&descriptor, &[json!("main\nfeature\n"), json!([])]).expect("eval"),
+            json!([{ "name": "main" }, { "name": "feature" }])
+        );
+    }
+
+    #[test]
+    fn return_inside_try_aborts_the_fallback_empty_array() {
+        let descriptor = parse_typed_hook_ir(&json!({
+            "version": IR_VERSION,
+            "kind": IR_KIND,
+            "sourceField": "postProcess",
+            "resultType": "suggestion-array",
+            "params": [{"index": 0, "type": "string"}, {"index": 1, "type": "string-array"}],
+            "expr": {
+                "op": "seq",
+                "items": [
+                    {
+                        "op": "try",
+                        "body": {
+                            "op": "return",
+                            "value": {
+                                "op": "array",
+                                "items": [{
+                                    "op": "object",
+                                    "fields": [{"key": "name", "value": {"op": "string", "value": "build"}}]
+                                }]
+                            }
+                        },
+                        "catch": {"op": "array", "items": []}
+                    },
+                    {"op": "array", "items": []}
+                ]
+            }
+        }))
+        .expect("try return descriptor");
+        assert_eq!(
+            evaluate_typed_hook_json(&descriptor, &[json!("{}"), json!([])]).expect("eval"),
+            json!([{ "name": "build" }])
+        );
+    }
+
+    #[test]
+    fn json_parse_object_entries_keep_source_key_order() {
+        let descriptor = parse_typed_hook_ir(&json!({
+            "version": IR_VERSION,
+            "kind": IR_KIND,
+            "sourceField": "postProcess",
+            "resultType": "suggestion-array",
+            "params": [{"index": 0, "type": "string"}, {"index": 1, "type": "string-array"}],
+            "expr": {
+                "op": "array-map",
+                "value": {
+                    "op": "object-entries",
+                    "value": {"op": "json-parse", "value": {"op": "arg", "index": 0}}
+                },
+                "fn": {
+                    "op": "lambda",
+                    "params": ["entry"],
+                    "body": {
+                        "op": "object",
+                        "fields": [{
+                            "key": "name",
+                            "value": {
+                                "op": "array-index",
+                                "value": {"op": "var", "name": "entry"},
+                                "index": {"op": "integer", "value": 0}
+                            }
+                        }]
+                    }
+                }
+            }
+        }))
+        .expect("object-entries descriptor");
+        assert_eq!(
+            evaluate_typed_hook_json(&descriptor, &[json!("{\"build\":1,\"b\":2,\"format\":3}"), json!([])])
+                .expect("eval"),
+            json!([{ "name": "build" }, { "name": "b" }, { "name": "format" }])
+        );
+    }
+
+    #[test]
+    fn js_slice_range_keeps_negative_end() {
+        assert_eq!(
+            js_slice_range(&Utf16String::from_str("main"), 0, -1)
+                .expect("slice")
+                .to_string_lossy(),
+            "mai"
+        );
+        assert_eq!(
+            js_slice_range(&Utf16String::from_str("not json"), 0, -1)
+                .expect("slice")
+                .to_string_lossy(),
+            "not jso"
+        );
+        assert_eq!(
+            js_substring(&Utf16String::from_str("main"), 0, -1)
+                .expect("substring")
+                .to_string_lossy(),
+            ""
+        );
     }
 
     #[test]

@@ -3,14 +3,16 @@
 //! T2.1 goldens keep one implementation.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
+use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use super::{
     TypedExpr, TypedHookError, TypedHookResult, TypedObjectField, TypedValue, Utf16String, ensure_safe_integer,
-    ensure_string_limit, js_at, js_char_at, js_map_case, js_pad, js_repeat, js_replace, js_slice, js_split,
-    js_substring, js_trim, safe_arithmetic, typed_value_to_json, utf16_ends_with, utf16_index_of, utf16_index_of_i64,
-    utf16_last_index_of_i64, utf16_starts_with,
+    ensure_string_limit, js_at, js_char_at, js_map_case, js_pad, js_repeat, js_replace, js_slice, js_slice_range,
+    js_split, js_substring, js_trim, safe_arithmetic, typed_value_to_json, utf16_ends_with, utf16_index_of,
+    utf16_index_of_i64, utf16_last_index_of_i64, utf16_starts_with,
 };
 
 enum Abort {
@@ -101,10 +103,12 @@ fn evaluate_inner(
             Ok(TypedValue::String(js_slice(&value, start)?))
         },
         TypedExpr::StringSliceRange { value, start, end } => {
-            let value = as_utf16(&ev(value, locals)?, "string-slice-range.value")?;
+            let Some(value) = receiver_utf16(ev(value, locals)?, "string-slice-range.value")? else {
+                return Ok(TypedValue::Null);
+            };
             let start = as_i64(&ev(start, locals)?, "string-slice-range.start")?;
             let end = as_i64(&ev(end, locals)?, "string-slice-range.end")?;
-            Ok(TypedValue::String(js_substring(&value, start, end)?))
+            Ok(TypedValue::String(js_slice_range(&value, start, end)?))
         },
         TypedExpr::StringSliceAfterFirst { value, needle } => {
             let value = as_utf16(&ev(value, locals)?, "string-slice-after-first.value")?;
@@ -136,21 +140,24 @@ fn evaluate_inner(
             let limit = as_i64(&ev(limit, locals)?, "string-split-limit.limit")?;
             Ok(TypedValue::StringArray(js_split_limit(&value, &separator, limit)))
         },
-        TypedExpr::StringTrim { value } => Ok(TypedValue::String(js_trim(
-            &as_utf16(&ev(value, locals)?, "trim")?,
-            true,
-            true,
-        ))),
-        TypedExpr::StringTrimStart { value } => Ok(TypedValue::String(js_trim(
-            &as_utf16(&ev(value, locals)?, "trim-start")?,
-            true,
-            false,
-        ))),
-        TypedExpr::StringTrimEnd { value } => Ok(TypedValue::String(js_trim(
-            &as_utf16(&ev(value, locals)?, "trim-end")?,
-            false,
-            true,
-        ))),
+        TypedExpr::StringTrim { value } => {
+            let Some(value) = receiver_utf16(ev(value, locals)?, "trim")? else {
+                return Ok(TypedValue::Null);
+            };
+            Ok(TypedValue::String(js_trim(&value, true, true)))
+        },
+        TypedExpr::StringTrimStart { value } => {
+            let Some(value) = receiver_utf16(ev(value, locals)?, "trim-start")? else {
+                return Ok(TypedValue::Null);
+            };
+            Ok(TypedValue::String(js_trim(&value, true, false)))
+        },
+        TypedExpr::StringTrimEnd { value } => {
+            let Some(value) = receiver_utf16(ev(value, locals)?, "trim-end")? else {
+                return Ok(TypedValue::Null);
+            };
+            Ok(TypedValue::String(js_trim(&value, false, true)))
+        },
         TypedExpr::StringReplace {
             value,
             needle,
@@ -293,8 +300,17 @@ fn evaluate_inner(
             .ok_or_else(|| fail(format!("unbound variable {name}"))),
         TypedExpr::Let { name, value, body } => {
             let value = ev(value, locals)?;
-            locals.insert(name.clone(), value);
-            ev(body, locals)
+            let previous = locals.insert(name.clone(), value);
+            let result = ev(body, locals);
+            match previous {
+                Some(previous) => {
+                    locals.insert(name.clone(), previous);
+                },
+                None => {
+                    locals.remove(name);
+                },
+            }
+            result
         },
         TypedExpr::Block { items } | TypedExpr::Seq { items } => {
             let mut last = TypedValue::Null;
@@ -304,6 +320,10 @@ fn evaluate_inner(
             Ok(last)
         },
         TypedExpr::Return { value } => Err(Abort::Return(ev(value, locals)?)),
+        TypedExpr::CatchReturn { body } => match ev(body, locals) {
+            Err(Abort::Return(value)) => Ok(value),
+            other => other,
+        },
         TypedExpr::Break => Err(Abort::Break),
         TypedExpr::Continue => Err(Abort::Continue),
         TypedExpr::Try { body, catch } => match ev(body, locals) {
@@ -355,6 +375,13 @@ fn evaluate_inner(
         TypedExpr::Spread { value, fields } => {
             let base = ev(value, locals)?;
             Ok(TypedValue::Object(eval_fields(fields, arguments, locals, Some(base))?))
+        },
+        TypedExpr::ObjectAssign { parts } => {
+            let mut fields = Vec::new();
+            for part in parts {
+                object_assign(&mut fields, object_map(ev(part, locals)?));
+            }
+            Ok(TypedValue::Object(fields))
         },
         TypedExpr::Get { value, key } | TypedExpr::JsonGet { value, key } => {
             let value = ev(value, locals)?;
@@ -510,7 +537,10 @@ fn evaluate_inner(
                 let value = ev(part, locals)?;
                 if matches!(
                     value,
-                    TypedValue::Array(_) | TypedValue::StringArray(_) | TypedValue::Json(JsonValue::Array(_))
+                    TypedValue::Array(_)
+                        | TypedValue::StringArray(_)
+                        | TypedValue::StringSet(_)
+                        | TypedValue::Json(JsonValue::Array(_))
                 ) {
                     out.extend(as_array(&value));
                 } else {
@@ -535,12 +565,21 @@ fn evaluate_inner(
             Ok(TypedValue::Array(items))
         },
         TypedExpr::ArrayIndex { value, index } => {
-            let items = as_array(&ev(value, locals)?);
-            let index = as_i64(&ev(index, locals)?, "array-index")?;
-            if index < 0 {
-                return Ok(TypedValue::Null);
+            let value = ev(value, locals)?;
+            let index = ev(index, locals)?;
+            if is_array_value(&value) {
+                if let Ok(index) = as_i64(&index, "array-index") {
+                    if index < 0 {
+                        return Ok(TypedValue::Null);
+                    }
+                    return Ok(as_array(&value)
+                        .get(index as usize)
+                        .cloned()
+                        .unwrap_or(TypedValue::Null));
+                }
             }
-            Ok(items.get(index as usize).cloned().unwrap_or(TypedValue::Null))
+            let key = as_utf16(&index, "array-index")?.to_string_lossy();
+            Ok(get_prop(&value, &key))
         },
         TypedExpr::ArrayPush { name, item } => {
             let item = ev(item, locals)?;
@@ -571,27 +610,29 @@ fn evaluate_inner(
             locals.insert(name.clone(), TypedValue::Array(items));
             Ok(first)
         },
-        TypedExpr::ArrayFrom { value } => Ok(TypedValue::Array(as_array(&ev(value, locals)?))),
+        TypedExpr::ArrayFrom { value } => {
+            let value = ev(value, locals)?;
+            if let Some(length) = object_length(&value) {
+                let count = as_i64(&length, "array-from.length")?.max(0);
+                let count = usize::try_from(count).unwrap_or(0).min(10_000);
+                return Ok(TypedValue::Array(vec![TypedValue::Null; count]));
+            }
+            Ok(TypedValue::Array(as_array(&value)))
+        },
         TypedExpr::ArrayFlat { value, depth } => {
             let depth = as_i64(&ev(depth, locals)?, "array-flat.depth")?;
             Ok(TypedValue::Array(flatten(as_array(&ev(value, locals)?), depth)))
         },
         TypedExpr::JsonParse { value } => {
             let text = as_utf16(&ev(value, locals)?, "json-parse")?.to_string_lossy();
-            match serde_json::from_str::<JsonValue>(&text) {
-                Ok(parsed) => Ok(json_to_value(&parsed)),
-                Err(_) => Ok(TypedValue::Null),
-            }
+            Ok(parse_js_json(&text).unwrap_or(TypedValue::Null))
         },
         TypedExpr::JsonArrayItems { value } => Ok(TypedValue::Array(as_array(&ev(value, locals)?))),
         TypedExpr::JsonAsString { value } => match ev(value, locals)? {
             TypedValue::String(value) => Ok(TypedValue::String(value)),
             _ => Ok(TypedValue::Null),
         },
-        TypedExpr::JsonAsNumber { value } => match ev(value, locals)? {
-            TypedValue::Integer(value) => Ok(TypedValue::Integer(value)),
-            _ => Ok(TypedValue::Null),
-        },
+        TypedExpr::JsonAsNumber { value } => Ok(to_js_number(&ev(value, locals)?)),
         TypedExpr::JsonAsBool { value } => match ev(value, locals)? {
             TypedValue::Bool(value) => Ok(TypedValue::Bool(value)),
             _ => Ok(TypedValue::Null),
@@ -695,11 +736,7 @@ fn evaluate_inner(
         TypedExpr::LocaleCompare { left, right } => {
             let left = as_utf16(&ev(left, locals)?, "locale-compare.left")?.to_string_lossy();
             let right = as_utf16(&ev(right, locals)?, "locale-compare.right")?.to_string_lossy();
-            Ok(TypedValue::Integer(match left.cmp(&right) {
-                std::cmp::Ordering::Less => -1,
-                std::cmp::Ordering::Equal => 0,
-                std::cmp::Ordering::Greater => 1,
-            }))
+            Ok(TypedValue::Integer(js_locale_compare(&left, &right)))
         },
     }
 }
@@ -707,20 +744,34 @@ fn evaluate_inner(
 fn apply_lambda(
     callback: &TypedExpr,
     arguments: &[TypedValue],
-    locals: &BTreeMap<String, TypedValue>,
+    locals: &mut BTreeMap<String, TypedValue>,
     values: &[TypedValue],
 ) -> EvalResult<TypedValue> {
     let TypedExpr::Lambda { params, body } = callback else {
         return Err(fail("array callback is not a lambda"));
     };
-    let mut child = locals.clone();
+    let saved: Vec<(String, Option<TypedValue>)> = params
+        .iter()
+        .map(|name| (name.clone(), locals.get(name).cloned()))
+        .collect();
     for (index, name) in params.iter().enumerate() {
-        child.insert(name.clone(), values.get(index).cloned().unwrap_or(TypedValue::Null));
+        locals.insert(name.clone(), values.get(index).cloned().unwrap_or(TypedValue::Null));
     }
-    match evaluate_inner(body, arguments, &mut child) {
+    let result = match evaluate_inner(body, arguments, locals) {
         Err(Abort::Return(value)) => Ok(value),
         other => other,
+    };
+    for (name, previous) in saved {
+        match previous {
+            Some(previous) => {
+                locals.insert(name, previous);
+            },
+            None => {
+                locals.remove(&name);
+            },
+        }
     }
+    result
 }
 
 fn eval_fields(
@@ -728,13 +779,17 @@ fn eval_fields(
     arguments: &[TypedValue],
     locals: &mut BTreeMap<String, TypedValue>,
     base: Option<TypedValue>,
-) -> EvalResult<BTreeMap<String, TypedValue>> {
+) -> EvalResult<Vec<(String, TypedValue)>> {
     let mut object = match base {
         Some(value) => object_map(value),
-        None => BTreeMap::new(),
+        None => Vec::new(),
     };
     for field in fields {
-        object.insert(field.key.clone(), evaluate_inner(&field.value, arguments, locals)?);
+        object_insert(
+            &mut object,
+            field.key.clone(),
+            evaluate_inner(&field.value, arguments, locals)?,
+        );
     }
     Ok(object)
 }
@@ -750,14 +805,21 @@ fn bind_for_of(locals: &mut BTreeMap<String, TypedValue>, names: &[String], item
     }
 }
 
+fn receiver_utf16(value: TypedValue, label: &str) -> EvalResult<Option<Utf16String>> {
+    if matches!(value, TypedValue::Null) {
+        return Ok(None);
+    }
+    Ok(Some(as_utf16(&value, label)?))
+}
+
 fn as_utf16(value: &TypedValue, label: &str) -> TypedHookResult<Utf16String> {
     match value {
         TypedValue::String(value) => Ok(value.clone()),
-        TypedValue::Null => Ok(Utf16String::from_str("")),
+        TypedValue::Null => Ok(Utf16String::from_str("undefined")),
         TypedValue::Bool(value) => Ok(Utf16String::from_str(if *value { "true" } else { "false" })),
         TypedValue::Integer(value) => Ok(Utf16String::from_str(&value.to_string())),
         TypedValue::Json(JsonValue::String(value)) => Ok(Utf16String::from_str(value)),
-        TypedValue::Json(JsonValue::Null) => Ok(Utf16String::from_str("")),
+        TypedValue::Json(JsonValue::Null) => Ok(Utf16String::from_str("null")),
         other => typed_value_to_json(other)
             .map(|json| match json {
                 JsonValue::String(value) => Utf16String::from_str(&value),
@@ -786,6 +848,43 @@ fn as_i64(value: &TypedValue, label: &str) -> TypedHookResult<i64> {
     }
 }
 
+fn is_array_value(value: &TypedValue) -> bool {
+    matches!(
+        value,
+        TypedValue::Array(_)
+            | TypedValue::StringArray(_)
+            | TypedValue::StringSet(_)
+            | TypedValue::Json(JsonValue::Array(_))
+    )
+}
+
+/// Approximate Node's default `localeCompare` for CLI tokens: punctuation
+/// and symbols sort before letters, then code points.  That is what the
+/// example/trigger file-list helper relies on (`{{{` before `not json`).
+fn js_locale_compare(left: &str, right: &str) -> i64 {
+    let mut left_chars = left.chars();
+    let mut right_chars = right.chars();
+    loop {
+        match (left_chars.next(), right_chars.next()) {
+            (None, None) => return 0,
+            (None, Some(_)) => return -1,
+            (Some(_), None) => return 1,
+            (Some(left), Some(right)) => {
+                let left_rank = locale_rank(left);
+                let right_rank = locale_rank(right);
+                if left_rank != right_rank {
+                    return i64::from(left_rank > right_rank) * 2 - 1;
+                }
+            },
+        }
+    }
+}
+
+fn locale_rank(ch: char) -> (u8, char) {
+    let class = if ch.is_ascii_alphanumeric() { 2 } else { 1 };
+    (class, ch)
+}
+
 fn as_array(value: &TypedValue) -> Vec<TypedValue> {
     match value {
         TypedValue::Array(items) => items.clone(),
@@ -794,6 +893,82 @@ fn as_array(value: &TypedValue) -> Vec<TypedValue> {
         TypedValue::Json(JsonValue::Array(items)) => items.iter().map(json_to_value).collect(),
         TypedValue::Null => Vec::new(),
         other => vec![other.clone()],
+    }
+}
+
+/// `JSON.parse` that keeps object key insertion order.  `serde_json::Value`
+/// maps are `BTreeMap` unless the crate-wide `preserve_order` feature is on,
+/// which would scramble `Object.entries` on package.json `scripts`.
+fn parse_js_json(text: &str) -> Result<TypedValue, serde_json::Error> {
+    serde_json::from_str::<JsJson>(text).map(|value| value.0)
+}
+
+struct JsJson(TypedValue);
+
+impl<'de> Deserialize<'de> for JsJson {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(JsJsonVisitor)
+    }
+}
+
+struct JsJsonVisitor;
+
+impl<'de> serde::de::Visitor<'de> for JsJsonVisitor {
+    type Value = JsJson;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Self::Value, E> {
+        Ok(JsJson(TypedValue::Bool(value)))
+    }
+
+    fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+        Ok(JsJson(TypedValue::Integer(value)))
+    }
+
+    fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+        i64::try_from(value)
+            .map(TypedValue::Integer)
+            .map(JsJson)
+            .map_err(|_| serde::de::Error::custom("JSON number is outside the safe integer range"))
+    }
+
+    fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<Self::Value, E> {
+        Ok(JsJson(TypedValue::Json(JsonValue::from(value))))
+    }
+
+    fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+        Ok(JsJson(TypedValue::String(Utf16String::from_str(value))))
+    }
+
+    fn visit_string<E: serde::de::Error>(self, value: String) -> Result<Self::Value, E> {
+        Ok(JsJson(TypedValue::String(Utf16String::from_str(&value))))
+    }
+
+    fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+        Ok(JsJson(TypedValue::Null))
+    }
+
+    fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+        Ok(JsJson(TypedValue::Null))
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let mut items = Vec::new();
+        while let Some(JsJson(item)) = seq.next_element()? {
+            items.push(item);
+        }
+        Ok(JsJson(TypedValue::Array(items)))
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut fields = Vec::new();
+        while let Some((key, JsJson(child))) = map.next_entry()? {
+            object_insert(&mut fields, key, child);
+        }
+        Ok(JsJson(TypedValue::Object(fields)))
     }
 }
 
@@ -878,7 +1053,7 @@ fn js_typeof(value: &TypedValue) -> &'static str {
 
 fn get_prop(value: &TypedValue, key: &str) -> TypedValue {
     match value {
-        TypedValue::Object(fields) => fields.get(key).cloned().unwrap_or(TypedValue::Null),
+        TypedValue::Object(fields) => object_get(fields, key).cloned().unwrap_or(TypedValue::Null),
         TypedValue::Json(JsonValue::Object(fields)) => fields.get(key).map(json_to_value).unwrap_or(TypedValue::Null),
         TypedValue::Array(items) if key.parse::<usize>().is_ok() => items
             .get(key.parse::<usize>().unwrap_or(usize::MAX))
@@ -893,7 +1068,7 @@ fn get_prop(value: &TypedValue, key: &str) -> TypedValue {
 fn set_prop(value: &mut TypedValue, key: &str, child: TypedValue) {
     match value {
         TypedValue::Object(fields) => {
-            fields.insert(key.to_string(), child);
+            object_insert(fields, key.to_string(), child);
         },
         TypedValue::Json(JsonValue::Object(fields)) => {
             if let Ok(json) = typed_value_to_json(&child) {
@@ -902,26 +1077,65 @@ fn set_prop(value: &mut TypedValue, key: &str, child: TypedValue) {
         },
         other => {
             let mut fields = object_map(other.clone());
-            fields.insert(key.to_string(), child);
+            object_insert(&mut fields, key.to_string(), child);
             *other = TypedValue::Object(fields);
         },
     }
 }
 
-fn object_map(value: TypedValue) -> BTreeMap<String, TypedValue> {
+fn object_get<'a>(fields: &'a [(String, TypedValue)], key: &str) -> Option<&'a TypedValue> {
+    fields
+        .iter()
+        .rev()
+        .find(|(name, _)| name == key)
+        .map(|(_, child)| child)
+}
+
+fn object_insert(fields: &mut Vec<(String, TypedValue)>, key: String, child: TypedValue) {
+    if let Some((_, existing)) = fields.iter_mut().find(|(name, _)| *name == key) {
+        *existing = child;
+        return;
+    }
+    fields.push((key, child));
+}
+
+fn object_assign(target: &mut Vec<(String, TypedValue)>, source: Vec<(String, TypedValue)>) {
+    for (key, child) in source {
+        object_insert(target, key, child);
+    }
+}
+
+fn object_map(value: TypedValue) -> Vec<(String, TypedValue)> {
     match value {
         TypedValue::Object(fields) => fields,
         TypedValue::Json(JsonValue::Object(fields)) => fields
             .into_iter()
             .map(|(key, child)| (key, json_to_value(&child)))
             .collect(),
-        _ => BTreeMap::new(),
+        _ => Vec::new(),
     }
+}
+
+fn object_length(value: &TypedValue) -> Option<TypedValue> {
+    match value {
+        TypedValue::Object(fields) => object_get(fields, "length").cloned(),
+        TypedValue::Json(JsonValue::Object(fields)) => fields.get("length").map(json_to_value),
+        _ => None,
+    }
+}
+
+fn to_js_number(value: &TypedValue) -> TypedValue {
+    if let TypedValue::String(text) = value {
+        if text.0.is_empty() {
+            return TypedValue::Integer(0);
+        }
+    }
+    as_i64(value, "number").map_or(TypedValue::Null, TypedValue::Integer)
 }
 
 fn object_keys(value: &TypedValue) -> Vec<String> {
     match value {
-        TypedValue::Object(fields) => fields.keys().cloned().collect(),
+        TypedValue::Object(fields) => fields.iter().map(|(key, _)| key.clone()).collect(),
         TypedValue::Json(JsonValue::Object(fields)) => fields.keys().cloned().collect(),
         _ => Vec::new(),
     }
@@ -929,7 +1143,7 @@ fn object_keys(value: &TypedValue) -> Vec<String> {
 
 fn object_entries(value: &TypedValue) -> Vec<(String, TypedValue)> {
     match value {
-        TypedValue::Object(fields) => fields.iter().map(|(key, child)| (key.clone(), child.clone())).collect(),
+        TypedValue::Object(fields) => fields.clone(),
         TypedValue::Json(JsonValue::Object(fields)) => fields
             .iter()
             .map(|(key, child)| (key.clone(), json_to_value(child)))
@@ -1055,7 +1269,11 @@ fn regex_search(pattern: &str, flags: &str, value: &str) -> TypedHookResult<i64>
 
 fn regex_match(pattern: &str, flags: &str, value: &str) -> TypedHookResult<TypedValue> {
     if flags.contains('g') {
-        return regex_match_all(pattern, flags, value);
+        let matches = regex_match_all(pattern, flags, value)?;
+        return Ok(match &matches {
+            TypedValue::Array(items) if items.is_empty() => TypedValue::Null,
+            _ => matches,
+        });
     }
     match compile_regex(pattern, flags)?.captures(value) {
         Ok(Some(captures)) => {

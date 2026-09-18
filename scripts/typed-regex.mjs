@@ -66,7 +66,78 @@ export function assertTypedRegexLiteral(pattern, flags = "") {
   } catch (error) {
     fail(`regex is not valid JavaScript: ${error.message}`, "syntax");
   }
-  return { pattern, flags };
+  const fancyPattern = escapeCharacterClassHyphens(pattern);
+  try {
+    new RegExp(fancyPattern, flags.replaceAll("y", ""));
+  } catch (error) {
+    fail(`regex is not valid after fancy-regex translation: ${error.message}`, "syntax");
+  }
+  return { pattern: fancyPattern, flags };
+}
+
+function lastClassAtom(output) {
+  if (output.length >= 2 && output[output.length - 2] === "\\") return null;
+  return output[output.length - 1] ?? null;
+}
+
+function isSimpleRangeEndpoint(value) {
+  return typeof value === "string" && /^[A-Za-z0-9]$/.test(value);
+}
+
+/**
+ * JavaScript treats `-` after a class escape (`\w`, `\d`, …) as a literal.
+ * fancy-regex parses it as a range and rejects `[\w-+]`.  Escape those
+ * interior hyphens; keep a simple `a-z` range as a range.
+ */
+export function escapeCharacterClassHyphens(pattern) {
+  let out = "";
+  let inClass = false;
+  let atClassStart = false;
+  let escaped = false;
+  for (let index = 0; index < pattern.length; index += 1) {
+    const ch = pattern[index];
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      atClassStart = false;
+      continue;
+    }
+    if (ch === "\\") {
+      out += ch;
+      escaped = true;
+      continue;
+    }
+    if (!inClass) {
+      if (ch === "[") {
+        inClass = true;
+        atClassStart = true;
+      }
+      out += ch;
+      continue;
+    }
+    if (atClassStart && ch === "^") {
+      out += ch;
+      continue;
+    }
+    if (ch === "]" && !atClassStart) {
+      inClass = false;
+      out += ch;
+      continue;
+    }
+    if (ch === "-" && !atClassStart) {
+      const next = pattern[index + 1];
+      const prev = lastClassAtom(out);
+      const nextIsSimple = next != null && next !== "]" && isSimpleRangeEndpoint(next);
+      if (!(isSimpleRangeEndpoint(prev) && nextIsSimple)) {
+        out += "\\-";
+        atClassStart = false;
+        continue;
+      }
+    }
+    out += ch;
+    atClassStart = false;
+  }
+  return out;
 }
 
 export function typedRegexFromAcornLiteral(node) {

@@ -3221,7 +3221,7 @@
         "direnv#filterTemplateSuggestions#2"
       ],
       "sourceField": "filterTemplateSuggestions",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 3,
@@ -3245,7 +3245,7 @@
         "ts-node#filterTemplateSuggestions#2"
       ],
       "sourceField": "filterTemplateSuggestions",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 3,
@@ -3271,7 +3271,7 @@
         "xcodeproj#filterTemplateSuggestions#2"
       ],
       "sourceField": "filterTemplateSuggestions",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 3,
@@ -3298,7 +3298,7 @@
         "oxlint#filterTemplateSuggestions#1"
       ],
       "sourceField": "filterTemplateSuggestions",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 3,
@@ -3326,7 +3326,7 @@
         "oxlint#filterTemplateSuggestions#0"
       ],
       "sourceField": "filterTemplateSuggestions",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 3,
@@ -4254,7 +4254,7 @@
         "bun#getQueryTerm#23"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 7,
@@ -4280,7 +4280,7 @@
         "example/trigger#getQueryTerm#4"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 7,
@@ -4310,7 +4310,7 @@
         "esbuild#getQueryTerm#13"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 7,
@@ -4336,7 +4336,7 @@
         "file#getQueryTerm#3"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 7,
@@ -4363,7 +4363,7 @@
         "chezmoi#getQueryTerm#11"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 7,
@@ -4389,7 +4389,7 @@
         "spring#getQueryTerm#4"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 7,
@@ -4415,7 +4415,7 @@
         "esbuild#getQueryTerm#7"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 7,
@@ -4444,7 +4444,7 @@
         "airflow#getQueryTerm#3"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 7,
@@ -4471,7 +4471,7 @@
         "deno#getQueryTerm#11"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 7,
@@ -4496,7 +4496,7 @@
         "nx#getQueryTerm#17"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 7,
@@ -4523,7 +4523,7 @@
         "swift#getQueryTerm#13"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 7,
@@ -4572,7 +4572,7 @@
         "gh#getQueryTerm#31"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 7,
@@ -4599,7 +4599,7 @@
         "cargo#getQueryTerm#105"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 7,
@@ -4629,7 +4629,7 @@
         "scc#getQueryTerm#15"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 7,
@@ -4654,7 +4654,7 @@
         "nx#getQueryTerm#5"
       ],
       "sourceField": "getQueryTerm",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 3,
@@ -4703,7 +4703,7 @@
         "svtplay-dl#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -4727,7 +4727,7 @@
         "nextflow#postProcess#14"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -4751,7 +4751,7 @@
         "multipass#postProcess#7"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -4777,7 +4777,7 @@
         "podman#postProcess#66"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -4802,7 +4802,7 @@
         "lerna#postProcess#6"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -4854,7 +4854,7 @@
         "dotnet/dotnet-new#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -4880,7 +4880,7 @@
         "doppler#postProcess#55"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -4905,7 +4905,7 @@
         "bat#postProcess#4"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -4931,7 +4931,7 @@
         "docker#postProcess#78"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -4954,7 +4954,7 @@
         "hyper#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -4981,7 +4981,7 @@
         "mise#postProcess#39"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5005,7 +5005,7 @@
         "networkQuality#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5029,7 +5029,7 @@
         "q#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5053,7 +5053,7 @@
         "terraform#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5103,7 +5103,7 @@
         "iconv#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5126,7 +5126,7 @@
         "react-native#postProcess#6"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5151,7 +5151,7 @@
         "brew#postProcess#38"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5176,7 +5176,7 @@
         "unset#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5200,7 +5200,7 @@
         "ansible-doc#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5227,7 +5227,7 @@
         "networksetup#postProcess#35"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5250,7 +5250,7 @@
         "uv#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5275,7 +5275,7 @@
         "podman#postProcess#44"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5299,7 +5299,7 @@
         "multipass#postProcess#4"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5324,7 +5324,7 @@
         "fig/2.0.0#postProcess#13"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5351,7 +5351,7 @@
         "conda#postProcess#6"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5374,7 +5374,7 @@
         "kill#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5400,7 +5400,7 @@
         "gh#postProcess#12"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5424,7 +5424,7 @@
         "jenv#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5449,7 +5449,7 @@
         "trex#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5474,7 +5474,7 @@
         "meteor#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5499,7 +5499,7 @@
         "nx#postProcess#76"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5544,7 +5544,7 @@
         "killall#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5570,7 +5570,7 @@
         "grok#postProcess#13"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5595,7 +5595,7 @@
         "rclone#postProcess#10"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5620,7 +5620,7 @@
         "aws-vault#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5673,7 +5673,7 @@
         "assimp#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5725,7 +5725,7 @@
         "tns#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5748,7 +5748,7 @@
         "ykman#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5773,7 +5773,7 @@
         "bat#postProcess#5"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5799,7 +5799,7 @@
         "mise#postProcess#18"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5822,7 +5822,7 @@
         "tsh#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5846,7 +5846,7 @@
         "hugo#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5873,7 +5873,7 @@
         "herd#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5898,7 +5898,7 @@
         "robot#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5926,7 +5926,7 @@
         "docker#postProcess#65"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5951,7 +5951,7 @@
         "hf#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -5978,7 +5978,7 @@
         "tsuru#postProcess#42"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6002,7 +6002,7 @@
         "wifi-password#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6027,7 +6027,7 @@
         "mix#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6050,7 +6050,7 @@
         "passwd#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6075,7 +6075,7 @@
         "nextflow#postProcess#7"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6099,7 +6099,7 @@
         "pnpm#postProcess#11"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6123,7 +6123,7 @@
         "assimp#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6147,7 +6147,7 @@
         "shortcuts#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6172,7 +6172,7 @@
         "fisher#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6196,7 +6196,7 @@
         "ignite-cli#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6221,7 +6221,7 @@
         "amplify#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6245,7 +6245,7 @@
         "pyenv#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6268,7 +6268,7 @@
         "react-native#postProcess#7"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6293,7 +6293,7 @@
         "k3d#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6319,7 +6319,7 @@
         "heroku/8.0.0#postProcess#10"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6348,7 +6348,7 @@
         "limactl#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6373,7 +6373,7 @@
         "brew#postProcess#26"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6425,7 +6425,7 @@
         "multipass#postProcess#9"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6449,7 +6449,7 @@
         "stepzen#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6472,7 +6472,7 @@
         "lsof#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6496,7 +6496,7 @@
         "tmuxinator#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6520,7 +6520,7 @@
         "phpunit-watcher#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6547,7 +6547,7 @@
         "rubocop#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6572,7 +6572,7 @@
         "brew#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6599,7 +6599,7 @@
         "networksetup#postProcess#60"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6625,7 +6625,7 @@
         "networksetup#postProcess#11"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6655,7 +6655,7 @@
         "git#postProcess#44"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6706,7 +6706,7 @@
         "nx#postProcess#77"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6730,7 +6730,7 @@
         "mackup#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6753,7 +6753,7 @@
         "brew#postProcess#7"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6781,7 +6781,7 @@
         "asdf#postProcess#13"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6808,7 +6808,7 @@
         "swiftlint#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6832,7 +6832,7 @@
         "tesseract#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6858,7 +6858,7 @@
         "brew#postProcess#11"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6884,7 +6884,7 @@
         "bat#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6908,7 +6908,7 @@
         "fig/2.0.0#postProcess#9"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6933,7 +6933,7 @@
         "ipatool#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6958,7 +6958,7 @@
         "rbenv#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -6983,7 +6983,7 @@
         "docker#postProcess#51"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7010,7 +7010,7 @@
         "redwood#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7035,7 +7035,7 @@
         "youtube-dl#postProcess#7"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7060,7 +7060,7 @@
         "lsof#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7084,7 +7084,7 @@
         "docker#postProcess#12"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7110,7 +7110,7 @@
         "watson#postProcess#9"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7137,7 +7137,7 @@
         "n#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7162,7 +7162,7 @@
         "nx#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7186,7 +7186,7 @@
         "dotnet/dotnet-tool#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7209,7 +7209,7 @@
         "kubectx#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7235,7 +7235,7 @@
         "expo-cli#postProcess#4"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7261,7 +7261,7 @@
         "docker#postProcess#61"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7286,7 +7286,7 @@
         "sam#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7313,7 +7313,7 @@
         "mise#postProcess#22"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7337,7 +7337,7 @@
         "k3d#postProcess#15"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7363,7 +7363,7 @@
         "mamba#postProcess#6"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7386,7 +7386,7 @@
         "bun#postProcess#21"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7411,7 +7411,7 @@
         "tsh#postProcess#14"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7435,7 +7435,7 @@
         "kool#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7461,7 +7461,7 @@
         "eb#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7514,7 +7514,7 @@
         "m#postProcess#7"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7594,7 +7594,7 @@
         "bosh#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7620,7 +7620,7 @@
         "m#postProcess#15"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7644,7 +7644,7 @@
         "softwareupdate#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7668,7 +7668,7 @@
         "checkov#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7717,7 +7717,7 @@
         "podman#postProcess#9"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7776,7 +7776,7 @@
         "rustup#postProcess#11"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7802,7 +7802,7 @@
         "networksetup#postProcess#68"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7826,7 +7826,7 @@
         "tfsec#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7851,7 +7851,7 @@
         "glab#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7876,7 +7876,7 @@
         "bat#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7900,7 +7900,7 @@
         "react-native#postProcess#4"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7926,7 +7926,7 @@
         "m#postProcess#14"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7953,7 +7953,7 @@
         "scarb#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -7983,7 +7983,7 @@
         "rustup#postProcess#6"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8012,7 +8012,7 @@
         "git#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8036,7 +8036,7 @@
         "stepzen#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8061,7 +8061,7 @@
         "kind#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8117,7 +8117,7 @@
         "example/trigger#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8141,7 +8141,7 @@
         "docker#postProcess#13"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8165,7 +8165,7 @@
         "chsh#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8192,7 +8192,7 @@
         "npm#postProcess#4"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8217,7 +8217,7 @@
         "eslint#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8244,7 +8244,7 @@
         "arduino-cli#postProcess#13"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8270,7 +8270,7 @@
         "pipx#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8293,7 +8293,7 @@
         "sysctl#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8319,7 +8319,7 @@
         "fly#postProcess#24"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8348,7 +8348,7 @@
         "pnpm#postProcess#29"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8375,7 +8375,7 @@
         "ffmpeg#postProcess#10"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8404,7 +8404,7 @@
         "hub#postProcess#25"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8429,7 +8429,7 @@
         "valet#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8455,7 +8455,7 @@
         "glab#postProcess#11"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8481,7 +8481,7 @@
         "vultr-cli#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8506,7 +8506,7 @@
         "jenv#postProcess#4"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8532,7 +8532,7 @@
         "okteto#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8560,7 +8560,7 @@
         "bun#postProcess#8"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8587,7 +8587,7 @@
         "zellij#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8611,7 +8611,7 @@
         "fig/1.0.0#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8637,7 +8637,7 @@
         "nextflow#postProcess#20"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8662,7 +8662,7 @@
         "lerna#postProcess#10"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8686,7 +8686,7 @@
         "deployctl#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8710,7 +8710,7 @@
         "v#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8736,7 +8736,7 @@
         "tmuxinator#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8763,7 +8763,7 @@
         "grok#postProcess#7"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8786,7 +8786,7 @@
         "rugby#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8815,7 +8815,7 @@
         "brew#postProcess#17"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8869,7 +8869,7 @@
         "react-native#postProcess#9"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8893,7 +8893,7 @@
         "trex#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8922,7 +8922,7 @@
         "pre-commit#postProcess#8"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8946,7 +8946,7 @@
         "git-cliff#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8970,7 +8970,7 @@
         "dtm#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -8995,7 +8995,7 @@
         "yarn#postProcess#6"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9018,7 +9018,7 @@
         "k3d#postProcess#6"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9046,7 +9046,7 @@
         "tsuru#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9069,7 +9069,7 @@
         "killall#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9097,7 +9097,7 @@
         "tsuru#postProcess#11"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9121,7 +9121,7 @@
         "pyenv#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9146,7 +9146,7 @@
         "meteor#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9171,7 +9171,7 @@
         "podman#postProcess#11"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9195,7 +9195,7 @@
         "tfenv#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9219,7 +9219,7 @@
         "rake#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9243,7 +9243,7 @@
         "deno#postProcess#5"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9266,7 +9266,7 @@
         "journalctl#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9310,7 +9310,7 @@
         "kubens#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9335,7 +9335,7 @@
         "fig/2.0.0#postProcess#6"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9364,7 +9364,7 @@
         "kubectl#postProcess#12"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9390,7 +9390,7 @@
         "dotnet/dotnet-tool#postProcess#8"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9443,7 +9443,7 @@
         "jenv#postProcess#6"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9470,7 +9470,7 @@
         "networksetup#postProcess#48"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9495,7 +9495,7 @@
         "lsof#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9524,7 +9524,7 @@
         "kubecolor#postProcess#101"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9547,7 +9547,7 @@
         "id#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9633,7 +9633,7 @@
         "terraform#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9658,7 +9658,7 @@
         "black#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9685,7 +9685,7 @@
         "launchctl#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9710,7 +9710,7 @@
         "pandoc#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9736,7 +9736,7 @@
         "docker#postProcess#11"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9761,7 +9761,7 @@
         "networksetup#postProcess#73"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9786,7 +9786,7 @@
         "ninja#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9811,7 +9811,7 @@
         "hub#postProcess#75"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9838,7 +9838,7 @@
         "fvm#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9863,7 +9863,7 @@
         "pip#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9888,7 +9888,7 @@
         "expo-cli#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9914,7 +9914,7 @@
         "flyctl#postProcess#24"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9938,7 +9938,7 @@
         "expo-cli#postProcess#5"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9961,7 +9961,7 @@
         "login#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -9985,7 +9985,7 @@
         "react-native#postProcess#8"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10014,7 +10014,7 @@
         "kubectl#postProcess#23"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10037,7 +10037,7 @@
         "ykman#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10063,7 +10063,7 @@
         "multipass#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10087,7 +10087,7 @@
         "mount#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10112,7 +10112,7 @@
         "bat#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10141,7 +10141,7 @@
         "asdf#postProcess#19"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10167,7 +10167,7 @@
         "doppler#postProcess#12"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10191,7 +10191,7 @@
         "tfenv#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10220,7 +10220,7 @@
         "pnpm#postProcess#32"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10244,7 +10244,7 @@
         "lerna#postProcess#7"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10268,7 +10268,7 @@
         "coda#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10297,7 +10297,7 @@
         "yarn#postProcess#17"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10346,7 +10346,7 @@
         "ollama#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10377,7 +10377,7 @@
         "pre-commit#postProcess#6"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10402,7 +10402,7 @@
         "bundle#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10427,7 +10427,7 @@
         "mamba#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10507,7 +10507,7 @@
         "mise#postProcess#17"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10532,7 +10532,7 @@
         "r#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10556,7 +10556,7 @@
         "defaultbrowser#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10582,7 +10582,7 @@
         "pkgutil#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10607,7 +10607,7 @@
         "terragrunt#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10633,7 +10633,7 @@
         "dotnet/dotnet-tool#postProcess#11"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10696,7 +10696,7 @@
         "tsuru#postProcess#41"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10721,7 +10721,7 @@
         "m#postProcess#20"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10745,7 +10745,7 @@
         "hexo#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10771,7 +10771,7 @@
         "robot#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10798,7 +10798,7 @@
         "flutter#postProcess#10"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10825,7 +10825,7 @@
         "nr#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10850,7 +10850,7 @@
         "tsh#postProcess#13"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10874,7 +10874,7 @@
         "vite#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10900,7 +10900,7 @@
         "flyctl#postProcess#12"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10923,7 +10923,7 @@
         "ant#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10947,7 +10947,7 @@
         "kind#postProcess#7"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10973,7 +10973,7 @@
         "conda#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -10999,7 +10999,7 @@
         "okteto#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11028,7 +11028,7 @@
         "tailscale#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11052,7 +11052,7 @@
         "k9s#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11078,7 +11078,7 @@
         "gpg#postProcess#4"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11157,7 +11157,7 @@
         "uv#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11183,7 +11183,7 @@
         "tmux#postProcess#10"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11208,7 +11208,7 @@
         "which#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11233,7 +11233,7 @@
         "flutter#postProcess#5"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11257,7 +11257,7 @@
         "task/go-task#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11283,7 +11283,7 @@
         "pulumi#postProcess#10"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11333,7 +11333,7 @@
         "brew#postProcess#48"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11359,7 +11359,7 @@
         "mise#postProcess#29"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11385,7 +11385,7 @@
         "xcodes#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11412,7 +11412,7 @@
         "kill#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11438,7 +11438,7 @@
         "task/taskwarrior#postProcess#40"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11497,7 +11497,7 @@
         "vsce#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11520,7 +11520,7 @@
         "bat#postProcess#6"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11543,7 +11543,7 @@
         "cordova#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11568,7 +11568,7 @@
         "yarn#postProcess#4"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11593,7 +11593,7 @@
         "react-native#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11618,7 +11618,7 @@
         "elm-json#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11644,7 +11644,7 @@
         "docker#postProcess#104"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11671,7 +11671,7 @@
         "yalc#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11697,7 +11697,7 @@
         "nextflow#postProcess#10"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11722,7 +11722,7 @@
         "watson#postProcess#13"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11774,7 +11774,7 @@
         "jenv#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11799,7 +11799,7 @@
         "multipass#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11825,7 +11825,7 @@
         "cargo#postProcess#171"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11852,7 +11852,7 @@
         "trap#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11878,7 +11878,7 @@
         "mise#postProcess#59"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11902,7 +11902,7 @@
         "git-profile#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11927,7 +11927,7 @@
         "gh#postProcess#34"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11951,7 +11951,7 @@
         "fig/2.0.0#postProcess#4"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11976,7 +11976,7 @@
         "pandoc#postProcess#4"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -11999,7 +11999,7 @@
         "fin#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12055,7 +12055,7 @@
         "deno#postProcess#20"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12082,7 +12082,7 @@
         "arduino-cli#postProcess#12"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12108,7 +12108,7 @@
         "m#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12134,7 +12134,7 @@
         "mise#postProcess#46"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12159,7 +12159,7 @@
         "fin#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12210,7 +12210,7 @@
         "k3d#postProcess#12"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12236,7 +12236,7 @@
         "defaults#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12263,7 +12263,7 @@
         "bazel#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12287,7 +12287,7 @@
         "bun#postProcess#26"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12313,7 +12313,7 @@
         "doppler#postProcess#13"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12337,7 +12337,7 @@
         "mkinitcpio#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12390,7 +12390,7 @@
         "dotnet/dotnet-run#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12416,7 +12416,7 @@
         "expo#postProcess#7"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12443,7 +12443,7 @@
         "herdr#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12466,7 +12466,7 @@
         "elm#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12491,7 +12491,7 @@
         "firebase#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12514,7 +12514,7 @@
         "dotnet/dotnet-new#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12537,7 +12537,7 @@
         "yalc#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12568,7 +12568,7 @@
         "git#postProcess#17"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12597,7 +12597,7 @@
         "gh#postProcess#18"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12624,7 +12624,7 @@
         "mamba#postProcess#10"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12653,7 +12653,7 @@
         "gh#postProcess#8"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12738,7 +12738,7 @@
         "op#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12764,7 +12764,7 @@
         "rancher#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12816,7 +12816,7 @@
         "lsof#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12840,7 +12840,7 @@
         "podman#postProcess#10"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12864,7 +12864,7 @@
         "mount#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12893,7 +12893,7 @@
         "hub#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12919,7 +12919,7 @@
         "podman#postProcess#17"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12944,7 +12944,7 @@
         "pip3#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -12969,7 +12969,7 @@
         "hub#postProcess#89"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13025,7 +13025,7 @@
         "react-native#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13049,7 +13049,7 @@
         "open#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13075,7 +13075,7 @@
         "docker#postProcess#82"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13129,7 +13129,7 @@
         "kubectx#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13155,7 +13155,7 @@
         "tsuru#postProcess#5"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13208,7 +13208,7 @@
         "turbo#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13234,7 +13234,7 @@
         "nextflow#postProcess#19"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13261,7 +13261,7 @@
         "fnm#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13285,7 +13285,7 @@
         "meteor#postProcess#4"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13311,7 +13311,7 @@
         "jenv#postProcess#12"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13334,7 +13334,7 @@
         "lerna#postProcess#8"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13359,7 +13359,7 @@
         "cargo#postProcess#230"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13384,7 +13384,7 @@
         "watson#postProcess#12"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13410,7 +13410,7 @@
         "conda#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13437,7 +13437,7 @@
         "docker#postProcess#16"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13461,7 +13461,7 @@
         "docker#postProcess#28"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13488,7 +13488,7 @@
         "podman#postProcess#53"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13514,7 +13514,7 @@
         "apt#postProcess#4"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13538,7 +13538,7 @@
         "fig/2.0.0#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13564,7 +13564,7 @@
         "podman#postProcess#32"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13590,7 +13590,7 @@
         "networksetup#postProcess#63"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13617,7 +13617,7 @@
         "cargo#postProcess#145"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13641,7 +13641,7 @@
         "ibus#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13694,7 +13694,7 @@
         "shortcuts#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13719,7 +13719,7 @@
         "ng#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13743,7 +13743,7 @@
         "quickmail#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13770,7 +13770,7 @@
         "youtube-dl#postProcess#5"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13797,7 +13797,7 @@
         "cordova#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13820,7 +13820,7 @@
         "fin#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13846,7 +13846,7 @@
         "dapr#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13873,7 +13873,7 @@
         "grok#postProcess#4"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13899,7 +13899,7 @@
         "cargo#postProcess#132"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13922,7 +13922,7 @@
         "brew#postProcess#14"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -13952,7 +13952,7 @@
         "git#postProcess#14"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14000,7 +14000,7 @@
         "fly#postProcess#12"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14025,7 +14025,7 @@
         "yarn#postProcess#15"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14049,7 +14049,7 @@
         "expo-cli#postProcess#6"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14076,7 +14076,7 @@
         "grok#postProcess#12"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14102,7 +14102,7 @@
         "docker#postProcess#96"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14126,7 +14126,7 @@
         "envchain#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14150,7 +14150,7 @@
         "docker#postProcess#100"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14176,7 +14176,7 @@
         "gpg#postProcess#5"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14200,7 +14200,7 @@
         "terragrunt#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14227,7 +14227,7 @@
         "m#postProcess#16"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14254,7 +14254,7 @@
         "docker-compose#script#28"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14281,7 +14281,7 @@
         "docker#script#64"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14305,7 +14305,7 @@
         "nx#script#1"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14328,7 +14328,7 @@
         "asdf#script#5"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14353,7 +14353,7 @@
         "youtube-dl#script#4"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14377,7 +14377,7 @@
         "deno#script#2"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14400,7 +14400,7 @@
         "mamba#script#2"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14427,7 +14427,7 @@
         "kubectl#script#11"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14453,7 +14453,7 @@
         "kubectl#script#22"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14478,7 +14478,7 @@
         "ipatool#script#2"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14505,7 +14505,7 @@
         "mise#script#16"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14529,7 +14529,7 @@
         "docker#script#69"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14554,7 +14554,7 @@
         "dotnet/dotnet-add#script#0"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14577,7 +14577,7 @@
         "dotnet/dotnet-tool#script#2"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14604,7 +14604,7 @@
         "kubectl#script#43"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14629,7 +14629,7 @@
         "expo-cli#script#1"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14657,7 +14657,7 @@
         "example/trigger#script#0"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14683,7 +14683,7 @@
         "dotnet/dotnet-tool#script#10"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14706,7 +14706,7 @@
         "dotnet/dotnet-add#script#2"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14731,7 +14731,7 @@
         "asdf#script#18"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14760,7 +14760,7 @@
         "just#script#4"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14812,7 +14812,7 @@
         "kubecolor#script#108"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14837,7 +14837,7 @@
         "yarn#script#5"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14862,7 +14862,7 @@
         "dotnet/dotnet-tool#script#7"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14886,7 +14886,7 @@
         "podman#script#57"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14915,7 +14915,7 @@
         "docker-compose#script#10"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14938,7 +14938,7 @@
         "dotnet/dotnet-new#script#0"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14964,7 +14964,7 @@
         "kubecolor#script#28"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -14993,7 +14993,7 @@
         "kubecolor#script#106"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 4,
@@ -15020,7 +15020,7 @@
         "kubectl#script#39"
       ],
       "sourceField": "script",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15070,7 +15070,7 @@
         "cargo#trigger#11"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15095,7 +15095,7 @@
         "spring#trigger#3"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15125,7 +15125,7 @@
         "esbuild#trigger#18"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15153,7 +15153,7 @@
         "airflow#trigger#2"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15226,7 +15226,7 @@
         "swift#trigger#2"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15251,7 +15251,7 @@
         "cargo#trigger#258"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15299,7 +15299,7 @@
         "deno#trigger#8"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15329,7 +15329,7 @@
         "scc#trigger#2"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15356,7 +15356,7 @@
         "chezmoi#trigger#14"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15408,7 +15408,7 @@
         "pnpm#trigger#21"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15455,7 +15455,7 @@
         "file#trigger#2"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15482,7 +15482,7 @@
         "rush#trigger#1"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15509,7 +15509,7 @@
         "scc#trigger#10"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15538,7 +15538,7 @@
         "bun#trigger#30"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15564,7 +15564,7 @@
         "example/trigger#trigger#3"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15593,7 +15593,7 @@
         "npm#trigger#13"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15623,7 +15623,7 @@
         "bun#trigger#39"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15672,7 +15672,7 @@
         "gh#trigger#32"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15741,7 +15741,7 @@
         "esbuild#trigger#6"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15769,7 +15769,7 @@
         "yarn#trigger#9"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     },
     {
       "baselineCases": 6,
@@ -15798,7 +15798,7 @@
         "mgnl#trigger#1"
       ],
       "sourceField": "trigger",
-      "status": "requires-native-adapter"
+      "status": "typed-ir-research-candidate"
     }
   ],
   "counts": {
@@ -15819,9 +15819,9 @@
       },
       "jsFilterTemplateSuggestions": {
         "native-filepaths-rewrite": 0,
-        "requires-native-adapter": 12,
+        "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
-        "typed-ir-research-candidate": 0,
+        "typed-ir-research-candidate": 12,
         "unclassified": 0
       },
       "jsGenerateSpec": {
@@ -15833,9 +15833,9 @@
       },
       "jsGetQueryTerm": {
         "native-filepaths-rewrite": 0,
-        "requires-native-adapter": 238,
+        "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
-        "typed-ir-research-candidate": 2,
+        "typed-ir-research-candidate": 240,
         "unclassified": 0
       },
       "jsLoadSpec": {
@@ -15847,23 +15847,23 @@
       },
       "jsPostProcess": {
         "native-filepaths-rewrite": 0,
-        "requires-native-adapter": 2547,
+        "requires-native-adapter": 220,
         "syntax-or-analysis-failure": 0,
-        "typed-ir-research-candidate": 4,
+        "typed-ir-research-candidate": 2331,
         "unclassified": 0
       },
       "jsScript": {
         "native-filepaths-rewrite": 0,
-        "requires-native-adapter": 188,
+        "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
-        "typed-ir-research-candidate": 2,
+        "typed-ir-research-candidate": 190,
         "unclassified": 0
       },
       "jsTrigger": {
         "native-filepaths-rewrite": 0,
-        "requires-native-adapter": 127,
+        "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
-        "typed-ir-research-candidate": 72,
+        "typed-ir-research-candidate": 199,
         "unclassified": 0
       }
     },
@@ -15885,23 +15885,23 @@
     },
     "extractedHooks": {
       "native-filepaths-rewrite": 0,
-      "requires-native-adapter": 3612,
+      "requires-native-adapter": 720,
       "syntax-or-analysis-failure": 0,
-      "typed-ir-research-candidate": 80,
+      "typed-ir-research-candidate": 2972,
       "unclassified": 0
     },
     "hooks": {
       "native-filepaths-rewrite": 0,
-      "requires-native-adapter": 3612,
+      "requires-native-adapter": 720,
       "syntax-or-analysis-failure": 0,
-      "typed-ir-research-candidate": 80,
+      "typed-ir-research-candidate": 2972,
       "unclassified": 0
     },
     "uniqueBodies": {
       "native-filepaths-rewrite": 0,
-      "requires-native-adapter": 580,
+      "requires-native-adapter": 174,
       "syntax-or-analysis-failure": 0,
-      "typed-ir-research-candidate": 14,
+      "typed-ir-research-candidate": 420,
       "unclassified": 0
     }
   },

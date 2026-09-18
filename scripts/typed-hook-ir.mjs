@@ -121,6 +121,7 @@ export const TYPED_EXPRESSION_OPERATIONS = Object.freeze([
   "let",
   "block",
   "return",
+  "catch-return",
   "break",
   "continue",
   "try",
@@ -134,6 +135,7 @@ export const TYPED_EXPRESSION_OPERATIONS = Object.freeze([
   "typeof",
   "object",
   "spread",
+  "object-assign",
   "get",
   "object-keys",
   "object-entries",
@@ -293,6 +295,7 @@ const OP_KEYS = Object.freeze({
   let: ["op", "name", "value", "body"],
   block: ["op", "items"],
   return: ["op", "value"],
+  "catch-return": ["op", "body"],
   break: ["op"],
   continue: ["op"],
   try: ["op", "body", "catch"],
@@ -306,6 +309,7 @@ const OP_KEYS = Object.freeze({
   typeof: ["op", "value"],
   object: ["op", "fields"],
   spread: ["op", "value", "fields"],
+  "object-assign": ["op", "parts"],
   get: ["op", "value", "key"],
   "object-keys": ["op", "value"],
   "object-entries": ["op", "value"],
@@ -761,21 +765,103 @@ function compileLambda(node, environment, elementType, state, depth, secondType 
   }
   const childEnv = cloneEnv(environment);
   const params = [];
+  const wraps = [];
   node.params.forEach((param, index) => {
     const type = index === 0 ? elementType : secondType;
-    const names = bindPatternNames(param, type, childEnv, "lambda");
-    params.push(...names);
+    if (param.type === "Identifier") {
+      childEnv.set(param.name, { kind: "lambda", type, name: param.name });
+      params.push(param.name);
+      return;
+    }
+    const synthetic = `$${index}`;
+    params.push(synthetic);
+    childEnv.set(synthetic, { kind: "lambda", type, name: synthetic });
+    bindPatternNames(param, type, childEnv, "lambda");
+    wraps.push({ param, synthetic });
   });
   const body = compileFunctionBody(node, childEnv, null, state, depth + 1);
+  let expr = body.expr;
+  for (const wrap of [...wraps].reverse()) {
+    expr = wrapPatternLets(wrap.param, { op: "var", name: wrap.synthetic }, expr);
+  }
   return {
     type: null,
     expr: {
       op: "lambda",
       params,
-      body: body.expr,
+      body: expr,
     },
     resultType: body.type,
   };
+}
+
+function wrapPatternLets(pattern, source, body) {
+  let expr = body;
+  if (pattern.type === "ArrayPattern") {
+    pattern.elements.forEach((element, elementIndex) => {
+      if (element?.type === "Identifier") {
+        expr = {
+          op: "let",
+          name: element.name,
+          value: {
+            op: "array-index",
+            value: source,
+            index: { op: "integer", value: elementIndex },
+          },
+          body: expr,
+        };
+      }
+      if (element?.type === "RestElement" && element.argument?.type === "Identifier") {
+        expr = {
+          op: "let",
+          name: element.argument.name,
+          value: {
+            op: "array-slice",
+            value: source,
+            start: { op: "integer", value: elementIndex },
+            end: { op: "length", value: source },
+          },
+          body: expr,
+        };
+      }
+    });
+    return expr;
+  }
+  if (pattern.type === "ObjectPattern") {
+    for (const property of pattern.properties) {
+      if (property.type !== "Property" || property.computed) continue;
+      const key =
+        property.key.type === "Identifier" ? property.key.name : property.key.value;
+      const defaultRight =
+        property.value.type === "AssignmentPattern" ? property.value.right : null;
+      const target =
+        property.value.type === "Identifier"
+          ? property.value.name
+          : property.value.type === "AssignmentPattern" &&
+              property.value.left.type === "Identifier"
+            ? property.value.left.name
+            : null;
+      if (!key || !target) continue;
+      const fetched = {
+        op: "get",
+        value: source,
+        key: { op: "string", value: key },
+      };
+      expr = {
+        op: "let",
+        name: target,
+        value: defaultRight
+          ? {
+              op: "nullish",
+              left: fetched,
+              right: { op: "null" },
+            }
+          : fetched,
+        body: expr,
+      };
+    }
+  }
+  return expr;
 }
 
 function compileFunctionBody(fn, environment, expectedType, state, depth) {
@@ -974,7 +1060,7 @@ function compileStatements(statements, environment, expectedType, state, depth) 
     const value = head.argument
       ? compileExpression(head.argument, environment, expectedType, state, depth + 1)
       : { type: TYPE.NULL, expr: { op: "null" } };
-    if (tail.length === 0) return value;
+    if (tail.length === 0 && depth === 0) return value;
     return {
       type: value.type,
       expr: { op: "return", value: value.expr },
@@ -1009,7 +1095,7 @@ function compileStatements(statements, environment, expectedType, state, depth) 
           state,
           depth + 1,
         )
-      : compileStatements(tail, environment, expectedType, state, depth + 1);
+      : { type: TYPE.NULL, expr: { op: "null" } };
     const branch = {
       type: unifyTypes(consequent.type, alternate.type, expectedType),
       expr: {
@@ -1019,28 +1105,15 @@ function compileStatements(statements, environment, expectedType, state, depth) 
         else: alternate.expr,
       },
     };
-    if (!head.alternate && tail.length) {
-      return {
-        type: branch.type,
-        expr: {
-          op: "seq",
-          items: [branch.expr, compileStatements(tail, environment, expectedType, state, depth + 1).expr],
-        },
-      };
-    }
-    if (head.alternate && tail.length) {
-      return {
-        type: branch.type,
-        expr: {
-          op: "seq",
-          items: [
-            branch.expr,
-            compileStatements(tail, environment, expectedType, state, depth + 1).expr,
-          ],
-        },
-      };
-    }
-    return branch;
+    if (tail.length === 0) return branch;
+    const after = compileStatements(tail, environment, expectedType, state, depth + 1);
+    return {
+      type: after.type ?? branch.type,
+      expr: {
+        op: "seq",
+        items: [branch.expr, after.expr],
+      },
+    };
   }
   if (head.type === "TryStatement") {
     if (head.finalizer) {
@@ -1272,6 +1345,10 @@ function compileHelperCall(
     state,
     depth + 1,
   );
+  body = {
+    type: body.type,
+    expr: { op: "catch-return", body: body.expr },
+  };
   for (let index = bindings.length - 1; index >= 0; index -= 1) {
     body = {
       type: body.type,
@@ -2090,10 +2167,29 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
             : method === "trimStart"
               ? "string-trim-start"
               : "string-trim-end";
-        return finish({
+        const compiled = {
           type: TYPE.STRING,
           expr: { op, value: receiver.expr },
-        });
+        };
+        if (optionalCall) {
+          return finish({
+            type: TYPE.STRING,
+            expr: {
+              op: "if",
+              condition: {
+                op: "not",
+                value: {
+                  op: "strict-eq",
+                  left: receiver.expr,
+                  right: { op: "null" },
+                },
+              },
+              then: compiled.expr,
+              else: { op: "null" },
+            },
+          });
+        }
+        return finish(compiled);
       }
       if (method === "toLowerCase" || method === "toUpperCase") {
         requireStringReceiver();
@@ -2915,12 +3011,24 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
           expr: { op: "json-object", fields: [] },
         });
       }
-      const fields = [];
-      let spreadValue = null;
+      const parts = [];
+      let fields = [];
       let jsonFields = false;
+      const flushFields = () => {
+        if (fields.length === 0) return;
+        parts.push({
+          op: jsonFields ? "json-object" : "object",
+          fields,
+        });
+        fields = [];
+        jsonFields = false;
+      };
       for (const property of node.properties) {
         if (property.type === "SpreadElement") {
           const spread = child(property.argument);
+          if (spread.type === TYPE.NULL) {
+            continue;
+          }
           if (
             spread.type !== TYPE.SUGGESTION &&
             spread.type !== TYPE.JSON &&
@@ -2931,7 +3039,8 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
               code: "type-mismatch",
             });
           }
-          spreadValue = spread.expr;
+          flushFields();
+          parts.push(spread.expr);
           continue;
         }
         if (property.type !== "Property" || property.computed || property.kind !== "init") {
@@ -2957,16 +3066,36 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
           value: child(property.value).expr,
         });
       }
-      if (jsonFields && !spreadValue) {
+      flushFields();
+      if (parts.length === 0) {
         return finish({
           type: TYPE.JSON,
-          expr: { op: "json-object", fields },
+          expr: { op: "json-object", fields: [] },
         });
       }
-      const expr = spreadValue
-        ? { op: "spread", value: spreadValue, fields }
-        : { op: "object", fields };
-      return finish({ type: TYPE.SUGGESTION, expr });
+      if (parts.length === 1) {
+        const only = parts[0];
+        if (only.op === "object" || only.op === "json-object") {
+          return finish({
+            type: only.op === "json-object" ? TYPE.JSON : TYPE.SUGGESTION,
+            expr: only,
+          });
+        }
+        return finish({ type: TYPE.SUGGESTION, expr: only });
+      }
+      if (
+        parts.length === 2 &&
+        parts[1].op === "object"
+      ) {
+        return finish({
+          type: TYPE.SUGGESTION,
+          expr: { op: "spread", value: parts[0], fields: parts[1].fields },
+        });
+      }
+      return finish({
+        type: TYPE.SUGGESTION,
+        expr: { op: "object-assign", parts },
+      });
     }
     case "AssignmentExpression": {
       if (node.left.type === "Identifier") {
@@ -3021,6 +3150,9 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
         }
         binding.type = value.type ?? binding.type;
         if (binding.kind === "param") {
+          if (state.assignedParams instanceof Map && typeof binding.index === "number") {
+            state.assignedParams.set(node.left.name, binding.index);
+          }
           binding.kind = "let";
           binding.name = node.left.name;
         }
@@ -3188,13 +3320,13 @@ function compileFunction({ body, parameterTypes, resultType, helpers = new Map()
       environment.set(name, { kind: "helper", helper, name });
     }
   }
-  const state = { nodes: 0 };
+  const state = { nodes: 0, assignedParams: new Map() };
   const result = compileFunctionBody(fn, environment, resultType, state, 0);
   let expression = result.expr;
+  const wrapLet = (name, value) => {
+    expression = { op: "let", name, value, body: expression };
+  };
   fn.params.forEach((param, index) => {
-    const wrapLet = (name, value) => {
-      expression = { op: "let", name, value, body: expression };
-    };
     if (param.type === "ArrayPattern") {
       param.elements.forEach((element, elementIndex) => {
         if (element?.type === "Identifier") {
@@ -3252,6 +3384,9 @@ function compileFunction({ body, parameterTypes, resultType, helpers = new Map()
       }
     }
   });
+  for (const [name, index] of state.assignedParams ?? []) {
+    wrapLet(name, { op: "arg", index });
+  }
   if (resultType === TYPE.STRING_ARRAY && result.type === TYPE.STRING) {
     expression = {
       op: "array",
@@ -3297,6 +3432,7 @@ export function compileTypedHook({
   sourceField = "trigger",
   resultType,
   moduleSource,
+  helperLiterals,
 } = {}) {
   const contract =
     typeof sourceField === "string" &&
@@ -3317,7 +3453,7 @@ export function compileTypedHook({
   let helpers = new Map();
   if (moduleSource) {
     try {
-      helpers = resolveHookHelpers({ body, moduleSource }).helpers;
+      helpers = resolveHookHelpers({ body, moduleSource, helperLiterals }).helpers;
     } catch (error) {
       if (error instanceof TypedHookInlineError) {
         fail(error.message, { code: error.code });
@@ -3585,6 +3721,8 @@ function validateExpression(
       return expectedType ?? TYPE.JSON;
     case "return":
       return ensureResult(child(node.value, expectedType, "value"));
+    case "catch-return":
+      return ensureResult(child(node.body, expectedType, "body"));
     case "break":
     case "continue":
       return TYPE.NULL;
@@ -3616,6 +3754,12 @@ function validateExpression(
     case "typeof":
       child(node.value, null, "value");
       return ensureResult(TYPE.STRING);
+    case "object-assign":
+      if (!Array.isArray(node.parts)) {
+        fail(`${path}.parts must be an array`, { code: "schema" });
+      }
+      node.parts.forEach((part, index) => child(part, null, `parts[${index}]`));
+      return expectedType ?? TYPE.SUGGESTION;
     case "object":
     case "spread":
     case "json-object":
@@ -4033,12 +4177,18 @@ function evaluateExpression(node, args, locals = new Map()) {
       return ev(node.value).split(
         ev(node.separator),
       );
-    case "string-trim":
-      return ev(node.value).trim();
-    case "string-trim-start":
-      return ev(node.value).trimStart();
-    case "string-trim-end":
-      return ev(node.value).trimEnd();
+    case "string-trim": {
+      const value = ev(node.value);
+      return value == null ? null : String(value).trim();
+    }
+    case "string-trim-start": {
+      const value = ev(node.value);
+      return value == null ? null : String(value).trimStart();
+    }
+    case "string-trim-end": {
+      const value = ev(node.value);
+      return value == null ? null : String(value).trimEnd();
+    }
     case "string-replace":
       return jsReplace(
         ev(node.value),
@@ -4166,11 +4316,11 @@ function evaluateExpression(node, args, locals = new Map()) {
         ev(node.left) &&
         ev(node.right)
       );
-    case "or":
-      return (
-        ev(node.left) ||
-        ev(node.right)
-      );
+    case "or": {
+      const left = ev(node.left);
+      if (left) return left;
+      return ev(node.right);
+    }
     case "if":
       return ev(node.condition) ? ev(node.then) : ev(node.else);
     case "lambda":
@@ -4192,6 +4342,15 @@ function evaluateExpression(node, args, locals = new Map()) {
     }
     case "return":
       throw new TypedCompletion("return", ev(node.value));
+    case "catch-return":
+      try {
+        return ev(node.body);
+      } catch (error) {
+        if (error instanceof TypedCompletion && error.kind === "return") {
+          return error.value;
+        }
+        throw error;
+      }
     case "break":
       throw new TypedCompletion("break");
     case "continue":
@@ -4256,6 +4415,11 @@ function evaluateExpression(node, args, locals = new Map()) {
       for (const field of node.fields) object[field.key] = ev(field.value);
       return object;
     }
+    case "object-assign": {
+      const object = {};
+      for (const part of node.parts) Object.assign(object, ev(part) ?? {});
+      return object;
+    }
     case "get":
     case "json-get": {
       const value = ev(node.value);
@@ -4276,35 +4440,35 @@ function evaluateExpression(node, args, locals = new Map()) {
       return value.map((item, index) => [index, item]);
     }
     case "array-map":
-      return (asArray(ev(node.value)) ?? []).map((item) =>
-        applyLambda(node.fn, [item], args, locals),
+      return (asArray(ev(node.value)) ?? []).map((item, index) =>
+        applyLambda(node.fn, [item, index], args, locals),
       );
     case "array-filter":
-      return (asArray(ev(node.value)) ?? []).filter((item) =>
-        isTruthy(applyLambda(node.fn, [item], args, locals)),
+      return (asArray(ev(node.value)) ?? []).filter((item, index) =>
+        isTruthy(applyLambda(node.fn, [item, index], args, locals)),
       );
     case "array-flat-map":
-      return (asArray(ev(node.value)) ?? []).flatMap((item) => {
-        const mapped = applyLambda(node.fn, [item], args, locals);
+      return (asArray(ev(node.value)) ?? []).flatMap((item, index) => {
+        const mapped = applyLambda(node.fn, [item, index], args, locals);
         return asArray(mapped) ?? [mapped];
       });
     case "array-some":
-      return (asArray(ev(node.value)) ?? []).some((item) =>
-        isTruthy(applyLambda(node.fn, [item], args, locals)),
+      return (asArray(ev(node.value)) ?? []).some((item, index) =>
+        isTruthy(applyLambda(node.fn, [item, index], args, locals)),
       );
     case "array-every":
-      return (asArray(ev(node.value)) ?? []).every((item) =>
-        isTruthy(applyLambda(node.fn, [item], args, locals)),
+      return (asArray(ev(node.value)) ?? []).every((item, index) =>
+        isTruthy(applyLambda(node.fn, [item, index], args, locals)),
       );
     case "array-find":
       return (
-        (asArray(ev(node.value)) ?? []).find((item) =>
-          isTruthy(applyLambda(node.fn, [item], args, locals)),
+        (asArray(ev(node.value)) ?? []).find((item, index) =>
+          isTruthy(applyLambda(node.fn, [item, index], args, locals)),
         ) ?? null
       );
     case "array-find-index":
-      return (asArray(ev(node.value)) ?? []).findIndex((item) =>
-        isTruthy(applyLambda(node.fn, [item], args, locals)),
+      return (asArray(ev(node.value)) ?? []).findIndex((item, index) =>
+        isTruthy(applyLambda(node.fn, [item, index], args, locals)),
       );
     case "array-sort": {
       const value = [...(asArray(ev(node.value)) ?? [])];
@@ -4363,7 +4527,9 @@ function evaluateExpression(node, args, locals = new Map()) {
     }
     case "json-as-number": {
       const value = ev(node.value);
-      return Number.isSafeInteger(value) ? value : null;
+      if (Number.isSafeInteger(value)) return value;
+      const parsed = Number(value);
+      return Number.isSafeInteger(parsed) ? parsed : null;
     }
     case "json-as-bool": {
       const value = ev(node.value);
@@ -4428,8 +4594,15 @@ function evaluateExpression(node, args, locals = new Map()) {
       return JSON.stringify(ev(node.value));
     case "locale-compare":
       return ev(node.left).localeCompare(ev(node.right));
-    case "array-from":
-      return Array.from(ev(node.value) ?? []);
+    case "array-from": {
+      const value = ev(node.value);
+      if (value && typeof value === "object" && !Array.isArray(value) && !(value instanceof Set) && "length" in value) {
+        const count = Number(value.length);
+        if (!Number.isSafeInteger(count) || count <= 0) return [];
+        return Array.from({ length: Math.min(count, 10_000) });
+      }
+      return Array.from(value ?? []);
+    }
     case "string-split-limit":
       return ev(node.value).split(ev(node.separator), ev(node.limit));
     case "array-shift": {

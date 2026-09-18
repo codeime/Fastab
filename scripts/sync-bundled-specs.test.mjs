@@ -37,6 +37,12 @@ const hookContractPath = fileURLToPath(
 const typedHookIrPath = fileURLToPath(
   new URL("./typed-hook-ir.mjs", import.meta.url),
 );
+const typedHookInlinePath = fileURLToPath(
+  new URL("./typed-hook-inline.mjs", import.meta.url),
+);
+const typedRegexPath = fileURLToPath(
+  new URL("./typed-regex.mjs", import.meta.url),
+);
 const referenceSafeIoPath = fileURLToPath(
   new URL("./reference-safe-io.mjs", import.meta.url),
 );
@@ -107,6 +113,11 @@ test("sync guards empty packages, missing icons, and lock drift without replacin
     typedHookIrPath,
     join(root, "scripts", "typed-hook-ir.mjs"),
   );
+  await copyFile(
+    typedHookInlinePath,
+    join(root, "scripts", "typed-hook-inline.mjs"),
+  );
+  await copyFile(typedRegexPath, join(root, "scripts", "typed-regex.mjs"));
   await copyFile(
     referenceSafeIoPath,
     join(root, "scripts", "reference-safe-io.mjs"),

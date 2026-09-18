@@ -18,6 +18,7 @@ import {
   evaluateTypedHook,
   validateTypedHookIr,
 } from "./typed-hook-ir.mjs";
+import { factoryStringCandidates } from "./typed-hook-inline.mjs";
 import {
   TYPED_IR_V2_OPS_PATH,
   buildTypedIrV2OpsGolden,
@@ -1042,4 +1043,251 @@ test("T2.2 compiles array, control-flow, regex, and helper-inline shapes", () =>
   assert.equal(MAX_NODES, 512);
   assert.ok(TYPED_EXPRESSION_OPERATIONS.includes("array-map"));
   assert.ok(TYPED_VALUE_TYPES.includes("regex"));
+});
+
+test("reassigned hook parameters stay readable when the assignment is skipped", () => {
+  const hook = compileTypedHook({
+    body: `(out, tokens) => { if (out.startsWith("fatal:")) return []; out.startsWith("warning:") && (out = out.slice(out.indexOf("\\n")+1)); return out.split("\\n").filter(Boolean).map(line => ({name: line.split(" ")[0]})); }`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["fatal: boom\n", ["git-cliff"]]), []);
+  assert.deepEqual(evaluateTypedHook(hook, ["main feature\n", ["git-cliff"]]), [
+    { name: "main" },
+  ]);
+});
+
+test("return inside try aborts the fallback empty array", () => {
+  const hook = compileTypedHook({
+    body: `function(e,[n]){if(e.trim()=="")return[];try{let t=JSON.parse(e),a=t.scripts,i=t.fig||{};if(a)return Object.entries(a).map(([s,o])=>{let c=n==="yarn"?"fig://icon?type=yarn":"fig://icon?type=npm",p=i[s];return{name:s,icon:c,description:o,priority:51,...p}})}catch(t){console.error(t)}return[]}`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(
+    evaluateTypedHook(hook, [
+      JSON.stringify({ scripts: { build: "turbo build", test: "vitest" } }),
+      ["bun"],
+    ]),
+    [
+      {
+        name: "build",
+        icon: "fig://icon?type=npm",
+        description: "turbo build",
+        priority: 51,
+      },
+      {
+        name: "test",
+        icon: "fig://icon?type=npm",
+        description: "vitest",
+        priority: 51,
+      },
+    ],
+  );
+  assert.deepEqual(evaluateTypedHook(hook, ["", ["bun"]]), []);
+  assert.deepEqual(evaluateTypedHook(hook, ["not json\n{{{", ["bun"]]), []);
+});
+
+test("IIFE return does not abort the outer hook", () => {
+  const hook = compileTypedHook({
+    body: `r => { const list = (s => { return s.split("\\n").filter(Boolean); })(r); return list.map(name => ({name})); }`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["main\nfeature\n", []]), [
+    { name: "main" },
+    { name: "feature" },
+  ]);
+});
+
+test("spreading a missing factory object is a no-op", () => {
+  const hook = compileTypedHook({
+    body: `rows => rows.map(row => ({...row, ...extra}))`,
+    sourceField: "filterTemplateSuggestions",
+    moduleSource: `
+export default (function ({extra} = {}) {
+  return { filterTemplateSuggestions: rows => rows.map(row => ({...row, ...extra})) };
+})({extra: void 0});
+`,
+  });
+  assert.deepEqual(
+    evaluateTypedHook(hook, [[{ name: "main", type: "file" }]]),
+    [{ name: "main", type: "file" }],
+  );
+});
+
+test("forEach push mutates the outer suggestion list", () => {
+  const hook = compileTypedHook({
+    body: `r => { const a = []; r.split("\\n").forEach(s => { if (s) a.push({name:s,insertValue:s,type:"file"}); }); return a; }`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["main\nfeature\n", []]), [
+    { name: "main", insertValue: "main", type: "file" },
+    { name: "feature", insertValue: "feature", type: "file" },
+  ]);
+});
+
+test("character-class hyphen after \\\\w stays a literal for matchAll", () => {
+  const hook = compileTypedHook({
+    body: `e => [...e.matchAll(/(\\d+\\)\\s)?([\\w-+]+)/g)].map(n => ({name: n[2]}))`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["main\nfeature\n", []]), [
+    { name: "main" },
+    { name: "feature" },
+  ]);
+});
+
+test("slice(0, -1) keeps JavaScript slice semantics, not substring", () => {
+  const hook = compileTypedHook({
+    body: `out => out.split("\\n").map(line => ({name: line.slice(0, -1)}))`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["main", []]), [{ name: "mai" }]);
+  assert.deepEqual(evaluateTypedHook(hook, ["not json\n{{{", []]), [
+    { name: "not jso" },
+    { name: "{{" },
+  ]);
+});
+
+test("optional trim on a missing split field stays null", () => {
+  const hook = compileTypedHook({
+    body: `out => out.split("\\n").map(line => line.split("|")[1]?.trim()).filter(line => line && line !== "identifier").map(line => ({name: line}))`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["main\nfeature\n", []]), []);
+});
+
+test("spreading a Set flattens unique first words", () => {
+  const hook = compileTypedHook({
+    body: `out => { let seen = new Set; for (const line of out.split("\\n")) { const name = line.trim().split(/\\s+/)[0]; name && seen.add(name); } return [...seen].map(name => ({name, description: "Installed tool"})); }`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["go 1\nnode 2\ngo 3\n", []]), [
+    { name: "go", description: "Installed tool" },
+    { name: "node", description: "Installed tool" },
+  ]);
+});
+
+test("factoryStringCandidates keeps a single non-default separator", () => {
+  const moduleSource = `
+export default (function () {
+  function fe({separator:e="="}={}) {
+    return { getQueryTerm: s => s.slice(s.indexOf(e)+1) };
+  }
+  return {
+    a: fe({separator:":"}),
+    b: fe({separator:"="}),
+    c: fe(),
+  };
+})();
+`;
+  const body = "s => s.slice(s.indexOf(e)+1)";
+  const candidates = factoryStringCandidates({ body, moduleSource });
+  assert.ok(candidates.e.includes(":"));
+  assert.ok(candidates.e.includes("="));
+  const colon = compileTypedHook({
+    body,
+    sourceField: "getQueryTerm",
+    moduleSource,
+    helperLiterals: { e: ":" },
+  });
+  assert.equal(evaluateTypedHook(colon, ["a:b:c"]), "b:c");
+  assert.equal(evaluateTypedHook(colon, ["--flag=value"]), "--flag=value");
+});
+
+test("factory object literals that agree win over the parameter default", () => {
+  const moduleSource = `
+export default (function () {
+  function fe({separator:e="="}={}) {
+    return { getQueryTerm: s => s.slice(s.indexOf(e)+1) };
+  }
+  return {
+    a: fe({separator:":"}),
+    b: fe({separator:":",cache:!0}),
+  };
+})();
+`;
+  const descriptor = compileTypedHook({
+    body: "s => s.slice(s.indexOf(e)+1)",
+    sourceField: "getQueryTerm",
+    moduleSource,
+  });
+  assert.match(JSON.stringify(descriptor.expr), /"value":":"/);
+  assert.equal(
+    evaluateTypedHook(descriptor, ["user@host:path"]),
+    "path",
+  );
+  assert.equal(evaluateTypedHook(descriptor, ["--flag=value"]), "--flag=value");
+});
+
+test("array filter callbacks receive the element index", () => {
+  const hook = compileTypedHook({
+    body: `out => out.split(",").filter((item, index) => index === 0).map(name => ({name}))`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["main,feature", []]), [{ name: "main" }]);
+});
+
+test("mixed factory extras prefer the explicit object over an omitted call", () => {
+  const body = "rows => rows.map(row => ({...row, ...extra}))";
+  const moduleSource = `
+export default (function () {
+  function wrap({extra: extra} = {}) {
+    return { filterTemplateSuggestions: ${body} };
+  }
+  return { a: wrap(), b: wrap({extra: {isDangerous: true}}) };
+})();
+`;
+  const descriptor = compileTypedHook({
+    body,
+    sourceField: "filterTemplateSuggestions",
+    moduleSource,
+  });
+  assert.deepEqual(
+    evaluateTypedHook(descriptor, [[{ name: "src/", type: "folder" }]]),
+    [{ name: "src/", type: "folder", isDangerous: true }],
+  );
+});
+
+test("factory extra objects can be retried as helper literals", () => {
+  const body = "rows => rows.map(row => ({...row, ...extra}))";
+  const moduleSource = `
+export default (function () {
+  function wrap({extra: extra} = {}) {
+    return { filterTemplateSuggestions: ${body} };
+  }
+  return { a: wrap(), b: wrap({extra: {isDangerous: true}}) };
+})();
+`;
+  const descriptor = compileTypedHook({
+    body,
+    sourceField: "filterTemplateSuggestions",
+    moduleSource,
+    helperLiterals: { extra: { isDangerous: true } },
+  });
+  assert.deepEqual(
+    evaluateTypedHook(descriptor, [[{ name: "src/", type: "folder" }]]),
+    [{ name: "src/", type: "folder", isDangerous: true }],
+  );
+});
+
+test("mixed factory booleans prefer the omitted default", () => {
+  const body =
+    't=>{let n=t.split("\\n").map(e=>e.split(" ")[0]),s=[];return o||(s=n.map(e=>e.split("-")[0]),s=s.filter((e,r)=>s.indexOf(e)===r)),s.concat(n).map(e=>({name:e}))}';
+  const moduleSource = `
+export default (function () {
+  var i=({excludeShort:o}={})=>({
+    postProcess: ${body}
+  });
+  return { a: i(), b: i({excludeShort:true}) };
+})();
+`;
+  const descriptor = compileTypedHook({
+    body,
+    sourceField: "postProcess",
+    moduleSource,
+  });
+  assert.deepEqual(evaluateTypedHook(descriptor, ["not json\n{{{", ["apt"]]), [
+    { name: "not" },
+    { name: "{{{" },
+    { name: "not" },
+    { name: "{{{" },
+  ]);
 });
