@@ -1052,6 +1052,16 @@ mod test {
         }
     }
 
+    fn fish_integration() -> DotfileShellIntegration {
+        DotfileShellIntegration {
+            pre: true,
+            post: true,
+            shell: Shell::Fish,
+            dotfile_directory: "".into(),
+            dotfile_name: "config.fish",
+        }
+    }
+
     #[test]
     fn test_previous_product_regex_strips_easy_complete_blocks() {
         let integration = zshrc_integration();
@@ -1126,6 +1136,29 @@ eval "$(ec init zsh pre --rcfile zshrc)""#,
             stripped.contains("ftab init"),
             "current CLI eval must not be treated as leftover: {stripped}"
         );
+    }
+
+    #[test]
+    fn test_previous_cli_eval_strips_fish() {
+        let integration = fish_integration();
+        let lines = [
+            r#"eval (ec init fish pre | string split0)"#,
+            r#"eval (ec init fish pre --rcfile config | string split0)"#,
+            r#"test -x ~/.local/bin/ec; and eval (~/.local/bin/ec init fish pre --rcfile config | string split0)"#,
+        ];
+        for line in lines {
+            let doc =
+                format!("# Easy Complete pre block. Keep at the top of this file.\n{line}\nset -gx KEEP /usr/bin\n");
+            let stripped = integration.remove_from_text(&doc, When::Pre).unwrap();
+            assert!(
+                !stripped.contains("ec init"),
+                "legacy fish eval must be removed: {line} -> {stripped}"
+            );
+            assert!(
+                stripped.contains("set -gx KEEP /usr/bin"),
+                "foreign lines must stay: {stripped}"
+            );
+        }
     }
 
     #[test]
