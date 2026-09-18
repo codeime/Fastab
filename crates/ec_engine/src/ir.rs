@@ -600,7 +600,7 @@ impl Registry {
                 // A missing/different generation must not look like an
                 // ordinary absent command. The snapshot marks itself stale
                 // for I/O or digest failures; the next Engine request will
-                // attempt an atomic Registry+JsHost rebuild.
+                // attempt an atomic Registry+NativeHooks rebuild.
                 tracing::warn!(command = %name, path = %path.display(), %error, "spec lazy load failed");
             },
         }

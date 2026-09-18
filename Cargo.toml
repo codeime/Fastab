@@ -125,7 +125,7 @@ serde = { version = "1.0.219", features = ["derive", "rc"] }
 # standalone `cargo build -p ec_cli` get a `BTreeMap` and sort the same keys,
 # so the native adapters would rank `npm view` versions and package.json
 # scripts differently from the app the tests are meant to stand in for.
-serde_json = { version = "1.0.140", features = ["preserve_order"] }
+serde_json = { version = "1.0.140", features = ["preserve_order", "raw_value"] }
 sha2 = "0.11.0"
 shlex = "2.0.1"
 similar = "2.7.0"

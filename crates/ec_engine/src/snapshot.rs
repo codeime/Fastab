@@ -10,10 +10,11 @@
 //! can never return a different generation's bytes.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
 
@@ -28,6 +29,10 @@ use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 #[cfg(unix)]
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
+/// Files the opener already read while hashing the tree. `NativeHooks::load`
+/// takes `typed-hooks.json` so the 4.6 MB sidecar is not read and hashed twice.
+const CAPTURED_ON_OPEN: &[&str] = &["typed-hooks.json"];
+
 /// One opened generation of the IR directory. Cloning this value is cheap and
 /// shares stale state with every Registry/NativeHooks clone.
 #[derive(Clone, Debug)]
@@ -40,8 +45,21 @@ struct SnapshotInner {
     display_path: PathBuf,
     entries: HashMap<PathBuf, EntryKind>,
     file_digests: HashMap<PathBuf, String>,
+    captured_files: CapturedFiles,
     generation: Generation,
     stale: AtomicBool,
+}
+
+/// One-shot bodies captured while hashing. Debug prints names only.
+struct CapturedFiles(Mutex<HashMap<PathBuf, Vec<u8>>>);
+
+impl fmt::Debug for CapturedFiles {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0.lock() {
+            Ok(map) => f.debug_list().entries(map.keys()).finish(),
+            Err(_) => f.write_str("<poisoned>"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,13 +95,21 @@ impl DirectorySnapshot {
             let mut entries = HashMap::new();
             entries.insert(PathBuf::new(), EntryKind::Directory);
             let mut file_digests = HashMap::new();
-            capture_tree(root_fd.as_raw_fd(), Path::new(""), &mut entries, &mut file_digests)?;
+            let mut captured_files = HashMap::new();
+            capture_tree(
+                root_fd.as_raw_fd(),
+                Path::new(""),
+                &mut entries,
+                &mut file_digests,
+                &mut captured_files,
+            )?;
             let marker_digest = file_digests.get(Path::new(".spec-pair.json")).cloned();
             Ok(Self {
                 inner: Arc::new(SnapshotInner {
                     display_path: path.to_path_buf(),
                     entries,
                     file_digests,
+                    captured_files: CapturedFiles(Mutex::new(captured_files)),
                     generation: Generation {
                         root_identity: root_identity(&root_stat),
                         marker_digest,
@@ -106,13 +132,21 @@ impl DirectorySnapshot {
             let mut entries = HashMap::new();
             entries.insert(PathBuf::new(), EntryKind::Directory);
             let mut file_digests = HashMap::new();
-            capture_tree_path(path, Path::new(""), &mut entries, &mut file_digests)?;
+            let mut captured_files = HashMap::new();
+            capture_tree_path(
+                path,
+                Path::new(""),
+                &mut entries,
+                &mut file_digests,
+                &mut captured_files,
+            )?;
             let marker_digest = file_digests.get(Path::new(".spec-pair.json")).cloned();
             Ok(Self {
                 inner: Arc::new(SnapshotInner {
                     display_path: path.to_path_buf(),
                     entries,
                     file_digests,
+                    captured_files: CapturedFiles(Mutex::new(captured_files)),
                     generation: Generation {
                         canonical_path,
                         marker_digest,
@@ -234,6 +268,12 @@ impl DirectorySnapshot {
             return Ok(None);
         }
         self.read_file(relative).map(Some)
+    }
+
+    /// Take a body that `open` hashed and kept. Later reads go back to disk
+    /// and still compare against the digest recorded at open.
+    pub(crate) fn take_captured_file(&self, relative: &Path) -> Option<Vec<u8>> {
+        self.inner.captured_files.0.lock().ok()?.remove(relative)
     }
 
     /// Return names directly below a directory from the captured tree. This
@@ -373,6 +413,7 @@ fn capture_tree(
     current: &Path,
     entries: &mut HashMap<PathBuf, EntryKind>,
     file_digests: &mut HashMap<PathBuf, String>,
+    captured_files: &mut HashMap<PathBuf, Vec<u8>>,
 ) -> io::Result<()> {
     for name in read_dir_fd(parent_fd)? {
         let bytes = name.as_os_str().as_bytes();
@@ -397,13 +438,17 @@ fn capture_tree(
         let relative = current.join(&name);
         if is_directory(&metadata) {
             entries.insert(relative.clone(), EntryKind::Directory);
-            capture_tree(fd.as_raw_fd(), &relative, entries, file_digests)?;
+            capture_tree(fd.as_raw_fd(), &relative, entries, file_digests, captured_files)?;
         } else if is_regular_file(&metadata) {
             let mut file = File::from(fd);
             let mut bytes = Vec::new();
             file.read_to_end(&mut bytes)?;
+            let digest = sha256_hex(&bytes);
             entries.insert(relative.clone(), EntryKind::File);
-            file_digests.insert(relative, sha256_hex(&bytes));
+            if should_capture_on_open(&relative) {
+                captured_files.insert(relative.clone(), bytes);
+            }
+            file_digests.insert(relative, digest);
         } else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -520,6 +565,7 @@ fn capture_tree_path(
     current: &Path,
     entries: &mut HashMap<PathBuf, EntryKind>,
     file_digests: &mut HashMap<PathBuf, String>,
+    captured_files: &mut HashMap<PathBuf, Vec<u8>>,
 ) -> io::Result<()> {
     for entry in std::fs::read_dir(root.join(current))? {
         let entry = entry?;
@@ -527,10 +573,15 @@ fn capture_tree_path(
         let metadata = std::fs::symlink_metadata(entry.path())?;
         if metadata.is_dir() {
             entries.insert(relative.clone(), EntryKind::Directory);
-            capture_tree_path(root, &relative, entries, file_digests)?;
+            capture_tree_path(root, &relative, entries, file_digests, captured_files)?;
         } else if metadata.is_file() {
+            let bytes = std::fs::read(entry.path())?;
+            let digest = sha256_hex(&bytes);
             entries.insert(relative.clone(), EntryKind::File);
-            file_digests.insert(relative, sha256_hex(&std::fs::read(entry.path())?));
+            if should_capture_on_open(&relative) {
+                captured_files.insert(relative.clone(), bytes);
+            }
+            file_digests.insert(relative, digest);
         } else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -557,6 +608,10 @@ fn validate_relative_path(path: &Path) -> io::Result<()> {
 #[cfg(unix)]
 fn validate_relative_path(path: &Path) -> io::Result<()> {
     relative_components(path).map(|_| ())
+}
+
+fn should_capture_on_open(relative: &Path) -> bool {
+    CAPTURED_ON_OPEN.iter().any(|name| relative == Path::new(name))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -598,6 +653,26 @@ mod tests {
         assert!(
             during.saturating_sub(before) < 64,
             "snapshot retained too many descriptors: before={before}, during={during}"
+        );
+    }
+
+    #[test]
+    fn open_keeps_sidecar_bytes_until_taken() {
+        let root = tempfile::tempdir().expect("snapshot root");
+        let sidecar = br#"{"hooks":[]}"#;
+        std::fs::write(root.path().join("typed-hooks.json"), sidecar).expect("sidecar");
+        std::fs::write(root.path().join("other.json"), b"{}\n").expect("other");
+
+        let snapshot = DirectorySnapshot::open(root.path()).expect("snapshot");
+        assert!(snapshot.take_captured_file(Path::new("other.json")).is_none());
+        let taken = snapshot
+            .take_captured_file(Path::new("typed-hooks.json"))
+            .expect("captured sidecar");
+        assert_eq!(taken, sidecar);
+        assert!(snapshot.take_captured_file(Path::new("typed-hooks.json")).is_none());
+        assert_eq!(
+            snapshot.read_file(Path::new("typed-hooks.json")).expect("disk read"),
+            sidecar
         );
     }
 }
