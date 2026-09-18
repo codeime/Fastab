@@ -1,0 +1,10 @@
+{
+  "names": ["slowexec"],
+  "description": "executeCommand timeout fixture",
+  "args": [
+    {
+      "name": "job",
+      "jsCustom": "slowexec#custom#0"
+    }
+  ]
+}

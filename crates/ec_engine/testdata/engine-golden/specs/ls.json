@@ -1,0 +1,24 @@
+{
+  "names": ["ls"],
+  "description": "List directory contents",
+  "options": [
+    {
+      "names": ["-a"],
+      "description": "Include directory entries whose names begin with a dot",
+      "icon": "fig://icon?type=string",
+      "priority": 70
+    },
+    {
+      "names": ["-l"],
+      "description": "List in long format",
+      "icon": "fig://icon?type=string",
+      "priority": 65
+    },
+    {
+      "names": ["--color"],
+      "description": "Colorize output",
+      "icon": "fig://icon?type=string",
+      "priority": 50
+    }
+  ]
+}

@@ -119,7 +119,13 @@ shellexpand = "3.0.0"
 shell-color = "1.0.0"
 semver = { version = "1.0.26", features = ["serde"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
-serde_json = "1.0.140"
+# `preserve_order` is not optional here. gpui turns it on, so `easy-complete`
+# already iterates `serde_json::Map` in insertion order — the order the Fig
+# hooks' `Object.keys` saw. Without it, `cargo test -p ec_engine` and a
+# standalone `cargo build -p ec_cli` get a `BTreeMap` and sort the same keys,
+# so the native adapters would rank `npm view` versions and package.json
+# scripts differently from the app the tests are meant to stand in for.
+serde_json = { version = "1.0.140", features = ["preserve_order"] }
 sha2 = "0.11.0"
 shlex = "2.0.1"
 similar = "2.7.0"

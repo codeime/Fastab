@@ -1,0 +1,10 @@
+{
+  "names": ["spinloop"],
+  "description": "JS interrupt timeout fixture",
+  "args": [
+    {
+      "name": "job",
+      "jsCustom": "spinloop#custom#0"
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+[
+  {
+    "name": ".cargo-lock"
+  },
+  {
+    "name": ".css"
+  },
+  {
+    "name": ".db"
+  },
+  {
+    "name": ".gitignore"
+  },
+  {
+    "name": ".js"
+  },
+  {
+    "name": ".json"
+  },
+  {
+    "name": ".md"
+  },
+  {
+    "name": ".plist"
+  },
+  {
+    "name": ".png"
+  },
+  {
+    "name": ".rs"
+  },
+  {
+    "name": ".sh"
+  },
+  {
+    "name": ".toml"
+  },
+  {
+    "name": ".ts"
+  },
+  {
+    "name": ".tsx"
+  },
+  {
+    "name": ".xml"
+  },
+  {
+    "name": ".yml"
+  }
+]

@@ -1,0 +1,761 @@
+{
+  "name": "kamal",
+  "options": [
+    {
+      "description": "Detailed logging",
+      "name": [
+        "--verbose",
+        "-v"
+      ]
+    },
+    {
+      "description": "Minimal logging",
+      "name": [
+        "--quiet",
+        "-q"
+      ]
+    },
+    {
+      "args": {
+        "name": "VERSION"
+      },
+      "description": "Run commands against a specific app version",
+      "name": "--version"
+    },
+    {
+      "description": "Run commands only on primary host instead of all",
+      "name": [
+        "--primary",
+        "-p"
+      ]
+    },
+    {
+      "args": {
+        "name": "hosts"
+      },
+      "description": "Run commands on these hosts instead of all (separate by comma)",
+      "name": [
+        "--hosts",
+        "-h"
+      ]
+    },
+    {
+      "args": {
+        "name": "roles"
+      },
+      "description": "Run commands on these roles instead of all (separate by comma)",
+      "name": [
+        "--roles",
+        "-r"
+      ]
+    },
+    {
+      "args": {
+        "default": "config/deploy.yml",
+        "name": "config"
+      },
+      "description": "Path to config file",
+      "name": [
+        "--config_file",
+        "-c"
+      ]
+    },
+    {
+      "args": {
+        "description": "Destination to use",
+        "generators": {
+          "cache": {
+            "cacheByDirectory": true,
+            "strategy": "stale-while-revalidate",
+            "ttl": 30
+          },
+          "postProcess": {
+            "bodySha256": "75f9eb4a64ac7770c8fe2a5c4b8889365d1f5f9585a666449113906a8a2c05e6",
+            "kind": "function"
+          },
+          "script": [
+            "bin/kamal",
+            "destinations",
+            "--json"
+          ]
+        },
+        "name": "destination"
+      },
+      "description": "Specify destination to use",
+      "name": [
+        "-d",
+        "--destination"
+      ]
+    },
+    {
+      "description": "Don't run hooks",
+      "name": [
+        "--skip_hooks",
+        "-H"
+      ]
+    }
+  ],
+  "subcommands": [
+    {
+      "description": "Setup all accessories and deploy app to servers",
+      "icon": "🛠️",
+      "name": "setup"
+    },
+    {
+      "description": "List all destinations",
+      "name": "destinations",
+      "options": [
+        {
+          "description": "Output as JSON",
+          "name": [
+            "--json",
+            "-j"
+          ]
+        }
+      ]
+    },
+    {
+      "description": "Deploy your app to a destination",
+      "icon": "🚀",
+      "name": "deploy",
+      "options": [
+        {
+          "description": "Skip image build and push",
+          "name": [
+            "-P",
+            "--skip_push"
+          ]
+        }
+      ],
+      "priority": 80
+    },
+    {
+      "description": "Deploy app to servers without bootstrapping servers, starting Traefik, pruning, and registry login",
+      "icon": "🚀",
+      "name": "redeploy",
+      "options": [
+        {
+          "description": "Skip image build and push",
+          "name": [
+            "-P",
+            "--skip_push"
+          ]
+        }
+      ]
+    },
+    {
+      "args": {
+        "name": "version"
+      },
+      "description": "Rollback app to VERSION",
+      "icon": "↩️",
+      "name": "rollback"
+    },
+    {
+      "description": "Show details about all containers",
+      "icon": "🔍",
+      "name": "details"
+    },
+    {
+      "description": "Show audit log from servers",
+      "icon": "🔍",
+      "name": "audit"
+    },
+    {
+      "description": "Show combined config (including secrets!)",
+      "name": "config"
+    },
+    {
+      "description": "Create config stub in config/deploy.yml and env stub in .env",
+      "icon": "🆕",
+      "name": "init",
+      "options": [
+        {
+          "description": "Add Kamal to the Gemfile and create a bin/kamal binstub",
+          "name": "bundle"
+        }
+      ],
+      "priority": 100
+    },
+    {
+      "description": "Create .env by evaluating .env.erb (or .env.staging.erb -> .env.staging when using -d staging)",
+      "name": "envify",
+      "options": [
+        {
+          "args": {
+            "name": "template",
+            "template": "filepaths"
+          },
+          "description": "Template to use",
+          "hidden": true,
+          "name": "template"
+        }
+      ]
+    },
+    {
+      "description": "Remove Traefik, app, accessories, and registry session from servers",
+      "icon": "🗑️",
+      "name": "remove",
+      "options": [
+        {
+          "description": "Proceed without confirmation question",
+          "name": [
+            "--confirmed",
+            "-y"
+          ]
+        }
+      ]
+    },
+    {
+      "description": "Show Kamal version",
+      "name": "version"
+    },
+    {
+      "description": "Manage accessories (db/redis/search)",
+      "name": "accessory",
+      "subcommands": [
+        {
+          "args": {
+            "name": "name",
+            "suggestions": [
+              {
+                "displayName": "Use \"all\" to boot all accessories",
+                "name": "all"
+              }
+            ]
+          },
+          "description": "Boot new accessory service on host (use NAME=all to boot all accessories)",
+          "name": "boot"
+        },
+        {
+          "args": {
+            "name": "name"
+          },
+          "description": "Upload accessory files to host",
+          "name": "upload"
+        },
+        {
+          "args": {
+            "name": "name"
+          },
+          "description": "Create accessory directories on host",
+          "hidden": true,
+          "name": "directories"
+        },
+        {
+          "args": {
+            "name": "name"
+          },
+          "description": "Reboot existing accessory on host (stop container, remove container, start new container)",
+          "name": "reboot"
+        },
+        {
+          "args": {
+            "name": "name"
+          },
+          "description": "Start existing accessory container on host",
+          "name": "start"
+        },
+        {
+          "args": {
+            "name": "name"
+          },
+          "description": "Stop existing accessory container on host",
+          "name": "stop"
+        },
+        {
+          "args": {
+            "name": "name"
+          },
+          "description": "Restart existing accessory container on host",
+          "name": "restart"
+        },
+        {
+          "args": {
+            "name": "name",
+            "suggestions": [
+              {
+                "displayName": "Use \"all\" to boot all accessories",
+                "name": "all"
+              }
+            ]
+          },
+          "description": "Show details about accessory on host (use NAME=all to show all accessories)",
+          "name": "details"
+        },
+        {
+          "args": [
+            {
+              "name": "name"
+            },
+            {
+              "name": "CMD"
+            }
+          ],
+          "description": "Execute a custom command on servers",
+          "name": "exec",
+          "options": [
+            {
+              "description": "Execute command over ssh for an interactive shell (use for console/bash)",
+              "name": [
+                "-i",
+                "--interactive"
+              ]
+            },
+            {
+              "description": "Reuse currently running container instead of starting a new one",
+              "name": "--reuse"
+            }
+          ]
+        },
+        {
+          "description": "Show log lines from accessory on host",
+          "name": "logs",
+          "options": [
+            {
+              "description": "Show lines since timestamp\\\" (e.g. 2013-01-02T13:23:37Z) or relative (e.g. 42m for 42 minutes)",
+              "name": [
+                "--since",
+                "-s"
+              ]
+            },
+            {
+              "description": "Number of lines to show from each server",
+              "name": [
+                "--lines",
+                "-n"
+              ]
+            },
+            {
+              "description": "Show lines with grep match only (use this to fetch specific requests by id)",
+              "name": [
+                "--grep",
+                "-g"
+              ]
+            },
+            {
+              "description": "Follow log on primary server (or specific host set by --hosts)",
+              "name": [
+                "--follow",
+                "-f"
+              ]
+            }
+          ]
+        },
+        {
+          "args": {
+            "name": "name"
+          },
+          "description": "Show status of accessory on host",
+          "name": "status"
+        },
+        {
+          "args": {
+            "name": "name",
+            "suggestions": [
+              {
+                "displayName": "Use \"all\" to boot all accessories",
+                "name": "all"
+              }
+            ]
+          },
+          "description": "Remove accessory container, image and data directory from host",
+          "name": "remove",
+          "options": [
+            {
+              "description": "Proceed without confirmation question",
+              "name": [
+                "-y",
+                "--confirmed"
+              ]
+            }
+          ]
+        },
+        {
+          "args": {
+            "name": "name"
+          },
+          "description": "Remove accessory container from host",
+          "hidden": true,
+          "name": "remove_container"
+        },
+        {
+          "args": {
+            "name": "name"
+          },
+          "description": "Remove accessory image from host",
+          "hidden": true,
+          "name": "remove_image"
+        },
+        {
+          "args": {
+            "name": "name"
+          },
+          "description": "Remove accessory directory used for uploaded files and data directories from host",
+          "hidden": true,
+          "name": "remove_service_directory"
+        }
+      ]
+    },
+    {
+      "description": "Manage application",
+      "name": "app",
+      "subcommands": [
+        {
+          "description": "Boot app on servers (or reboot app if already running)",
+          "name": "boot"
+        },
+        {
+          "description": "Start existing app container on servers",
+          "name": "start"
+        },
+        {
+          "description": "Stop app container on servers",
+          "name": "stop"
+        },
+        {
+          "description": "Show details about app containers",
+          "name": "details"
+        },
+        {
+          "args": {
+            "name": "CMD"
+          },
+          "description": "Execute a custom command on servers",
+          "name": "exec",
+          "options": [
+            {
+              "description": "Execute command over ssh for an interactive shell (use for console/bash)",
+              "name": [
+                "--interactive",
+                "-i"
+              ]
+            },
+            {
+              "description": "Reuse currently running container instead of starting a new one",
+              "name": "--reuse"
+            }
+          ]
+        },
+        {
+          "description": "Show app containers on servers",
+          "name": "containers"
+        },
+        {
+          "description": "Detect app stale containers",
+          "name": "stale_containers",
+          "options": [
+            {
+              "description": "Stop the stale containers found",
+              "name": [
+                "--stop",
+                "-s"
+              ]
+            }
+          ]
+        },
+        {
+          "description": "Show app images on servers",
+          "name": "images"
+        },
+        {
+          "description": "Show log lines from app on servers (use --help to show options)",
+          "name": "logs",
+          "options": [
+            {
+              "description": "Show lines since timestamp\\\" (e.g. 2013-01-02T13:23:37Z) or relative (e.g. 42m for 42 minutes)",
+              "name": [
+                "--since",
+                "-s"
+              ]
+            },
+            {
+              "description": "Number of lines to show from each server",
+              "name": [
+                "--lines",
+                "-n"
+              ]
+            },
+            {
+              "description": "Show lines with grep match only (use this to fetch specific requests by id)",
+              "name": [
+                "--grep",
+                "-g"
+              ]
+            },
+            {
+              "description": "Follow log on primary server (or specific host set by --hosts)",
+              "name": [
+                "--follow",
+                "-f"
+              ]
+            }
+          ]
+        },
+        {
+          "description": "Remove app containers and images from servers",
+          "name": "remove"
+        },
+        {
+          "args": {
+            "name": "VERSION"
+          },
+          "description": "Remove app container with given version from servers",
+          "hidden": true,
+          "name": "remove_container"
+        },
+        {
+          "description": "Remove all app containers from servers",
+          "hidden": true,
+          "name": "remove_containers"
+        },
+        {
+          "description": "Remove all app images from servers",
+          "hidden": true,
+          "name": "remove_images"
+        },
+        {
+          "description": "Show app version currently running on servers",
+          "name": "version"
+        }
+      ]
+    },
+    {
+      "description": "Build application image",
+      "icon": "🏗️",
+      "name": "build",
+      "subcommands": [
+        {
+          "description": "Build app and push app image to registry then pull image on servers",
+          "name": "deliver"
+        },
+        {
+          "description": "Build and push app image to registry",
+          "name": "push"
+        },
+        {
+          "description": "Pull app image from registry onto servers",
+          "name": "pull"
+        },
+        {
+          "description": "Create a build setup",
+          "name": "create"
+        },
+        {
+          "description": "Remove build setup",
+          "name": "remove"
+        },
+        {
+          "description": "Show build setup",
+          "name": "details"
+        }
+      ]
+    },
+    {
+      "description": "Healthcheck application",
+      "name": "healthcheck",
+      "subcommands": [
+        {
+          "description": "Health check current app version",
+          "name": "perform"
+        }
+      ]
+    },
+    {
+      "description": "Manage the deploy lock",
+      "icon": "🔒",
+      "name": "lock",
+      "subcommands": [
+        {
+          "description": "Report lock status",
+          "name": "status"
+        },
+        {
+          "description": "Acquire the deploy lock",
+          "name": "acquire",
+          "options": [
+            {
+              "args": {
+                "description": "Message to set on the lock",
+                "name": "message"
+              },
+              "name": [
+                "message",
+                "m"
+              ]
+            }
+          ]
+        },
+        {
+          "description": "Release the deploy lock",
+          "name": "release"
+        }
+      ]
+    },
+    {
+      "description": "Prune old application images and containers",
+      "icon": "🧹",
+      "name": "prune",
+      "subcommands": [
+        {
+          "description": "Prune unused images and stopped containers",
+          "name": "all"
+        },
+        {
+          "description": "Prune unused images",
+          "name": "images"
+        },
+        {
+          "description": "Prune stopped containers, except last 5",
+          "name": "containers"
+        }
+      ]
+    },
+    {
+      "description": "Login and -out of the image registry",
+      "icon": "📦",
+      "name": "registry",
+      "subcommands": [
+        {
+          "description": "Login to registry locally and remotely",
+          "name": "login"
+        },
+        {
+          "description": "Log out of registry remotely",
+          "name": "logout"
+        }
+      ]
+    },
+    {
+      "description": "Bootstrap servers with curl and Docker",
+      "name": "server",
+      "subcommands": [
+        {
+          "description": "Set up Docker to run Kamal apps",
+          "name": "bootstrap"
+        }
+      ]
+    },
+    {
+      "description": "Manage Traefik load balancer",
+      "icon": "🚦",
+      "name": "traefik",
+      "subcommands": [
+        {
+          "description": "Boot Traefik on servers",
+          "name": "boot"
+        },
+        {
+          "description": "Reboot Traefik on servers (stop container, remove container, start new container)",
+          "name": "reboot",
+          "options": [
+            {
+              "description": "Reboot traefik on hosts in sequence, rather than in parallel",
+              "name": "--rolling"
+            }
+          ]
+        },
+        {
+          "description": "Start existing Traefik container on servers",
+          "name": "start"
+        },
+        {
+          "description": "Stop existing Traefik container on servers",
+          "name": "stop"
+        },
+        {
+          "description": "Restart existing Traefik container on servers",
+          "name": "restart"
+        },
+        {
+          "description": "Show details about Traefik container from servers",
+          "name": "details"
+        },
+        {
+          "description": "Show log lines from Traefik on servers",
+          "name": "logs",
+          "options": [
+            {
+              "description": "Show lines since timestamp\\\" (e.g. 2013-01-02T13:23:37Z) or relative (e.g. 42m for 42 minutes)",
+              "name": [
+                "--since",
+                "-s"
+              ]
+            },
+            {
+              "description": "Number of lines to show from each server",
+              "name": [
+                "--lines",
+                "-n"
+              ]
+            },
+            {
+              "description": "Show lines with grep match only (use this to fetch specific requests by id)",
+              "name": [
+                "--grep",
+                "-g"
+              ]
+            },
+            {
+              "description": "Follow log on primary server (or specific host set by --hosts)",
+              "name": [
+                "--follow",
+                "-f"
+              ]
+            }
+          ]
+        },
+        {
+          "description": "Remove Traefik container and image from servers",
+          "name": "remove"
+        },
+        {
+          "description": "Remove Traefik container from servers",
+          "hidden": true,
+          "name": "remove_container"
+        },
+        {
+          "description": "Remove Traefik image from servers",
+          "hidden": true,
+          "name": "remove_image"
+        },
+        {
+          "args": {
+            "name": "subcommand",
+            "suggestions": [
+              {
+                "name": "boot"
+              },
+              {
+                "name": "details"
+              },
+              {
+                "name": "help"
+              },
+              {
+                "name": "logs"
+              },
+              {
+                "name": "reboot"
+              },
+              {
+                "name": "remove"
+              },
+              {
+                "name": "restart"
+              },
+              {
+                "name": "start"
+              },
+              {
+                "name": "stop"
+              }
+            ]
+          },
+          "description": "Describe subcommands or one specific subcommand",
+          "name": "help"
+        }
+      ]
+    }
+  ]
+}

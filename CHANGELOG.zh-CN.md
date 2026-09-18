@@ -2,12 +2,13 @@
 
 ## v3.0.0-beta.14
 
+- 功能：桌面零运行时 JS——补全 hook 只走 typed IR 或具名原生适配器；QuickJS、`rquickjs` 与 `hooks/` 已删除
 - 修复：生成器的 `splitOn: ""` 不再按行切分脚本输出；切分出的每一段保留原文，不再逐段去空白
 - 修复：动态的 `alias` / `loadSpec` / `generateSpec` hook 使用实时的 `autocomplete.scriptTimeout` 设置，不再固定 5 秒
+- 修复：hook 里的循环在执行过程中就会被脚本预算打断，不必等到下一条命令；超出预算的 hook 记为超时而不是执行失败
 - 修复：`specs-ir` 目录缺失时直接报错，不再静默变成空的 spec 注册表；安装后引擎会把 spec 与 hook 模块一起重新绑定，进行中的请求不会读到混合的两代数据
 - 构建：打包的 spec 源码与编译出的 IR 作为一对经过校验的整体发布；`.app` 只从这对数据的锁定快照组装，并原子替换到位
-- 构建：抽取出的 JS hook 以保留闭包的模块加 SHA-256 清单的形式打包，文本相同的 hook 各自保留闭包；运行时拒绝被篡改或不匹配的模块
-- 构建：纯原生迁移的基础工作——逐 hook 清单（3692 个 hook、594 种不同内容）、沙箱内的参考探针、以及带测试专用 Rust 求值器的类型化 `trigger` IR；应用目前仍通过 QuickJS 运行 hook
+- 构建：补全 hook 编译进 `typed-hooks.json`（typed IR + 适配器）；残留的 `hooks/` / `source-modules/` 会让编译、审计和 CI 发布门槛失败
 
 ## v3.0.0-beta.13
 

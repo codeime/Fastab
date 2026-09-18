@@ -388,7 +388,6 @@ pub(crate) fn generate_for_arg_with_history(
                     history_values,
                     &gen_query,
                     &normalized_search_term,
-                    search_term,
                     cwd,
                     fuzzy,
                     timeout,
@@ -588,9 +587,7 @@ fn should_trigger(
             let Some(hook) = trigger.js_trigger.as_deref() else {
                 return true;
             };
-            crate::js_host::current()
-                .and_then(|(host, _)| host.trigger(hook, search_term, previous))
-                .unwrap_or(true)
+            crate::hook_backend::dispatch_trigger(hook, search_term, previous).unwrap_or(true)
         },
         "string" => {
             let needle = trigger_string(trigger);
@@ -671,6 +668,10 @@ fn generated_row_matches_query(suggestion: &Suggestion, query: &str, fuzzy: bool
             .is_some_and(|basename| matches_query(basename, query, fuzzy))
 }
 
+fn hook_session_cwd() -> Option<String> {
+    crate::hook_backend::current_cwd()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn generate_from_generator(
     arg: &ArgSpec,
@@ -679,7 +680,6 @@ fn generate_from_generator(
     history_values: &[String],
     query: &str,
     normalized_search_term: &str,
-    raw_search_term: &str,
     cwd: &str,
     fuzzy: bool,
     timeout: Duration,
@@ -721,15 +721,15 @@ fn generate_from_generator(
     let snapshot = arg_snapshot_for_generator(arg, generator);
     // Fig's script and custom generators both bail on `haveContextForGenerator`
     // — no cwd, no run — so an empty cwd yields no rows from either.
-    if let Some((host, scope_cwd)) = crate::js_host::current() {
-        let cwd = if cwd.is_empty() { scope_cwd } else { cwd };
+    // A live session comes from `hook_backend::enter_context` (Engine::complete).
+    if let Some(session_cwd) = hook_session_cwd() {
+        let cwd = if cwd.is_empty() { session_cwd } else { cwd.to_string() };
         out.extend(run_js_generators(
-            host,
             &snapshot,
             tokens,
             query,
-            raw_search_term,
-            cwd,
+            normalized_search_term,
+            &cwd,
             fuzzy,
             timeout,
         ));
@@ -755,7 +755,7 @@ fn generate_from_generator(
         .any(|template| matches!(template, Template::Filepaths | Template::Folders));
     let mut template_rows = Vec::new();
     if lists_paths {
-        let environment = crate::js_host::current_shell().environment_variables.as_slice();
+        let environment = crate::hook_backend::current_shell().environment_variables;
         let filter = filegen::PathFilter {
             folders_only,
             files_only: generator.show_folders.as_deref() == Some("never"),
@@ -765,7 +765,7 @@ fn generate_from_generator(
             file_priority: generator.file_priority,
             folder_priority: generator.folder_priority,
             root_directory: generator.root_directory.as_deref(),
-            environment,
+            environment: environment.as_slice(),
             matches: generator.matches.as_deref(),
             matches_flags: generator.matches_flags.as_deref(),
         };
@@ -783,8 +783,7 @@ fn generate_from_generator(
         template_rows.extend(history_template_suggestions(history_values, query, fuzzy));
     }
     if let Some(hook) = generator.js_filter_template_suggestions.as_deref()
-        && let Some((host, _)) = crate::js_host::current()
-        && let Some(filtered) = host.filter_template_suggestions(hook, &template_rows)
+        && let Some(filtered) = crate::hook_backend::dispatch_filter_template_suggestions(hook, &template_rows, tokens)
     {
         template_rows = filtered;
     }
@@ -850,11 +849,10 @@ fn dedup_suggestions(suggestions: &mut Vec<Suggestion>) {
 
 #[allow(clippy::too_many_arguments)]
 fn run_js_generators(
-    host: &crate::js_host::JsHost,
     arg: &ArgSpec,
     tokens: &[String],
     query: &str,
-    raw_search_term: &str,
+    search_term: &str,
     cwd: &str,
     fuzzy: bool,
     timeout: Duration,
@@ -865,7 +863,7 @@ fn run_js_generators(
     }
     let mut out = Vec::new();
     if has_script {
-        let raw = run_script_or_post_process(host, arg, tokens, cwd, timeout);
+        let raw = run_script_or_post_process(arg, tokens, cwd, timeout);
         out.extend(
             raw.into_iter()
                 .filter(|suggestion| matches_query(&suggestion.name, query, fuzzy))
@@ -873,9 +871,9 @@ fn run_js_generators(
         );
     }
     if let Some(hook_id) = arg.js_custom.as_deref() {
-        let fallback = crate::js_host::custom_cache_fallback(tokens);
-        let custom = crate::js_host::cached_suggestions(host, arg, cwd, "custom", &fallback, || {
-            host.custom(hook_id, tokens, cwd, raw_search_term, timeout, arg.meta.is_dangerous)
+        let fallback = crate::hook_cache::custom_cache_fallback(tokens);
+        let custom = with_suggestion_cache(arg, cwd, "custom", &fallback, || {
+            crate::hook_backend::dispatch_custom(hook_id, tokens, cwd, search_term, timeout, arg.meta.is_dangerous)
                 .unwrap_or_default()
         });
         out.extend(
@@ -894,15 +892,9 @@ fn run_js_generators(
 /// `postProcess` runs against the current tokens, else there are no rows.
 /// Caching stdout rather than rows is what lets a `postProcess` that reads
 /// `tokens` see the current buffer on a cache hit, as it does in Fig.
-fn run_script_or_post_process(
-    host: &crate::js_host::JsHost,
-    arg: &ArgSpec,
-    tokens: &[String],
-    cwd: &str,
-    timeout: Duration,
-) -> Vec<Suggestion> {
+fn run_script_or_post_process(arg: &ArgSpec, tokens: &[String], cwd: &str, timeout: Duration) -> Vec<Suggestion> {
     let (command, args, timeout) = if let Some(hook_id) = arg.js_script.as_deref() {
-        let Some(script) = host.script_command(hook_id, tokens) else {
+        let Some(script) = crate::hook_backend::dispatch_script_command(hook_id, tokens) else {
             return Vec::new();
         };
         let timeout = Duration::from_millis(effective_script_timeout_ms(
@@ -919,32 +911,42 @@ fn run_script_or_post_process(
     if command.is_empty() {
         return Vec::new();
     }
-    let fallback = crate::js_host::script_cache_fallback(&command, &args, cwd);
-    let stdout = crate::js_host::cached_script_output(host, arg, cwd, &fallback, || {
-        process::execute(&command, &args, cwd, timeout)
-    });
-    shape_script_output(host, arg, tokens, &stdout)
+    let fallback = crate::hook_cache::script_cache_fallback(&command, &args, cwd);
+    let stdout = with_script_cache(arg, cwd, &fallback, || process::execute(&command, &args, cwd, timeout));
+    let mut script = Vec::with_capacity(args.len() + 1);
+    script.push(command);
+    script.extend(args);
+    shape_script_output(arg, tokens, &script, &stdout)
 }
 
 /// Fig's `getScriptSuggestions` branches on `splitOn` first and only falls
 /// back to `postProcess`. Specs that declare both rely on that order, so
 /// running the hook here would feed it output it never expects. With
 /// neither, the result stays `[]`.
-fn shape_script_output(
-    host: &crate::js_host::JsHost,
-    arg: &ArgSpec,
-    tokens: &[String],
-    stdout: &str,
-) -> Vec<Suggestion> {
+fn shape_script_output(arg: &ArgSpec, tokens: &[String], script: &[String], stdout: &str) -> Vec<Suggestion> {
     // `executeCommandTimeout` hands both branches `cleanOutput(stdout)`.
-    let stdout = crate::js_host::clean_output(stdout);
+    let stdout = crate::hook_backend::clean_output(stdout);
     if let Some(separator) = arg.split_on.as_deref().filter(|value| !value.is_empty()) {
         return all_split(&stdout, separator);
     }
     if let Some(hook_id) = arg.js_post_process.as_deref() {
-        return host.post_process(hook_id, &stdout, tokens).unwrap_or_default();
+        return crate::hook_backend::dispatch_post_process(hook_id, &stdout, tokens, script).unwrap_or_default();
     }
     Vec::new()
+}
+
+fn with_suggestion_cache(
+    arg: &ArgSpec,
+    cwd: &str,
+    kind: &str,
+    fallback: &str,
+    run: impl FnOnce() -> Vec<Suggestion>,
+) -> Vec<Suggestion> {
+    crate::hook_cache::cached_suggestions(arg, cwd, kind, fallback, run)
+}
+
+fn with_script_cache(arg: &ArgSpec, cwd: &str, fallback: &str, run: impl FnOnce() -> String) -> String {
+    crate::hook_cache::cached_script_output(arg, cwd, fallback, run)
 }
 
 /// Host-less fallback for callers outside a completion attempt (the
@@ -1387,8 +1389,75 @@ fn read_package_json(cwd: &str) -> Option<Arc<serde_json::Value>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hook_backend::{self, NativeHooks};
+    use crate::hook_types::ShellContext;
     use crate::ir::{ArgSpec, OptionSpec, Spec, SuggestionMeta, SuggestionSeed, Template};
+    use serde_json::json;
     use std::fs;
+    use std::sync::Arc;
+
+    fn with_session<R>(cwd: &str, f: impl FnOnce() -> R) -> R {
+        let cache = crate::hook_cache::HookCache::new();
+        let _bound = cache.bind();
+        hook_backend::enter_context(cwd, &ShellContext::default(), f)
+    }
+
+    fn with_native<R>(native: NativeHooks, cwd: &str, f: impl FnOnce() -> R) -> R {
+        let cache = crate::hook_cache::HookCache::new();
+        let _hooks = hook_backend::bind_native(Arc::new(native));
+        let _bound = cache.bind();
+        hook_backend::enter_context(cwd, &ShellContext::default(), f)
+    }
+
+    fn suggestion_name(name: &str) -> serde_json::Value {
+        json!({
+            "op": "object",
+            "fields": [{"key": "name", "value": {"op": "string", "value": name}}]
+        })
+    }
+
+    fn constant_suggestions(names: &[&str]) -> serde_json::Value {
+        json!({
+            "op": "array",
+            "items": names.iter().copied().map(suggestion_name).collect::<Vec<_>>()
+        })
+    }
+
+    fn split_lines_prefix(prefix: &str) -> serde_json::Value {
+        json!({
+            "op": "array-map",
+            "value": {
+                "op": "array-filter",
+                "value": {
+                    "op": "string-split",
+                    "value": {"op": "arg", "index": 0},
+                    "separator": {"op": "string", "value": "\n"}
+                },
+                "fn": {
+                    "op": "lambda",
+                    "params": ["s"],
+                    "body": {"op": "truthy", "value": {"op": "var", "name": "s"}}
+                }
+            },
+            "fn": {
+                "op": "lambda",
+                "params": ["s"],
+                "body": {
+                    "op": "object",
+                    "fields": [{
+                        "key": "name",
+                        "value": {
+                            "op": "string-concat",
+                            "parts": [
+                                {"op": "string", "value": prefix},
+                                {"op": "var", "name": "s"}
+                            ]
+                        }
+                    }]
+                }
+            }
+        })
+    }
 
     #[test]
     fn script_generator_filters_prefix() {
@@ -2197,82 +2266,60 @@ mod tests {
     }
 
     #[test]
-    fn docker_exec_post_process_parses_json_lines() {
-        let dir = tempfile::tempdir().unwrap();
-        let hooks = dir.path().join("hooks");
-        fs::create_dir(&hooks).unwrap();
-        fs::write(
-            hooks.join("docker_postProcess_6.js"),
-            "export default t=>t.split(`\n`).map(n=>{try{let i=JSON.parse(n);return{name:i.Names,displayName:`${i.Names} (${i.Image})`,icon:\"fig://icon?type=docker\"}}catch(i){console.error(i)}});\n",
-        )
-        .unwrap();
-        let host = crate::js_host::JsHost::new(hooks);
-        let stdout = "{\"Names\":\"web\",\"Image\":\"nginx\"}\n{\"Names\":\"db\",\"Image\":\"postgres\"}\n";
-        let rows = host
-            .post_process("docker#postProcess#6", stdout, &["docker".into(), "exec".into()])
-            .expect("rows");
-        let names: Vec<_> = rows.iter().map(|row| row.name.as_str()).collect();
-        assert_eq!(names, vec!["web", "db"]);
-        assert_eq!(rows[0].display_name.as_deref(), Some("web (nginx)"));
-    }
-
-    #[test]
-    fn js_post_process_maps_stdout_and_skips_empty_cwd() {
-        let dir = tempfile::tempdir().unwrap();
-        let hooks = dir.path().join("hooks");
-        fs::create_dir(&hooks).unwrap();
-        fs::write(
-            hooks.join("demo_postProcess_0.js"),
-            "export default function(out) { return out.split('\\n').filter(Boolean).map((line) => ({ name: 'x-' + line })); }\n",
-        )
-        .unwrap();
-        let host = crate::js_host::JsHost::new(hooks);
+    fn post_process_maps_stdout_and_skips_empty_cwd() {
+        let native = hook_backend::test_native_hooks(vec![hook_backend::test_typed_entry(
+            "demo#postProcess#0",
+            "postProcess",
+            split_lines_prefix("x-"),
+        )]);
         let arg = ArgSpec {
             script: vec!["printf".into(), "alpha\nbeta\n".into()],
             js_post_process: Some("demo#postProcess#0".into()),
             ..ArgSpec::default()
         };
-        let rows = host.enter("/", || generate_for_arg(&arg, &["demo".into()], "", "/", false));
+        let rows = with_native(native, "/", || generate_for_arg(&arg, &["demo".into()], "", "/", false));
         let names: Vec<_> = rows.iter().map(|row| row.name.as_str()).collect();
         assert!(names.contains(&"x-alpha"), "{names:?}");
         assert!(names.contains(&"x-beta"), "{names:?}");
 
-        let empty = host.enter("", || generate_for_arg(&arg, &["demo".into()], "", "", false));
+        let native = hook_backend::test_native_hooks(vec![hook_backend::test_typed_entry(
+            "demo#postProcess#0",
+            "postProcess",
+            split_lines_prefix("x-"),
+        )]);
+        let empty = with_native(native, "", || generate_for_arg(&arg, &["demo".into()], "", "", false));
         assert!(empty.is_empty(), "{empty:?}");
     }
 
     #[test]
     fn split_on_wins_over_post_process_like_the_webview() {
-        // Fig's `getScriptSuggestions` is `if (splitOn) … else if (postProcess)`.
-        // A spec that declares both never sees its hook run.
-        let dir = tempfile::tempdir().unwrap();
-        let hooks = dir.path().join("hooks");
-        fs::create_dir(&hooks).unwrap();
-        fs::write(
-            hooks.join("demo_postProcess_0.js"),
-            "export default function() { return [{ name: 'from-hook' }]; }\n",
-        )
-        .unwrap();
-        let host = crate::js_host::JsHost::new(hooks);
+        let native = hook_backend::test_native_hooks(vec![hook_backend::test_typed_entry(
+            "demo#postProcess#0",
+            "postProcess",
+            constant_suggestions(&["from-hook"]),
+        )]);
         let arg = ArgSpec {
             script: vec!["printf".into(), "alpha,beta".into()],
             split_on: Some(",".into()),
             js_post_process: Some("demo#postProcess#0".into()),
             ..ArgSpec::default()
         };
-        let rows = host.enter("/", || generate_for_arg(&arg, &["demo".into()], "", "/", false));
+        let rows = with_native(native, "/", || generate_for_arg(&arg, &["demo".into()], "", "/", false));
         let names: Vec<_> = rows.iter().map(|row| row.name.as_str()).collect();
         assert_eq!(names, vec!["alpha", "beta"]);
 
-        // An empty JS string is falsy, so this form must take postProcess
-        // instead of splitting output into lines.
+        let native = hook_backend::test_native_hooks(vec![hook_backend::test_typed_entry(
+            "demo#postProcess#0",
+            "postProcess",
+            constant_suggestions(&["from-hook"]),
+        )]);
         let empty_split = ArgSpec {
             split_on: Some(String::new()),
-            ..arg
+            script: vec!["printf".into(), "alpha,beta".into()],
+            js_post_process: Some("demo#postProcess#0".into()),
+            ..ArgSpec::default()
         };
-        // A different command slot avoids reusing the generator-session
-        // result from the preceding request.
-        let rows = host.enter("/", || {
+        let rows = with_native(native, "/", || {
             generate_for_arg(&empty_split, &["demo-empty".into()], "", "/", false)
         });
         let names: Vec<_> = rows.iter().map(|row| row.name.as_str()).collect();
@@ -2281,59 +2328,57 @@ mod tests {
 
     #[test]
     fn empty_split_on_without_post_process_has_no_script_rows() {
-        // Both the desktop and the host-less engine must treat the empty
-        // string as JS falsy. With no postProcess there is no row shape.
         let script = vec!["printf".into(), "alpha\nbeta\n".into()];
         let rows = run_script(&script, "", "/", false, Duration::from_secs(1), Some(""));
         assert!(rows.is_empty(), "{rows:?}");
 
-        let dir = tempfile::tempdir().unwrap();
-        let host = crate::js_host::JsHost::new(dir.path().join("hooks"));
         let arg = ArgSpec {
             script,
             split_on: Some(String::new()),
             ..ArgSpec::default()
         };
-        let rows = host.enter("/", || {
+        let rows = with_session("/", || {
             generate_for_arg(&arg, &["empty-split-no-hook".into()], "", "/", false)
         });
         assert!(rows.is_empty(), "{rows:?}");
     }
 
     #[test]
-    fn js_post_process_errors_become_empty() {
-        let dir = tempfile::tempdir().unwrap();
-        let hooks = dir.path().join("hooks");
-        fs::create_dir(&hooks).unwrap();
-        fs::write(
-            hooks.join("demo_postProcess_0.js"),
-            "export default function() { throw new Error('boom'); }\n",
-        )
-        .unwrap();
-        let host = crate::js_host::JsHost::new(hooks);
+    fn post_process_errors_become_empty() {
+        let native = hook_backend::test_native_hooks(vec![hook_backend::test_typed_entry(
+            "demo#postProcess#0",
+            "postProcess",
+            json!({"op": "throw", "class": "Error", "message": {"op": "string", "value": "boom"}}),
+        )]);
         let arg = ArgSpec {
             script: vec!["printf".into(), "alpha\n".into()],
             js_post_process: Some("demo#postProcess#0".into()),
             ..ArgSpec::default()
         };
-        let rows = host.enter("/", || generate_for_arg(&arg, &["demo".into()], "", "/", false));
+        let rows = with_native(native, "/", || generate_for_arg(&arg, &["demo".into()], "", "/", false));
         assert!(rows.is_empty(), "{rows:?}");
     }
 
     #[test]
     fn custom_context_search_term_is_the_full_parser_token() {
-        // WebView `getCustomSuggestions` puts parserResult.searchTerm (`src/foo`)
-        // on context.searchTerm. getQueryTerm is only for filtering names.
-        let dir = tempfile::tempdir().unwrap();
-        let hooks = dir.path().join("hooks");
-        fs::create_dir(&hooks).unwrap();
-        fs::write(
-            hooks.join("demo_custom_0.js"),
-            "export default function(tokens, exec, ctx) {\n  return [\n    { name: 'foo', description: ctx.searchTerm },\n    { name: 'bar' }\n  ];\n}\n",
-        )
-        .unwrap();
-        let host = crate::js_host::JsHost::new(hooks);
-        let cwd = dir.path().display().to_string();
+        let native = hook_backend::test_native_hooks(vec![hook_backend::test_typed_entry(
+            "demo#custom#0",
+            "custom",
+            json!({
+                "op": "array",
+                "items": [
+                    {
+                        "op": "object",
+                        "fields": [
+                            {"key": "name", "value": {"op": "string", "value": "foo"}},
+                            {"key": "description", "value": {"op": "ctx-search-term"}}
+                        ]
+                    },
+                    {"op": "object", "fields": [{"key": "name", "value": {"op": "string", "value": "bar"}}]}
+                ]
+            }),
+        )]);
+        let cwd = tempfile::tempdir().unwrap().path().display().to_string();
         let arg = ArgSpec {
             js_custom: Some("demo#custom#0".into()),
             meta: SuggestionMeta {
@@ -2342,7 +2387,7 @@ mod tests {
             },
             ..ArgSpec::default()
         };
-        let rows = host.enter(&cwd, || {
+        let rows = with_native(native, &cwd, || {
             generate_for_arg_with_search_term(&arg, &["demo".into(), "src/foo".into()], "foo", "'src/foo", &cwd, false)
         });
         assert_eq!(
@@ -2354,23 +2399,25 @@ mod tests {
 
     #[test]
     fn custom_generator_receives_parser_inner_text_without_second_unescape() {
-        let dir = tempfile::tempdir().unwrap();
-        let hooks = dir.path().join("hooks");
-        fs::create_dir(&hooks).unwrap();
-        fs::write(
-            hooks.join("demo_custom_0.js"),
-            "export default function(tokens, exec, ctx) {\n  return [{ name: ctx.searchTerm }];\n}\n",
-        )
-        .unwrap();
-        let host = crate::js_host::JsHost::new(hooks);
-        let cwd = dir.path().display().to_string();
+        let native = hook_backend::test_native_hooks(vec![hook_backend::test_typed_entry(
+            "demo#custom#0",
+            "custom",
+            json!({
+                "op": "array",
+                "items": [{
+                    "op": "object",
+                    "fields": [{"key": "name", "value": {"op": "ctx-search-term"}}]
+                }]
+            }),
+        )]);
+        let cwd = tempfile::tempdir().unwrap().path().display().to_string();
         let arg = ArgSpec {
             js_custom: Some("demo#custom#0".into()),
             ..ArgSpec::default()
         };
         let raw = r"$'foo\'bar";
         let normalized = r"foo\'bar";
-        let rows = host.enter(&cwd, || {
+        let rows = with_native(native, &cwd, || {
             generate_for_arg_with_search_term(&arg, &["demo".into(), normalized.into()], normalized, raw, &cwd, false)
         });
         assert_eq!(
@@ -2380,49 +2427,77 @@ mod tests {
     }
 
     #[test]
-    fn js_custom_and_cache_avoid_repeat_spawns() {
+    fn custom_and_cache_avoid_repeat_spawns() {
         let dir = tempfile::tempdir().unwrap();
-        let hooks = dir.path().join("hooks");
-        fs::create_dir(&hooks).unwrap();
-        let count = dir.path().join("count");
-        fs::write(
-            hooks.join("demo_custom_0.js"),
-            "export default async function(tokens, exec, ctx) {\n  await exec({ command: 'sh', args: ['-c', 'echo x >> \"' + ctx.currentWorkingDirectory + '/count\"'] });\n  return [{ name: 'from-custom' }];\n}\n",
-        )
-        .unwrap();
-        let host = crate::js_host::JsHost::new(hooks);
         let cwd = dir.path().display().to_string();
+        let native = hook_backend::test_native_hooks(vec![hook_backend::test_typed_entry(
+            "demo#custom#0",
+            "custom",
+            json!({
+                "op": "seq",
+                "items": [
+                    {
+                        "op": "exec",
+                        "command": {"op": "string", "value": "sh"},
+                        "args": {
+                            "op": "array",
+                            "items": [
+                                {"op": "string", "value": "-c"},
+                                {
+                                    "op": "string-concat",
+                                    "parts": [
+                                        {"op": "string", "value": "echo x >> \""},
+                                        {"op": "ctx-cwd"},
+                                        {"op": "string", "value": "/count\""}
+                                    ]
+                                }
+                            ]
+                        },
+                        "cwd": {"op": "null"},
+                        "env": {"op": "null"},
+                        "timeout": {"op": "null"}
+                    },
+                    {
+                        "op": "array",
+                        "items": [{
+                            "op": "object",
+                            "fields": [{"key": "name", "value": {"op": "string", "value": "from-custom"}}]
+                        }]
+                    }
+                ]
+            }),
+        )]);
         let arg = ArgSpec {
             js_custom: Some("demo#custom#0".into()),
             cache_key: Some("custom".into()),
             cache_ttl_ms: Some(60_000),
             ..ArgSpec::default()
         };
-        let first = host.enter(&cwd, || generate_for_arg(&arg, &["demo".into()], "", &cwd, false));
-        let second = host.enter(&cwd, || generate_for_arg(&arg, &["demo".into()], "", &cwd, false));
+        let first = with_native(native, &cwd, || {
+            let first = generate_for_arg(&arg, &["demo".into()], "", &cwd, false);
+            let second = generate_for_arg(&arg, &["demo".into()], "", &cwd, false);
+            (first, second)
+        });
         assert_eq!(
-            first.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
+            first.0.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
             vec!["from-custom"]
         );
         assert_eq!(
-            second.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
+            first.1.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
             vec!["from-custom"]
         );
-        let written = fs::read_to_string(&count).unwrap_or_default();
+        let written = fs::read_to_string(dir.path().join("count")).unwrap_or_default();
         assert_eq!(written.matches('x').count(), 1, "{written}");
     }
 
     #[test]
     fn cached_script_rows_are_refiltered_when_the_query_changes() {
         let dir = tempfile::tempdir().unwrap();
-        let hooks = dir.path().join("hooks");
-        fs::create_dir(&hooks).unwrap();
-        fs::write(
-            hooks.join("demo_postProcess_0.js"),
-            "export default function(out) { return out.split('\\n').filter(Boolean).map((line) => ({ name: line })); }\n",
-        )
-        .unwrap();
-        let host = crate::js_host::JsHost::new(hooks);
+        let native = hook_backend::test_native_hooks(vec![hook_backend::test_typed_entry(
+            "demo#postProcess#0",
+            "postProcess",
+            split_lines_prefix(""),
+        )]);
         let count = dir.path().join("count");
         let script = format!("printf 'web\\napi\\nwest\\n'; echo x >> '{}'", count.display());
         let arg = ArgSpec {
@@ -2433,11 +2508,10 @@ mod tests {
             ..ArgSpec::default()
         };
         let cwd = dir.path().display().to_string();
-        let first = host.enter(&cwd, || {
-            generate_for_arg(&arg, &["demo".into(), "w".into()], "w", &cwd, false)
-        });
-        let second = host.enter(&cwd, || {
-            generate_for_arg(&arg, &["demo".into(), "we".into()], "we", &cwd, false)
+        let (first, second) = with_native(native, &cwd, || {
+            let first = generate_for_arg(&arg, &["demo".into(), "w".into()], "w", &cwd, false);
+            let second = generate_for_arg(&arg, &["demo".into(), "we".into()], "we", &cwd, false);
+            (first, second)
         });
         assert_eq!(
             first.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
@@ -2463,12 +2537,10 @@ mod tests {
             ..ArgSpec::default()
         };
         let cwd = dir.path().display().to_string();
-        let host = crate::js_host::JsHost::new(dir.path().join("hooks"));
-        let first = host.enter(&cwd, || {
-            generate_for_arg(&arg, &["demo".into(), "w".into()], "w", &cwd, false)
-        });
-        let second = host.enter(&cwd, || {
-            generate_for_arg(&arg, &["demo".into(), "we".into()], "we", &cwd, false)
+        let (first, second) = with_session(&cwd, || {
+            let first = generate_for_arg(&arg, &["demo".into(), "w".into()], "w", &cwd, false);
+            let second = generate_for_arg(&arg, &["demo".into(), "we".into()], "we", &cwd, false);
+            (first, second)
         });
         assert!(first.iter().any(|row| row.name == "web"), "{first:?}");
         assert!(second.iter().any(|row| row.name == "web"), "{second:?}");
@@ -2477,25 +2549,25 @@ mod tests {
     }
 
     #[test]
-    fn js_script_generators_without_a_cache_key_do_not_share_an_entry() {
-        // Fig keys a script generator's cache on the resolved
-        // `executeCommand` input. Every `kubectl` resource generator is a
-        // function-form `script` with `cache: { ttl }` and no `cacheKey`, so
-        // keying on the (empty) static script collided them all.
-        let dir = tempfile::tempdir().unwrap();
-        let hooks = dir.path().join("hooks");
-        fs::create_dir(&hooks).unwrap();
-        fs::write(
-            hooks.join("kdemo_script_0.js"),
-            "export default function() { return ['printf', 'pod-alpha\\npod-beta\\n']; }\n",
-        )
-        .unwrap();
-        fs::write(
-            hooks.join("kdemo_script_1.js"),
-            "export default function() { return ['printf', 'node-1\\nnode-2\\n']; }\n",
-        )
-        .unwrap();
-        let host = crate::js_host::JsHost::new(hooks);
+    fn script_generators_without_a_cache_key_do_not_share_an_entry() {
+        let native = hook_backend::test_native_hooks(vec![
+            hook_backend::test_typed_entry(
+                "kdemo#script#0",
+                "script",
+                json!({"op": "array", "items": [
+                    {"op": "string", "value": "printf"},
+                    {"op": "string", "value": "pod-alpha\npod-beta\n"}
+                ]}),
+            ),
+            hook_backend::test_typed_entry(
+                "kdemo#script#1",
+                "script",
+                json!({"op": "array", "items": [
+                    {"op": "string", "value": "printf"},
+                    {"op": "string", "value": "node-1\nnode-2\n"}
+                ]}),
+            ),
+        ]);
         let pods = ArgSpec {
             js_script: Some("kdemo#script#0".into()),
             split_on: Some("\n".into()),
@@ -2507,12 +2579,12 @@ mod tests {
             js_script: Some("kdemo#script#1".into()),
             ..pods.clone()
         };
+        let dir = tempfile::tempdir().unwrap();
         let cwd = dir.path().display().to_string();
-        let first = host.enter(&cwd, || {
-            generate_for_arg(&pods, &["kdemo".into(), "pods".into()], "", &cwd, false)
-        });
-        let second = host.enter(&cwd, || {
-            generate_for_arg(&nodes, &["kdemo".into(), "nodes".into()], "", &cwd, false)
+        let (first, second) = with_native(native, &cwd, || {
+            let first = generate_for_arg(&pods, &["kdemo".into(), "pods".into()], "", &cwd, false);
+            let second = generate_for_arg(&nodes, &["kdemo".into(), "nodes".into()], "", &cwd, false);
+            (first, second)
         });
         assert_eq!(
             first.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
@@ -2526,8 +2598,6 @@ mod tests {
 
     #[test]
     fn script_cache_is_keyed_on_the_directory_even_without_cache_by_directory() {
-        // `JSON.stringify(executeCommandInput)` carries `cwd`, so the same
-        // command in another directory is a different entry in Fig.
         let dir = tempfile::tempdir().unwrap();
         let count = dir.path().join("count");
         let script = format!("pwd; echo x >> '{}'", count.display());
@@ -2541,11 +2611,13 @@ mod tests {
         let b = dir.path().join("b");
         fs::create_dir_all(&a).unwrap();
         fs::create_dir_all(&b).unwrap();
-        let host = crate::js_host::JsHost::new(dir.path().join("hooks"));
         let cwd_a = a.display().to_string();
         let cwd_b = b.display().to_string();
-        let first = host.enter(&cwd_a, || generate_for_arg(&arg, &["demo".into()], "", &cwd_a, false));
-        let second = host.enter(&cwd_b, || generate_for_arg(&arg, &["demo".into()], "", &cwd_b, false));
+        let (first, second) = with_session(&cwd_a, || {
+            let first = generate_for_arg(&arg, &["demo".into()], "", &cwd_a, false);
+            let second = generate_for_arg(&arg, &["demo".into()], "", &cwd_b, false);
+            (first, second)
+        });
         assert!(first.iter().any(|row| row.name.ends_with("/a")), "{first:?}");
         assert!(second.iter().any(|row| row.name.ends_with("/b")), "{second:?}");
         assert_eq!(fs::read_to_string(&count).unwrap_or_default().matches('x').count(), 2);
@@ -2553,18 +2625,53 @@ mod tests {
 
     #[test]
     fn cached_script_output_is_reshaped_by_post_process_with_the_current_tokens() {
-        // Fig caches `executeCommand` stdout and re-runs `postProcess(out,
-        // tokens)` on every hit, so a hook that reads the typed tokens keeps
-        // seeing the current buffer.
         let dir = tempfile::tempdir().unwrap();
-        let hooks = dir.path().join("hooks");
-        fs::create_dir(&hooks).unwrap();
-        fs::write(
-            hooks.join("demo_postProcess_0.js"),
-            "export default function(out, tokens) { return out.split('\\n').filter(Boolean).map((line) => ({ name: line + '@' + tokens[tokens.length - 1] })); }\n",
-        )
-        .unwrap();
-        let host = crate::js_host::JsHost::new(hooks);
+        let native = hook_backend::test_native_hooks(vec![hook_backend::test_typed_entry(
+            "demo#postProcess#0",
+            "postProcess",
+            json!({
+                "op": "array-map",
+                "value": {
+                    "op": "array-filter",
+                    "value": {
+                        "op": "string-split",
+                        "value": {"op": "arg", "index": 0},
+                        "separator": {"op": "string", "value": "\n"}
+                    },
+                    "fn": {
+                        "op": "lambda",
+                        "params": ["s"],
+                        "body": {"op": "truthy", "value": {"op": "var", "name": "s"}}
+                    }
+                },
+                "fn": {
+                    "op": "lambda",
+                    "params": ["s"],
+                    "body": {
+                        "op": "object",
+                        "fields": [{
+                            "key": "name",
+                            "value": {
+                                "op": "string-concat",
+                                "parts": [
+                                    {"op": "var", "name": "s"},
+                                    {"op": "string", "value": "@"},
+                                    {
+                                        "op": "array-index",
+                                        "value": {"op": "arg", "index": 1},
+                                        "index": {
+                                            "op": "sub",
+                                            "left": {"op": "length", "value": {"op": "arg", "index": 1}},
+                                            "right": {"op": "integer", "value": 1}
+                                        }
+                                    }
+                                ]
+                            }
+                        }]
+                    }
+                }
+            }),
+        )]);
         let count = dir.path().join("count");
         let script = format!("printf 'row\\n'; echo x >> '{}'", count.display());
         let arg = ArgSpec {
@@ -2574,11 +2681,10 @@ mod tests {
             ..ArgSpec::default()
         };
         let cwd = dir.path().display().to_string();
-        let first = host.enter(&cwd, || {
-            generate_for_arg(&arg, &["demo".into(), "one".into()], "", &cwd, false)
-        });
-        let second = host.enter(&cwd, || {
-            generate_for_arg(&arg, &["demo".into(), "two".into()], "", &cwd, false)
+        let (first, second) = with_native(native, &cwd, || {
+            let first = generate_for_arg(&arg, &["demo".into(), "one".into()], "", &cwd, false);
+            let second = generate_for_arg(&arg, &["demo".into(), "two".into()], "", &cwd, false);
+            (first, second)
         });
         assert_eq!(
             first.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
@@ -2593,17 +2699,12 @@ mod tests {
 
     #[test]
     fn script_without_split_on_or_post_process_yields_no_rows() {
-        // Fig `getScriptSuggestions`: `if (splitOn) … else if (postProcess) …`
-        // and otherwise `result` stays `[]`. The four `oxlint` generators
-        // shaped like this used to leak raw `oxlint --rules` lines.
-        let dir = tempfile::tempdir().unwrap();
-        let host = crate::js_host::JsHost::new(dir.path().join("hooks"));
         let arg = ArgSpec {
             script: vec!["printf".into(), "alpha\n".into()],
             ..ArgSpec::default()
         };
-        let cwd = dir.path().display().to_string();
-        let rows = host.enter(&cwd, || generate_for_arg(&arg, &["demo".into()], "", &cwd, false));
+        let cwd = tempfile::tempdir().unwrap().path().display().to_string();
+        let rows = with_session(&cwd, || generate_for_arg(&arg, &["demo".into()], "", &cwd, false));
         assert!(rows.is_empty(), "{rows:?}");
         let rows = generate_for_arg(&arg, &["demo".into()], "", &cwd, false);
         assert!(rows.is_empty(), "{rows:?}");
@@ -2611,15 +2712,12 @@ mod tests {
 
     #[test]
     fn scripts_need_a_cwd_like_every_fig_generator() {
-        // `haveContextForGenerator` gates script and custom generators alike.
-        let dir = tempfile::tempdir().unwrap();
-        let host = crate::js_host::JsHost::new(dir.path().join("hooks"));
         let arg = ArgSpec {
             script: vec!["printf".into(), "alpha\n".into()],
             split_on: Some("\n".into()),
             ..ArgSpec::default()
         };
-        let rows = host.enter("", || generate_for_arg(&arg, &["demo".into()], "", "", false));
+        let rows = with_session("", || generate_for_arg(&arg, &["demo".into()], "", "", false));
         assert!(rows.is_empty(), "{rows:?}");
         let rows = generate_for_arg(&arg, &["demo".into()], "", "", false);
         assert!(rows.is_empty(), "{rows:?}");

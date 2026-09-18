@@ -1,0 +1,23 @@
+[
+  {
+    "name": "all"
+  },
+  {
+    "name": "dirs"
+  },
+  {
+    "name": "files"
+  },
+  {
+    "name": "remove"
+  },
+  {
+    "name": "scripts"
+  },
+  {
+    "name": "symlinks"
+  },
+  {
+    "name": "encrypted"
+  }
+]

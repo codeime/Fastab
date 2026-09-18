@@ -4,6 +4,9 @@ pub const APP_BUNDLE_NAME: &str = "Easy Complete.app";
 #[cfg(target_os = "macos")]
 pub const APP_PROCESS_NAME: &str = "easy-complete";
 
+#[cfg(target_os = "linux")]
+pub const APP_PROCESS_NAME: &str = "easy-complete";
+
 #[cfg(windows)]
 pub const APP_PROCESS_NAME: &str = "easy-complete.exe";
 
@@ -72,6 +75,15 @@ pub mod macos {
     pub const BUNDLE_CONTENTS_RESOURCE_PATH: &str = "Contents/Resources";
     pub const BUNDLE_CONTENTS_HELPERS_PATH: &str = "Contents/Helpers";
     pub const BUNDLE_CONTENTS_INFO_PLIST_PATH: &str = "Contents/Info.plist";
+}
+
+/// Linux-specific constants. `directories.rs` and the leftover desktop Linux
+/// branch both import these; they were dropped during the rebrand and the
+/// crate no longer compiled on the CI ubuntu job.
+pub mod linux {
+    pub const DESKTOP_ENTRY_NAME: &str = "easy-complete.desktop";
+    pub const PACKAGE_NAME: &str = "easy-complete";
+    pub const DESKTOP_APP_WM_CLASS: &str = "Easy-complete";
 }
 
 pub mod env_var {

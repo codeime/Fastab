@@ -1,0 +1,59 @@
+{
+  "names": ["kubectl"],
+  "description": "Kubernetes control plane",
+  "subcommands": [
+    {
+      "names": ["get"],
+      "description": "Display one or many resources",
+      "icon": "fig://icon?type=kubernetes",
+      "priority": 80,
+      "args": [
+        {
+          "name": "resource",
+          "suggestions": [
+            {
+              "names": ["pods"],
+              "description": "Pod",
+              "icon": "fig://icon?type=kubernetes",
+              "priority": 80
+            },
+            {
+              "names": ["nodes"],
+              "description": "Node",
+              "icon": "fig://icon?type=kubernetes",
+              "priority": 70
+            },
+            {
+              "names": ["services"],
+              "description": "Service",
+              "icon": "fig://icon?type=kubernetes",
+              "priority": 60
+            }
+          ],
+          "generators": [
+            {
+              "script": ["kubectl", "api-resources"],
+              "jsPostProcess": "kubectl#postProcess#0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "names": ["config"],
+      "description": "Modify kubeconfig files",
+      "subcommands": [
+        {
+          "names": ["use-context"],
+          "description": "Set the current-context",
+          "args": [
+            {
+              "name": "context",
+              "jsCustom": "kubectl#custom#0"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -6,7 +6,7 @@ use std::time::Duration;
 const MAX_STDOUT: usize = 256 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
-enum RunResult {
+pub(crate) enum RunResult {
     Output(String),
     TimedOut,
     Failed,
@@ -401,6 +401,13 @@ pub(crate) mod mock {
 
     pub fn calls() -> Vec<(String, Vec<String>)> {
         CALLS.with(|cell| cell.borrow().clone())
+    }
+
+    /// Swap the rule table without clearing the recorded call log. Engine
+    /// golden cases use this between two `complete` calls so a TTL refetch
+    /// can return different stdout while `expectSecondCalls` still counts.
+    pub fn replace_rules(rules: Vec<ExecRule>) {
+        RULES.with(|cell| *cell.borrow_mut() = rules);
     }
 
     fn is_active() -> bool {

@@ -1,15 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { readFile } from "node:fs/promises";
+
 import {
+  MAX_DEPTH,
+  MAX_NODES,
+  TYPED_EXPRESSION_OPERATIONS,
+  TYPED_HOOK_CONTRACTS,
   TYPED_HOOK_IR_KIND,
   TYPED_HOOK_IR_VERSION,
+  TYPED_VALUE_TYPES,
   TypedHookCompileError,
   compileTypedExpression,
   compileTypedGetQueryTerm,
   compileTypedHook,
+  evaluateTypedHook,
+  evaluateTypedHookJson,
   validateTypedHookIr,
 } from "./typed-hook-ir.mjs";
+import { factoryStringCandidates } from "./typed-hook-inline.mjs";
+import {
+  TYPED_IR_V2_OPS_PATH,
+  buildTypedIrV2OpsGolden,
+  writeTypedIrV2OpsGolden,
+} from "./typed-ir-v2-ops.mjs";
 
 function trigger(body) {
   return compileTypedHook({ body, sourceField: "trigger" });
@@ -210,7 +225,7 @@ test("array includes is available in the generic positional compiler", () => {
   });
 });
 
-test("the closed getQueryTerm shape replaces generic integer addition", () => {
+test("getQueryTerm compiles through add and string-slice", () => {
   const result = compileTypedGetQueryTerm({
     body: `value=>value.includes("latest")?value.slice(value.indexOf(":")+1):value`,
   });
@@ -222,9 +237,17 @@ test("the closed getQueryTerm shape replaces generic integer addition", () => {
       needle: { op: "string", value: "latest" },
     },
     then: {
-      op: "string-slice-after-first",
+      op: "string-slice",
       value: { op: "arg", index: 0 },
-      needle: { op: "string", value: ":" },
+      start: {
+        op: "add",
+        left: {
+          op: "string-index-of",
+          value: { op: "arg", index: 0 },
+          needle: { op: "string", value: ":" },
+        },
+        right: { op: "integer", value: 1 },
+      },
     },
     else: { op: "arg", index: 0 },
   });
@@ -238,40 +261,41 @@ test("the closed getQueryTerm shape replaces generic integer addition", () => {
     }),
     result,
   );
-  assert.throws(
-    () =>
-      compileTypedExpression({
-        body: `value=>value.indexOf(":")+1`,
-        parameterTypes: ["string"],
-        resultType: "integer",
-      }),
-    (error) => error.code === "unsupported-syntax",
+  assert.deepEqual(
+    compileTypedExpression({
+      body: `value=>value.indexOf(":")+1`,
+      parameterTypes: ["string"],
+      resultType: "integer",
+    }).expr,
+    {
+      op: "add",
+      left: {
+        op: "string-index-of",
+        value: { op: "arg", index: 0 },
+        needle: { op: "string", value: ":" },
+      },
+      right: { op: "integer", value: 1 },
+    },
   );
 });
 
-test("getQueryTerm research matching is exact and fails closed", () => {
-  const unsupported = [
-    `value=>value.includes("latest")?value.slice(value.lastIndexOf(":")+1):value`,
-    `value=>value.includes("latest")?value.slice(value.indexOf(":")+2):value`,
-    `value=>value.includes("latest")?value.slice(1+value.indexOf(":")):value`,
-    `value=>value.includes("latest")?value.slice(value.indexOf(":")):value`,
-    `value=>value.includes("latest")?value.slice(value.indexOf("/")+1):value`,
-    `value=>value.includes("latest")?value.slice(value.indexOf(":")+1):""`,
-    `(value,other)=>value.includes("latest")?value.slice(value.indexOf(":")+1):value`,
-    `value=>value.includes("LATEST")?value.slice(value.indexOf(":")+1):value`,
-  ];
-  for (const body of unsupported) {
-    assert.throws(
-      () => compileTypedGetQueryTerm({ body }),
-      (error) =>
-        error instanceof TypedHookCompileError &&
-        ["function-shape", "parameter-count"].includes(error.code),
-      body,
-    );
-  }
+test("getQueryTerm identity and lastIndexOf shapes compile", () => {
+  assert.deepEqual(
+    compileTypedHook({ body: `value=>value`, sourceField: "getQueryTerm" }).expr,
+    { op: "arg", index: 0 },
+  );
+  const last = compileTypedGetQueryTerm({
+    body: `value=>value.slice(value.lastIndexOf(":")+1)`,
+  });
+  assert.equal(last.expr.op, "string-slice");
+  assert.equal(last.expr.start.left.op, "string-last-index-of");
   assert.throws(
-    () => compileTypedHook({ body: `value=>value`, sourceField: "getQueryTerm" }),
-    (error) => error instanceof TypedHookCompileError && error.code === "function-shape",
+    () =>
+      compileTypedHook({
+        body: `(value,other)=>value`,
+        sourceField: "getQueryTerm",
+      }),
+    (error) => error instanceof TypedHookCompileError && error.code === "parameter-count",
   );
 });
 
@@ -301,10 +325,9 @@ test("unsupported syntax and free variables fail closed", () => {
   const cases = [
     [`(a,b)=>unknown`, "free-variable"],
     [`(a,b)=>a.foo`, "unsupported-property"],
-    [`(a,b)=>a[0]`, "dynamic-property"],
-    [`(a,b)=>a.match(/x/)`, "unknown-call"],
+    [`(a,b)=>new Date()`, "unknown-call"],
     [`async (a,b)=>true`, "async"],
-    [`(a,b)=>{const value=true;return value}`, "function-shape"],
+    [`(a,b)=>a.reduce((x,y)=>x)`, "unknown-call"],
   ];
   for (const [body, code] of cases) {
     assert.throws(
@@ -344,6 +367,10 @@ test("result type and field contracts are strict", () => {
   );
   assert.throws(
     () => compileTypedHook({ body: `()=>true`, sourceField: "postProcess" }),
+    (error) => error.code === "type-mismatch",
+  );
+  assert.throws(
+    () => compileTypedHook({ body: `()=>true`, sourceField: "unknownField" }),
     (error) => error.code === "unknown-field",
   );
   assert.throws(
@@ -446,4 +473,1006 @@ test("integer and string literals stay inside the cross-language value contract"
     }).expr.value,
     "😀",
   );
+});
+
+test("typed IR v2 exports the expanded value, op, and complexity contract", () => {
+  assert.equal(MAX_NODES, 512);
+  assert.equal(MAX_DEPTH, 24);
+  for (const type of [
+    "json",
+    "suggestion",
+    "suggestion-array",
+    "string-record",
+    "null",
+  ]) {
+    assert.ok(TYPED_VALUE_TYPES.includes(type), type);
+  }
+  for (const op of [
+    "null",
+    "string-trim",
+    "string-trim-start",
+    "string-trim-end",
+    "string-replace",
+    "string-replace-all",
+    "string-starts-with",
+    "string-ends-with",
+    "string-substring",
+    "string-last-index-of",
+    "string-to-lower",
+    "string-to-upper",
+    "string-pad-start",
+    "string-pad-end",
+    "string-repeat",
+    "string-concat",
+    "string-char-at",
+    "string-at",
+    "add",
+    "sub",
+    "mul",
+    "lt",
+    "le",
+    "ge",
+    "not",
+    "nullish",
+  ]) {
+    assert.ok(TYPED_EXPRESSION_OPERATIONS.includes(op), op);
+  }
+  assert.deepEqual(TYPED_HOOK_CONTRACTS.postProcess, {
+    params: ["string", "string-array"],
+    resultType: "suggestion-array",
+  });
+  assert.deepEqual(TYPED_HOOK_CONTRACTS.script, {
+    params: ["string-array"],
+    resultType: "string-array",
+  });
+  assert.deepEqual(TYPED_HOOK_CONTRACTS.filterTemplateSuggestions, {
+    params: ["suggestion-array"],
+    resultType: "suggestion-array",
+  });
+});
+
+test("new string, numeric, and nullish operations compile to closed ops", () => {
+  const cases = [
+    [
+      `value=>value.trim()`,
+      "getQueryTerm",
+      { op: "string-trim", value: { op: "arg", index: 0 } },
+    ],
+    [
+      `value=>value.trimStart()`,
+      "getQueryTerm",
+      { op: "string-trim-start", value: { op: "arg", index: 0 } },
+    ],
+    [
+      `value=>value.trimEnd()`,
+      "getQueryTerm",
+      { op: "string-trim-end", value: { op: "arg", index: 0 } },
+    ],
+    [
+      `value=>value.replace("-","_")`,
+      "getQueryTerm",
+      {
+        op: "string-replace",
+        value: { op: "arg", index: 0 },
+        needle: { op: "string", value: "-" },
+        replacement: { op: "string", value: "_" },
+      },
+    ],
+    [
+      `value=>value.replaceAll("-","_")`,
+      "getQueryTerm",
+      {
+        op: "string-replace-all",
+        value: { op: "arg", index: 0 },
+        needle: { op: "string", value: "-" },
+        replacement: { op: "string", value: "_" },
+      },
+    ],
+    [
+      `value=>value.substring(1,3)`,
+      "getQueryTerm",
+      {
+        op: "string-substring",
+        value: { op: "arg", index: 0 },
+        start: { op: "integer", value: 1 },
+        end: { op: "integer", value: 3 },
+      },
+    ],
+    [
+      `value=>value.toLowerCase()`,
+      "getQueryTerm",
+      { op: "string-to-lower", value: { op: "arg", index: 0 } },
+    ],
+    [
+      `value=>value.toUpperCase()`,
+      "getQueryTerm",
+      { op: "string-to-upper", value: { op: "arg", index: 0 } },
+    ],
+    [
+      `value=>value.padStart(4,"0")`,
+      "getQueryTerm",
+      {
+        op: "string-pad-start",
+        value: { op: "arg", index: 0 },
+        target: { op: "integer", value: 4 },
+        pad: { op: "string", value: "0" },
+      },
+    ],
+    [
+      `value=>value.padEnd(3)`,
+      "getQueryTerm",
+      {
+        op: "string-pad-end",
+        value: { op: "arg", index: 0 },
+        target: { op: "integer", value: 3 },
+        pad: { op: "string", value: " " },
+      },
+    ],
+    [
+      `value=>value.repeat(2)`,
+      "getQueryTerm",
+      {
+        op: "string-repeat",
+        value: { op: "arg", index: 0 },
+        count: { op: "integer", value: 2 },
+      },
+    ],
+    [
+      `value=>value.concat("!")`,
+      "getQueryTerm",
+      {
+        op: "string-concat",
+        parts: [{ op: "arg", index: 0 }, { op: "string", value: "!" }],
+      },
+    ],
+    [
+      `value=>value.charAt(1)`,
+      "getQueryTerm",
+      {
+        op: "string-char-at",
+        value: { op: "arg", index: 0 },
+        index: { op: "integer", value: 1 },
+      },
+    ],
+    [
+      `value=>value.at(-1)`,
+      "getQueryTerm",
+      {
+        op: "string-at",
+        value: { op: "arg", index: 0 },
+        index: { op: "integer", value: -1 },
+      },
+    ],
+    [
+      `value=>value.slice(-1)`,
+      "getQueryTerm",
+      {
+        op: "string-slice",
+        value: { op: "arg", index: 0 },
+        start: { op: "integer", value: -1 },
+      },
+    ],
+    [
+      `value=>\`x\${value}y\``,
+      "getQueryTerm",
+      {
+        op: "string-concat",
+        parts: [
+          { op: "string", value: "x" },
+          { op: "arg", index: 0 },
+          { op: "string", value: "y" },
+        ],
+      },
+    ],
+    [
+      `(a,b)=>a.startsWith(b)`,
+      "trigger",
+      {
+        op: "string-starts-with",
+        value: { op: "arg", index: 0 },
+        needle: { op: "arg", index: 1 },
+      },
+    ],
+    [
+      `(a,b)=>a.endsWith("/")`,
+      "trigger",
+      {
+        op: "string-ends-with",
+        value: { op: "arg", index: 0 },
+        needle: { op: "string", value: "/" },
+      },
+    ],
+    [
+      `(a,b)=>!a.startsWith("x")`,
+      "trigger",
+      {
+        op: "not",
+        value: {
+          op: "string-starts-with",
+          value: { op: "arg", index: 0 },
+          needle: { op: "string", value: "x" },
+        },
+      },
+    ],
+    [
+      `(a,b)=>a.length<b.length`,
+      "trigger",
+      {
+        op: "lt",
+        left: { op: "length", value: { op: "arg", index: 0 } },
+        right: { op: "length", value: { op: "arg", index: 1 } },
+      },
+    ],
+    [
+      `(a,b)=>a.length<=1`,
+      "trigger",
+      {
+        op: "le",
+        left: { op: "length", value: { op: "arg", index: 0 } },
+        right: { op: "integer", value: 1 },
+      },
+    ],
+    [
+      `(a,b)=>a.length>=2`,
+      "trigger",
+      {
+        op: "ge",
+        left: { op: "length", value: { op: "arg", index: 0 } },
+        right: { op: "integer", value: 2 },
+      },
+    ],
+    [
+      `(a,b)=>a.length-1===0`,
+      "trigger",
+      {
+        op: "strict-eq",
+        left: {
+          op: "sub",
+          left: { op: "length", value: { op: "arg", index: 0 } },
+          right: { op: "integer", value: 1 },
+        },
+        right: { op: "integer", value: 0 },
+      },
+    ],
+    [
+      `(a,b)=>a.length*2===4`,
+      "trigger",
+      {
+        op: "strict-eq",
+        left: {
+          op: "mul",
+          left: { op: "length", value: { op: "arg", index: 0 } },
+          right: { op: "integer", value: 2 },
+        },
+        right: { op: "integer", value: 4 },
+      },
+    ],
+    [
+      `tokens=>["echo","-n"]`,
+      "script",
+      {
+        op: "array",
+        items: [
+          { op: "string", value: "echo" },
+          { op: "string", value: "-n" },
+        ],
+      },
+    ],
+    [
+      `suggestions=>suggestions`,
+      "filterTemplateSuggestions",
+      { op: "arg", index: 0 },
+    ],
+  ];
+
+  for (const [body, sourceField, expr] of cases) {
+    assert.deepEqual(
+      compileTypedHook({ body, sourceField }).expr,
+      expr,
+      body,
+    );
+  }
+
+  const nullish = compileTypedHook({
+    body: `(a,b)=>a.startsWith("x")??true`,
+    sourceField: "trigger",
+  });
+  assert.deepEqual(nullish.expr, {
+    op: "nullish",
+    left: {
+      op: "string-starts-with",
+      value: { op: "arg", index: 0 },
+      needle: { op: "string", value: "x" },
+    },
+    right: { op: "bool", value: true },
+  });
+});
+
+test("replace needles must be string literals and arithmetic stays fail-closed", () => {
+  assert.throws(
+    () =>
+      compileTypedHook({
+        body: `value=>value.replace(value,"x")`,
+        sourceField: "getQueryTerm",
+      }),
+    (error) => error.code === "unsupported-syntax",
+  );
+  assert.equal(
+    evaluateTypedHook(
+      compileTypedHook({
+        body: `(a,b)=>a.length+1===b.length`,
+        sourceField: "trigger",
+      }),
+      ["ab", "xyz"],
+    ),
+    true,
+  );
+  assert.equal(
+    evaluateTypedHook(
+      compileTypedHook({
+        body: `(a,b)=> (null ?? a.length) === 2`,
+        sourceField: "trigger",
+      }),
+      ["ab", "z"],
+    ),
+    true,
+  );
+});
+
+test("evaluateTypedHook matches JavaScript UTF-16 string and safe-integer arithmetic", () => {
+  const query = (body, value) =>
+    evaluateTypedHook(
+      compileTypedHook({ body, sourceField: "getQueryTerm" }),
+      [value],
+    );
+  const triggerEval = (body, left, right) =>
+    evaluateTypedHook(compileTypedHook({ body, sourceField: "trigger" }), [
+      left,
+      right,
+    ]);
+
+  assert.equal(query(`value=>value.trim()`, "  hi  "), "hi");
+  assert.equal(query(`value=>value.trimStart()`, "  hi  "), "hi  ");
+  assert.equal(query(`value=>value.trimEnd()`, "  hi  "), "  hi");
+  assert.equal(query(`value=>value.replace("-","_")`, "a-b-c"), "a_b-c");
+  assert.equal(query(`value=>value.replaceAll("-","_")`, "a-b-c"), "a_b_c");
+  assert.equal(query(`value=>value.replaceAll("","-")`, "ab"), "-a-b-");
+  assert.equal(query(`value=>value.replace("","-")`, "ab"), "-ab");
+  assert.equal(query(`value=>value.toLowerCase()`, "AbC"), "abc");
+  assert.equal(query(`value=>value.toUpperCase()`, "AbC"), "ABC");
+  assert.equal(query(`value=>value.substring(1,3)`, "abcd"), "bc");
+  assert.equal(query(`value=>value.substring(3,1)`, "abcd"), "bc");
+  assert.equal(query(`value=>value.substring(2)`, "abcdef"), "cdef");
+  assert.equal(query(`value=>value.padStart(4,"0")`, "12"), "0012");
+  assert.equal(query(`value=>value.padEnd(4,".")`, "12"), "12..");
+  assert.equal(query(`value=>value.padStart(2,"0")`, "abcd"), "abcd");
+  assert.equal(query(`value=>value.padStart(4,"")`, "12"), "12");
+  assert.equal(query(`value=>value.repeat(3)`, "ab"), "ababab");
+  assert.equal(query(`value=>value.concat("!")`, "hi"), "hi!");
+  assert.equal(query(`value=>value.charAt(1)`, "abc"), "b");
+  assert.equal(query(`value=>value.charAt(-1)`, "abc"), "");
+  assert.equal(query(`value=>value.at(-1)`, "abc"), "c");
+  assert.equal(query(`value=>value.at(8)`, "abc"), "");
+  assert.equal(query(`value=>\`x\${value}y\``, "mid"), "xmidy");
+  assert.equal(query(`value=>value.substring(1,3)`, "a😀b"), "😀");
+  assert.equal(query(`value=>value.padStart(3,".")`, "😀"), ".😀");
+  assert.equal(query(`value=>value.trim()`, "\u0085hi"), "\u0085hi");
+  assert.equal(
+    query(
+      `value=>value.includes("latest")?value.slice(value.indexOf(":")+1):value`,
+      "nodejs:latest",
+    ),
+    "latest",
+  );
+  assert.equal(
+    query(`value=>value.slice(value.lastIndexOf(":")+1)`, "a:b:c"),
+    "c",
+  );
+
+  assert.equal(triggerEval(`(a,b)=>a.startsWith(b)`, "hello", "he"), true);
+  assert.equal(triggerEval(`(a,b)=>a.endsWith("/")`, "src/", "x"), true);
+  assert.equal(triggerEval(`(a,b)=>!a.startsWith("x")`, "hello", "x"), true);
+  assert.equal(triggerEval(`(a,b)=>a.length<b.length`, "a", "bb"), true);
+  assert.equal(triggerEval(`(a,b)=>a.length<=1`, "a", "z"), true);
+  assert.equal(triggerEval(`(a,b)=>a.length>=2`, "ab", "z"), true);
+  assert.equal(triggerEval(`(a,b)=>a.length-1===0`, "x", "z"), true);
+  assert.equal(triggerEval(`(a,b)=>a.length*2===4`, "ab", "z"), true);
+  assert.equal(
+    triggerEval(`(a,b)=>a.lastIndexOf("/")!==b.lastIndexOf("/")`, "a/b", "ab"),
+    true,
+  );
+  assert.deepEqual(
+    evaluateTypedHook(
+      compileTypedHook({
+        body: `tokens=>["echo","-n"]`,
+        sourceField: "script",
+      }),
+      [[]],
+    ),
+    ["echo", "-n"],
+  );
+
+  const nullishFallback = compileTypedHook({
+    body: `value=>value`,
+    sourceField: "getQueryTerm",
+  });
+  nullishFallback.expr = {
+    op: "nullish",
+    left: { op: "null" },
+    right: { op: "arg", index: 0 },
+  };
+  assert.equal(evaluateTypedHook(nullishFallback, ["fallback"]), "fallback");
+
+  const overflow = compileTypedHook({
+    body: `(a,b)=>a.length===0`,
+    sourceField: "trigger",
+  });
+  overflow.expr = {
+    op: "strict-eq",
+    left: {
+      op: "add",
+      left: { op: "integer", value: Number.MAX_SAFE_INTEGER },
+      right: { op: "integer", value: 1 },
+    },
+    right: { op: "integer", value: 0 },
+  };
+  assert.throws(
+    () => evaluateTypedHook(overflow, ["", ""]),
+    (error) => error.code === "overflow",
+  );
+  const repeatOverflow = compileTypedHook({
+    body: `value=>value.repeat(0)`,
+    sourceField: "getQueryTerm",
+  });
+  repeatOverflow.expr.count = { op: "integer", value: -1 };
+  assert.throws(
+    () => evaluateTypedHook(repeatOverflow, ["x"]),
+    (error) => error.code === "overflow",
+  );
+  assert.throws(
+    () =>
+      evaluateTypedHook(
+        compileTypedHook({ body: `value=>value`, sourceField: "getQueryTerm" }),
+        [1],
+      ),
+    (error) => error.code === "input",
+  );
+  const hugePad = compileTypedHook({
+    body: `value=>value.padStart(4,"0")`,
+    sourceField: "getQueryTerm",
+  });
+  hugePad.expr.target = { op: "integer", value: 32 * 1024 + 1 };
+  assert.throws(
+    () => evaluateTypedHook(hugePad, ["x"]),
+    (error) => error.code === "complexity",
+  );
+});
+
+test("cross-language v2 op golden matches compile and evaluate", async () => {
+  const generated = buildTypedIrV2OpsGolden();
+  if (process.env.EC_TYPED_IR_V2_UPDATE === "1") {
+    await writeTypedIrV2OpsGolden();
+  }
+  const committed = JSON.parse(await readFile(TYPED_IR_V2_OPS_PATH, "utf8"));
+  assert.deepEqual(committed, generated);
+  for (const entry of committed.cases) {
+    assert.equal(validateTypedHookIr(entry.descriptor), true);
+    assert.deepEqual(
+      evaluateTypedHook(entry.descriptor, entry.args),
+      entry.expected,
+      entry.id,
+    );
+  }
+});
+
+test("T2.2 compiles array, control-flow, regex, and helper-inline shapes", () => {
+  const post = (body, args, moduleSource) =>
+    evaluateTypedHook(
+      compileTypedHook({ body, sourceField: "postProcess", moduleSource }),
+      args,
+    );
+
+  assert.deepEqual(
+    post(
+      `out => out.split("\\n").filter(Boolean).map(name => ({name}))`,
+      ["alpha\n\nbeta", []],
+    ),
+    [{ name: "alpha" }, { name: "beta" }],
+  );
+  assert.deepEqual(
+    post(`out => { const [name, rest] = out.split(" - ", 2); return [{name, description: rest}]; }`, [
+      "one - two extra",
+      [],
+    ]),
+    [{ name: "one", description: "two extra" }],
+  );
+  assert.deepEqual(
+    post(`out => { const rows = out.split("\\n"); rows.shift(); return rows.map(name => ({name})); }`, [
+      "header\na\nb",
+      [],
+    ]),
+    [{ name: "a" }, { name: "b" }],
+  );
+  assert.deepEqual(
+    post(
+      `out => { const seen = new Set(); for (const name of out.split(",")) seen.add(name); return [...seen].map(name => ({name})); }`,
+      ["a,b,a", []],
+    ),
+    [{ name: "a" }, { name: "b" }],
+  );
+  assert.deepEqual(
+    post(
+      `out => { const cmp = (a, b) => a.localeCompare(b); return out.split(",").sort(cmp).map(name => ({name})); }`,
+      ["c,a,b", []],
+    ),
+    [{ name: "a" }, { name: "b" }, { name: "c" }],
+  );
+  assert.deepEqual(
+    post(`out => ((lines) => lines.filter(Boolean).map(name => ({name})))(out.split("\\n"))`, [
+      "keep\n\n",
+      [],
+    ]),
+    [{ name: "keep" }],
+  );
+  assert.deepEqual(
+    post(
+      `function (out, tokens = []) { try { return JSON.parse(out).map(name => ({name})); } catch (error) { return console.error(error), []; } }`,
+      ["not-json", []],
+    ),
+    [],
+  );
+  assert.deepEqual(
+    post(`out => out.split(/\\s+/).map(name => ({name}))`, ["a  b", []]),
+    [{ name: "a" }, { name: "b" }],
+  );
+
+  const script = compileTypedHook({
+    body: `tokens => tokens.filter(Boolean)`,
+    sourceField: "script",
+  });
+  assert.deepEqual(evaluateTypedHook(script, [["echo", "", "hi"]]), ["echo", "hi"]);
+
+  const filter = compileTypedHook({
+    body: `rows => rows.filter(row => !row.hidden)`,
+    sourceField: "filterTemplateSuggestions",
+  });
+  assert.deepEqual(
+    evaluateTypedHook(filter, [[{ name: "a", hidden: true }, { name: "b" }]]),
+    [{ name: "b" }],
+  );
+
+  assert.equal(MAX_NODES, 512);
+  assert.ok(TYPED_EXPRESSION_OPERATIONS.includes("array-map"));
+  assert.ok(TYPED_VALUE_TYPES.includes("regex"));
+});
+
+test("reassigned hook parameters stay readable when the assignment is skipped", () => {
+  const hook = compileTypedHook({
+    body: `(out, tokens) => { if (out.startsWith("fatal:")) return []; out.startsWith("warning:") && (out = out.slice(out.indexOf("\\n")+1)); return out.split("\\n").filter(Boolean).map(line => ({name: line.split(" ")[0]})); }`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["fatal: boom\n", ["git-cliff"]]), []);
+  assert.deepEqual(evaluateTypedHook(hook, ["main feature\n", ["git-cliff"]]), [
+    { name: "main" },
+  ]);
+});
+
+test("return inside try aborts the fallback empty array", () => {
+  const hook = compileTypedHook({
+    body: `function(e,[n]){if(e.trim()=="")return[];try{let t=JSON.parse(e),a=t.scripts,i=t.fig||{};if(a)return Object.entries(a).map(([s,o])=>{let c=n==="yarn"?"fig://icon?type=yarn":"fig://icon?type=npm",p=i[s];return{name:s,icon:c,description:o,priority:51,...p}})}catch(t){console.error(t)}return[]}`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(
+    evaluateTypedHook(hook, [
+      JSON.stringify({ scripts: { build: "turbo build", test: "vitest" } }),
+      ["bun"],
+    ]),
+    [
+      {
+        name: "build",
+        icon: "fig://icon?type=npm",
+        description: "turbo build",
+        priority: 51,
+      },
+      {
+        name: "test",
+        icon: "fig://icon?type=npm",
+        description: "vitest",
+        priority: 51,
+      },
+    ],
+  );
+  assert.deepEqual(evaluateTypedHook(hook, ["", ["bun"]]), []);
+  assert.deepEqual(evaluateTypedHook(hook, ["not json\n{{{", ["bun"]]), []);
+});
+
+test("IIFE return does not abort the outer hook", () => {
+  const hook = compileTypedHook({
+    body: `r => { const list = (s => { return s.split("\\n").filter(Boolean); })(r); return list.map(name => ({name})); }`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["main\nfeature\n", []]), [
+    { name: "main" },
+    { name: "feature" },
+  ]);
+});
+
+test("spreading a missing factory object is a no-op", () => {
+  const hook = compileTypedHook({
+    body: `rows => rows.map(row => ({...row, ...extra}))`,
+    sourceField: "filterTemplateSuggestions",
+    moduleSource: `
+export default (function ({extra} = {}) {
+  return { filterTemplateSuggestions: rows => rows.map(row => ({...row, ...extra})) };
+})({extra: void 0});
+`,
+  });
+  assert.deepEqual(
+    evaluateTypedHook(hook, [[{ name: "main", type: "file" }]]),
+    [{ name: "main", type: "file" }],
+  );
+});
+
+test("forEach push mutates the outer suggestion list", () => {
+  const hook = compileTypedHook({
+    body: `r => { const a = []; r.split("\\n").forEach(s => { if (s) a.push({name:s,insertValue:s,type:"file"}); }); return a; }`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["main\nfeature\n", []]), [
+    { name: "main", insertValue: "main", type: "file" },
+    { name: "feature", insertValue: "feature", type: "file" },
+  ]);
+});
+
+test("character-class hyphen after \\\\w stays a literal for matchAll", () => {
+  const hook = compileTypedHook({
+    body: `e => [...e.matchAll(/(\\d+\\)\\s)?([\\w-+]+)/g)].map(n => ({name: n[2]}))`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["main\nfeature\n", []]), [
+    { name: "main" },
+    { name: "feature" },
+  ]);
+});
+
+test("slice(0, -1) keeps JavaScript slice semantics, not substring", () => {
+  const hook = compileTypedHook({
+    body: `out => out.split("\\n").map(line => ({name: line.slice(0, -1)}))`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["main", []]), [{ name: "mai" }]);
+  assert.deepEqual(evaluateTypedHook(hook, ["not json\n{{{", []]), [
+    { name: "not jso" },
+    { name: "{{" },
+  ]);
+});
+
+test("optional trim on a missing split field stays null", () => {
+  const hook = compileTypedHook({
+    body: `out => out.split("\\n").map(line => line.split("|")[1]?.trim()).filter(line => line && line !== "identifier").map(line => ({name: line}))`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["main\nfeature\n", []]), []);
+});
+
+test("spreading a Set flattens unique first words", () => {
+  const hook = compileTypedHook({
+    body: `out => { let seen = new Set; for (const line of out.split("\\n")) { const name = line.trim().split(/\\s+/)[0]; name && seen.add(name); } return [...seen].map(name => ({name, description: "Installed tool"})); }`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["go 1\nnode 2\ngo 3\n", []]), [
+    { name: "go", description: "Installed tool" },
+    { name: "node", description: "Installed tool" },
+  ]);
+});
+
+test("factoryStringCandidates keeps a single non-default separator", () => {
+  const moduleSource = `
+export default (function () {
+  function fe({separator:e="="}={}) {
+    return { getQueryTerm: s => s.slice(s.indexOf(e)+1) };
+  }
+  return {
+    a: fe({separator:":"}),
+    b: fe({separator:"="}),
+    c: fe(),
+  };
+})();
+`;
+  const body = "s => s.slice(s.indexOf(e)+1)";
+  const candidates = factoryStringCandidates({ body, moduleSource });
+  assert.ok(candidates.e.includes(":"));
+  assert.ok(candidates.e.includes("="));
+  const colon = compileTypedHook({
+    body,
+    sourceField: "getQueryTerm",
+    moduleSource,
+    helperLiterals: { e: ":" },
+  });
+  assert.equal(evaluateTypedHook(colon, ["a:b:c"]), "b:c");
+  assert.equal(evaluateTypedHook(colon, ["--flag=value"]), "--flag=value");
+});
+
+test("factory object literals that agree win over the parameter default", () => {
+  const moduleSource = `
+export default (function () {
+  function fe({separator:e="="}={}) {
+    return { getQueryTerm: s => s.slice(s.indexOf(e)+1) };
+  }
+  return {
+    a: fe({separator:":"}),
+    b: fe({separator:":",cache:!0}),
+  };
+})();
+`;
+  const descriptor = compileTypedHook({
+    body: "s => s.slice(s.indexOf(e)+1)",
+    sourceField: "getQueryTerm",
+    moduleSource,
+  });
+  assert.match(JSON.stringify(descriptor.expr), /"value":":"/);
+  assert.equal(
+    evaluateTypedHook(descriptor, ["user@host:path"]),
+    "path",
+  );
+  assert.equal(evaluateTypedHook(descriptor, ["--flag=value"]), "--flag=value");
+});
+
+test("array filter callbacks receive the element index", () => {
+  const hook = compileTypedHook({
+    body: `out => out.split(",").filter((item, index) => index === 0).map(name => ({name}))`,
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHook(hook, ["main,feature", []]), [{ name: "main" }]);
+});
+
+test("mixed factory extras fail closed when call sites disagree", () => {
+  const body = "rows => rows.map(row => ({...row, ...extra}))";
+  const moduleSource = `
+export default (function () {
+  function wrap({extra: extra} = {}) {
+    return { filterTemplateSuggestions: ${body} };
+  }
+  return { a: wrap(), b: wrap({extra: {isDangerous: true}}) };
+})();
+`;
+  assert.throws(
+    () =>
+      compileTypedHook({
+        body,
+        sourceField: "filterTemplateSuggestions",
+        moduleSource,
+      }),
+    /disagreeing call-site values/,
+  );
+});
+
+test("factory extra objects can be retried as helper literals", () => {
+  const body = "rows => rows.map(row => ({...row, ...extra}))";
+  const moduleSource = `
+export default (function () {
+  function wrap({extra: extra} = {}) {
+    return { filterTemplateSuggestions: ${body} };
+  }
+  return { a: wrap(), b: wrap({extra: {isDangerous: true}}) };
+})();
+`;
+  const descriptor = compileTypedHook({
+    body,
+    sourceField: "filterTemplateSuggestions",
+    moduleSource,
+    helperLiterals: { extra: { isDangerous: true } },
+  });
+  assert.deepEqual(
+    evaluateTypedHook(descriptor, [[{ name: "src/", type: "folder" }]]),
+    [{ name: "src/", type: "folder", isDangerous: true }],
+  );
+});
+
+test("mixed factory booleans fail closed when call sites disagree", () => {
+  const body =
+    't=>{let n=t.split("\\n").map(e=>e.split(" ")[0]),s=[];return o||(s=n.map(e=>e.split("-")[0]),s=s.filter((e,r)=>s.indexOf(e)===r)),s.concat(n).map(e=>({name:e}))}';
+  const moduleSource = `
+export default (function () {
+  var i=({excludeShort:o}={})=>({
+    postProcess: ${body}
+  });
+  return { a: i(), b: i({excludeShort:true}) };
+})();
+`;
+  assert.throws(
+    () =>
+      compileTypedHook({
+        body,
+        sourceField: "postProcess",
+        moduleSource,
+      }),
+    /disagreeing call-site values/,
+  );
+});
+
+test("factory aliases through bundler assignments bind the call-site separator", () => {
+  const body = "(l,a)=>{let p=L(l,e,t),f=L(a,e,t);return p!==f}";
+  const moduleSource = `
+export default (function () {
+  function L(e,...t){return Math.max(...t.map(i=>e.lastIndexOf(i)))}
+  function ue({separator:e="=",delimiter:t=","}={}) {
+    return { trigger: ${body} };
+  }
+  var k = {};
+  k.keyValueList = ue;
+  var $ = { keyValueList: k.keyValueList };
+  return { hook: (0,$.keyValueList)({separator:":",keys:["user"]}) };
+})();
+`;
+  const descriptor = compileTypedHook({
+    body,
+    sourceField: "trigger",
+    moduleSource,
+  });
+  assert.equal(evaluateTypedHook(descriptor, ["scope:item", "scope"]), true);
+  assert.equal(evaluateTypedHook(descriptor, ["scope=item", "scope"]), false);
+});
+
+test("factory parameter without a visible call site fails closed", () => {
+  const body = "s => s.slice(s.indexOf(e)+1)";
+  const moduleSource = `
+export default (function () {
+  function fe({separator:e="="}={}) {
+    return { getQueryTerm: ${body} };
+  }
+  return { a: fe };
+})();
+`;
+  assert.throws(
+    () =>
+      compileTypedHook({
+        body,
+        sourceField: "getQueryTerm",
+        moduleSource,
+      }),
+    /no statically visible call-site/,
+  );
+});
+
+test("let bindings restore the outer name after an inner helper reuses it", () => {
+  const descriptor = compileTypedHook({
+    body: `tokens => {
+      let n = tokens[0] === "docker" ? ["docker", "compose"] : ["docker-compose"];
+      let t = (() => {
+        let n = [];
+        return n;
+      })();
+      return n.concat(t).concat(["config"]);
+    }`,
+    sourceField: "script",
+  });
+  assert.deepEqual(evaluateTypedHook(descriptor, [["git"]]), [
+    "docker-compose",
+    "config",
+  ]);
+});
+
+test("null string-method receivers coerce like Rust as_utf16", () => {
+  const includes = compileTypedHook({
+    body: "(tokens) => tokens[1].includes(\"x\") ? [\"echo\", \"x\"] : [\"echo\", tokens[0]]",
+    sourceField: "script",
+  });
+  assert.deepEqual(evaluateTypedHook(includes, [["git"]]), ["echo", "git"]);
+});
+
+test("evaluateTypedHookJson drops empty suggestion fields like Rust", () => {
+  const descriptor = compileTypedHook({
+    body: '(out) => out.split("\\n").filter(Boolean).map((name) => ({ name, description: "", type: "arg" }))',
+    sourceField: "postProcess",
+  });
+  assert.deepEqual(evaluateTypedHookJson(descriptor, ["main\n", ["git"]]), [
+    { name: "main", type: "arg" },
+  ]);
+});
+
+test("T2.5 effect contracts compile exec, context, spec-object, and Promise.all", () => {
+  assert.deepEqual(TYPED_HOOK_CONTRACTS.custom, {
+    params: ["string-array", "exec", "context"],
+    resultType: "suggestion-array",
+  });
+  assert.deepEqual(TYPED_HOOK_CONTRACTS.alias, {
+    params: ["string", "exec"],
+    resultType: "string",
+  });
+  assert.deepEqual(TYPED_HOOK_CONTRACTS.loadSpec, {
+    params: ["string", "exec"],
+    resultType: "spec",
+  });
+  assert.deepEqual(TYPED_HOOK_CONTRACTS.generateSpec, {
+    params: ["string-array", "exec"],
+    resultType: "spec",
+  });
+
+  const alias = compileTypedHook({
+    body: `async(e,t)=>{let{stdout:i,status:o}=await t({command:"git",args:["config","--get",\`alias.\${e}\`]});if(o!==0)throw new Error("Failed parsing alias");return i;}`,
+    sourceField: "alias",
+  });
+  assert.equal(alias.expr.op, "let");
+  assert.throws(
+    () =>
+      compileTypedHook({
+        body: `async(e,t)=>t("git "+e)`,
+        sourceField: "alias",
+      }),
+    (error) => error instanceof TypedHookCompileError && error.code === "shell-concat",
+  );
+
+  const env = compileTypedHook({
+    body: `async(r,a,e)=>Object.values(e.environmentVariables).map(n=>({name:n,description:"Environment variable"}))`,
+    sourceField: "custom",
+  });
+  assert.deepEqual(
+    evaluateTypedHook(
+      env,
+      [["env"]],
+      {
+        context: {
+          currentWorkingDirectory: "/repo",
+          currentProcess: "zsh",
+          sshPrefix: "",
+          environmentVariables: { HOME: "/Users/x", PATH: "/bin" },
+          searchTerm: "",
+          isDangerous: false,
+        },
+        exec() {
+          throw new Error("exec should not run");
+        },
+      },
+    ),
+    [
+      { name: "/Users/x", description: "Environment variable" },
+      { name: "/bin", description: "Environment variable" },
+    ],
+  );
+
+  const load = compileTypedHook({
+    body: `async e=>({name:"create-"+e,type:"global"})`,
+    sourceField: "loadSpec",
+  });
+  assert.equal(load.expr.op, "spec-object");
+  assert.deepEqual(evaluateTypedHook(load, ["react-app"]), {
+    name: "create-react-app",
+    type: "global",
+  });
+
+  const parallel = compileTypedHook({
+    body: `async(tokens,exec)=>{const rows=await Promise.all([exec({command:"echo",args:["a"]}),exec({command:"echo",args:["b"]})]);return rows.map(row=>({name:row.stdout}));}`,
+    sourceField: "custom",
+  });
+  assert.equal(parallel.expr.op, "let");
+  let seen = [];
+  assert.deepEqual(
+    evaluateTypedHook(
+      parallel,
+      [["cmd"]],
+      {
+        context: {
+          currentWorkingDirectory: "/",
+          currentProcess: "zsh",
+          sshPrefix: "",
+          environmentVariables: {},
+          searchTerm: "",
+          isDangerous: false,
+        },
+        exec(request) {
+          seen.push(`${request.command} ${request.args.join(" ")}`);
+          return { stdout: request.args[0], stderr: "", status: 0 };
+        },
+      },
+    ),
+    [{ name: "a" }, { name: "b" }],
+  );
+  assert.deepEqual(seen, ["echo a", "echo b"]);
+
+  const resolved = compileTypedHook({
+    body: `()=>Promise.resolve([{name:"ok"}])`,
+    sourceField: "custom",
+  });
+  assert.deepEqual(evaluateTypedHook(resolved, [[]]), [{ name: "ok" }]);
 });

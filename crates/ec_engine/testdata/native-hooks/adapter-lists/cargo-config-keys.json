@@ -1,0 +1,102 @@
+[
+  {
+    "description": "Sets the maximum number of compiler processes to run in parallel",
+    "name": "build.jobs"
+  },
+  {
+    "description": "Path to the rustc compiler",
+    "name": "build.rustc"
+  },
+  {
+    "description": "Sets a wrapper to execute instead of rustc",
+    "name": "build.rustc-wrapper"
+  },
+  {
+    "description": "The default target platform triples to compile to",
+    "name": "build.target"
+  },
+  {
+    "description": "The path to where all compiler output is placed",
+    "name": "build.target-dir"
+  },
+  {
+    "description": "Extra command-line flags to pass to rustc",
+    "name": "build.rustflags"
+  },
+  {
+    "description": "Extra command-line flags to pass to rustdoc",
+    "name": "build.rustdocflags"
+  },
+  {
+    "description": "Whether or not to perform incremental compilation",
+    "name": "build.incremental"
+  },
+  {
+    "description": "Strips the given path prefix from dep info file paths",
+    "name": "build.dep-info-basedir"
+  },
+  {
+    "description": "This option sets the browser to be used by cargo doc, overriding the BROWSER environment variable when opening documentation with the --open option",
+    "name": "doc.browser"
+  },
+  {
+    "description": "Specifies the source control system to use for initializing a new repository",
+    "name": "cargo-new.vcs"
+  },
+  {
+    "description": "Controls how often we display a notification to the terminal when a future incompat report is available",
+    "name": "future-incompat-report.frequency"
+  },
+  {
+    "description": "If true, enables debugging of HTTP requests",
+    "name": "http.debug"
+  },
+  {
+    "description": "Sets an HTTP and HTTPS proxy to use",
+    "name": "http.proxy"
+  },
+  {
+    "description": "Sets the timeout for each HTTP request, in seconds",
+    "name": "http.timeout"
+  },
+  {
+    "description": "Sets the path to a CA certificate bundle",
+    "name": "http.cainfo"
+  },
+  {
+    "description": "This determines whether or not TLS certificate revocation checks should be performed. This only works on Windows",
+    "name": "http.check-revoke"
+  },
+  {
+    "description": "This sets the minimum TLS version to use",
+    "name": "http.ssl-version"
+  },
+  {
+    "description": "This setting controls timeout behavior for slow connections",
+    "name": "http.low-speed-limit"
+  },
+  {
+    "description": "When `true`, Cargo will attempt to use the HTTP2 protocol with multiplexing",
+    "name": "http.multiplexing"
+  },
+  {
+    "description": "Specifies a custom user-agent header to use",
+    "name": "http.user-agent"
+  },
+  {
+    "description": "Sets the path to the root directory for installing executables for `cargo install`",
+    "name": "install.root"
+  },
+  {
+    "description": "Number of times to retry possibly spurious network errors",
+    "name": "net.retry"
+  },
+  {
+    "description": "If this is `true`, then Cargo will use the git executable to fetch registry indexes and git dependencies. If `false`, then it uses a built-in git library",
+    "name": "net.git-fetch-with-cli"
+  },
+  {
+    "description": "If this is true, then Cargo will avoid accessing the network, and attempt to proceed with locally cached data",
+    "name": "net.offline"
+  }
+]

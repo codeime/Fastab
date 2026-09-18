@@ -167,7 +167,7 @@ fi
 # source/IR generation across rustc's include_bytes! reads and the resource
 # snapshot copied into the final app.
 if [ "$SPECS_IR_PUBLISHED_BY_SYNC" = "0" ]; then
-  info "Compiling spec IR and JS hooks..."
+  info "Compiling spec IR..."
   node "${REPO_DIR}/scripts/compile-spec-ir.mjs"
 else
   info "Using the source/IR pair published together by the spec sync..."
@@ -176,8 +176,12 @@ if [ ! -f "${REPO_DIR}/bundle/specs-ir/index.json" ]; then
   echo "error: spec IR compile did not write index.json" >&2
   exit 1
 fi
-if ! find "${REPO_DIR}/bundle/specs-ir/hooks" -name '*.js' -print -quit | grep -q .; then
-  echo "error: spec IR hooks directory is missing or empty" >&2
+if [ -e "${REPO_DIR}/bundle/specs-ir/hooks" ] || [ -e "${REPO_DIR}/bundle/specs-ir/source-modules" ] || [ -e "${REPO_DIR}/bundle/specs-ir/hook-modules.json" ]; then
+  echo "error: spec IR still contains leftover runtime JS (hooks/, source-modules/, or hook-modules.json)" >&2
+  exit 1
+fi
+if [ ! -f "${REPO_DIR}/bundle/specs-ir/typed-hooks.json" ]; then
+  echo "error: spec IR compile did not write typed-hooks.json" >&2
   exit 1
 fi
 
@@ -285,8 +289,12 @@ node "${REPO_DIR}/scripts/build-spec-inputs.mjs" \
 if [ -d "$SPECS_IR_BUILD_SNAPSHOT" ]; then
   cp -R "$SPECS_IR_BUILD_SNAPSHOT"    "${RESOURCES_DIR}/specs-ir"
 fi
-if ! find "${RESOURCES_DIR}/specs-ir/hooks" -name '*.js' -print -quit | grep -q .; then
-  echo "error: app bundle is missing specs-ir/hooks" >&2
+if [ -e "${RESOURCES_DIR}/specs-ir/hooks" ] || [ -e "${RESOURCES_DIR}/specs-ir/source-modules" ] || [ -e "${RESOURCES_DIR}/specs-ir/hook-modules.json" ]; then
+  echo "error: app bundle specs-ir still contains leftover runtime JS" >&2
+  exit 1
+fi
+if [ ! -f "${RESOURCES_DIR}/specs-ir/typed-hooks.json" ]; then
+  echo "error: app bundle is missing specs-ir/typed-hooks.json" >&2
   exit 1
 fi
 EC_SPECS_IR="${RESOURCES_DIR}/specs-ir" \

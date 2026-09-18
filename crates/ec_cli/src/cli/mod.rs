@@ -427,6 +427,7 @@ mod test {
                 cycles: 1,
                 x: 120.0,
                 y: 700.0,
+                session: None,
             }))
         );
     }

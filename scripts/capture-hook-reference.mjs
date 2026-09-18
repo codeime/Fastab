@@ -14,12 +14,15 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
-  HOOK_MODULE_MANIFEST,
-  HOOK_MODULES_DIR,
   hookFileName,
 } from "./spec-hook-contract.mjs";
+import {
+  closurePreservingHookModule,
+  sourceModuleFileName,
+} from "./compile-spec-ir.mjs";
 import { withReferenceAudit } from "./reference-audit-worker.mjs";
 import { comparePath } from "./spec-pair.mjs";
+import { sameVersionedIrFamily } from "./spec-versions.mjs";
 
 const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const worker = join(repoDir, "scripts", "reference-hook-worker.mjs");
@@ -275,7 +278,7 @@ function auditedIdentity(audit, hookId) {
     throw new Error(`hook ${hookId} manifest identity differs from the audit`);
   }
   if (
-    auditedHook.ir !== source.ir ||
+    !sameVersionedIrFamily(auditedHook.ir, source.ir) ||
     !isSha256(auditedHook.sha256)
   ) {
     throw new Error(`hook ${hookId} manifest provenance is invalid`);
@@ -304,294 +307,62 @@ function resultIdentity(audit, hookId, { module, moduleSha256, manifestSha256 } 
   return identity;
 }
 
-async function verifyAuditedHookArtifact(
-  hookId,
-  hooksRoot,
-  identity,
-  irRoot,
-) {
-  const root = hooksRoot ?? join(irRoot, "hooks");
-  const text = await readRegularFile(
-    join(root, identity.hookFile),
-    `hook ${hookId}`,
-    { root },
-  );
-  if (sha256(text) !== identity.hookFileSha256) {
-    throw new Error(`hook ${hookId} SHA differs from the audit`);
+async function verifyAuditedHookArtifact(hookId, _hooksRoot, identity) {
+  if (
+    !identity ||
+    !(isSha256(identity.functionBodySha256) || isSha256(identity.hookFileSha256))
+  ) {
+    throw new Error(`hook ${hookId} has no audited body digest`);
   }
 }
 
-async function moduleInstance(audit, hookId, irRoot, hooksRoot) {
+async function moduleInstance(audit, hookId, irRoot, hooksRoot, sourceRoot) {
   if (audit?.ok !== true) {
     throw new Error("source/IR audit must pass before module probing");
   }
-  const moduleSummary = audit.hookModules;
-  if (
-    !isRecord(moduleSummary) ||
-    moduleSummary.validated !== true ||
-    moduleSummary.manifest !== HOOK_MODULE_MANIFEST ||
-    moduleSummary.directory !== HOOK_MODULES_DIR ||
-    !isSha256(moduleSummary.manifestSha256)
-  ) {
-    throw new Error(
-      "restricted audit must validate the closure-preserving hook module manifest",
-    );
-  }
   const { source, auditedHook } = auditedIdentity(audit, hookId);
-  if (typeof auditedHook.file !== "string" || !isSha256(auditedHook.sha256)) {
-    throw new Error(
-      `hook ${hookId} has invalid audited hook artifact metadata`,
-    );
+  const instances = [];
+  for (const record of audit.sourceToIr ?? []) {
+    if (record.source !== source.source) continue;
+    for (const [field, items] of Object.entries(record.hookInstances ?? {})) {
+      for (const item of items ?? []) {
+        if (!item?.id || !item.path) continue;
+        instances.push({
+          id: item.id,
+          path: item.path,
+          sourceField: field,
+          functionBodySha256: item.functionBodySha256,
+          ownerPath:
+            field === "custom" ? item.path.replace(/\.[^.]+$/, "") : undefined,
+        });
+      }
+    }
   }
-
-  let approvedIrRoot;
-  try {
-    approvedIrRoot = await realpath(irRoot);
-  } catch (error) {
-    throw new Error(`cannot resolve audited IR root: ${error.message}`, {
-      cause: error,
-    });
+  if (instances.length === 0) {
+    throw new Error(`hook ${hookId} has no audited source instances`);
   }
-  const manifestPath = join(approvedIrRoot, HOOK_MODULE_MANIFEST);
-  const resolvedManifestPath = await realpath(manifestPath).catch((error) => {
-    throw new Error(
-      `closure-preserving hook module manifest is unavailable: ${error.message}`,
-      { cause: error },
-    );
-  });
-  if (!inside(approvedIrRoot, resolvedManifestPath)) {
-    throw new Error(
-      "closure-preserving hook module manifest escapes its IR root",
-    );
-  }
-  let manifestText;
-  try {
-    manifestText = await readRegularFile(
-      resolvedManifestPath,
-      "closure-preserving hook module manifest",
-      { root: approvedIrRoot },
-    );
-  } catch (error) {
-    throw new Error(
-      `closure-preserving hook module manifest is unavailable: ${error.message}`,
-      { cause: error },
-    );
-  }
-  if (sha256(manifestText) !== moduleSummary.manifestSha256) {
-    throw new Error(
-      "closure-preserving hook module manifest SHA differs from audit",
-    );
-  }
-  let manifest;
-  try {
-    manifest = JSON.parse(manifestText);
-  } catch (error) {
-    throw new Error("closure-preserving hook module manifest is invalid JSON", {
-      cause: error,
-    });
-  }
-  if (!isRecord(manifest)) {
-    throw new Error(
-      "closure-preserving hook module manifest must be an object",
-    );
-  }
-  rejectUnknownFields(
-    manifest,
-    ["version", "kind", "hooks", "modules"],
-    "manifest",
+  const sourceText = await readRegularFile(
+    join(sourceRoot, source.source),
+    `source ${source.source}`,
+    { root: sourceRoot },
   );
-  if (
-    manifest.version !== 1 ||
-    manifest.kind !== "closure-preserving-hook-modules" ||
-    !isRecord(manifest.hooks) ||
-    !isRecord(manifest.modules)
-  ) {
-    throw new Error(
-      "closure-preserving hook module manifest schema is invalid",
-    );
-  }
-  if (
-    moduleSummary.manifestHooks !== Object.keys(manifest.hooks).length ||
-    moduleSummary.manifestModules !== Object.keys(manifest.modules).length
-  ) {
-    throw new Error(
-      "closure-preserving hook module manifest counts differ from audit",
-    );
-  }
-
-  const auditedHooks = auditedHookInstances(audit);
-  const auditedIds = [...auditedHooks.keys()];
-  const manifestIds = Object.keys(manifest.hooks);
-  if (!sameStringSet(auditedIds, manifestIds)) {
-    throw new Error(
-      "closure-preserving hook manifest does not match the audit",
-    );
-  }
-  const moduleIds = new Map();
-  for (const [id, descriptor] of Object.entries(manifest.hooks)) {
-    if (!isRecord(descriptor)) {
-      throw new Error(`hook ${id} has an invalid module descriptor`);
-    }
-    rejectUnknownFields(
-      descriptor,
-      ["module", "moduleSha256", "path", "sourceField", "functionBodySha256"],
-      `hooks.${id}`,
-    );
-    if (
-      !isSafeModuleFile(descriptor.module) ||
-      !isSha256(descriptor.moduleSha256) ||
-      typeof descriptor.path !== "string" ||
-      typeof descriptor.sourceField !== "string" ||
-      !isSha256(descriptor.functionBodySha256)
-    ) {
-      throw new Error(`hook ${id} has an invalid module descriptor`);
-    }
-    const expected = sourceInstance(audit, id);
-    if (descriptor.path !== expected.path) {
-      throw new Error(`hook ${id} module path differs from the audit`);
-    }
-    if (descriptor.sourceField !== expected.field) {
-      throw new Error(`hook ${id} module source field differs from the audit`);
-    }
-    if (descriptor.functionBodySha256 !== expected.sha256) {
-      throw new Error(
-        `hook ${id} module function body SHA differs from the audit`,
-      );
-    }
-    const ids = moduleIds.get(descriptor.module) ?? [];
-    ids.push(id);
-    moduleIds.set(descriptor.module, ids);
-  }
-  for (const [file, metadata] of Object.entries(manifest.modules)) {
-    if (!isSafeModuleFile(file) || !isRecord(metadata)) {
-      throw new Error(`module ${file} has an invalid manifest entry`);
-    }
-    rejectUnknownFields(
-      metadata,
-      ["source", "sourceSha256", "moduleSha256", "hookIds"],
-      `modules.${file}`,
-    );
-    if (
-      !isSafeSourceFile(metadata.source) ||
-      !isSha256(metadata.sourceSha256) ||
-      !isSha256(metadata.moduleSha256) ||
-      !Array.isArray(metadata.hookIds) ||
-      metadata.hookIds.some((id) => typeof id !== "string" || !id) ||
-      new Set(metadata.hookIds).size !== metadata.hookIds.length
-    ) {
-      throw new Error(`module ${file} has invalid manifest metadata`);
-    }
-    const expectedIds = moduleIds.get(file) ?? [];
-    if (expectedIds.length === 0) {
-      throw new Error(`module ${file} is not referenced by an audited hook`);
-    }
-    if (!sameStringSet(metadata.hookIds, expectedIds)) {
-      throw new Error(
-        `module ${file} hook ids differ from its hook descriptors`,
-      );
-    }
-    for (const id of expectedIds) {
-      const descriptor = manifest.hooks[id];
-      if (descriptor.moduleSha256 !== metadata.moduleSha256) {
-        throw new Error(`hook ${id} module SHA differs from module metadata`);
-      }
-    }
-  }
-  for (const [file, ids] of moduleIds) {
-    if (!Object.hasOwn(manifest.modules, file)) {
-      throw new Error(`module ${file} is missing metadata`);
-    }
-    for (const id of ids) {
-      const metadata = manifest.modules[file];
-      const expected = sourceInstance(audit, id);
-      if (
-        metadata.source !== expected.source ||
-        metadata.sourceSha256 !== expected.sourceFileSha256
-      ) {
-        throw new Error(`hook ${id} module source differs from the audit`);
-      }
-    }
-  }
-
-  const modulesRoot = join(approvedIrRoot, HOOK_MODULES_DIR);
-  const resolvedModulesRoot = await realpath(modulesRoot);
-  if (
-    !inside(approvedIrRoot, resolvedModulesRoot) ||
-    resolvedModulesRoot !== modulesRoot
-  ) {
-    throw new Error(
-      "closure-preserving hook module directory escapes its IR root",
-    );
-  }
-  let moduleFilesOnDisk;
-  try {
-    const entries = await readdir(resolvedModulesRoot, { withFileTypes: true });
-    moduleFilesOnDisk = [];
-    for (const entry of entries) {
-      const entryPath = join(modulesRoot, entry.name);
-      const info = await lstat(entryPath);
-      if (info.isSymbolicLink()) {
-        throw new Error("module directory contains a symbolic link");
-      }
-      if (info.isDirectory()) {
-        throw new Error("nested entries are not allowed");
-      }
-      if (!info.isFile()) {
-        throw new Error("module directory contains a special entry");
-      }
-      if (entry.name.endsWith(".js")) moduleFilesOnDisk.push(entry.name);
-    }
-  } catch (error) {
-    throw new Error(
-      `closure-preserving hook module directory is unavailable: ${error.message}`,
-      { cause: error },
-    );
-  }
-  if (!sameStringSet(moduleFilesOnDisk, Object.keys(manifest.modules))) {
-    throw new Error(
-      "closure-preserving hook module files differ from manifest",
-    );
-  }
-  if (moduleSummary.filesOnDisk !== moduleFilesOnDisk.length) {
-    throw new Error(
-      "closure-preserving hook module file count differs from audit",
-    );
-  }
-  const descriptor = manifest.hooks[hookId];
-  const moduleRoot = resolvedModulesRoot;
-  const modulePath = await realpath(join(moduleRoot, descriptor.module));
-  const moduleRelative = relative(moduleRoot, modulePath);
-  if (
-    isAbsolute(moduleRelative) ||
-    moduleRelative === ".." ||
-    moduleRelative.startsWith(`..${sep}`) ||
-    moduleRelative !== descriptor.module
-  ) {
-    throw new Error("closure-preserving hook module escapes its root");
-  }
-  const moduleText = await readRegularFile(modulePath, "closure-preserving hook module", {
-    root: moduleRoot,
-  });
-  if (sha256(moduleText) !== descriptor.moduleSha256) {
-    throw new Error("closure-preserving hook module SHA differs from manifest");
-  }
-  const approvedHooksRoot = hooksRoot ?? join(approvedIrRoot, "hooks");
-  const hookText = await readRegularFile(
-    join(approvedHooksRoot, auditedHook.file),
-    `hook ${hookId}`,
-    { root: approvedHooksRoot },
+  const moduleSource = closurePreservingHookModule(
+    sourceText,
+    source.source,
+    instances,
   );
-  if (sha256(hookText) !== auditedHook.sha256) {
-    throw new Error(`hook ${hookId} SHA differs from the audit`);
-  }
+  const module = sourceModuleFileName(source.source);
   return {
     ...source,
     path: source.path,
-    module: descriptor.module,
-    moduleSha256: descriptor.moduleSha256,
-    sourceField: descriptor.sourceField,
-    functionBodySha256: descriptor.functionBodySha256,
-    manifestSha256: moduleSummary.manifestSha256,
+    module,
+    moduleSha256: sha256(moduleSource),
+    moduleSource,
+    sourceField: source.sourceField,
+    functionBodySha256: auditedHook.functionBodySha256 ?? source.sha256,
+    manifestSha256: isSha256(audit.typedHooks?.sidecarSha256)
+      ? audit.typedHooks.sidecarSha256
+      : sha256(moduleSource),
   };
 }
 
@@ -813,7 +584,13 @@ export async function captureHookModuleReference(options = {}) {
   return withReferenceAudit(
     { sourceRoot, irRoot, hooksRoot },
     async (audit) => {
-      const instance = await moduleInstance(audit, hookId, irRoot, hooksRoot);
+      const instance = await moduleInstance(
+        audit,
+        hookId,
+        irRoot,
+        hooksRoot,
+        sourceRoot,
+      );
       const identity = resultIdentity(audit, hookId, {
         module: instance.module,
         moduleSha256: instance.moduleSha256,
@@ -827,6 +604,7 @@ export async function captureHookModuleReference(options = {}) {
           field: instance.field,
           module: instance.module,
           moduleSha256: instance.moduleSha256,
+          moduleSource: instance.moduleSource,
           args,
           mockExecRules,
         },
@@ -931,7 +709,13 @@ export async function captureHookModuleReferenceBatch(options = {}) {
       if (audit.ok !== true) {
         throw new Error("source/IR audit must pass before module probing");
       }
-      const instance = await moduleInstance(audit, hookId, irRoot, hooksRoot);
+      const instance = await moduleInstance(
+        audit,
+        hookId,
+        irRoot,
+        hooksRoot,
+        sourceRoot,
+      );
       const identity = resultIdentity(audit, hookId, {
         module: instance.module,
         moduleSha256: instance.moduleSha256,
@@ -947,6 +731,7 @@ export async function captureHookModuleReferenceBatch(options = {}) {
           field: instance.field,
           module: instance.module,
           moduleSha256: instance.moduleSha256,
+          moduleSource: instance.moduleSource,
         },
         metadata: {
           ...identity,

@@ -5,7 +5,7 @@
 //! `deny_unknown_fields` is attached to every object: a new harness key must
 //! be added on both sides before a baseline file can carry it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -72,22 +72,7 @@ pub struct ExecRule {
     pub delay_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct HookContext {
-    #[serde(rename = "currentWorkingDirectory")]
-    pub current_working_directory: String,
-    #[serde(rename = "currentProcess")]
-    pub current_process: String,
-    #[serde(rename = "sshPrefix")]
-    pub ssh_prefix: String,
-    #[serde(rename = "environmentVariables")]
-    pub environment_variables: BTreeMap<String, String>,
-    #[serde(rename = "searchTerm")]
-    pub search_term: String,
-    #[serde(rename = "isDangerous")]
-    pub is_dangerous: bool,
-}
+pub use crate::hook_types::HookContext;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "kind", deny_unknown_fields)]
@@ -467,7 +452,7 @@ mod tests {
         assert_eq!(loaded, vec![baseline]);
 
         let committed = load_all().expect("committed hook baselines");
-        assert_eq!(committed.len(), 594);
+        assert_eq!(committed.len(), 603);
     }
 
     #[test]

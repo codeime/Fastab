@@ -27,6 +27,10 @@ import {
 import { auditSpecsHooks, safeWriteAuditReport } from "./audit-spec-hooks.mjs";
 import { functionSource } from "./filepaths-helper.mjs";
 import { createPairMarker, writePairMarker } from "./spec-pair.mjs";
+import {
+  compileTypedHook,
+  typedHookSidecarContracts,
+} from "./typed-hook-ir.mjs";
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const execFileAsync = promisify(execFile);
@@ -42,12 +46,7 @@ async function createFixture() {
   };\n`;
   const id = "sample#postProcess#1";
   const moduleFile = "0123456789abcdef01234567.js";
-  const moduleText = `export default (() => {
-    const suffix = "-closure";
-    return Object.freeze({
-      ${JSON.stringify(id)}: (stdout) => [{ name: stdout + suffix }],
-    });
-  })();\n`;
+  const moduleSha256 = "a".repeat(64);
 
   await writeFile(join(sourceRoot, "sample.js"), source);
   const imported = await import(
@@ -57,8 +56,6 @@ async function createFixture() {
     imported.default.args[0].generators.postProcess,
   );
   assert.equal(typeof hookBody, "string");
-  await mkdir(join(irRoot, "hooks"));
-  await mkdir(join(irRoot, HOOK_MODULES_DIR));
   await writeFile(
     join(irRoot, "sample.json"),
     `${JSON.stringify({
@@ -66,64 +63,42 @@ async function createFixture() {
       args: [{ generators: { jsPostProcess: id } }],
     })}\n`,
   );
+  const descriptor = compileTypedHook({
+    body: hookBody,
+    sourceField: "postProcess",
+  });
+  const sidecarPath = join(irRoot, TYPED_HOOK_SIDECAR);
   await writeFile(
-    join(irRoot, "hooks", hookFileName(id)),
-    `export default ${hookBody};\n`,
-  );
-  await writeFile(join(irRoot, HOOK_MODULES_DIR, moduleFile), moduleText);
-  const moduleSha256 = sha256(moduleText);
-  const manifest = {
-    version: 1,
-    kind: "closure-preserving-hook-modules",
-    hooks: {
-      [id]: {
-        module: moduleFile,
-        moduleSha256,
-        path: "root.args[0].generators.postProcess",
-        sourceField: "postProcess",
-        functionBodySha256: sha256(hookBody),
-      },
-    },
-    modules: {
-      [moduleFile]: {
-        source: "sample.js",
-        sourceSha256: sha256(source),
-        moduleSha256,
-        hookIds: [id],
-      },
-    },
-  };
-  const manifestPath = join(irRoot, HOOK_MODULE_MANIFEST);
-  await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`);
-  await writeFile(
-    join(irRoot, TYPED_HOOK_SIDECAR),
+    sidecarPath,
     `${JSON.stringify({
       version: 1,
       kind: "typed-hook-expressions",
-      contracts: {
-        trigger: {
-          irVersion: 1,
-          params: ["string", "string"],
-          resultType: "bool",
+      contracts: typedHookSidecarContracts(),
+      hooks: {
+        [id]: {
+          module: moduleFile,
+          moduleSha256,
+          path: "root.args[0].generators.postProcess",
+          sourceField: "postProcess",
+          functionBodySha256: sha256(hookBody),
+          descriptor,
         },
       },
-      hooks: {},
     })}\n`,
   );
   await writePairMarker(irRoot, await createPairMarker({ sourceRoot, irRoot }));
   return {
     sourceRoot,
     irRoot,
-    manifestPath,
-    modulePath: join(irRoot, HOOK_MODULES_DIR, moduleFile),
+    sidecarPath,
     id,
     moduleFile,
     hookBody,
-    async readManifest() {
-      return JSON.parse(await readFile(manifestPath, "utf8"));
+    async readSidecar() {
+      return JSON.parse(await readFile(sidecarPath, "utf8"));
     },
-    async writeManifest(next) {
-      await writeFile(manifestPath, `${JSON.stringify(next)}\n`);
+    async writeSidecar(next) {
+      await writeFile(sidecarPath, `${JSON.stringify(next)}\n`);
     },
     async cleanup() {
       await Promise.all([
@@ -179,19 +154,17 @@ async function createTypedCompiledFixture() {
   };
 }
 
-test("audit validates closure-preserving hook module manifest v1", async () => {
+test("audit validates typed sidecar mapping without leftover runtime JS", async () => {
   const fixture = await createFixture();
   try {
     const report = await audit(fixture);
-    assert.equal(report.ok, true);
+    assert.equal(report.ok, true, JSON.stringify(report.errors, null, 2));
     assert.deepEqual(report.hookModules, {
       validated: true,
-      manifest: HOOK_MODULE_MANIFEST,
-      directory: HOOK_MODULES_DIR,
-      manifestHooks: 1,
-      manifestModules: 1,
-      filesOnDisk: 1,
-      manifestSha256: sha256(await readFile(fixture.manifestPath, "utf8")),
+      leftoverRuntimeJs: false,
+      leftoverHookFiles: 0,
+      leftoverHookModules: 0,
+      leftoverHookModuleManifest: 0,
     });
     assert.deepEqual(report.sourceToIr[0].hookInstances.postProcess, [
       {
@@ -497,40 +470,35 @@ test("audit recomputes the typed trigger set and rejects sidecar drift", async (
 test("audit has an explicit pre-manifest opt-out for compiler staging", async () => {
   const fixture = await createFixture();
   try {
-    await rm(fixture.manifestPath);
     const report = await audit(fixture, {
       validateHookModules: false,
       validateTypedHooks: false,
       pair: "skip",
     });
-    assert.equal(report.ok, true);
+    assert.equal(report.ok, true, JSON.stringify(report.errors, null, 2));
     assert.equal(report.hookModules.validated, false);
-    assert.equal(report.errors.missingHookModuleManifest.length, 0);
+    assert.equal(report.errors.leftoverHookModuleManifest.length, 0);
   } finally {
     await fixture.cleanup();
   }
 });
 
-test("audit fails when the module manifest is missing or a module is tampered", async () => {
+test("audit fails when leftover runtime JS artifacts are present", async () => {
   const fixture = await createFixture();
   try {
-    await rm(fixture.manifestPath);
-    const missing = await audit(fixture);
-    assert.equal(missing.ok, false);
-    assert.ok(missing.errors.missingHookModuleManifest.length > 0);
+    await writeFile(join(fixture.irRoot, HOOK_MODULE_MANIFEST), "{}\n");
+    const leftoverManifest = await audit(fixture, { pair: "skip" });
+    assert.equal(leftoverManifest.ok, false);
+    assert.ok(leftoverManifest.errors.leftoverHookModuleManifest.length > 0);
 
     const replacement = await createFixture();
     try {
-      await writeFile(replacement.modulePath, "tampered module\n");
-      const tampered = await audit(replacement);
-      assert.equal(tampered.ok, false);
-      assert.ok(
-        tampered.errors.hookModuleMismatches.some(
-          (entry) =>
-            entry.file === replacement.moduleFile &&
-            entry.reason.includes("SHA-256"),
-        ),
-      );
+      await mkdir(join(replacement.irRoot, HOOK_MODULES_DIR));
+      await mkdir(join(replacement.irRoot, "hooks"));
+      const leftoverDirs = await audit(replacement, { pair: "skip" });
+      assert.equal(leftoverDirs.ok, false);
+      assert.ok(leftoverDirs.errors.leftoverHookModules.length > 0);
+      assert.ok(leftoverDirs.errors.leftoverHookFiles.length > 0);
     } finally {
       await replacement.cleanup();
     }
@@ -539,116 +507,111 @@ test("audit fails when the module manifest is missing or a module is tampered", 
   }
 });
 
-test("audit requires exact hook-to-module mappings and rejects orphan files", async () => {
-  const fixture = await createFixture();
+test("audit captures a minified versions named export alias", async () => {
+  const sourceRoot = await mkdtemp(
+    join(tmpdir(), "easy-complete-minified-versions-src-"),
+  );
+  const irRoot = await mkdtemp(
+    join(tmpdir(), "easy-complete-minified-versions-ir-"),
+  );
   try {
-    const manifest = await fixture.readManifest();
-    const hookDescriptor = manifest.hooks[fixture.id];
-    delete manifest.hooks[fixture.id];
     await writeFile(
-      join(fixture.irRoot, HOOK_MODULES_DIR, "orphan.js"),
-      "export default (() => ({}))();\n",
+      join(sourceRoot, "tool.js"),
+      `var s={name:"tool",subcommands:[{name:"base"}]},v={};v["1.2.0"]={subcommands:[{name:"added",args:{generators:{postProcess:t=>[{name:t}]}}}]};export{s as default,v as versions};\n`,
     );
-    await fixture.writeManifest(manifest);
-    const report = await audit(fixture);
-    assert.equal(report.ok, false);
-    assert.ok(
-      report.errors.hookModuleMismatches.some((entry) =>
-        entry.reason.includes("missing from manifest hooks"),
-      ),
-    );
-    assert.ok(
-      report.errors.orphanHookModules.some(
-        (entry) => entry.file === "orphan.js",
-      ),
-    );
-
-    const missingMetadata = await fixture.readManifest();
-    missingMetadata.hooks[fixture.id] = hookDescriptor;
-    delete missingMetadata.modules[fixture.moduleFile];
-    await fixture.writeManifest(missingMetadata);
-    const reportWithoutMetadata = await audit(fixture);
-    assert.equal(reportWithoutMetadata.ok, false);
-    assert.ok(
-      reportWithoutMetadata.errors.hookModuleMismatches.some((entry) =>
-        entry.reason.includes("missing from manifest modules"),
-      ),
-    );
+    await compileSpecsIr({ srcDir: sourceRoot, outDir: irRoot });
+    const report = await auditSpecsHooks({ sourceRoot, irRoot });
+    assert.equal(report.ok, true, JSON.stringify(report.errors, null, 2));
   } finally {
-    await fixture.cleanup();
+    await Promise.all([
+      rm(sourceRoot, { recursive: true, force: true }),
+      rm(irRoot, { recursive: true, force: true }),
+    ]);
   }
 });
 
-test("audit rejects module path traversal and metadata hook-id drift", async () => {
-  const fixture = await createFixture();
+test("audit matches derived version IR hooks against the merged source tree", async () => {
+  const sourceRoot = await mkdtemp(
+    join(tmpdir(), "easy-complete-version-audit-src-"),
+  );
+  const irRoot = await mkdtemp(
+    join(tmpdir(), "easy-complete-version-audit-ir-"),
+  );
   try {
-    const manifest = await fixture.readManifest();
-    manifest.hooks[fixture.id].module = "../outside.js";
-    await fixture.writeManifest(manifest);
-    const traversal = await audit(fixture);
-    assert.equal(traversal.ok, false);
-    assert.ok(
-      traversal.errors.invalidHookModuleManifest.some((entry) =>
-        entry.reason.includes("root-relative .js filename"),
-      ),
+    await mkdir(join(sourceRoot, "tool"), { recursive: true });
+    await writeFile(
+      join(sourceRoot, "tool", "1.0.0.js"),
+      `const spec = { name: "tool", subcommands: [{ name: "base" }] };
+const versions = { "1.2.0": { subcommands: [{ name: "added", args: { generators: { postProcess: (out) => [{ name: out }] } } }] } };
+export { spec as default, versions };\n`,
     );
-
-    manifest.hooks[fixture.id].module = fixture.moduleFile;
-    manifest.modules[fixture.moduleFile].hookIds = [];
-    await fixture.writeManifest(manifest);
-    const report = await audit(fixture);
-    assert.equal(report.ok, false);
+    await compileSpecsIr({ srcDir: sourceRoot, outDir: irRoot });
+    const report = await auditSpecsHooks({ sourceRoot, irRoot });
+    assert.equal(report.ok, true, JSON.stringify(report.errors, null, 2));
+    assert.equal(report.errors.hookModuleMismatches.length, 0);
+    assert.equal(report.errors.orphanTypedHooks.length, 0);
+    assert.equal(report.errors.sourceHookMismatches.length, 0);
+    const derivedHook = report.sourceToIr[0].hookInstances.postProcess.find(
+      (instance) => instance.id === "tool/1.0.0#postProcess#0",
+    );
+    assert.ok(derivedHook, JSON.stringify(report.sourceToIr[0].hookInstances));
+    assert.equal(derivedHook.path, "root.subcommands[0].args.generators.postProcess");
     assert.ok(
-      report.errors.hookModuleMismatches.some((entry) =>
-        entry.reason.includes("hookIds do not match"),
-      ),
+      Object.keys(JSON.parse(await readFile(join(irRoot, TYPED_HOOK_SIDECAR), "utf8")).hooks).length >= 1,
     );
   } finally {
-    await fixture.cleanup();
+    await Promise.all([
+      rm(sourceRoot, { recursive: true, force: true }),
+      rm(irRoot, { recursive: true, force: true }),
+    ]);
   }
 });
 
 test("audit rejects compiler provenance tampering in path, field, or body hash", async () => {
   const fixture = await createFixture();
   try {
-    const baseline = await fixture.readManifest();
+    const baseline = await fixture.readSidecar();
     const tampering = [
       {
         name: "path",
-        mutate: (manifest) => {
-          manifest.hooks[fixture.id].path =
+        mutate: (sidecar) => {
+          sidecar.hooks[fixture.id].path =
             "root.args[1].generators.postProcess";
         },
         reason: "path does not resolve",
       },
       {
         name: "sourceField",
-        mutate: (manifest) => {
-          manifest.hooks[fixture.id].sourceField = "custom";
+        mutate: (sidecar) => {
+          sidecar.hooks[fixture.id].sourceField = "custom";
         },
-        reason: "sourceField does not match",
+        reason: "sourceField",
       },
       {
         name: "functionBodySha256",
-        mutate: (manifest) => {
-          manifest.hooks[fixture.id].functionBodySha256 = "0".repeat(64);
+        mutate: (sidecar) => {
+          sidecar.hooks[fixture.id].functionBodySha256 = "0".repeat(64);
         },
         reason: "function body SHA-256",
       },
     ];
     for (const { mutate, reason } of tampering) {
-      const manifest = structuredClone(baseline);
-      mutate(manifest);
-      await fixture.writeManifest(manifest);
-      const report = await audit(fixture);
+      const sidecar = structuredClone(baseline);
+      mutate(sidecar);
+      await fixture.writeSidecar(sidecar);
+      const report = await audit(fixture, { pair: "skip" });
       assert.equal(report.ok, false);
       assert.ok(
         [
-          ...report.errors.hookModuleMismatches,
+          ...report.errors.typedHookMismatches,
           ...report.errors.sourceHookMismatches,
+          ...report.errors.invalidTypedHookSidecar,
         ].some(
-          (entry) => entry.id === fixture.id && entry.reason.includes(reason),
+          (entry) =>
+            (entry.id === fixture.id || !entry.id) &&
+            String(entry.reason).includes(reason),
         ),
+        reason,
       );
     }
   } finally {

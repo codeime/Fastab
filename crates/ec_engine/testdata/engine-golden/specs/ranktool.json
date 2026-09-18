@@ -1,0 +1,22 @@
+{
+  "names": ["ranktool"],
+  "description": "Ranking fixture",
+  "subcommands": [
+    {
+      "names": ["checkout"],
+      "description": "Spec checkout",
+      "priority": 60
+    },
+    {
+      "names": ["alpha"],
+      "description": "High priority",
+      "icon": "fig://icon?type=star",
+      "priority": 95
+    },
+    {
+      "names": ["beta"],
+      "description": "Low priority",
+      "priority": 20
+    }
+  ]
+}

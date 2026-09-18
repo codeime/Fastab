@@ -17,13 +17,13 @@ futures.workspace = true
 fancy-regex = "0.16.2"
 libc.workspace = true
 nix.workspace = true
-rquickjs = { version = "0.12.2", default-features = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+fig_settings = { path = "../fig_settings", features = ["test-support"] }
 tempfile.workspace = true
 # Only to prove the reply channel stays outside tokio's cooperative budget; see
 # `replies_keep_resolving_after_tokio_exhausts_its_budget_on_the_polling_thread`.

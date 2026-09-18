@@ -1,0 +1,1451 @@
+{
+  "version": 1,
+  "kind": "typed-ir-v2-ops",
+  "cases": [
+    {
+      "id": "query-identity",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value",
+      "args": [
+        "keep"
+      ],
+      "expected": "keep",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "arg",
+          "index": 0
+        }
+      }
+    },
+    {
+      "id": "query-trim",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.trim()",
+      "args": [
+        "  hi  "
+      ],
+      "expected": "hi",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-trim",
+          "value": {
+            "op": "arg",
+            "index": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "query-trim-start",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.trimStart()",
+      "args": [
+        "  hi  "
+      ],
+      "expected": "hi  ",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-trim-start",
+          "value": {
+            "op": "arg",
+            "index": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "query-trim-end",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.trimEnd()",
+      "args": [
+        "  hi  "
+      ],
+      "expected": "  hi",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-trim-end",
+          "value": {
+            "op": "arg",
+            "index": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "query-trim-does-not-strip-nel",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.trim()",
+      "args": [
+        "hi"
+      ],
+      "expected": "hi",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-trim",
+          "value": {
+            "op": "arg",
+            "index": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "query-replace",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.replace(\"-\",\"_\")",
+      "args": [
+        "a-b-c"
+      ],
+      "expected": "a_b-c",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-replace",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "needle": {
+            "op": "string",
+            "value": "-"
+          },
+          "replacement": {
+            "op": "string",
+            "value": "_"
+          }
+        }
+      }
+    },
+    {
+      "id": "query-replace-all",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.replaceAll(\"-\",\"_\")",
+      "args": [
+        "a-b-c"
+      ],
+      "expected": "a_b_c",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-replace-all",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "needle": {
+            "op": "string",
+            "value": "-"
+          },
+          "replacement": {
+            "op": "string",
+            "value": "_"
+          }
+        }
+      }
+    },
+    {
+      "id": "query-to-lower",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.toLowerCase()",
+      "args": [
+        "AbC"
+      ],
+      "expected": "abc",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-to-lower",
+          "value": {
+            "op": "arg",
+            "index": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "query-to-upper",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.toUpperCase()",
+      "args": [
+        "AbC"
+      ],
+      "expected": "ABC",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-to-upper",
+          "value": {
+            "op": "arg",
+            "index": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "query-substring",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.substring(1,3)",
+      "args": [
+        "abcd"
+      ],
+      "expected": "bc",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-substring",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "start": {
+            "op": "integer",
+            "value": 1
+          },
+          "end": {
+            "op": "integer",
+            "value": 3
+          }
+        }
+      }
+    },
+    {
+      "id": "query-substring-swapped",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.substring(3,1)",
+      "args": [
+        "abcd"
+      ],
+      "expected": "bc",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-substring",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "start": {
+            "op": "integer",
+            "value": 3
+          },
+          "end": {
+            "op": "integer",
+            "value": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "query-substring-default-end",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.substring(2)",
+      "args": [
+        "abcdef"
+      ],
+      "expected": "cdef",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-substring",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "start": {
+            "op": "integer",
+            "value": 2
+          },
+          "end": {
+            "op": "length",
+            "value": {
+              "op": "arg",
+              "index": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "query-substring-utf16",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.substring(1,3)",
+      "args": [
+        "a😀b"
+      ],
+      "expected": "😀",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-substring",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "start": {
+            "op": "integer",
+            "value": 1
+          },
+          "end": {
+            "op": "integer",
+            "value": 3
+          }
+        }
+      }
+    },
+    {
+      "id": "query-pad-start",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.padStart(4,\"0\")",
+      "args": [
+        "12"
+      ],
+      "expected": "0012",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-pad-start",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "target": {
+            "op": "integer",
+            "value": 4
+          },
+          "pad": {
+            "op": "string",
+            "value": "0"
+          }
+        }
+      }
+    },
+    {
+      "id": "query-pad-end",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.padEnd(4,\".\")",
+      "args": [
+        "12"
+      ],
+      "expected": "12..",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-pad-end",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "target": {
+            "op": "integer",
+            "value": 4
+          },
+          "pad": {
+            "op": "string",
+            "value": "."
+          }
+        }
+      }
+    },
+    {
+      "id": "query-pad-start-utf16",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.padStart(3,\".\")",
+      "args": [
+        "😀"
+      ],
+      "expected": ".😀",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-pad-start",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "target": {
+            "op": "integer",
+            "value": 3
+          },
+          "pad": {
+            "op": "string",
+            "value": "."
+          }
+        }
+      }
+    },
+    {
+      "id": "query-repeat",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.repeat(3)",
+      "args": [
+        "ab"
+      ],
+      "expected": "ababab",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-repeat",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "count": {
+            "op": "integer",
+            "value": 3
+          }
+        }
+      }
+    },
+    {
+      "id": "query-concat",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.concat(\"!\")",
+      "args": [
+        "hi"
+      ],
+      "expected": "hi!",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-concat",
+          "parts": [
+            {
+              "op": "arg",
+              "index": 0
+            },
+            {
+              "op": "string",
+              "value": "!"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "query-char-at",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.charAt(1)",
+      "args": [
+        "abc"
+      ],
+      "expected": "b",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-char-at",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "index": {
+            "op": "integer",
+            "value": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "query-at-last",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.at(-1)",
+      "args": [
+        "abc"
+      ],
+      "expected": "c",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-at",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "index": {
+            "op": "integer",
+            "value": -1
+          }
+        }
+      }
+    },
+    {
+      "id": "query-template-concat",
+      "sourceField": "getQueryTerm",
+      "body": "value=>`x${value}y`",
+      "args": [
+        "mid"
+      ],
+      "expected": "xmidy",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-concat",
+          "parts": [
+            {
+              "op": "string",
+              "value": "x"
+            },
+            {
+              "op": "arg",
+              "index": 0
+            },
+            {
+              "op": "string",
+              "value": "y"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "query-asdf-add-slice",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.includes(\"latest\")?value.slice(value.indexOf(\":\")+1):value",
+      "args": [
+        "nodejs:latest"
+      ],
+      "expected": "latest",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "if",
+          "condition": {
+            "op": "string-includes",
+            "value": {
+              "op": "arg",
+              "index": 0
+            },
+            "needle": {
+              "op": "string",
+              "value": "latest"
+            }
+          },
+          "then": {
+            "op": "string-slice",
+            "value": {
+              "op": "arg",
+              "index": 0
+            },
+            "start": {
+              "op": "add",
+              "left": {
+                "op": "string-index-of",
+                "value": {
+                  "op": "arg",
+                  "index": 0
+                },
+                "needle": {
+                  "op": "string",
+                  "value": ":"
+                }
+              },
+              "right": {
+                "op": "integer",
+                "value": 1
+              }
+            }
+          },
+          "else": {
+            "op": "arg",
+            "index": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "query-last-index-slice",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.slice(value.lastIndexOf(\":\")+1)",
+      "args": [
+        "a:b:c"
+      ],
+      "expected": "c",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-slice",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "start": {
+            "op": "add",
+            "left": {
+              "op": "string-last-index-of",
+              "value": {
+                "op": "arg",
+                "index": 0
+              },
+              "needle": {
+                "op": "string",
+                "value": ":"
+              }
+            },
+            "right": {
+              "op": "integer",
+              "value": 1
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "query-starts-with-slice",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.startsWith(\".\")?value.slice(1):value",
+      "args": [
+        ".hidden"
+      ],
+      "expected": "hidden",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "if",
+          "condition": {
+            "op": "string-starts-with",
+            "value": {
+              "op": "arg",
+              "index": 0
+            },
+            "needle": {
+              "op": "string",
+              "value": "."
+            }
+          },
+          "then": {
+            "op": "string-slice",
+            "value": {
+              "op": "arg",
+              "index": 0
+            },
+            "start": {
+              "op": "integer",
+              "value": 1
+            }
+          },
+          "else": {
+            "op": "arg",
+            "index": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "query-ends-with-substring",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.endsWith(\"/\")?value.substring(0,value.length-1):value",
+      "args": [
+        "src/"
+      ],
+      "expected": "src",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "if",
+          "condition": {
+            "op": "string-ends-with",
+            "value": {
+              "op": "arg",
+              "index": 0
+            },
+            "needle": {
+              "op": "string",
+              "value": "/"
+            }
+          },
+          "then": {
+            "op": "string-substring",
+            "value": {
+              "op": "arg",
+              "index": 0
+            },
+            "start": {
+              "op": "integer",
+              "value": 0
+            },
+            "end": {
+              "op": "sub",
+              "left": {
+                "op": "length",
+                "value": {
+                  "op": "arg",
+                  "index": 0
+                }
+              },
+              "right": {
+                "op": "integer",
+                "value": 1
+              }
+            }
+          },
+          "else": {
+            "op": "arg",
+            "index": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "trigger-starts-with",
+      "sourceField": "trigger",
+      "body": "(a,b)=>a.startsWith(b)",
+      "args": [
+        "hello",
+        "he"
+      ],
+      "expected": true,
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "trigger",
+        "resultType": "bool",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          },
+          {
+            "index": 1,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-starts-with",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "needle": {
+            "op": "arg",
+            "index": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "trigger-ends-with",
+      "sourceField": "trigger",
+      "body": "(a,b)=>a.endsWith(\"/\")",
+      "args": [
+        "src/",
+        "x"
+      ],
+      "expected": true,
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "trigger",
+        "resultType": "bool",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          },
+          {
+            "index": 1,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-ends-with",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "needle": {
+            "op": "string",
+            "value": "/"
+          }
+        }
+      }
+    },
+    {
+      "id": "trigger-not",
+      "sourceField": "trigger",
+      "body": "(a,b)=>!a.startsWith(\"x\")",
+      "args": [
+        "hello",
+        "x"
+      ],
+      "expected": true,
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "trigger",
+        "resultType": "bool",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          },
+          {
+            "index": 1,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "not",
+          "value": {
+            "op": "string-starts-with",
+            "value": {
+              "op": "arg",
+              "index": 0
+            },
+            "needle": {
+              "op": "string",
+              "value": "x"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "trigger-lt",
+      "sourceField": "trigger",
+      "body": "(a,b)=>a.length<b.length",
+      "args": [
+        "a",
+        "bb"
+      ],
+      "expected": true,
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "trigger",
+        "resultType": "bool",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          },
+          {
+            "index": 1,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "lt",
+          "left": {
+            "op": "length",
+            "value": {
+              "op": "arg",
+              "index": 0
+            }
+          },
+          "right": {
+            "op": "length",
+            "value": {
+              "op": "arg",
+              "index": 1
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "trigger-le",
+      "sourceField": "trigger",
+      "body": "(a,b)=>a.length<=1",
+      "args": [
+        "a",
+        "z"
+      ],
+      "expected": true,
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "trigger",
+        "resultType": "bool",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          },
+          {
+            "index": 1,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "le",
+          "left": {
+            "op": "length",
+            "value": {
+              "op": "arg",
+              "index": 0
+            }
+          },
+          "right": {
+            "op": "integer",
+            "value": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "trigger-ge",
+      "sourceField": "trigger",
+      "body": "(a,b)=>a.length>=2",
+      "args": [
+        "ab",
+        "z"
+      ],
+      "expected": true,
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "trigger",
+        "resultType": "bool",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          },
+          {
+            "index": 1,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "ge",
+          "left": {
+            "op": "length",
+            "value": {
+              "op": "arg",
+              "index": 0
+            }
+          },
+          "right": {
+            "op": "integer",
+            "value": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "trigger-sub",
+      "sourceField": "trigger",
+      "body": "(a,b)=>a.length-1===0",
+      "args": [
+        "x",
+        "z"
+      ],
+      "expected": true,
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "trigger",
+        "resultType": "bool",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          },
+          {
+            "index": 1,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "strict-eq",
+          "left": {
+            "op": "sub",
+            "left": {
+              "op": "length",
+              "value": {
+                "op": "arg",
+                "index": 0
+              }
+            },
+            "right": {
+              "op": "integer",
+              "value": 1
+            }
+          },
+          "right": {
+            "op": "integer",
+            "value": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "trigger-mul",
+      "sourceField": "trigger",
+      "body": "(a,b)=>a.length*2===4",
+      "args": [
+        "ab",
+        "z"
+      ],
+      "expected": true,
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "trigger",
+        "resultType": "bool",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          },
+          {
+            "index": 1,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "strict-eq",
+          "left": {
+            "op": "mul",
+            "left": {
+              "op": "length",
+              "value": {
+                "op": "arg",
+                "index": 0
+              }
+            },
+            "right": {
+              "op": "integer",
+              "value": 2
+            }
+          },
+          "right": {
+            "op": "integer",
+            "value": 4
+          }
+        }
+      }
+    },
+    {
+      "id": "trigger-last-index-of",
+      "sourceField": "trigger",
+      "body": "(a,b)=>a.lastIndexOf(\"/\")!==b.lastIndexOf(\"/\")",
+      "args": [
+        "a/b",
+        "ab"
+      ],
+      "expected": true,
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "trigger",
+        "resultType": "bool",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          },
+          {
+            "index": 1,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "strict-ne",
+          "left": {
+            "op": "string-last-index-of",
+            "value": {
+              "op": "arg",
+              "index": 0
+            },
+            "needle": {
+              "op": "string",
+              "value": "/"
+            }
+          },
+          "right": {
+            "op": "string-last-index-of",
+            "value": {
+              "op": "arg",
+              "index": 1
+            },
+            "needle": {
+              "op": "string",
+              "value": "/"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "trigger-last-index-empty-needle",
+      "sourceField": "trigger",
+      "body": "(a,b)=>a.lastIndexOf(\"\")===a.length",
+      "args": [
+        "ab",
+        "x"
+      ],
+      "expected": true,
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "trigger",
+        "resultType": "bool",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          },
+          {
+            "index": 1,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "strict-eq",
+          "left": {
+            "op": "string-last-index-of",
+            "value": {
+              "op": "arg",
+              "index": 0
+            },
+            "needle": {
+              "op": "string",
+              "value": ""
+            }
+          },
+          "right": {
+            "op": "length",
+            "value": {
+              "op": "arg",
+              "index": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "query-replace-all-empty-needle",
+      "sourceField": "getQueryTerm",
+      "body": "value=>value.replaceAll(\"\",\"-\")",
+      "args": [
+        "ab"
+      ],
+      "expected": "-a-b-",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "string-replace-all",
+          "value": {
+            "op": "arg",
+            "index": 0
+          },
+          "needle": {
+            "op": "string",
+            "value": ""
+          },
+          "replacement": {
+            "op": "string",
+            "value": "-"
+          }
+        }
+      }
+    },
+    {
+      "id": "script-literal-argv",
+      "sourceField": "script",
+      "body": "tokens=>[\"echo\",\"-n\"]",
+      "args": [
+        []
+      ],
+      "expected": [
+        "echo",
+        "-n"
+      ],
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "script",
+        "resultType": "string-array",
+        "params": [
+          {
+            "index": 0,
+            "type": "string-array"
+          }
+        ],
+        "expr": {
+          "op": "array",
+          "items": [
+            {
+              "op": "string",
+              "value": "echo"
+            },
+            {
+              "op": "string",
+              "value": "-n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "query-nullish-null-left",
+      "sourceField": "getQueryTerm",
+      "body": null,
+      "args": [
+        "fallback"
+      ],
+      "expected": "fallback",
+      "descriptor": {
+        "version": 1,
+        "kind": "typed-hook-expression",
+        "sourceField": "getQueryTerm",
+        "resultType": "string",
+        "params": [
+          {
+            "index": 0,
+            "type": "string"
+          }
+        ],
+        "expr": {
+          "op": "nullish",
+          "left": {
+            "op": "null"
+          },
+          "right": {
+            "op": "arg",
+            "index": 0
+          }
+        }
+      }
+    }
+  ]
+}

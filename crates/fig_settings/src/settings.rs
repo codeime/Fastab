@@ -21,22 +21,22 @@ mod inner {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     static OVERRIDE: std::cell::RefCell<Option<Settings>> = const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub struct SettingsOverrideGuard;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Drop for SettingsOverrideGuard {
     fn drop(&mut self) {
         OVERRIDE.with(|cell| *cell.borrow_mut() = None);
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn install_override(settings: Settings) -> SettingsOverrideGuard {
     OVERRIDE.with(|cell| *cell.borrow_mut() = Some(settings));
     SettingsOverrideGuard
@@ -44,7 +44,7 @@ pub fn install_override(settings: Settings) -> SettingsOverrideGuard {
 
 impl Settings {
     pub fn new() -> Self {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         if let Some(settings) = OVERRIDE.with(|cell| cell.borrow().clone()) {
             return settings;
         }

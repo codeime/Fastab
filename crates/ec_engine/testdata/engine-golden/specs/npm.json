@@ -1,0 +1,19 @@
+{
+  "names": ["npm"],
+  "description": "Node package manager",
+  "subcommands": [
+    {
+      "names": ["run"],
+      "description": "Run a package script",
+      "icon": "fig://icon?type=npm",
+      "priority": 80,
+      "args": [
+        {
+          "name": "script",
+          "script": ["npm", "run"],
+          "jsPostProcess": "npm#postProcess#0"
+        }
+      ]
+    }
+  ]
+}

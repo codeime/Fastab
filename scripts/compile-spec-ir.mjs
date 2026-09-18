@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
  * Compile bundled Fig JS specs into static JSON IR for the Rust engine.
- * Static walk data stays in JSON. Fig functions keep legacy standalone files
- * under hooks/ for audit and compatibility. The runtime path uses one
- * closure-preserving table per source module under source-modules/, referenced
- * through hook-modules.json. Known Rust builtins still replace matching
- * git/npm scripts.
+ * Static walk data stays in JSON. Fig functions are compiled to typed IR or
+ * named native adapters and recorded in typed-hooks.json. Closure-preserving
+ * modules stay in memory only so helper inlining can still run; hooks/,
+ * source-modules/, and hook-modules.json are not published. Known Rust
+ * builtins still replace matching git/npm scripts.
  */
 import {
   mkdir,
@@ -41,12 +41,10 @@ import {
 } from "./filepaths-helper.mjs";
 import {
   countFunctionsInValue,
-  describeVersionDiffAllowlistDrift,
   HOOK_MODULE_MANIFEST,
   HOOK_MODULES_DIR,
   hookFileName,
   KNOWN_NON_SPEC_FILES,
-  KNOWN_UNAPPLIED_VERSION_DIFFS,
   SUPPORTED_HOOK_FIELDS,
   SUPPORTED_IR_HOOK_FIELDS,
   TYPED_HOOK_CATALOG_MAX_BYTES,
@@ -58,9 +56,18 @@ import {
   TYPED_HOOK_SIDECAR,
   TYPED_HOOK_SIDECAR_KIND,
   TYPED_HOOK_SIDECAR_VERSION,
-  unappliedVersionDiffKeys,
   utf8ByteLength,
 } from "./spec-hook-contract.mjs";
+import {
+  applySpecDiff,
+  applySpecDiffModuleSource,
+  compileGetVersionCommand,
+  compareSemver,
+  derivedVersionIrRel,
+  isEmptyVersionDiff,
+  resolveVersionedPath,
+  versionDiffKeys,
+} from "./spec-versions.mjs";
 import {
   assertNoSymlinkInPath,
   PAIR_LOCK_NAME,
@@ -74,10 +81,18 @@ import {
   writePairMarker,
 } from "./spec-pair.mjs";
 import {
+  allowUnadaptedHooks,
+  formatUnadaptedHookError,
+  isRegisteredNativeAdapter,
+  loadNativeHookAdapters,
+  NAMED_ADAPTER_FIELDS,
+} from "./native-hook-adapters.mjs";
+import {
   compileTypedHook,
-  TypedHookCompileError,
   TYPED_HOOK_CONTRACTS,
-  TYPED_HOOK_IR_VERSION,
+  TYPED_HOOK_SIDECAR_FIELDS,
+  tryCompileTypedHook,
+  typedHookSidecarContracts,
 } from "./typed-hook-ir.mjs";
 
 export {
@@ -229,6 +244,7 @@ export function createHookBag(specId) {
     extracted: new Map(),
     extractions: [],
     bindings: new Map(),
+    reuseByIdentity: false,
   };
 }
 
@@ -236,7 +252,7 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function sourceModuleFileName(sourcePath) {
+export function sourceModuleFileName(sourcePath) {
   return `${sha256(sourcePath).slice(0, 24)}.js`;
 }
 
@@ -353,6 +369,11 @@ export function closurePreservingHookModule(source, sourcePath, instances) {
     source,
     sourcePath,
   );
+  const needsMergedRoot = instances.some((instance) => instance.mergeThrough);
+  const rootExpression = (instance) => {
+    if (!instance.mergeThrough) return defaultExpression;
+    return `__ec_mergedThrough(${defaultExpression}, typeof versions === "undefined" ? {} : versions, ${JSON.stringify(instance.mergeThrough)})`;
+  };
   const entries = [...instances]
     .sort((left, right) => comparePath(left.id, right.id))
     .map((instance) => {
@@ -360,7 +381,8 @@ export function closurePreservingHookModule(source, sourcePath, instances) {
       if (segments.length === 0) {
         throw new Error(`hook ${instance.id} cannot target the spec root`);
       }
-      const target = propertyAccess(defaultExpression, segments);
+      const root = rootExpression(instance);
+      const target = propertyAccess(root, segments);
       if (instance.sourceField !== "custom") {
         return `${JSON.stringify(instance.id)}: ${target}`;
       }
@@ -370,26 +392,20 @@ export function closurePreservingHookModule(source, sourcePath, instances) {
         );
       }
       const ownerSegments = sourcePathSegments(instance.ownerPath);
-      const owner = propertyAccess(defaultExpression, ownerSegments);
+      const owner = propertyAccess(root, ownerSegments);
       const args = `__ec_args_${suffix}`;
       return `${JSON.stringify(instance.id)}: (...${args}) => Reflect.apply(${target}, ${owner}, ${args})`;
     });
-  // QuickJS strips `export default` and evaluates the remaining expression as
-  // a script. An explicit strict function preserves the original ESM module's
-  // top-level semantics in both loaders: `this` is undefined and accidental
+  const prefix = needsMergedRoot ? `${applySpecDiffModuleSource()}\n` : "";
+  // The typed compiler strips `export default` and reads the remaining
+  // expression as a script. An explicit strict function preserves the original
+  // ESM module's top-level semantics: `this` is undefined and accidental
   // globals are rejected.
-  return `export default (function () {\n"use strict";\n${body}\nreturn Object.freeze({\n${entries.join(",\n")}\n});\n})();\n`;
+  return `export default (function () {\n"use strict";\n${prefix}${body}\nreturn Object.freeze({\n${entries.join(",\n")}\n});\n})();\n`;
 }
 
 function typedHookContracts() {
-  const contract = TYPED_HOOK_CONTRACTS.trigger;
-  return {
-    trigger: {
-      irVersion: TYPED_HOOK_IR_VERSION,
-      params: [...contract.params],
-      resultType: contract.resultType,
-    },
-  };
+  return typedHookSidecarContracts();
 }
 
 function assertTypedHookCatalogString(value, label, maxBytes) {
@@ -437,8 +453,10 @@ function assertTypedHookCatalogEntry(id, entry) {
       throw new Error(`typed hook ${id} ${field} must be a lowercase SHA-256`);
     }
   }
-  if (entry.sourceField !== "trigger") {
-    throw new Error(`typed hook ${id} sourceField must be trigger`);
+  if (!TYPED_HOOK_SIDECAR_FIELDS.includes(entry.sourceField)) {
+    throw new Error(
+      `typed hook ${id} sourceField must be one of ${TYPED_HOOK_SIDECAR_FIELDS.join(", ")}`,
+    );
   }
   if (!entry.descriptor || typeof entry.descriptor !== "object") {
     throw new Error(`typed hook ${id} descriptor must be an object`);
@@ -457,44 +475,69 @@ async function writeTypedHookSidecar({
   stagedOutDir,
   compilerBindings,
   manifestHooks,
+  moduleSources,
+  enforceNamedAdapters = false,
 }) {
   const typedHooks = new Map();
-  const triggerBindings = compilerBindings
-    .filter((binding) => binding.field === "trigger")
+  const adapters = new Map();
+  const fields = new Set(TYPED_HOOK_SIDECAR_FIELDS);
+  const adapterCatalog = await loadNativeHookAdapters();
+  const unadapted = [];
+  const bindings = compilerBindings
+    .filter((binding) => fields.has(binding.field))
     .sort((left, right) => comparePath(left.id, right.id));
 
-  for (const binding of triggerBindings) {
+  for (const binding of bindings) {
     const body = functionSource(binding.fn);
     if (!body) {
       throw new Error(
-        `cannot compile typed trigger ${binding.id}: source function body is unavailable`,
+        `cannot compile typed ${binding.field} ${binding.id}: source function body is unavailable`,
       );
     }
-    let descriptor;
-    try {
-      descriptor = compileTypedHook({ body, sourceField: "trigger" });
-    } catch (error) {
-      if (error instanceof TypedHookCompileError) continue;
-      throw new Error(
-        `typed trigger compilation failed for ${binding.id}: ${error.message}`,
-        { cause: error },
-      );
-    }
-
     const manifestEntry = manifestHooks.get(binding.id);
     if (!manifestEntry) {
       throw new Error(
-        `typed trigger ${binding.id} has no closure module manifest entry`,
+        `typed ${binding.field} ${binding.id} has no closure module manifest entry`,
       );
     }
     if (
       manifestEntry.path !== binding.path ||
-      manifestEntry.sourceField !== "trigger" ||
+      manifestEntry.sourceField !== binding.field ||
       manifestEntry.functionBodySha256 !== binding.functionBodySha256
     ) {
       throw new Error(
-        `typed trigger ${binding.id} does not match the compiler identity binding and closure manifest`,
+        `typed ${binding.field} ${binding.id} does not match the compiler identity binding and closure manifest`,
       );
+    }
+    const moduleSource = moduleSources.get(manifestEntry.module) ?? "";
+    const descriptor = tryCompileTypedHook({
+      body,
+      sourceField: binding.field,
+      moduleSource,
+    });
+    if (!descriptor) {
+      if (
+        isRegisteredNativeAdapter(
+          binding.functionBodySha256,
+          binding.field,
+          adapterCatalog,
+        )
+      ) {
+        adapters.set(binding.id, {
+          path: binding.path,
+          sourceField: binding.field,
+          functionBodySha256: binding.functionBodySha256,
+        });
+        continue;
+      }
+      if (NAMED_ADAPTER_FIELDS.includes(binding.field)) {
+        unadapted.push({
+          id: binding.id,
+          field: binding.field,
+          bodySha256: binding.functionBodySha256,
+        });
+      }
+      continue;
     }
     const entry = {
       module: manifestEntry.module,
@@ -508,7 +551,7 @@ async function writeTypedHookSidecar({
     typedHooks.set(binding.id, entry);
   }
 
-  if (typedHooks.size > TYPED_HOOK_CATALOG_MAX_HOOKS) {
+  if (typedHooks.size + adapters.size > TYPED_HOOK_CATALOG_MAX_HOOKS) {
     throw new Error(
       `typed hook catalog exceeds the ${TYPED_HOOK_CATALOG_MAX_HOOKS}-hook limit`,
     );
@@ -523,6 +566,13 @@ async function writeTypedHookSidecar({
       ),
     ),
   };
+  if (adapters.size > 0) {
+    sidecar.adapters = Object.fromEntries(
+      [...adapters.entries()].sort(([left], [right]) =>
+        comparePath(left, right),
+      ),
+    );
+  }
   const text = `${JSON.stringify(sidecar)}\n`;
   if (utf8ByteLength(text) > TYPED_HOOK_CATALOG_MAX_BYTES) {
     throw new Error(
@@ -530,6 +580,13 @@ async function writeTypedHookSidecar({
     );
   }
   await writeOutputFile(stagedOutDir, TYPED_HOOK_SIDECAR, text);
+  if (
+    enforceNamedAdapters &&
+    unadapted.length > 0 &&
+    !allowUnadaptedHooks()
+  ) {
+    throw new Error(formatUnadaptedHookError(unadapted));
+  }
   return typedHooks.size;
 }
 
@@ -547,6 +604,12 @@ function extractHook(hooks, kind, fn, { owner = null } = {}) {
   if (typeof fn !== "function") return undefined;
   if (!hooks) {
     throw new Error(`cannot extract ${kind} hook without a hook bag`);
+  }
+  if (hooks.reuseByIdentity) {
+    const existing = hooks.extractions.find(
+      (item) => item.field === kind && item.fn === fn,
+    );
+    if (existing) return existing.id;
   }
   const src = functionSource(fn);
   if (!src) {
@@ -618,6 +681,7 @@ function assertNoUnknownFunctionFields(
           fn: value[key],
           owner: value,
           ownerPath: path,
+          mergeThrough: null,
           nativeRewrite:
             isFilepathsHelper(value) && NATIVE_REWRITE_FIELDS.has(key),
         });
@@ -672,14 +736,17 @@ function bindExtractedHooks(hooks, sourceFunctions, specId) {
     // function object (and therefore its closure) is identical.  Selecting a
     // stable path makes the provenance deterministic without changing the
     // callable value.  Custom hooks always retain their exact owner path.
-    const [selected] = [...matching].sort((left, right) =>
-      comparePath(left.path, right.path),
-    );
+    const [selected] = [...matching].sort((left, right) => {
+      if (!left.mergeThrough && right.mergeThrough) return -1;
+      if (left.mergeThrough && !right.mergeThrough) return 1;
+      return comparePath(left.path, right.path);
+    });
     hooks.bindings.set(extraction.id, {
       id: extraction.id,
       field: extraction.field,
       path: selected.path,
       ownerPath: selected.ownerPath,
+      mergeThrough: selected.mergeThrough ?? null,
       functionBodySha256: sha256(functionSource(extraction.fn)),
       fn: extraction.fn,
       owner: selected.owner,
@@ -1562,6 +1629,7 @@ async function writeClosurePreservingHookModules({
   srcDir,
   stagedOutDir,
   compiledSpecs,
+  enforceNamedAdapters = false,
 }) {
   // The audit remains a pre-manifest completeness gate, but it is deliberately
   // not the source of the module mapping. The compiler already has the actual
@@ -1591,14 +1659,9 @@ async function writeClosurePreservingHookModules({
     );
   }
 
-  const modulesDir = join(stagedOutDir, HOOK_MODULES_DIR);
-  assertSafeSourceRelativePath(HOOK_MODULES_DIR);
-  assertPathInsideRoot(stagedOutDir, modulesDir, "compiled IR module directory");
-  await assertNoSymlinkInPath(modulesDir);
-  await mkdir(modulesDir, { recursive: true });
-  await assertNoSymlinkInPath(modulesDir);
   const manifestHooks = new Map();
   const manifestModules = new Map();
+  const moduleSources = new Map();
   let moduleCount = 0;
   let hookCount = 0;
 
@@ -1661,11 +1724,7 @@ async function writeClosurePreservingHookModules({
       );
     }
     const moduleSha256 = sha256(moduleSource);
-    await writeOutputFile(
-      stagedOutDir,
-      `${HOOK_MODULES_DIR}/${moduleFile}`,
-      moduleSource,
-    );
+    moduleSources.set(moduleFile, moduleSource);
     const hookIds = instances.map((instance) => instance.id).sort();
     manifestModules.set(moduleFile, {
       source: record.source,
@@ -1694,29 +1753,12 @@ async function writeClosurePreservingHookModules({
       `closure-preserving manifest covers ${hookCount}/${audit.hookManifest.length} audited hooks`,
     );
   }
-  const manifest = {
-    version: 1,
-    kind: "closure-preserving-hook-modules",
-    hooks: Object.fromEntries(
-      [...manifestHooks.entries()].sort(([left], [right]) =>
-        comparePath(left, right),
-      ),
-    ),
-    modules: Object.fromEntries(
-      [...manifestModules.entries()].sort(([left], [right]) =>
-        comparePath(left, right),
-      ),
-    ),
-  };
-  await writeOutputFile(
-    stagedOutDir,
-    HOOK_MODULE_MANIFEST,
-    `${JSON.stringify(manifest)}\n`,
-  );
   const typedHooks = await writeTypedHookSidecar({
     stagedOutDir,
     compilerBindings,
     manifestHooks,
+    moduleSources,
+    enforceNamedAdapters,
   });
   return { modules: moduleCount, hooks: hookCount, typedHooks };
 }
@@ -1835,6 +1877,17 @@ async function assertManagedIrOutput(
       }
       throw error;
     }
+    // T4.1: the previous compiler published hooks/, source-modules/, and
+    // hook-modules.json. Replacing that exact canonical tree is the
+    // migration; custom outputs still fail closed if leftover JS is present.
+    for (const name of [HOOK_MODULE_MANIFEST, HOOK_MODULES_DIR, "hooks"]) {
+      try {
+        await lstat(join(directory, name));
+        return snapshot;
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+    }
   }
   try {
     await verifyPair({ irRoot: directory, irOnly: true });
@@ -1850,6 +1903,7 @@ async function assertManagedIrOutput(
 async function compileSpecsIrUnlocked({
   srcDir = join(repoDir, "bundle", "specs"),
   outDir = join(repoDir, "bundle", "specs-ir"),
+  enforceNamedAdapters = false,
 } = {}) {
   // The caller may supply an arbitrary output directory. Check every existing
   // parent (including a dangling final link) before mkdir/rename so a compile
@@ -1880,22 +1934,11 @@ async function compileSpecsIrUnlocked({
     let compiled = 0;
     let failed = 0;
     let skipped = 0;
-    let hooksWritten = 0;
+    let hooksExtracted = 0;
     const failures = [];
-    // Non-empty `versions` diffs the WebView merged at load time. They are
-    // not applied here, so each one must be on the reviewed allowlist and is
-    // reported as unadapted behaviour rather than dropped silently.
-    const unappliedVersionDiffs = [];
-    const seenVersionDiffFiles = new Set();
-    const compilingCanonicalSource =
-      resolve(srcDir) === resolve(canonicalSourceDir);
-    const hooksDir = join(stagedOutDir, "hooks");
-    assertSafeSourceRelativePath("hooks");
-    assertPathInsideRoot(stagedOutDir, hooksDir, "compiled IR hook directory");
-    await assertNoSymlinkInPath(hooksDir);
+    const appliedVersionDiffs = [];
+    const versionedByCommand = new Map();
     const hookFilesByName = new Map();
-    await mkdir(hooksDir, { recursive: true });
-    await assertNoSymlinkInPath(hooksDir);
 
     for (const rel of files) {
       assertSafeSourceRelativePath(rel);
@@ -1927,27 +1970,6 @@ async function compileSpecsIrUnlocked({
         const binder = createFilepathsBinder(source);
         const mod = await import(pathToFileURL(src).href);
         const rawSpec = mod.default ?? mod;
-        const versionDiffDrift = describeVersionDiffAllowlistDrift(
-          normalizedRel,
-          mod,
-          { enforceStale: compilingCanonicalSource },
-        );
-        if (versionDiffDrift) {
-          throw new Error(versionDiffDrift);
-        }
-        const allowlistedDiffs = (
-          KNOWN_UNAPPLIED_VERSION_DIFFS[normalizedRel] ?? []
-        ).filter((version) => unappliedVersionDiffKeys(mod).includes(version));
-        if (allowlistedDiffs.length) {
-          seenVersionDiffFiles.add(normalizedRel);
-          unappliedVersionDiffs.push({
-            file: normalizedRel,
-            versions: [...allowlistedDiffs].map((version) => ({
-              version,
-              functions: countFunctionsInValue(mod.versions[version]),
-            })),
-          });
-        }
         const sourceFunctions = [];
         assertNoUnknownFunctionFields(
           rawSpec,
@@ -1962,15 +1984,45 @@ async function compileSpecsIrUnlocked({
             `source did not produce a static spec (add the file to ${"KNOWN_NON_SPEC_FILES"} only when it is a reviewed helper/barrel)`,
           );
         }
+        const destRel = normalizedRel.replace(/\.js$/, ".json");
+        const versionVariants = await compileAppliedVersionDiffs({
+          rawSpec,
+          mod,
+          specId,
+          sourceRel: normalizedRel,
+          destRel,
+          hooks,
+          source,
+          binder,
+          sourceFunctions,
+        });
         assertFunctionsExtracted(sourceFunctions, hooks, specId);
         bindExtractedHooks(hooks, sourceFunctions, specId);
-        const destRel = normalizedRel.replace(/\.js$/, ".json");
         await writeOutputFile(
           stagedOutDir,
           destRel,
           `${JSON.stringify(spec)}\n`,
         );
-        for (const [id, hookSource] of hooks.files) {
+        for (const variant of versionVariants) {
+          if (variant.spec) {
+            await writeOutputFile(
+              stagedOutDir,
+              variant.destRel,
+              `${JSON.stringify(variant.spec)}\n`,
+            );
+          }
+        }
+        if (versionVariants.length) {
+          appliedVersionDiffs.push({
+            file: normalizedRel,
+            versions: versionVariants.map((variant) => ({
+              version: variant.version,
+              destRel: variant.destRel,
+              functions: countFunctionsInValue(mod.versions?.[variant.version]),
+            })),
+          });
+        }
+        for (const [id] of hooks.files) {
           const filename = hookFileName(id);
           const previousId = hookFilesByName.get(filename);
           if (previousId && previousId !== id) {
@@ -1979,15 +2031,16 @@ async function compileSpecsIrUnlocked({
             );
           }
           hookFilesByName.set(filename, id);
-          await writeOutputFile(
-            stagedOutDir,
-            `hooks/${filename}`,
-            hookSource,
-          );
-          hooksWritten += 1;
+          hooksExtracted += 1;
         }
         compiled += 1;
-        compiledSpecs.push({ rel: normalizedRel, destRel, spec, hooks });
+        compiledSpecs.push({
+          rel: normalizedRel,
+          destRel,
+          spec,
+          hooks,
+          versionVariants,
+        });
       } catch (err) {
         failed += 1;
         failures.push({ rel: normalizedRel, message: err.message });
@@ -2019,22 +2072,7 @@ async function compileSpecsIrUnlocked({
       );
     }
 
-    // The allowlist describes the canonical bundle. A listed file that has
-    // disappeared from that bundle is stale review data and must be removed,
-    // otherwise the inventory would keep reporting a gap that no longer
-    // exists. Fixture trees compiled through the API are exempt: they never
-    // contain the bundled versioned specs.
-    if (compilingCanonicalSource) {
-      const stale = Object.keys(KNOWN_UNAPPLIED_VERSION_DIFFS)
-        .filter((file) => !seenVersionDiffFiles.has(file))
-        .sort(comparePath);
-      if (stale.length) {
-        throw new Error(
-          `KNOWN_UNAPPLIED_VERSION_DIFFS lists ${JSON.stringify(stale)} but the bundled source tree has no such spec file(s); remove the stale entries`,
-        );
-      }
-    }
-    unappliedVersionDiffs.sort((left, right) =>
+    appliedVersionDiffs.sort((left, right) =>
       comparePath(left.file, right.file),
     );
 
@@ -2042,6 +2080,7 @@ async function compileSpecsIrUnlocked({
       srcDir,
       stagedOutDir,
       compiledSpecs,
+      enforceNamedAdapters,
     });
 
     const commandFiles = new Map();
@@ -2105,7 +2144,26 @@ async function compileSpecsIrUnlocked({
       }
     }
 
+    await collectVersionedSelectors({
+      srcDir,
+      files,
+      compiledSpecs,
+      sourceIndex,
+      versionedByCommand,
+    });
+    for (const [name, entry] of versionedByCommand) {
+      const fallbackPath = resolveVersionedPath(entry, undefined);
+      if (fallbackPath && sourceCommandAllowed(sourceIndex, name)) {
+        candidateFor(name, { destRel: fallbackPath, priority: 2.5 });
+      }
+    }
+
     const unique = [...commandFiles.keys()].sort();
+    const versioned = Object.fromEntries(
+      [...versionedByCommand.entries()].sort(([left], [right]) =>
+        left < right ? -1 : left > right ? 1 : 0,
+      ),
+    );
     await writeOutputFile(
       stagedOutDir,
       "index.json",
@@ -2121,6 +2179,7 @@ async function compileSpecsIrUnlocked({
             )
             .map(([name, candidate]) => [name, candidate.destRel]),
         ),
+        ...(Object.keys(versioned).length ? { versioned } : {}),
       })}\n`,
     );
     const pairMarker = await createPairMarker({
@@ -2145,7 +2204,13 @@ async function compileSpecsIrUnlocked({
     if (!finalAudit.ok) {
       const failures = Object.entries(finalAudit.errors)
         .filter(([, entries]) => entries.length)
-        .map(([name, entries]) => `${name}=${entries.length}`);
+        .map(([name, entries]) => {
+          const samples = entries
+            .slice(0, 3)
+            .map((entry) => JSON.stringify(entry))
+            .join("; ");
+          return `${name}=${entries.length}${samples ? ` [${samples}]` : ""}`;
+        });
       throw new Error(
         `Spec IR pre-publish audit failed: ${failures.join(", ")}`,
       );
@@ -2153,21 +2218,11 @@ async function compileSpecsIrUnlocked({
     await publishDirectory(stagedOutDir, outDir);
     published = true;
     process.stdout.write(
-      `Wrote ${compiled} IR specs (${unique.length} names, ${hooksWritten} hooks in ${hookModules.modules} closure-preserving modules, ${hookModules.typedHooks} typed trigger hooks; ${skipped} allowlisted skipped) to ${outDir}\n`,
+      `Wrote ${compiled} IR specs (${unique.length} names, ${hooksExtracted} extracted hooks in ${hookModules.modules} in-memory closure modules, ${hookModules.typedHooks} typed hooks; ${skipped} allowlisted skipped) to ${outDir}\n`,
     );
-    if (unappliedVersionDiffs.length) {
-      const diffCount = unappliedVersionDiffs.reduce(
-        (sum, entry) => sum + entry.versions.length,
-        0,
-      );
-      const functionCount = unappliedVersionDiffs.reduce(
-        (sum, entry) =>
-          sum +
-          entry.versions.reduce((inner, item) => inner + item.functions, 0),
-        0,
-      );
+    if (appliedVersionDiffs.length || versionedByCommand.size) {
       process.stdout.write(
-        `Unadapted: ${diffCount} allowlisted version diff(s) containing ${functionCount} function(s) in ${unappliedVersionDiffs.length} file(s) are not applied (${unappliedVersionDiffs.map((entry) => entry.file).join(", ")})\n`,
+        `Adapted: ${appliedVersionDiffs.reduce((sum, entry) => sum + entry.versions.length, 0)} version diff(s) in ${appliedVersionDiffs.length} file(s); ${versionedByCommand.size} version selector(s)\n`,
       );
     }
     return {
@@ -2176,10 +2231,11 @@ async function compileSpecsIrUnlocked({
       skipped,
       allowlistedSkipped: skipped,
       names: unique.length,
-      hooks: hooksWritten,
+      hooks: hooksExtracted,
       hookModules: hookModules.modules,
       typedHooks: hookModules.typedHooks,
-      unappliedVersionDiffs,
+      appliedVersionDiffs,
+      versionedCommands: [...versionedByCommand.keys()],
     };
   } finally {
     if (!published && !(await pairJournalExists(pairLockPath))) {
@@ -2191,9 +2247,10 @@ async function compileSpecsIrUnlocked({
 export async function compileSpecsIr({
   srcDir = join(repoDir, "bundle", "specs"),
   outDir = join(repoDir, "bundle", "specs-ir"),
+  enforceNamedAdapters = false,
 } = {}) {
   return withPairLock(pairLockPath, () =>
-    compileSpecsIrUnlocked({ srcDir, outDir }),
+    compileSpecsIrUnlocked({ srcDir, outDir, enforceNamedAdapters }),
   );
 }
 
@@ -2249,6 +2306,110 @@ function compareFileCandidates(left, right) {
   if (left.version && right.version)
     return compareVersions(left.version, right.version);
   return comparePath(left.destRel, right.destRel);
+}
+
+async function compileAppliedVersionDiffs({
+  rawSpec,
+  mod,
+  specId,
+  sourceRel,
+  destRel,
+  hooks,
+  source,
+  binder,
+  sourceFunctions,
+}) {
+  const keys = versionDiffKeys(mod.versions);
+  if (!keys.length) return [];
+  hooks.reuseByIdentity = true;
+  const variants = [];
+  let current = rawSpec;
+  let previousDestRel = destRel;
+  for (const version of keys) {
+    const diff = mod.versions[version];
+    current = applySpecDiff(current, diff);
+    if (isEmptyVersionDiff(diff)) {
+      variants.push({ version, destRel: previousDestRel, spec: null });
+      continue;
+    }
+    const mergedFunctions = [];
+    assertNoUnknownFunctionFields(
+      current,
+      specId,
+      "root",
+      new WeakSet(),
+      mergedFunctions,
+    );
+    for (const record of mergedFunctions) {
+      record.mergeThrough = version;
+      sourceFunctions.push(record);
+    }
+    const spec = await convertNode(current, { hooks, source, binder });
+    if (!spec) {
+      throw new Error(
+        `${sourceRel} versions[${JSON.stringify(version)}] did not produce a static spec after applySpecDiff`,
+      );
+    }
+    const variantDestRel = derivedVersionIrRel(sourceRel, version);
+    variants.push({ version, destRel: variantDestRel, spec });
+    previousDestRel = variantDestRel;
+  }
+  return variants;
+}
+
+async function collectVersionedSelectors({
+  srcDir,
+  files,
+  compiledSpecs,
+  sourceIndex,
+  versionedByCommand,
+}) {
+  for (const rel of files) {
+    const normalizedRel = rel.replaceAll("\\", "/");
+    if (!normalizedRel.endsWith("/index.js")) continue;
+    if (!KNOWN_NON_SPEC_FILES.has(normalizedRel)) continue;
+    const directory = dirname(normalizedRel);
+    if (!sourceVersionedRoot(sourceIndex, directory)) continue;
+    const src = join(srcDir, normalizedRel);
+    const mod = await import(pathToFileURL(src).href);
+    if (typeof mod.getVersionCommand !== "function") continue;
+    const versionFiles = compiledSpecs.filter((item) => {
+      const itemRel = item.rel.replaceAll("\\", "/");
+      if (dirname(itemRel) !== directory) return false;
+      return parseVersionFilename(itemRel.slice(itemRel.lastIndexOf("/") + 1));
+    });
+    if (!versionFiles.length) {
+      throw new Error(
+        `${normalizedRel} exports getVersionCommand but ${directory} has no compiled version files`,
+      );
+    }
+    const filesMap = {};
+    const applied = {};
+    for (const item of versionFiles.sort((left, right) =>
+      compareSemver(
+        parseVersionFilename(left.rel.slice(left.rel.lastIndexOf("/") + 1)).raw,
+        parseVersionFilename(right.rel.slice(right.rel.lastIndexOf("/") + 1)).raw,
+      ),
+    )) {
+      const version = parseVersionFilename(
+        item.rel.slice(item.rel.lastIndexOf("/") + 1),
+      ).raw;
+      filesMap[version] = item.destRel;
+      if (item.versionVariants?.length) {
+        applied[version] = Object.fromEntries(
+          item.versionVariants.map((variant) => [variant.version, variant.destRel]),
+        );
+      }
+    }
+    const selector = compileGetVersionCommand(mod.getVersionCommand, directory);
+    const fileVersions = Object.keys(filesMap).sort(compareSemver);
+    versionedByCommand.set(directory, {
+      ...selector,
+      fallback: fileVersions[fileVersions.length - 1],
+      files: filesMap,
+      ...(Object.keys(applied).length ? { applied } : {}),
+    });
+  }
 }
 
 async function canonicalDestination(path) {
@@ -2316,9 +2477,82 @@ async function assertCliDestinationPair(srcDir, outDir) {
 const isMain =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
+export async function typedHookCompileReport({
+  irRoot = join(repoDir, "bundle", "specs-ir"),
+} = {}) {
+  const sidecar = JSON.parse(
+    await readFile(join(irRoot, TYPED_HOOK_SIDECAR), "utf8"),
+  );
+  const fields = Object.keys(TYPED_HOOK_CONTRACTS);
+  const groups = new Map();
+  const addGroup = (id, entry, ok, code = null) => {
+    if (!fields.includes(entry.sourceField)) return;
+    const key = `${entry.sourceField}\0${entry.functionBodySha256}`;
+    if (groups.has(key)) {
+      groups.get(key).ids.push(id);
+      return;
+    }
+    groups.set(key, {
+      id,
+      field: entry.sourceField,
+      sha: entry.functionBodySha256,
+      ids: [id],
+      ok,
+      code,
+    });
+  };
+  for (const [id, entry] of Object.entries(sidecar.hooks ?? {})) {
+    addGroup(id, entry, true);
+  }
+  for (const [id, entry] of Object.entries(sidecar.adapters ?? {})) {
+    addGroup(id, entry, false, "adapter");
+  }
+  const byField = Object.fromEntries(
+    fields.map((field) => [field, { total: 0, ok: 0, codes: {} }]),
+  );
+  for (const group of groups.values()) {
+    const bucket = byField[group.field];
+    bucket.total += 1;
+    if (group.ok) {
+      bucket.ok += 1;
+      continue;
+    }
+    const key = group.code ?? "leftover";
+    bucket.codes[key] = (bucket.codes[key] ?? 0) + 1;
+  }
+  return { byField, uniqueBodies: groups.size };
+}
+
+function printTypedHookReport(report) {
+  const rows = [];
+  for (const [field, bucket] of Object.entries(report.byField)) {
+    const codes = Object.entries(bucket.codes).sort((left, right) => right[1] - left[1]);
+    process.stdout.write(
+      `${field}: ${bucket.ok}/${bucket.total} compiled\n`,
+    );
+    for (const [code, count] of codes.slice(0, 20)) {
+      process.stdout.write(`  ${count}\t${code}\n`);
+      rows.push({ field, code, count });
+    }
+  }
+  const top = [...rows].sort((left, right) => right.count - left.count).slice(0, 20);
+  process.stdout.write("Top 20 TypedHookCompileError.code:\n");
+  for (const row of top) {
+    process.stdout.write(`  ${row.count}\t${row.field}\t${row.code}\n`);
+  }
+}
+
 if (isMain) {
+  const typedReport = process.argv.includes("--typed-report");
   const srcDir = process.env.EC_SPECS_SRC || canonicalSourceDir;
   const outDir = process.env.EC_SPECS_IR || join(repoDir, "bundle", "specs-ir");
   await assertCliDestinationPair(srcDir, outDir);
-  await compileSpecsIr({ srcDir, outDir });
+  await compileSpecsIr({
+    srcDir,
+    outDir,
+    enforceNamedAdapters: !allowUnadaptedHooks(),
+  });
+  if (typedReport) {
+    printTypedHookReport(await typedHookCompileReport({ irRoot: outDir }));
+  }
 }

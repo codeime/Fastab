@@ -1,0 +1,42 @@
+[
+  {
+    "description": "General commands",
+    "icon": "📑",
+    "name": "1"
+  },
+  {
+    "description": "System calls",
+    "icon": "📑",
+    "name": "2"
+  },
+  {
+    "description": "C library functions",
+    "icon": "📑",
+    "name": "3"
+  },
+  {
+    "description": "Devices and special files",
+    "icon": "📑",
+    "name": "4"
+  },
+  {
+    "description": "File formats and conventions",
+    "icon": "📑",
+    "name": "5"
+  },
+  {
+    "description": "Games, etc",
+    "icon": "📑",
+    "name": "6"
+  },
+  {
+    "description": "Miscellanea",
+    "icon": "📑",
+    "name": "7"
+  },
+  {
+    "description": "System admin and daemons",
+    "icon": "📑",
+    "name": "8"
+  }
+]

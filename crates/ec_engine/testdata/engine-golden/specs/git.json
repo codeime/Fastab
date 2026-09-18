@@ -1,0 +1,42 @@
+{
+  "names": ["git"],
+  "description": "the stupid content tracker",
+  "subcommands": [
+    {
+      "names": ["checkout", "co"],
+      "description": "Switch branches or restore working tree files",
+      "icon": "fig://icon?type=git",
+      "priority": 80,
+      "args": [
+        {
+          "name": "branch",
+          "description": "Branch to checkout",
+          "generators": [
+            {
+              "script": ["git", "branch", "--list"],
+              "jsPostProcess": "git#postProcess#0",
+              "cacheKey": "git-branches",
+              "cacheTtl": 60000
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "names": ["commit"],
+      "description": "Record changes to the repository",
+      "priority": 70,
+      "insertValue": "git commit -m \"{cursor}\"",
+      "options": [
+        {
+          "names": ["-m", "--message"],
+          "description": "Use the given message",
+          "insertValue": "-m \"{cursor}\"",
+          "icon": "fig://icon?type=string",
+          "priority": 75,
+          "args": [{ "name": "message" }]
+        }
+      ]
+    }
+  ]
+}

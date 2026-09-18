@@ -1,0 +1,19 @@
+{
+  "files": {
+    "git": "git.json",
+    "npm": "npm.json",
+    "docker": "docker.json",
+    "kubectl": "kubectl.json",
+    "cd": "cd.json",
+    "ls": "ls.json",
+    "asdf": "asdf.json",
+    "open": "open.json",
+    "env": "env.json",
+    "ranktool": "ranktool.json",
+    "cachetool": "cachetool.json",
+    "cachettl": "cachettl.json",
+    "cachefresh": "cachefresh.json",
+    "slowexec": "slowexec.json",
+    "spinloop": "spinloop.json"
+  }
+}

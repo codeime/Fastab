@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import {
+  mkdir,
   mkdtemp,
   readFile,
-  rename as fsRename,
   rm,
   stat,
   writeFile,
@@ -16,7 +16,6 @@ import {
   captureHookReference,
 } from "./capture-hook-reference.mjs";
 import { compileSpecsIr } from "./compile-spec-ir.mjs";
-import { createPairMarker, writePairMarker } from "./spec-pair.mjs";
 import { withReferenceAudit } from "./reference-audit-worker.mjs";
 import {
   DEFAULT_LIMIT,
@@ -133,7 +132,7 @@ test("probes every fixture field twice and records deterministic provenance", as
     );
     assert.equal(
       report.provenance.manifest.manifestSha256,
-      audit.hookModules.manifestSha256,
+      audit.typedHooks.sidecarSha256,
     );
     assert.match(report.provenance.manifest.manifestSha256, /^[a-f0-9]{64}$/);
     assert.match(report.provenance.fixture.matrixSha256, /^[a-f0-9]{64}$/);
@@ -211,41 +210,21 @@ test("rejects caller-supplied full, compact, and file-backed audits", async () =
   });
 });
 
-test("fresh audit supports a custom hooks root", async () => {
-  await withFixture(allFieldsFixture, async ({ sourceRoot, irRoot, audit }) => {
-    const customHooksRoot = await mkdtemp(
-      join(tmpdir(), "easy-complete-custom-hooks-"),
+test("a leftover hooks directory fails the restricted audit", async () => {
+  await withFixture(allFieldsFixture, async ({ sourceRoot, irRoot }) => {
+    const leftover = join(irRoot, "hooks");
+    await mkdir(leftover);
+    await writeFile(join(leftover, "orphan.js"), "export default () => true;\n");
+    await assert.rejects(
+      captureHookReferenceBatch({
+        sourceRoot,
+        irRoot,
+        limit: 1,
+        concurrency: 1,
+      }),
+      /leftover runtime JS|strict source\/IR audit failed|IR tree contains leftover/,
     );
-    try {
-      await rm(customHooksRoot, { recursive: true, force: true });
-      await fsRename(join(irRoot, "hooks"), customHooksRoot);
-      await writePairMarker(
-        irRoot,
-        await createPairMarker({ sourceRoot, irRoot }),
-      );
-      await withReferenceAudit(
-        { sourceRoot, irRoot, hooksRoot: customHooksRoot },
-        async (customAudit) => {
-          assert.equal(customAudit.ok, true);
-          const report = await captureHookReferenceBatch({
-            sourceRoot,
-            irRoot,
-            hooksRoot: customHooksRoot,
-            limit: 1,
-            concurrency: 1,
-          });
-          assert.equal(report.ok, true);
-          assert.equal(report.selection.selectedInstances, 1);
-        },
-      );
-    } finally {
-      await fsRename(customHooksRoot, join(irRoot, "hooks"));
-      await writePairMarker(
-        irRoot,
-        await createPairMarker({ sourceRoot, irRoot }),
-      );
-      await rm(customHooksRoot, { recursive: true, force: true });
-    }
+    await rm(leftover, { recursive: true, force: true });
   });
 });
 
@@ -321,22 +300,16 @@ export default {
   );
 });
 
-test("a tampered generated module fails closed before a parity probe", async () => {
+test("leftover runtime JS artifacts fail a batch parity probe", async () => {
   await withFixture(allFieldsFixture, async ({ sourceRoot, irRoot, audit }) => {
-    const moduleManifest = JSON.parse(
-      await readFile(join(irRoot, "hook-modules.json"), "utf8"),
-    );
-    const moduleFile = Object.keys(moduleManifest.modules)[0];
-    const modulePath = join(irRoot, "source-modules", moduleFile);
-    const original = await readFile(modulePath, "utf8");
-    await writeFile(modulePath, `${original}\n`);
+    await writeFile(join(irRoot, "hook-modules.json"), "{}\n");
     await assert.rejects(
       captureHookModuleReference({
         hookId: audit.hookManifest[0].id,
         sourceRoot,
         irRoot,
       }),
-      /module.*SHA differs/,
+      /leftover runtime JS|strict source\/IR audit failed|IR tree contains leftover/,
     );
     await assert.rejects(
       captureHookReferenceBatch({
@@ -344,9 +317,9 @@ test("a tampered generated module fails closed before a parity probe", async () 
         irRoot,
         limit: 1,
       }),
-      /strict source\/IR audit failed|module.*SHA differs/,
+      /strict source\/IR audit failed|leftover runtime JS|IR tree contains leftover/,
     );
-    await writeFile(modulePath, original);
+    await rm(join(irRoot, "hook-modules.json"), { force: true });
   });
 });
 
@@ -461,18 +434,14 @@ test("changed IR or extracted hook cannot reuse an audited source mapping", asyn
       /strict source\/IR audit failed|IR .* SHA differs/,
     );
     await writeFile(irPath, originalIr);
-    const first = audit.hookManifest.find(
-      (item) => item.field === "jsLoadSpec",
-    );
-    assert.ok(first);
-    const hookPath = join(irRoot, "hooks", first.file);
-    const originalHook = await readFile(hookPath, "utf8");
-    await writeFile(hookPath, `${originalHook} \n`);
+    const sidecarPath = join(irRoot, "typed-hooks.json");
+    const originalSidecar = await readFile(sidecarPath, "utf8");
+    await writeFile(sidecarPath, `${originalSidecar} \n`);
     await assert.rejects(
       captureHookReferenceBatch({ sourceRoot, irRoot, limit: 1 }),
-      /strict source\/IR audit failed|hook .* SHA differs/,
+      /strict source\/IR audit failed|sidecar SHA differs|typed hook sidecar/,
     );
-    await writeFile(hookPath, originalHook);
+    await writeFile(sidecarPath, originalSidecar);
   });
 });
 

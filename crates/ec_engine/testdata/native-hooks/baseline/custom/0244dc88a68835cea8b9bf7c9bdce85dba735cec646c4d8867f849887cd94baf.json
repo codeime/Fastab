@@ -1,0 +1,116 @@
+{
+  "bodySha256": "0244dc88a68835cea8b9bf7c9bdce85dba735cec646c4d8867f849887cd94baf",
+  "cases": [
+    {
+      "args": [
+        [
+          "fig"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "error",
+        "value": "Error"
+      },
+      "id": "root",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "fig",
+          "app"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "error",
+        "value": "Error"
+      },
+      "id": "subcommand",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "fig",
+          "--help"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "error",
+        "value": "Error"
+      },
+      "id": "flag",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        [
+          "fig"
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "error",
+        "value": "Error"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "custom",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "fig/1.0.0#custom#10",
+  "version": 1
+}

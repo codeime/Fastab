@@ -26,4 +26,4 @@ cargo run --bin ec -- engine complete --buffer "git ch"
 - `src/overlay.rs` — completion requests, insertion, caret placement
 - `src/settings_ui.rs` — native settings window
 - `crates/ec_gpui` — list rendering, theme, AppKit frame
-- `crates/ec_engine` — IR lookup, generators, QuickJS hooks
+- `crates/ec_engine` — IR lookup, generators, typed hook IR and native adapters

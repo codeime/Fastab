@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,14 +16,10 @@ import {
   INVENTORY_VERSION,
   updateNativeHookInventory,
 } from "./classify-native-hooks.mjs";
-import {
-  KNOWN_UNAPPLIED_VERSION_DIFFS,
-  KNOWN_VERSION_SELECTORS,
-} from "./spec-hook-contract.mjs";
 
 test("classifies pure, input, command, closure, complex, and gated syntax bodies", () => {
   const pure = classifyHookBody({ field: "jsTrigger", body: "() => !0" });
-  assert.equal(pure.status, "typed-ir-research-candidate");
+  assert.equal(pure.status, "typed-ir");
   assert.equal(pure.buildTimePureStatic, true);
   assert.equal(pure.nativeExecutable, false);
   assert.deepEqual(pure.freeVariables, []);
@@ -37,7 +34,7 @@ test("classifies pure, input, command, closure, complex, and gated syntax bodies
     field: "jsGetQueryTerm",
     body: '(term) => term.slice(term.indexOf(":" ) + 1)',
   });
-  assert.equal(input.status, "typed-ir-research-candidate");
+  assert.equal(input.status, "typed-ir");
   assert.equal(input.buildTimePureStatic, false);
   assert.equal(input.dependencies.input, true);
   assert.equal(input.dependencies.command, false);
@@ -47,7 +44,7 @@ test("classifies pure, input, command, closure, complex, and gated syntax bodies
     field: "jsCustom",
     body: 'async (tokens, exec) => (await exec({ command: "list" })).stdout',
   });
-  assert.equal(command.status, "requires-native-adapter");
+  assert.equal(command.status, "typed-ir");
   assert.equal(command.dependencies.command, true);
   assert.ok(command.risks.includes("async"));
   assert.ok(command.risks.includes("exec"));
@@ -94,6 +91,37 @@ test("classifies pure, input, command, closure, complex, and gated syntax bodies
   });
   assert.equal(invalid.status, "syntax-or-analysis-failure");
   assert.equal(invalid.failureKind, "syntax");
+
+  const compileUpgrade = classifyHookBody({
+    field: "jsTrigger",
+    body: '(a, b) => a.trim().toLowerCase().startsWith(b) && a.trimEnd().length > 0',
+  });
+  assert.equal(compileUpgrade.status, "typed-ir");
+  assert.ok(compileUpgrade.risks.includes("complexity"));
+
+  const leftover = "(rows) => rows.map((row) => External(row))";
+  const leftoverSha = createHash("sha256").update(leftover).digest("hex");
+  const upgraded = classifyHookBody({
+    field: "jsPostProcess",
+    body: leftover,
+    adapters: {
+      version: 1,
+      kind: "native-hook-adapters",
+      adapters: [
+        {
+          bodySha256: leftoverSha,
+          field: "postProcess",
+          representativeHookId: "fixture#postProcess#0",
+          reason: "unbound External",
+        },
+      ],
+    },
+  });
+  assert.equal(upgraded.status, "native-adapter");
+  assert.equal(
+    classifyHookBody({ field: "jsPostProcess", body: leftover }).status,
+    "requires-native-adapter",
+  );
 });
 
 test("compiles a real helper fixture and reports deterministic native readiness", async () => {
@@ -149,34 +177,21 @@ test("compiles a real helper fixture and reports deterministic native readiness"
     assert.equal(first.gate.classificationComplete, true);
     assert.equal(first.gate.pathSwitchAllowed, false);
     assert.ok(first.gate.blockers.includes("requires-native-adapter"));
-    assert.ok(first.gate.blockers.includes("typed-ir-research-candidate"));
+    assert.equal(first.gate.blockers.includes("typed-ir"), false);
     assert.equal(first.nativeFilepathsRewrites.byField.trigger, 1);
     assert.equal(first.nativeFilepathsRewrites.byField.getQueryTerm, 1);
     assert.equal(first.nativeFilepathsRewrites.byField.custom, 1);
-    assert.equal(first.counts.extractedHooks["typed-ir-research-candidate"], 4);
+    assert.equal(first.counts.extractedHooks["typed-ir"], 4);
     assert.equal(first.counts.extractedHooks["requires-native-adapter"], 1);
 
-    // The versioned-spec allowlist describes the bundled tree, so a fixture
-    // tree reports every entry as absent but still lists it: the gap is a
-    // property of the compiler, not of one source tree.
-    assert.equal(first.versionedSpecs.status, "unadapted");
-    assert.ok(first.gate.blockers.includes("versioned-spec-behaviour-unadapted"));
-    assert.deepEqual(
-      first.versionedSpecs.selectors.map((entry) => entry.file),
-      [...KNOWN_VERSION_SELECTORS].sort(),
+    // A fixture tree without createVersionedSpec index files has no
+    // versioned-spec gap of its own.
+    assert.equal(first.versionedSpecs.status, "none");
+    assert.equal(
+      first.gate.blockers.includes("versioned-spec-behaviour-unadapted"),
+      false,
     );
-    assert.ok(first.versionedSpecs.selectors.every((entry) => !entry.present));
-    assert.deepEqual(
-      first.versionedSpecs.unappliedDiffs.map((entry) => entry.file),
-      Object.keys(KNOWN_UNAPPLIED_VERSION_DIFFS).sort(),
-    );
-    assert.ok(
-      first.versionedSpecs.unappliedDiffs.every(
-        (entry) =>
-          !entry.present &&
-          entry.versions.every((item) => item.functions === null),
-      ),
-    );
+    assert.deepEqual(first.versionedSpecs.selectors, []);
 
     // The committed inventory is a compact, deterministic projection: one row
     // per distinct body with no per-hook rows, and check/update round-trip.
@@ -216,7 +231,7 @@ test("compiles a real helper fixture and reports deterministic native readiness"
   }
 });
 
-test("an orphan extracted file is unclassified and closes the migration gate", async () => {
+test("leftover runtime JS artifacts close the migration gate", async () => {
   const sourceRoot = await mkdtemp(join(tmpdir(), "easy-complete-native-src-"));
   const irRoot = await mkdtemp(join(tmpdir(), "easy-complete-native-ir-"));
   try {
@@ -225,24 +240,15 @@ test("an orphan extracted file is unclassified and closes the migration gate", a
       'export default { name: "fixture", args: [{ name: "value", generators: { trigger: () => !0 } }] };\n',
     );
     await compileSpecsIr({ srcDir: sourceRoot, outDir: irRoot });
+    await mkdir(join(irRoot, "hooks"), { recursive: true });
     await writeFile(
       join(irRoot, "hooks", "orphan.js"),
       "export default () => !0;\n",
     );
     const report = await classifyNativeHooks({ sourceRoot, irRoot });
-    assert.equal(report.coverage.unclassifiedHooks, 1);
     assert.equal(report.gate.classificationComplete, false);
     assert.equal(report.gate.pathSwitchAllowed, false);
-    assert.ok(report.gate.blockers.includes("unclassified"));
-    assert.deepEqual(
-      report.hooks
-        .filter((hook) => hook.file === "orphan.js")
-        .map((hook) => ({
-          status: hook.status,
-          reasonCodes: hook.reasonCodes,
-        })),
-      [{ status: "unclassified", reasonCodes: ["orphan-hook-file"] }],
-    );
+    assert.ok(report.gate.blockers.includes("audit-errors"));
   } finally {
     await Promise.all([
       rm(sourceRoot, { recursive: true, force: true }),
@@ -251,21 +257,18 @@ test("an orphan extracted file is unclassified and closes the migration gate", a
   }
 });
 
-test("full pinned bundle is covered and remains gated", async () => {
+test("full pinned bundle is covered and stage-2 gate is open", async () => {
   const report = await classifyNativeHooks();
   // The committed inventory must describe this exact bundle; CI runs the
   // same check so a specs update or classifier change is reviewed as a diff.
   await checkNativeHookInventory({ report });
-  assert.equal(report.versionedSpecs.status, "unadapted");
+  assert.equal(report.versionedSpecs.status, "adapted");
   assert.ok(report.versionedSpecs.selectors.every((entry) => entry.present));
-  assert.ok(
-    report.versionedSpecs.unappliedDiffs.every(
-      (entry) =>
-        entry.present &&
-        entry.versions.every((item) => Number.isInteger(item.functions)),
-    ),
+  assert.ok(report.versionedSpecs.totals.functionsInAppliedDiffs > 0);
+  assert.equal(
+    report.gate.blockers.includes("versioned-spec-behaviour-unadapted"),
+    false,
   );
-  assert.ok(report.versionedSpecs.totals.functionsInUnappliedDiffs > 0);
   const audit = await auditSpecsHooks();
   const auditedUniqueBodies = Object.values(
     audit.hooks.uniqueBodyCounts,
@@ -273,30 +276,32 @@ test("full pinned bundle is covered and remains gated", async () => {
   const auditedNativeRewrites = Object.values(
     audit.source.nativeRewriteCounts,
   ).reduce((sum, count) => sum + count, 0);
-  assert.equal(report.coverage.extractedHooks, audit.hooks.files);
+  assert.equal(report.coverage.extractedHooks, audit.hooks.referenced);
   assert.equal(report.coverage.uniqueBodies, auditedUniqueBodies);
-  assert.equal(report.coverage.hookFilesOnDisk, audit.hooks.files);
+  assert.equal(report.coverage.hookFilesOnDisk, 0);
+  assert.equal(audit.hooks.files, 0);
   assert.equal(report.coverage.nativeFilepathsRewrite, auditedNativeRewrites);
   assert.equal(report.coverage.unclassifiedHooks, 0);
   assert.equal(report.gate.classificationComplete, true);
-  assert.equal(report.gate.pathSwitchAllowed, false);
+  // Stage 2/3 are complete and T4.1 removed runtime JS: every unique body
+  // is typed-ir or native-adapter, version diffs are applied, hook files
+  // are gone, and the output baseline covers all 603 bodies.
+  assert.equal(report.gate.pathSwitchAllowed, true);
+  assert.deepEqual(report.gate.blockers, []);
   assert.equal(report.outputBaseline.status, "established");
-  assert.equal(report.outputBaseline.coveredUniqueBodies, 594);
-  assert.equal(report.outputBaseline.totalUniqueBodies, 594);
+  assert.equal(report.outputBaseline.coveredUniqueBodies, 603);
+  assert.equal(report.outputBaseline.totalUniqueBodies, 603);
   assert.equal(report.gate.outputBaselineEstablished, true);
   assert.equal(
     report.gate.blockers.includes("output-baseline-not-established"),
     false,
   );
-  for (const status of [
-    "requires-native-adapter",
-    "typed-ir-research-candidate",
-  ]) {
-    assert.equal(
-      report.gate.blockers.includes(status),
-      report.counts.uniqueBodies[status] > 0,
-    );
-  }
+  assert.equal(
+    report.gate.blockers.includes("requires-native-adapter"),
+    report.counts.uniqueBodies["requires-native-adapter"] > 0,
+  );
+  assert.equal(report.gate.blockers.includes("typed-ir"), false);
+  assert.ok(report.counts.uniqueBodies["typed-ir"] > 0);
   assert.equal(report.hooks.length, report.coverage.extractedHooks);
   assert.equal(report.bodyGroups.length, report.coverage.uniqueBodies);
   assert.equal(
@@ -362,7 +367,7 @@ test("output baseline blocker stays until every unique body is covered", async (
       full.gate.blockers.includes("output-baseline-not-established"),
       false,
     );
-    assert.equal(full.gate.pathSwitchAllowed, false);
+    assert.equal(full.gate.pathSwitchAllowed, true);
     assert.ok(full.bodyGroups.every((group) => group.baselineCovered && group.baselineCases === 3));
   } finally {
     await Promise.all([

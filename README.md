@@ -45,9 +45,10 @@ for the full list of what is and isn't collected.
 ## Native
 
 The completion popup and the settings window are GPUI views (Zed's UI toolkit).
-Completions never enter a web view: `ec_engine` looks up JSON IR compiled at
-build time, and QuickJS runs only when a spec hook needs it (`postProcess`,
-`script`, `custom`, `generateSpec`).
+Completions never enter a web view, and the app ships no JavaScript runtime:
+`ec_engine` looks up JSON IR compiled at build time, and every spec hook
+(`postProcess`, `script`, `custom`, `generateSpec`) is compiled to typed IR or
+a named Rust adapter at build time too.
 
 ## Contents
 
@@ -251,7 +252,7 @@ Process memory: `./scripts/memory-usage.sh` (`--watch 5`, `--peak`, `--csv mem.c
 | ----------------------- | ---------------------------------------------------------------- |
 | `fig_desktop`           | Native app host: GPUI overlay + settings, tray, engine client    |
 | `ec_gpui`               | Overlay list, theme, macOS window placement                      |
-| `ec_engine`             | Headless completion: IR lookup, generators, QuickJS hooks        |
+| `ec_engine`             | Headless completion: IR lookup, generators, typed hook IR        |
 | `figterm`               | PTY interceptor, shell edit-buffer tracking                      |
 | `ec_cli`                | CLI crate, providing the `ec` binary and all its subcommands     |
 | `fig_input_method`      | macOS input method helper (cursor tracking)                      |

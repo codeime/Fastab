@@ -3,11 +3,11 @@
  * Classify extracted Fig hook bodies for the native migration.
  *
  * This is a build-time inventory only. It never evaluates hook JavaScript and
- * it does not select a runtime implementation. A small, deliberately closed
- * AST subset is reported as a typed-IR research candidate; all other valid
- * hooks remain adapter work until a typed IR/native adapter proves the
- * semantics. The report is deterministic so it can be used as an input to
- * that work.
+ * it does not select a runtime implementation. A body is `typed-ir` only when
+ * `compileTypedHook` succeeds for its field contract; every other valid body
+ * stays `requires-native-adapter` until a named adapter exists in
+ * `adapters.json`. Registered leftovers become `native-adapter`. The report is
+ * deterministic so it can be used as an input to that work.
  */
 import { createHash } from "node:crypto";
 import { lstat, readdir, readFile, writeFile } from "node:fs/promises";
@@ -24,12 +24,17 @@ import {
   SUPPORTED_HOOK_FIELDS,
   SUPPORTED_IR_HOOK_FIELDS,
 } from "./compile-spec-ir.mjs";
-import {
-  countFunctionsInValue,
-  KNOWN_UNAPPLIED_VERSION_DIFFS,
-  KNOWN_VERSION_SELECTORS,
-} from "./spec-hook-contract.mjs";
+import { countFunctionsInValue, KNOWN_NON_SPEC_FILES } from "./spec-hook-contract.mjs";
 import { comparePath } from "./spec-pair.mjs";
+import { derivedVersionIrRel } from "./spec-versions.mjs";
+import {
+  isRegisteredNativeAdapter,
+  loadNativeHookAdapters,
+} from "./native-hook-adapters.mjs";
+import {
+  TYPED_HOOK_CONTRACTS,
+  compileTypedHook,
+} from "./typed-hook-ir.mjs";
 
 const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultSourceRoot = join(repoDir, "bundle", "specs");
@@ -61,7 +66,8 @@ export const INVENTORY_KIND = "native-hook-inventory";
 const VERSIONED_SPEC_BLOCKER = "versioned-spec-behaviour-unadapted";
 
 export const CLASSIFICATION_STATUSES = Object.freeze([
-  "typed-ir-research-candidate",
+  "typed-ir",
+  "native-adapter",
   "native-filepaths-rewrite",
   "requires-native-adapter",
   "syntax-or-analysis-failure",
@@ -71,11 +77,12 @@ export const CLASSIFICATION_STATUSES = Object.freeze([
 const STATUS_ORDER = new Map(
   CLASSIFICATION_STATUSES.map((status, index) => [status, index]),
 );
-const CANDIDATE_STATUS = CLASSIFICATION_STATUSES[0];
-const NATIVE_FILEPATHS_STATUS = CLASSIFICATION_STATUSES[1];
-const ADAPTER_STATUS = CLASSIFICATION_STATUSES[2];
-const FAILURE_STATUS = CLASSIFICATION_STATUSES[3];
-const UNCLASSIFIED_STATUS = CLASSIFICATION_STATUSES[4];
+const TYPED_IR_STATUS = "typed-ir";
+const NATIVE_ADAPTER_STATUS = "native-adapter";
+const NATIVE_FILEPATHS_STATUS = "native-filepaths-rewrite";
+const ADAPTER_STATUS = "requires-native-adapter";
+const FAILURE_STATUS = "syntax-or-analysis-failure";
+const UNCLASSIFIED_STATUS = "unclassified";
 
 const IR_TO_SOURCE_FIELD = Object.fromEntries(
   Object.entries(SUPPORTED_HOOK_FIELDS).map(([source, ir]) => [ir, source]),
@@ -85,7 +92,7 @@ const COMMAND_PARAMETER_FIELDS = new Set(["custom", "alias", "generateSpec"]);
 const ENVIRONMENT_PARAMETER_FIELDS = new Set(["custom"]);
 
 // Calls in this set are deterministic string/array reads. This is a syntax
-// gate for research candidates, not a claim that the native engine already
+// gate for the typed-IR compiler, not a claim that the native engine already
 // implements these methods.
 const PURE_METHODS = new Set([
   "at",
@@ -94,7 +101,12 @@ const PURE_METHODS = new Set([
   "includes",
   "indexOf",
   "lastIndexOf",
+  "concat",
+  "padEnd",
+  "padStart",
+  "repeat",
   "replace",
+  "replaceAll",
   "slice",
   "split",
   "startsWith",
@@ -155,6 +167,10 @@ const COMPLEXITY_LIMITS = Object.freeze({
   maxCalls: 3,
   maxMembers: 6,
 });
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -577,7 +593,7 @@ function analyzeAst(ast, field, body) {
       status: FAILURE_STATUS,
       failureKind: "unsupported-runtime-syntax",
       analysisError:
-        "runtime syntax is not supported by the phase-1 QuickJS gate",
+        "runtime syntax the typed-IR compiler cannot represent",
       researchCandidate: false,
       nativeExecutable: false,
       buildTimePureStatic: false,
@@ -613,8 +629,8 @@ function analyzeAst(ast, field, body) {
     sortedFreeVariables.length === 0;
   dependencies.buildTimePureStatic = buildTimePureStatic;
   return {
-    status: candidate ? CANDIDATE_STATUS : ADAPTER_STATUS,
-    researchCandidate: candidate,
+    status: ADAPTER_STATUS,
+    researchCandidate: false,
     nativeExecutable: false,
     buildTimePureStatic,
     freeVariables: sortedFreeVariables,
@@ -640,7 +656,7 @@ function analyzeAst(ast, field, body) {
  * Analyze and classify one extracted body without evaluating it.
  * Exported for focused fixtures; the full report uses the same function.
  */
-export function classifyHookBody({ body, field }) {
+export function classifyHookBody({ body, field, moduleSource, adapters = null }) {
   if (typeof body !== "string" || !body.trim()) {
     return {
       status: FAILURE_STATUS,
@@ -682,7 +698,43 @@ export function classifyHookBody({ body, field }) {
       field,
     };
   }
-  return analyzeAst(ast, field, body);
+  return upgradeWithNamedAdapter(
+    upgradeWithTypedCompile(analyzeAst(ast, field, body), body, field, moduleSource),
+    body,
+    field,
+    adapters,
+  );
+}
+
+function upgradeWithTypedCompile(analysis, body, field, moduleSource) {
+  if (analysis.status === FAILURE_STATUS) return analysis;
+  const sourceField = IR_TO_SOURCE_FIELD[field] ?? field;
+  if (!Object.hasOwn(TYPED_HOOK_CONTRACTS, sourceField)) return analysis;
+  try {
+    compileTypedHook({ body, sourceField, moduleSource });
+  } catch {
+    return analysis;
+  }
+  return {
+    ...analysis,
+    status: TYPED_IR_STATUS,
+    researchCandidate: false,
+  };
+}
+
+function upgradeWithNamedAdapter(analysis, body, field, adapters) {
+  if (analysis.status !== ADAPTER_STATUS || !adapters || typeof body !== "string") {
+    return analysis;
+  }
+  const sourceField = IR_TO_SOURCE_FIELD[field] ?? field;
+  if (!isRegisteredNativeAdapter(sha256(body), sourceField, adapters)) {
+    return analysis;
+  }
+  return {
+    ...analysis,
+    status: NATIVE_ADAPTER_STATUS,
+    researchCandidate: false,
+  };
 }
 
 function nativeRewriteSummary(audit) {
@@ -825,67 +877,149 @@ async function isRegularFile(path) {
 }
 
 /**
- * Inventory of diff-versioned spec behaviour the compiler does not adapt yet.
- *
- * Both lists come from the reviewed allowlist in spec-hook-contract.mjs; the
- * compiler already fails closed when the bundle drifts from it. The version
- * diffs are imported here only to count the functions they carry (hooks the
- * WebView could run after merging a diff). No hook is invoked.
+ * Inventory of versioned spec behaviour. After T2.6 the compiler applies
+ * every `versions` diff and records selectors in `index.json`, so a present
+ * IR `versioned` map is `adapted`. A selector or non-empty diff with no IR
+ * entry is still `unadapted` and blocks the gate.
  */
-async function versionedSpecInventory(sourceRoot) {
+async function versionedSpecInventory(sourceRoot, irRoot) {
   const selectors = [];
-  for (const file of [...KNOWN_VERSION_SELECTORS].sort(comparePath)) {
+  for (const file of [...KNOWN_NON_SPEC_FILES].sort(comparePath)) {
+    if (!file.endsWith("/index.js")) continue;
+    const path = join(sourceRoot, file);
+    if (!(await isRegularFile(path))) continue;
+    let namespace = null;
+    try {
+      namespace = await import(pathToFileURL(path).href);
+    } catch {
+      namespace = null;
+    }
+    if (typeof namespace?.getVersionCommand !== "function") continue;
     selectors.push({
       file,
-      present: await isRegularFile(join(sourceRoot, file)),
-      resolution: "highest-version-file",
+      present: true,
+      resolution: "version-command",
     });
   }
-  const unappliedDiffs = [];
-  for (const [file, versions] of Object.entries(
-    KNOWN_UNAPPLIED_VERSION_DIFFS,
-  ).sort(([left], [right]) => comparePath(left, right))) {
+  const appliedDiffs = [];
+  for (const file of await listJsFiles(sourceRoot)) {
+    if (KNOWN_NON_SPEC_FILES.has(file)) continue;
     const path = join(sourceRoot, file);
     let namespace = null;
-    if (await isRegularFile(path)) {
-      try {
-        namespace = await import(pathToFileURL(path).href);
-      } catch {
-        namespace = null;
-      }
+    try {
+      namespace = await import(pathToFileURL(path).href);
+    } catch {
+      continue;
     }
-    unappliedDiffs.push({
+    const versions = namespace?.versions;
+    if (!versions || typeof versions !== "object" || Array.isArray(versions)) {
+      continue;
+    }
+    const keys = Object.keys(versions).filter((key) => {
+      const diff = versions[key];
+      return (
+        diff !== null &&
+        typeof diff === "object" &&
+        !Array.isArray(diff) &&
+        Object.keys(diff).length > 0
+      );
+    });
+    if (!keys.length) continue;
+    appliedDiffs.push({
       file,
-      present: namespace !== null,
-      versions: [...versions].map((version) => ({
+      present: true,
+      versions: keys.map((version) => ({
         version,
-        functions:
-          namespace === null
-            ? null
-            : countFunctionsInValue(namespace.versions?.[version]),
+        functions: countFunctionsInValue(versions[version]),
       })),
     });
   }
-  const diffCount = unappliedDiffs.reduce(
-    (sum, entry) => sum + entry.versions.length,
-    0,
+  let irVersioned = null;
+  const indexPath = join(irRoot, "index.json");
+  if (await isRegularFile(indexPath)) {
+    try {
+      irVersioned = JSON.parse(await readFile(indexPath, "utf8")).versioned ?? {};
+    } catch {
+      irVersioned = null;
+    }
+  }
+  const selectorCommands = selectors.map((entry) =>
+    entry.file.replace(/\/index\.js$/, ""),
   );
-  const functionCount = unappliedDiffs.reduce(
-    (sum, entry) =>
-      sum +
-      entry.versions.reduce((inner, item) => inner + (item.functions ?? 0), 0),
-    0,
+  const missingSelectors = selectorCommands.filter(
+    (name) => !irVersioned || !irVersioned[name],
   );
+  const coveredDerived = new Set();
+  for (const entry of Object.values(irVersioned || {})) {
+    for (const diffs of Object.values(entry.applied || {})) {
+      for (const destRel of Object.values(diffs)) {
+        coveredDerived.add(destRel);
+      }
+    }
+  }
+  const missingAppliedDiffs = [];
+  for (const entry of appliedDiffs) {
+    for (const item of entry.versions) {
+      const destRel = derivedVersionIrRel(entry.file, item.version);
+      if (!coveredDerived.has(destRel)) {
+        missingAppliedDiffs.push({
+          file: entry.file,
+          version: item.version,
+          destRel,
+        });
+      }
+    }
+  }
+  const status =
+    selectors.length === 0 && appliedDiffs.length === 0
+      ? "none"
+      : missingSelectors.length || missingAppliedDiffs.length
+        ? "unadapted"
+        : "adapted";
   return {
-    status: selectors.length || diffCount ? "unadapted" : "none",
+    status,
     selectors,
-    unappliedDiffs,
+    appliedDiffs,
+    missingSelectors,
+    missingAppliedDiffs,
     totals: {
       selectors: selectors.length,
-      unappliedDiffs: diffCount,
-      functionsInUnappliedDiffs: functionCount,
+      appliedDiffs: appliedDiffs.reduce(
+        (sum, entry) => sum + entry.versions.length,
+        0,
+      ),
+      functionsInAppliedDiffs: appliedDiffs.reduce(
+        (sum, entry) =>
+          sum +
+          entry.versions.reduce((inner, item) => inner + (item.functions ?? 0), 0),
+        0,
+      ),
     },
   };
+}
+
+async function listJsFiles(root) {
+  const files = [];
+  async function walk(dir, prefix) {
+    let entries = [];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries.sort((left, right) =>
+      comparePath(left.name, right.name),
+    )) {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        await walk(join(dir, entry.name), rel);
+      } else if (entry.isFile() && entry.name.endsWith(".js")) {
+        files.push(rel);
+      }
+    }
+  }
+  await walk(root, "");
+  return files;
 }
 
 /**
@@ -922,17 +1056,25 @@ export async function classifyNativeHooks({
   irRoot = process.env.EC_SPECS_IR || defaultIrRoot,
   hooksRoot = process.env.EC_SPECS_HOOKS || join(irRoot, "hooks"),
   baselineRoot = defaultBaselineRoot,
+  adapters = null,
 } = {}) {
-  const audit = await auditSpecsHooks({ sourceRoot, irRoot, hooksRoot });
+  const adapterCatalog = adapters ?? (await loadNativeHookAdapters());
+  const audit = await auditSpecsHooks({ sourceRoot, irRoot });
   const locationsById = sourceLocations(audit);
   const manifest = [...(audit.hookManifest ?? [])].sort((left, right) =>
     comparePath(left.id, right.id),
   );
-  const hookFilesOnDisk = await walkHookFiles(hooksRoot);
-  const manifestFiles = new Set(manifest.map((hook) => hook.file));
   const hooks = [];
   const groupsByHash = new Map();
   const readErrors = [];
+  let sidecar = { hooks: {}, adapters: {} };
+  try {
+    sidecar = JSON.parse(await readFile(join(irRoot, "typed-hooks.json"), "utf8"));
+  } catch (error) {
+    readErrors.push({ file: "typed-hooks.json", message: error.message });
+  }
+  const sidecarHooks = isRecord(sidecar.hooks) ? sidecar.hooks : {};
+  const sidecarAdapters = isRecord(sidecar.adapters) ? sidecar.adapters : {};
 
   for (const entry of manifest) {
     const field = entry.field;
@@ -958,11 +1100,19 @@ export async function classifyNativeHooks({
       });
       continue;
     }
-    let text;
-    try {
-      text = await readFile(join(hooksRoot, entry.file), "utf8");
-    } catch (error) {
-      readErrors.push({ file: entry.file, message: error.message });
+    const typed = sidecarHooks[entry.id];
+    const adapter = sidecarAdapters[entry.id];
+    const body = typeof entry.body === "string" ? entry.body : null;
+    const bodySha256 =
+      typed?.functionBodySha256 ??
+      adapter?.functionBodySha256 ??
+      entry.functionBodySha256 ??
+      (body == null ? null : sha256(body));
+    if (body == null && !bodySha256) {
+      readErrors.push({
+        file: entry.file,
+        message: "hook body is missing from the typed sidecar and source audit",
+      });
       hooks.push({
         id: entry.id,
         file: entry.file,
@@ -983,9 +1133,25 @@ export async function classifyNativeHooks({
       });
       continue;
     }
-    const body = bodyFromHookFile(text);
-    const bodySha256 = body == null ? null : sha256(body);
-    const analysis = classifyHookBody({ body, field });
+    let analysis = classifyHookBody({
+      body: body ?? "",
+      field,
+      moduleSource: undefined,
+      adapters: adapterCatalog,
+    });
+    if (isRecord(typed)) {
+      analysis = {
+        ...analysis,
+        status: TYPED_IR_STATUS,
+        nativeExecutable: true,
+      };
+    } else if (isRecord(adapter)) {
+      analysis = {
+        ...analysis,
+        status: NATIVE_ADAPTER_STATUS,
+        nativeExecutable: true,
+      };
+    }
     const hook = {
       id: entry.id,
       file: entry.file,
@@ -1026,30 +1192,6 @@ export async function classifyNativeHooks({
       group.analyses.push(analysis);
       groupsByHash.set(key, group);
     }
-  }
-
-  // A hook file without an IR reference cannot be assigned a field or a
-  // native implementation. Keep it visible and fail closed.
-  for (const file of hookFilesOnDisk) {
-    if (manifestFiles.has(file)) continue;
-    hooks.push({
-      id: null,
-      file,
-      field: null,
-      sourceField: null,
-      bodySha256: null,
-      status: UNCLASSIFIED_STATUS,
-      reasonCodes: ["orphan-hook-file"],
-      researchCandidate: false,
-      nativeExecutable: false,
-      dependencies: {
-        input: false,
-        command: false,
-        environment: false,
-        buildTimePureStatic: false,
-      },
-      locations: [],
-    });
   }
 
   hooks.sort(
@@ -1134,7 +1276,7 @@ export async function classifyNativeHooks({
     },
   };
   const nativeRewrites = nativeRewriteSummary(audit);
-  const versionedSpecs = await versionedSpecInventory(sourceRoot);
+  const versionedSpecs = await versionedSpecInventory(sourceRoot, irRoot);
   const auditErrors = sanitizeAuditErrors(audit.errors, {
     sourceRoot,
     irRoot,
@@ -1149,9 +1291,6 @@ export async function classifyNativeHooks({
   if (counts.extractedHooks[FAILURE_STATUS] > 0)
     gateBlockers.push(FAILURE_STATUS);
   if (unclassifiedCount > 0) gateBlockers.push(UNCLASSIFIED_STATUS);
-  if (counts.uniqueBodies[CANDIDATE_STATUS] > 0) {
-    gateBlockers.push(CANDIDATE_STATUS);
-  }
   const coveredUniqueBodies = groups.filter((group) => group.baselineCovered).length;
   const outputBaseline = outputBaselineFromCoverage(
     coveredUniqueBodies,
@@ -1161,13 +1300,14 @@ export async function classifyNativeHooks({
     gateBlockers.push(OUTPUT_BASELINE_BLOCKER);
   }
   if (structuralErrorCount > 0) gateBlockers.push("audit-errors");
-  if (versionedSpecs.status !== "none") gateBlockers.push(VERSIONED_SPEC_BLOCKER);
+  if (versionedSpecs.status === "unadapted")
+    gateBlockers.push(VERSIONED_SPEC_BLOCKER);
   const report = {
     version: 1,
     kind: "native-hook-readiness",
     contract: {
       statuses: CLASSIFICATION_STATUSES,
-      researchOnlyStatuses: [CANDIDATE_STATUS],
+      researchOnlyStatuses: [],
       nativeExecutableStatuses: [NATIVE_FILEPATHS_STATUS],
       failClosedStatuses: [FAILURE_STATUS, UNCLASSIFIED_STATUS],
       outputBaselineRequired: true,
@@ -1186,7 +1326,7 @@ export async function classifyNativeHooks({
     coverage: {
       extractedHooks: extractedHooks.length,
       uniqueBodies: groups.length,
-      hookFilesOnDisk: hookFilesOnDisk.length,
+      hookFilesOnDisk: audit.hooks?.files ?? 0,
       classifiedHooks: classifiedHooks.length,
       unclassifiedHooks: unclassifiedCount,
       nativeFilepathsRewrite: nativeRewrites.total,
@@ -1208,10 +1348,10 @@ export async function classifyNativeHooks({
         counts.extractedHooks[FAILURE_STATUS] === 0 &&
         counts.uniqueBodies[ADAPTER_STATUS] === 0 &&
         counts.uniqueBodies[FAILURE_STATUS] === 0 &&
-        counts.uniqueBodies[CANDIDATE_STATUS] === 0 &&
-        versionedSpecs.status === "none" &&
+        (versionedSpecs.status === "none" ||
+          versionedSpecs.status === "adapted") &&
         outputBaseline.status === "established",
-      researchOnlyStatuses: [CANDIDATE_STATUS],
+      researchOnlyStatuses: [],
       blockers: sortStrings(gateBlockers),
       allBundledHooksMustPass: true,
       outputBaselineRequired: true,

@@ -10,6 +10,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::snapshot::{DirectorySnapshot, EntryKind};
+use crate::versioned::VersionedCommand;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -133,8 +134,8 @@ pub struct ArgSpec {
     /// hook, when present, runs instead of this split.
     #[serde(default, alias = "splitOn")]
     pub split_on: Option<String>,
-    /// Extracted Fig `postProcess` hook id. The worker looks up source under
-    /// `hooks/` and runs it in the process-local QuickJS runtime.
+    /// Extracted Fig `postProcess` hook id. NativeHooks looks this up in
+    /// `typed-hooks.json` (typed IR or a named adapter).
     #[serde(default, alias = "jsPostProcess")]
     pub js_post_process: Option<String>,
     /// Extracted Fig `custom` generator hook id.
@@ -420,6 +421,12 @@ pub struct Registry {
     /// meant to replace — that fallback was silent, and for a command the
     /// bundle does not know it left no completion at all.
     pinned: Vec<Arc<Spec>>,
+    /// `index.json` `versioned` map: command → selector + version files.
+    versioned: HashMap<String, VersionedCommand>,
+    /// Per-session CLI versions (`None` = detection failed). Keyed by command.
+    version_cache: HashMap<String, Option<String>>,
+    /// Specs loaded by relative IR path for versioned selection.
+    path_specs: HashMap<PathBuf, Arc<Spec>>,
 }
 
 /// How [`Registry::overlay_specs_dir`] treats a name the bundle already has.
@@ -609,6 +616,59 @@ impl Registry {
     pub fn get_arc(&mut self, name: &str) -> Option<Arc<Spec>> {
         self.ensure_loaded(name);
         self.specs.get(name).cloned()
+    }
+
+    pub fn versioned_command(&self, name: &str) -> Option<&VersionedCommand> {
+        self.versioned.get(name)
+    }
+
+    /// Session-cached versioned root spec. Detection failures load the
+    /// highest file (with that file's diffs applied), matching WebView.
+    pub fn get_versioned_arc(&mut self, name: &str, cwd: &str, timeout: std::time::Duration) -> Option<Arc<Spec>> {
+        let entry = self.versioned.get(name)?.clone();
+        let detected = self
+            .version_cache
+            .entry(name.to_string())
+            .or_insert_with(|| crate::versioned::detect_cli_version(&entry, cwd, timeout))
+            .clone();
+        let relative = crate::versioned::resolve_versioned_path(&entry, detected.as_deref())?;
+        self.load_relative_spec(&relative, name)
+    }
+
+    fn load_relative_spec(&mut self, relative: &str, name: &str) -> Option<Arc<Spec>> {
+        // DirectorySnapshot keys are root-relative. An absolute path fails
+        // `read_file`, so `get_versioned_arc` returns None and lookup falls
+        // back to `files.<command>` (the default / highest IR).
+        let relative = relative.trim().trim_start_matches("./");
+        let relative_path = safe_relative_path(relative)?;
+        if let Some(spec) = self.path_specs.get(&relative_path).cloned() {
+            return Some(spec);
+        }
+        let files = self.files.clone();
+        let loaded = if let Some(snapshot) = self.snapshot.as_ref() {
+            if !snapshot.is_file(&relative_path) {
+                tracing::warn!(command = %name, path = %relative, "versioned spec missing from snapshot");
+                return None;
+            }
+            load_snapshot_file(snapshot, &relative_path, &files, &mut Vec::new())
+        } else {
+            let path = safe_index_path(&self.root, relative)?;
+            load_spec_file(&path, &self.root, &files, &mut Vec::new())
+        };
+        match loaded {
+            Ok(mut spec) => {
+                if !spec.names.iter().any(|candidate| candidate == name) {
+                    spec.names.push(name.to_string());
+                }
+                let spec = Arc::new(spec);
+                self.path_specs.insert(relative_path, spec.clone());
+                Some(spec)
+            },
+            Err(error) => {
+                tracing::warn!(command = %name, path = %relative, %error, "versioned spec load failed");
+                None
+            },
+        }
     }
 
     pub fn command_names_matching(&self, query: &str) -> Vec<(String, String)> {
@@ -847,6 +907,7 @@ fn overlay_json_dir(registry: &mut Registry, dir: &Path, mode: OverlayMode) {
 #[derive(Debug, Default, Deserialize)]
 struct IrIndex {
     files: Option<HashMap<String, String>>,
+    versioned: Option<HashMap<String, VersionedCommand>>,
 }
 
 fn safe_index_path(root: &Path, relative: &str) -> Option<PathBuf> {
@@ -874,6 +935,12 @@ fn read_index_snapshot(snapshot: &DirectorySnapshot, registry: &mut Registry) ->
     let Some(files) = index.files else {
         return Ok(false);
     };
+    if let Some(versioned) = index.versioned {
+        registry.versioned = versioned
+            .into_iter()
+            .filter(|(command, _)| !command.is_empty())
+            .collect();
+    }
     for (command, relative) in files {
         if command.is_empty() {
             continue;
@@ -1171,6 +1238,57 @@ mod tests {
     fn write_spec(dir: &Path, name: &str, body: &str) {
         fs::create_dir_all(dir).unwrap();
         fs::write(dir.join(format!("{name}.json")), body).unwrap();
+    }
+
+    #[test]
+    fn versioned_spec_loads_from_snapshot_relative_path() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("tool")).unwrap();
+        fs::write(
+            dir.path().join("tool/1.0.0.json"),
+            r#"{"names":["tool"],"subcommands":[{"names":["old"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("tool/1.0.0+1.1.0.json"),
+            r#"{"names":["tool"],"subcommands":[{"names":["old"]},{"names":["extra"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("tool/2.0.0.json"),
+            r#"{"names":["tool"],"subcommands":[{"names":["new"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{
+              "completions":["tool"],
+              "files":{"tool":"tool/2.0.0.json"},
+              "versioned":{
+                "tool":{
+                  "command":["tool","--version"],
+                  "parse":"after-first-space",
+                  "fallback":"2.0.0",
+                  "files":{"1.0.0":"tool/1.0.0.json","2.0.0":"tool/2.0.0.json"},
+                  "applied":{"1.0.0":{"1.1.0":"tool/1.0.0+1.1.0.json"}}
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let _guard = crate::process::mock::install(vec![crate::process::mock::ExecRule {
+            command: Some("tool".into()),
+            args: Some(vec!["--version".into()]),
+            stdout: "tool 1.0.5".into(),
+            ..crate::process::mock::ExecRule::default()
+        }]);
+        let spec = registry
+            .get_versioned_arc("tool", "/", std::time::Duration::from_secs(5))
+            .expect("versioned snapshot load");
+        assert!(spec.find_subcommand("extra").is_some());
+        assert!(spec.find_subcommand("old").is_some());
+        assert!(spec.find_subcommand("new").is_none());
     }
 
     #[test]

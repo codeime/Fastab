@@ -1,0 +1,19 @@
+{
+  "names": ["docker"],
+  "description": "Docker",
+  "subcommands": [
+    {
+      "names": ["run"],
+      "description": "Run a container",
+      "icon": "fig://icon?type=docker",
+      "priority": 80,
+      "args": [
+        {
+          "name": "image",
+          "script": ["docker", "images"],
+          "jsPostProcess": "docker#postProcess#0"
+        }
+      ]
+    }
+  ]
+}

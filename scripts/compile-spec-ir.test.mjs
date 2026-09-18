@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import {
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -159,45 +160,34 @@ test("compiler emits shared hook modules that preserve closures and custom recei
     );
     await compileSpecsIr({ srcDir, outDir });
     const ir = JSON.parse(await readFile(join(outDir, "closure.json"), "utf8"));
-    const manifest = JSON.parse(
-      await readFile(join(outDir, "hook-modules.json"), "utf8"),
+    const sidecar = JSON.parse(
+      await readFile(join(outDir, "typed-hooks.json"), "utf8"),
     );
+    await assert.rejects(lstat(join(outDir, "hook-modules.json")), {
+      code: "ENOENT",
+    });
+    await assert.rejects(lstat(join(outDir, "source-modules")), {
+      code: "ENOENT",
+    });
+    await assert.rejects(lstat(join(outDir, "hooks")), { code: "ENOENT" });
     const ids = ir.args.map(
       (arg) => arg.generators[0].jsPostProcess ?? arg.generators[0].jsCustom,
     );
     assert.equal(new Set(ids).size, 4);
-    const modules = new Set(ids.map((id) => manifest.hooks[id].module));
+    const customIds = ir.args
+      .map((arg) => arg.generators[0].jsCustom)
+      .filter(Boolean);
     assert.equal(
-      modules.size,
-      1,
-      "one source module is shared by all four hooks",
+      customIds.every((id) => !sidecar.hooks[id] && !sidecar.adapters?.[id]),
+      true,
+      "this-binding customs stay off the sidecar until a named adapter exists",
     );
-    const [moduleFile] = modules;
-    const moduleUrl = pathToFileURL(join(outDir, "source-modules", moduleFile));
-    moduleUrl.searchParams.set("test", String(Date.now()));
-    const table = (await import(moduleUrl.href)).default;
-
-    assert.deepEqual(table[ids[0]]("stdout", []), [
-      { name: "one:stdout", priority: 73, moduleThis: "undefined" },
-    ]);
-    assert.deepEqual(table[ids[1]]("stdout", []), [
-      { name: "two:stdout", priority: 73, moduleThis: "undefined" },
-    ]);
-    assert.deepEqual(table[ids[2]](["token"]), [{ name: "three:token" }]);
-    assert.deepEqual(table[ids[3]](["token"]), [{ name: "four:token" }]);
-
-    const moduleText = await readFile(
-      join(outDir, "source-modules", moduleFile),
-      "utf8",
+    const typedModules = new Set(
+      Object.values(sidecar.hooks)
+        .map((entry) => entry.module)
+        .filter(Boolean),
     );
-    const runtimeExpression = moduleText
-      .trim()
-      .replace(/^export\s+default\s+/, "")
-      .replace(/;$/, "");
-    const runtimeTable = new Function(`return (${runtimeExpression})`)();
-    assert.deepEqual(runtimeTable[ids[0]]("stdout", []), [
-      { name: "one:stdout", priority: 73, moduleThis: "undefined" },
-    ]);
+    assert.ok(typedModules.size <= 1);
   } finally {
     await Promise.all([
       rm(srcDir, { recursive: true, force: true }),
@@ -238,39 +228,25 @@ test("closure modules bind ids to compiler-selected paths when texts collide", a
     );
     await compileSpecsIr({ srcDir, outDir });
     const ir = JSON.parse(await readFile(join(outDir, "binding.json"), "utf8"));
-    const manifest = JSON.parse(
-      await readFile(join(outDir, "hook-modules.json"), "utf8"),
+    const sidecar = JSON.parse(
+      await readFile(join(outDir, "typed-hooks.json"), "utf8"),
     );
-    const [moduleFile] = new Set(
-      Object.values(manifest.hooks).map((entry) => entry.module),
-    );
-    const moduleUrl = pathToFileURL(join(outDir, "source-modules", moduleFile));
-    moduleUrl.searchParams.set("test", String(Date.now()));
-    const table = (await import(moduleUrl.href)).default;
-
-    for (const [index, arg] of ir.args.entries()) {
-      const id = arg.generators[0].jsPostProcess;
-      assert.deepEqual(table[id]("stdout", []), [{ name: `${index}:stdout` }]);
-    }
+    await assert.rejects(lstat(join(outDir, "hook-modules.json")), {
+      code: "ENOENT",
+    });
     const regularId = ir.options[0].args[0].generators[0].jsCustom;
     const persistentId = ir.persistentOptions[0].args[0].generators[0].jsCustom;
-    assert.equal(
-      manifest.hooks[regularId].path,
-      "root.options[1].args.generators.custom",
-    );
-    assert.equal(
-      manifest.hooks[persistentId].path,
-      "root.options[0].args.generators.custom",
-    );
-    assert.equal(manifest.hooks[regularId].sourceField, "custom");
-    assert.match(
-      manifest.hooks[regularId].functionBodySha256,
-      /^[a-f0-9]{64}$/,
-    );
-    assert.deepEqual(table[regularId](["token"]), [{ name: "regular:token" }]);
-    assert.deepEqual(table[persistentId](["token"]), [
-      { name: "persistent:token" },
-    ]);
+    assert.equal(typeof regularId, "string");
+    assert.equal(typeof persistentId, "string");
+    assert.notEqual(regularId, persistentId);
+    assert.equal(sidecar.hooks[regularId], undefined);
+    assert.equal(sidecar.hooks[persistentId], undefined);
+    assert.equal(sidecar.adapters?.[regularId], undefined);
+    assert.equal(sidecar.adapters?.[persistentId], undefined);
+    for (const [index, arg] of ir.args.entries()) {
+      const id = arg.generators[0].jsPostProcess;
+      assert.equal(typeof id, "string", `extracted postProcess ${index}`);
+    }
   } finally {
     await Promise.all([
       rm(srcDir, { recursive: true, force: true }),
@@ -308,11 +284,14 @@ test("compiler CLI completes its pre-manifest audit without a module cycle", asy
       },
     );
     assert.equal(stderr, "");
-    assert.match(stdout, /1 closure-preserving modules/);
-    const manifest = JSON.parse(
-      await readFile(join(outDir, "hook-modules.json"), "utf8"),
+    assert.match(stdout, /1 in-memory closure modules/);
+    const sidecar = JSON.parse(
+      await readFile(join(outDir, "typed-hooks.json"), "utf8"),
     );
-    assert.equal(Object.keys(manifest.hooks).length, 1);
+    assert.equal(Object.keys(sidecar.hooks).length, 1);
+    await assert.rejects(lstat(join(outDir, "hook-modules.json")), {
+      code: "ENOENT",
+    });
   } finally {
     await Promise.all([
       rm(srcDir, { recursive: true, force: true }),
@@ -966,12 +945,13 @@ test("compiler keeps postProcess scripts and extracts JS hooks", async () => {
     assert.equal(ir.jsGenerateSpec, "fixture#generateSpec#0");
     assert.equal(ir.generateSpecCacheKey, "fixture-tree");
 
-    const hook = await readFile(
-      join(outDir, "hooks", "fixture_postProcess_1.js"),
-      "utf8",
+    const sidecar = JSON.parse(
+      await readFile(join(outDir, "typed-hooks.json"), "utf8"),
     );
-    assert.match(hook, /export default/);
-    assert.match(hook, /postProcess|split/);
+    const post = sidecar.hooks["fixture#postProcess#1"];
+    assert.equal(post.sourceField, "postProcess");
+    assert.match(post.path, /postProcess/);
+    await assert.rejects(lstat(join(outDir, "hooks")), { code: "ENOENT" });
   } finally {
     await Promise.all([
       rm(srcDir, { recursive: true, force: true }),
@@ -1394,9 +1374,6 @@ test("compiler emits a deterministic typed trigger sidecar from binding identity
     );
     assert.equal(triggerIds.length, 2);
     const [supportedId, legacyId] = triggerIds;
-    const manifest = JSON.parse(
-      await readFile(join(firstOutDir, "hook-modules.json"), "utf8"),
-    );
     const sidecarText = await readFile(
       join(firstOutDir, TYPED_HOOK_SIDECAR),
       "utf8",
@@ -1414,6 +1391,46 @@ test("compiler emits a deterministic typed trigger sidecar from binding identity
         params: ["string", "string"],
         resultType: "bool",
       },
+      getQueryTerm: {
+        irVersion: 1,
+        params: ["string"],
+        resultType: "string",
+      },
+      postProcess: {
+        irVersion: 1,
+        params: ["string", "string-array"],
+        resultType: "suggestion-array",
+      },
+      script: {
+        irVersion: 1,
+        params: ["string-array"],
+        resultType: "string-array",
+      },
+      filterTemplateSuggestions: {
+        irVersion: 1,
+        params: ["suggestion-array"],
+        resultType: "suggestion-array",
+      },
+      custom: {
+        irVersion: 1,
+        params: ["string-array", "exec", "context"],
+        resultType: "suggestion-array",
+      },
+      alias: {
+        irVersion: 1,
+        params: ["string", "exec"],
+        resultType: "string",
+      },
+      loadSpec: {
+        irVersion: 1,
+        params: ["string", "exec"],
+        resultType: "spec",
+      },
+      generateSpec: {
+        irVersion: 1,
+        params: ["string-array", "exec"],
+        resultType: "spec",
+      },
     });
     assert.deepEqual(Object.keys(sidecar.hooks), [supportedId]);
     const imported = await import(
@@ -1421,10 +1438,12 @@ test("compiler emits a deterministic typed trigger sidecar from binding identity
     );
     const body = functionSource(imported.default.args[0].generators[0].trigger);
     assert.equal(typeof body, "string");
-    assert.deepEqual(sidecar.hooks[supportedId], {
-      ...manifest.hooks[supportedId],
-      descriptor: compileTypedHook({ body, sourceField: "trigger" }),
-    });
+    assert.equal(sidecar.hooks[supportedId].sourceField, "trigger");
+    assert.equal(sidecar.hooks[supportedId].path, "root.args[0].generators[0].trigger");
+    assert.deepEqual(
+      sidecar.hooks[supportedId].descriptor,
+      compileTypedHook({ body, sourceField: "trigger" }),
+    );
     assert.equal(sidecar.hooks[legacyId], undefined);
     assert.deepEqual(
       await readFile(join(secondOutDir, TYPED_HOOK_SIDECAR)),
@@ -1440,7 +1459,7 @@ test("compiler emits a deterministic typed trigger sidecar from binding identity
   }
 });
 
-test("production compiler keeps the reviewed getQueryTerm hook on its compatibility path", async () => {
+test("production compiler writes a reviewed getQueryTerm hook into the sidecar", async () => {
   const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-get-query-src-"));
   const outDir = await mkdtemp(join(tmpdir(), "easy-complete-get-query-ir-"));
   try {
@@ -1462,14 +1481,21 @@ test("production compiler keeps the reviewed getQueryTerm hook on its compatibil
     const sidecar = JSON.parse(
       await readFile(join(outDir, TYPED_HOOK_SIDECAR), "utf8"),
     );
-    assert.deepEqual(Object.keys(sidecar.hooks), []);
+    assert.ok(Object.keys(sidecar.hooks).includes(hookId));
+    assert.ok(
+      Object.keys(sidecar.hooks).every((id) => id.includes("#getQueryTerm#")),
+    );
     const imported = await import(
       `${pathToFileURL(sourcePath).href}?query=${Date.now()}`,
     );
     const body = functionSource(imported.default.args[0].generators.getQueryTerm);
     const descriptor = compileTypedHook({ body, sourceField: "getQueryTerm" });
-    assert.equal(descriptor.expr.then.op, "string-slice-after-first");
+    assert.equal(descriptor.expr.then.op, "string-slice");
+    assert.equal(descriptor.expr.then.start.op, "add");
     assert.equal(descriptor.sourceField, "getQueryTerm");
+    for (const entry of Object.values(sidecar.hooks)) {
+      assert.deepEqual(entry.descriptor, descriptor);
+    }
   } finally {
     await Promise.all([
       rm(srcDir, { recursive: true, force: true }),
@@ -1761,7 +1787,6 @@ test("audit detects a dropped duplicate hook instance, not just a missing hash",
     const secondId = second.jsCustom;
     ir.args[0].generators[1].jsCustom = firstId;
     await writeFile(irPath, `${JSON.stringify(ir)}\n`);
-    await rm(join(outDir, "hooks", hookFileName(secondId)));
 
     const report = await auditSpecsHooks({
       sourceRoot: srcDir,
@@ -1808,10 +1833,12 @@ test("object-method hooks with nested arrows remain standalone callable function
     const ir = JSON.parse(await readFile(join(outDir, "method.json"), "utf8"));
     const hookId = ir.args[0].generators[0].jsPostProcess;
     assert.equal(typeof hookId, "string");
-    const hookPath = join(outDir, "hooks", hookFileName(hookId));
-    const hookSource = await readFile(hookPath, "utf8");
-    assert.match(hookSource, /^export default function\(/);
-    const hook = (await import(pathToFileURL(hookPath).href)).default;
+    const report = await auditSpecsHooks({ sourceRoot: srcDir, irRoot: outDir });
+    assert.equal(report.ok, true, JSON.stringify(report.errors, null, 2));
+    const entry = report.hookManifest.find((item) => item.id === hookId);
+    assert.equal(typeof entry?.body, "string");
+    assert.match(entry.body, /^function\s*\(/);
+    const hook = new Function(`return (${entry.body})`)();
     assert.deepEqual(hook("alpha\nbeta", []), [
       { name: "alpha" },
       { name: "beta" },
@@ -1836,8 +1863,6 @@ test("audit fails closed for empty trees and invalid source indexes", async () =
     });
     assert.equal(empty.ok, false);
     assert.ok(empty.errors.unexpectedSkippedSpecs.length > 0);
-    assert.ok(empty.errors.missingIrSpecs.length > 0);
-    assert.ok(empty.errors.sourceReadErrors.length > 0);
 
     await writeFile(
       join(srcDir, "valid.js"),
@@ -1845,7 +1870,6 @@ test("audit fails closed for empty trees and invalid source indexes", async () =
     );
     await writeFile(join(srcDir, "index.json"), "not json\n");
     await writeFile(join(irDir, "valid.json"), `{"names":["valid"]}\n`);
-    await mkdir(join(irDir, "hooks"));
     const invalidIndex = await auditSpecsHooks({
       sourceRoot: srcDir,
       irRoot: irDir,
@@ -1911,6 +1935,7 @@ test("audit rejects a hook file whose body cannot run as a standalone expression
     const ir = JSON.parse(await readFile(join(outDir, "syntax.json"), "utf8"));
     const hookId = ir.args[0].jsPostProcess;
     assert.equal(typeof hookId, "string");
+    await mkdir(join(outDir, "hooks"));
     await writeFile(
       join(outDir, "hooks", hookFileName(hookId)),
       "export default postProcess(stdout){ return []; };\n",
@@ -1920,11 +1945,7 @@ test("audit rejects a hook file whose body cannot run as a standalone expression
       irRoot: outDir,
     });
     assert.equal(report.ok, false);
-    assert.ok(
-      report.errors.malformedHookFiles.some((item) =>
-        item.reason.includes("standalone JavaScript expression"),
-      ),
-    );
+    assert.ok(report.errors.leftoverHookFiles.length > 0);
   } finally {
     await Promise.all([
       rm(srcDir, { recursive: true, force: true }),
@@ -1933,13 +1954,10 @@ test("audit rejects a hook file whose body cannot run as a standalone expression
   }
 });
 
-test("compiler fails closed on unlisted version diffs and ignores empty ones", async () => {
+test("compiler applies version diffs and ignores empty ones", async () => {
   const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-specs-versions-"));
   const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-versions-"));
   try {
-    // A non-empty `versions` diff the WebView would have merged at load time
-    // is unadapted behaviour. It is only allowed when the reviewed allowlist
-    // names the file and the exact key, so this fixture must be rejected.
     await mkdir(join(srcDir, "tool"), { recursive: true });
     await writeFile(
       join(srcDir, "tool", "1.0.0.js"),
@@ -1954,14 +1972,35 @@ export { spec as default, versions };\n`,
         diffVersionedCompletions: ["tool"],
       }),
     );
-    await assert.rejects(
-      compileSpecsIr({ srcDir, outDir }),
-      /tool\/1\.0\.0\.js exports non-empty `versions` diff\(s\) \["1\.2\.0"\] that are not applied by the compiler and are not listed in KNOWN_UNAPPLIED_VERSION_DIFFS/,
+    const applied = await compileSpecsIr({ srcDir, outDir });
+    assert.equal(applied.compiled, 1);
+    assert.deepEqual(
+      applied.appliedVersionDiffs.map((entry) => entry.file),
+      ["tool/1.0.0.js"],
+    );
+    const base = JSON.parse(
+      await readFile(join(outDir, "tool", "1.0.0.json"), "utf8"),
+    );
+    const merged = JSON.parse(
+      await readFile(join(outDir, "tool", "1.0.0+1.2.0.json"), "utf8"),
+    );
+    assert.deepEqual(
+      base.subcommands.map((subcommand) => subcommand.names),
+      [["base"]],
+    );
+    assert.deepEqual(
+      merged.subcommands.map((subcommand) => subcommand.names),
+      [["added"], ["base"]],
+    );
+    assert.equal(
+      merged.subcommands[0].args[0].jsPostProcess,
+      "tool/1.0.0#postProcess#0",
+    );
+    assert.equal(
+      merged.subcommands[0].args[0].generators[0].jsPostProcess,
+      "tool/1.0.0#postProcess#0",
     );
 
-    // An empty diff is a no-op in `getVersionFromVersionedSpec`, so it is not
-    // a loss and does not need review. (A new file name: Node caches ESM
-    // namespaces by URL, so rewriting 1.0.0.js would re-import the old text.)
     await rm(join(srcDir, "tool", "1.0.0.js"));
     await writeFile(
       join(srcDir, "tool", "2.0.0.js"),
@@ -1976,9 +2015,8 @@ export { spec as default, versions };\n`,
         diffVersionedCompletions: ["tool"],
       }),
     );
-    const result = await compileSpecsIr({ srcDir, outDir });
-    assert.equal(result.compiled, 1);
-    assert.deepEqual(result.unappliedVersionDiffs, []);
+    const empty = await compileSpecsIr({ srcDir, outDir });
+    assert.equal(empty.compiled, 1);
     const ir = JSON.parse(
       await readFile(join(outDir, "tool", "2.0.0.json"), "utf8"),
     );
@@ -1987,6 +2025,107 @@ export { spec as default, versions };\n`,
       [["base"]],
     );
   } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("compiler records two-level versioned selectors in index.json", async () => {
+  const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-specs-selector-"));
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-selector-"));
+  try {
+    await mkdir(join(srcDir, "heroku"), { recursive: true });
+    await writeFile(
+      join(srcDir, "heroku", "8.0.0.js"),
+      `const spec = { name: "heroku", subcommands: [{ name: "old" }] };
+const versions = { "8.11.1": { subcommands: [{ name: "domains" }] } };
+export { spec as default, versions };\n`,
+    );
+    await writeFile(
+      join(srcDir, "heroku", "8.6.0.js"),
+      `export default { name: "heroku", subcommands: [{ name: "new" }] };\n`,
+    );
+    await writeFile(
+      join(srcDir, "heroku", "index.js"),
+      `export const getVersionCommand = async (exec) => {
+  const { stdout } = await exec({ command: "heroku", args: ["--version"] });
+  const match = /heroku\\/([0-9]+\\.[0-9]+\\.[0.9]+)/.exec(stdout);
+  return match ? match[1] : "8.0.0";
+};
+export default getVersionCommand;\n`,
+    );
+    await writeFile(
+      join(srcDir, "index.json"),
+      JSON.stringify({
+        completions: ["heroku"],
+        diffVersionedCompletions: ["heroku"],
+      }),
+    );
+    const compiled = await compileSpecsIr({ srcDir, outDir });
+    assert.deepEqual(compiled.versionedCommands, ["heroku"]);
+    const index = JSON.parse(await readFile(join(outDir, "index.json"), "utf8"));
+    assert.deepEqual(index.versioned.heroku.command, ["heroku", "--version"]);
+    assert.equal(index.versioned.heroku.parse, "regex");
+    assert.equal(index.versioned.heroku.files["8.0.0"], "heroku/8.0.0.json");
+    assert.equal(index.versioned.heroku.files["8.6.0"], "heroku/8.6.0.json");
+    assert.equal(
+      index.versioned.heroku.applied["8.0.0"]["8.11.1"],
+      "heroku/8.0.0+8.11.1.json",
+    );
+    assert.equal(index.files.heroku, "heroku/8.6.0.json");
+    const merged = JSON.parse(
+      await readFile(join(outDir, "heroku", "8.0.0+8.11.1.json"), "utf8"),
+    );
+    assert.deepEqual(
+      merged.subcommands.map((subcommand) => subcommand.names),
+      [["domains"], ["old"]],
+    );
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("side-effect-free leftovers hard-fail unless a named adapter or EC_ALLOW_UNADAPTED is set", async () => {
+  const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-specs-unadapted-"));
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-unadapted-"));
+  const previous = process.env.EC_ALLOW_UNADAPTED;
+  try {
+    delete process.env.EC_ALLOW_UNADAPTED;
+    await writeFile(
+      join(srcDir, "leftover.js"),
+      `export default {
+        name: "leftover",
+        args: {
+          generators: {
+            postProcess(stdout) {
+              return stdout.split("\\n").reduce((rows, line) => {
+                rows.push({ name: line });
+                return rows;
+              }, []);
+            },
+          },
+        },
+      };\n`,
+    );
+    await assert.rejects(
+      compileSpecsIr({ srcDir, outDir, enforceNamedAdapters: true }),
+      /typed compile failed for 1 hook/,
+    );
+    process.env.EC_ALLOW_UNADAPTED = "1";
+    const result = await compileSpecsIr({
+      srcDir,
+      outDir,
+      enforceNamedAdapters: true,
+    });
+    assert.equal(result.compiled, 1);
+  } finally {
+    if (previous === undefined) delete process.env.EC_ALLOW_UNADAPTED;
+    else process.env.EC_ALLOW_UNADAPTED = previous;
     await Promise.all([
       rm(srcDir, { recursive: true, force: true }),
       rm(outDir, { recursive: true, force: true }),

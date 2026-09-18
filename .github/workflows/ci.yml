@@ -46,6 +46,7 @@ jobs:
           node --check scripts/build-spec-inputs.mjs
           node --check scripts/publish-app-bundle.mjs
           bash -n scripts/build-app.sh
+          bash -n scripts/assert-no-runtime-js.sh
           node --test --test-concurrency=1 scripts/compile-spec-ir.test.mjs scripts/audit-spec-hooks.test.mjs scripts/compiler-hook-chain.test.mjs scripts/spec-pair.test.mjs scripts/sync-bundled-specs.test.mjs scripts/typed-hook-ir.test.mjs scripts/build-spec-inputs.test.mjs scripts/publish-app-bundle.test.mjs
 
       - name: Compile and audit bundled spec IR
@@ -55,9 +56,33 @@ jobs:
           node scripts/spec-pair.mjs
           node scripts/capture-typed-trigger-reference.mjs --check
           node scripts/capture-typed-trigger-reference.mjs --get-query-term --check
+          node scripts/capture-typed-reference.mjs --field getQueryTerm --check
+          node scripts/capture-typed-reference.mjs --field postProcess --check
+          node scripts/capture-typed-reference.mjs --field script --check
+          node scripts/capture-typed-reference.mjs --field filterTemplateSuggestions --check
+          ./scripts/assert-no-runtime-js.sh
 
       - name: Verify native hook inventory
         run: node scripts/classify-native-hooks.mjs --check
+
+      - name: Assert path-switch gate
+        run: |
+          node -e '
+            const expected = process.env.EC_GATE_PATH_SWITCH_EXPECTED;
+            const inventory = require("./crates/ec_engine/testdata/native-hooks/inventory.json");
+            const allowed = inventory.gate && inventory.gate.pathSwitchAllowed === true;
+            if (expected === "false") {
+              if (allowed) {
+                console.error("EC_GATE_PATH_SWITCH_EXPECTED=false but gate.pathSwitchAllowed is true");
+                process.exit(1);
+              }
+              process.exit(0);
+            }
+            if (!allowed) {
+              console.error("T3.4 requires inventory.json gate.pathSwitchAllowed === true");
+              process.exit(1);
+            }
+          '
 
       - name: Test hook output baselines
         run: node --test --test-concurrency=1 scripts/hook-baseline-contract.test.mjs scripts/capture-hook-baseline.test.mjs scripts/record-cli-output.test.mjs
@@ -69,7 +94,7 @@ jobs:
         run: node scripts/capture-hook-baseline.mjs --check
 
       - name: Test native inventory and test-only source reference
-        run: node --test --test-concurrency=1 scripts/classify-native-hooks.test.mjs scripts/reference-audit-worker.test.mjs scripts/capture-hook-reference.test.mjs scripts/capture-hook-reference-batch.test.mjs scripts/capture-typed-trigger-reference.test.mjs
+        run: node --test --test-concurrency=1 scripts/native-hook-adapters.test.mjs scripts/classify-native-hooks.test.mjs scripts/reference-audit-worker.test.mjs scripts/capture-hook-reference.test.mjs scripts/capture-hook-reference-batch.test.mjs scripts/capture-typed-trigger-reference.test.mjs
 
       - name: Build packages
         run: pnpm build
@@ -159,6 +184,9 @@ jobs:
 
       - name: Compile bundled spec IR for engine tests
         run: node scripts/compile-spec-ir.mjs
+
+      - name: Enforce zero runtime JavaScript
+        run: ./scripts/assert-no-runtime-js.sh
 
       - name: Test
         run: cargo test --workspace --locked

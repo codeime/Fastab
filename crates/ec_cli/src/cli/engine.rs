@@ -33,18 +33,18 @@ impl EngineArgs {
         match self.command {
             EngineCommand::Complete { buffer, cwd, specs_dir } => {
                 let specs_dir = specs_dir.unwrap_or_else(default_specs_dir);
+                let cwd = cwd.unwrap_or_else(|| {
+                    std::env::current_dir().map_or_else(|_err| "/".into(), |path| path.display().to_string())
+                });
+                let request = CompleteRequest {
+                    buffer,
+                    cwd,
+                    cursor: None,
+                    include_history: true,
+                    ..CompleteRequest::default()
+                };
                 let engine = EngineClient::spawn(specs_dir).map_err(|err| eyre::eyre!("{err}"))?;
-                let result = engine
-                    .complete(CompleteRequest {
-                        buffer,
-                        cwd: cwd.unwrap_or_else(|| {
-                            std::env::current_dir().map_or_else(|_err| "/".into(), |p| p.display().to_string())
-                        }),
-                        cursor: None,
-                        ..CompleteRequest::default()
-                    })
-                    .await
-                    .map_err(|err| eyre::eyre!("{err}"))?;
+                let result = engine.complete(request).await.map_err(|err| eyre::eyre!("{err}"))?;
                 // Keep this diagnostic command lossless. Insertion metadata,
                 // the normalized match term, and current-argument context are
                 // precisely the fields needed when comparing the native
@@ -53,5 +53,34 @@ impl EngineArgs {
                 Ok(ExitCode::SUCCESS)
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    #[derive(Debug, Parser)]
+    #[command(name = "engine")]
+    struct Parse {
+        #[command(flatten)]
+        args: EngineArgs,
+    }
+
+    #[test]
+    fn parses_buffer_flag() {
+        let parsed = Parse::parse_from(["engine", "complete", "--buffer", "git ch"]).args;
+        assert_eq!(
+            parsed,
+            EngineArgs {
+                command: EngineCommand::Complete {
+                    buffer: "git ch".into(),
+                    cwd: None,
+                    specs_dir: None,
+                },
+            }
+        );
     }
 }

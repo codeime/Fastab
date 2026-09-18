@@ -1,0 +1,12 @@
+{
+  "name": "dual-path-npm",
+  "private": true,
+  "scripts": {
+    "test": "echo test",
+    "build": "echo build",
+    "lint": "echo lint"
+  },
+  "dependencies": {
+    "left-pad": "1.3.0"
+  }
+}

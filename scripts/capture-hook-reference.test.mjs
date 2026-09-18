@@ -292,7 +292,7 @@ test("batch probe fails closed when a hook exceeds the worker deadline", async (
   );
 });
 
-test("generated module reference fails closed on manifest or module tampering", async () => {
+test("leftover runtime JS artifacts fail the reference audit", async () => {
   await withReferenceFixture(
     `const suffix = "-kept";
      export default { name: "factory", args: { generators: {
@@ -301,89 +301,18 @@ test("generated module reference fails closed on manifest or module tampering", 
 `,
     async ({ sourceRoot, irRoot, audit }) => {
       const hookId = audit.sourceToIr[0].hookInstances.postProcess[0].id;
-      const manifestPath = join(irRoot, "hook-modules.json");
-      const originalManifest = await readFile(manifestPath, "utf8");
-      await rm(manifestPath);
+      const module = await captureHookModuleReference({
+        hookId,
+        sourceRoot,
+        irRoot,
+      });
+      assert.equal(module.status, "success");
+      await writeFile(join(irRoot, "hook-modules.json"), "{}\n");
       await assert.rejects(
         captureHookModuleReference({ hookId, sourceRoot, irRoot }),
-        /manifest is unavailable/,
+        /leftover runtime JS|strict source\/IR audit failed|IR tree contains leftover/,
       );
-      await writeFile(manifestPath, originalManifest);
-
-      await writeFile(manifestPath, `${originalManifest}tampered`);
-      await assert.rejects(
-        captureHookModuleReference({ hookId, sourceRoot, irRoot }),
-        /manifest SHA differs from audit/,
-      );
-      await writeFile(manifestPath, originalManifest);
-
-      const manifest = JSON.parse(originalManifest);
-      const moduleFile = manifest.hooks[hookId].module;
-      const modulePath = join(irRoot, "source-modules", moduleFile);
-      const originalModule = await readFile(modulePath, "utf8");
-      await writeFile(modulePath, `${originalModule}tampered`);
-      await assert.rejects(
-        captureHookModuleReference({ hookId, sourceRoot, irRoot }),
-        /module SHA differs from manifest/,
-      );
-      await writeFile(modulePath, originalModule);
-
-      const missingHookManifest = JSON.parse(originalManifest);
-      delete missingHookManifest.hooks[hookId];
-      const missingHookText = `${JSON.stringify(missingHookManifest)}\n`;
-      await writeFile(manifestPath, missingHookText);
-      await assert.rejects(
-        captureHookModuleReference({
-          hookId,
-          sourceRoot,
-          irRoot,
-        }),
-        /manifest SHA differs from audit/,
-      );
-
-      await writeFile(manifestPath, originalManifest);
-      manifest.hooks[hookId].module = "../outside.js";
-      await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`);
-      await assert.rejects(
-        captureHookModuleReference({
-          hookId,
-          sourceRoot,
-          irRoot,
-        }),
-        /manifest SHA differs from audit/,
-      );
-
-      for (const { field, value, error } of [
-        {
-          field: "path",
-          value: "root.args[99].generators.postProcess",
-          error: /module path differs from the audit/,
-        },
-        {
-          field: "sourceField",
-          value: "custom",
-          error: /module source field differs from the audit/,
-        },
-        {
-          field: "functionBodySha256",
-          value: "0".repeat(64),
-          error: /module function body SHA differs from the audit/,
-        },
-      ]) {
-        const provenanceManifest = JSON.parse(originalManifest);
-        provenanceManifest.hooks[hookId][field] = value;
-        const provenanceText = `${JSON.stringify(provenanceManifest)}\n`;
-        await writeFile(manifestPath, provenanceText);
-        await assert.rejects(
-          captureHookModuleReference({
-            hookId,
-            sourceRoot,
-            irRoot,
-          }),
-          /manifest SHA differs from audit/,
-        );
-      }
-      await writeFile(manifestPath, originalManifest);
+      await rm(join(irRoot, "hook-modules.json"), { force: true });
     },
   );
 });

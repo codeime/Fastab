@@ -342,7 +342,7 @@ cargo test -p fig_desktop
 **改动**
 
 - `crates/ec_cli/src/cli/engine.rs`：`ec engine complete` 加 `--compare`（两路都跑，打印 JSON diff，非零退出表示有差异）。
-- `scripts/dual-path-session.sh`：读 `tests/dual-path/sessions/*.jsonl`（每行 `{buffer, cwd}`），在 git/npm/docker/kubectl/cargo 五类真实仓库目录下逐条调用 `ec engine complete --compare`。录制 5 个 session，每个 ≥ 100 条 buffer（含逐字符输入序列）。
+- `scripts/dual-path-session.sh`：读 `tests/dual-path/sessions/*.jsonl`（每行 `{buffer, cwd}`），在 git/npm/docker/kubectl/cargo 五类真实仓库目录下逐条调用 `ec engine complete --compare`。录制 5 个 session，每个 ≥ 100 条 buffer（含逐字符输入序列）。T4.1 删掉 `--compare` 之后，脚本与数据改名为 `scripts/replay-sessions.sh` / `tests/session-replay/`，只做冒烟回放。
 - `fig_desktop`：新写一个测试驱动器（CLAUDE.md 的 Native UI 一节描述了帧格式：在 `remote.sock` 握手，向 `desktop.sock` 发 `EditBufferHook` + caret 帧，caret 帧编码见 `crates/fig_input_method/src/wire.rs`），回放 T3.3 的 session，`EC_HOOK_BACKEND=native` 下 overlay 测试全部通过。
 
 **验收**
@@ -359,13 +359,13 @@ cargo test -p fig_desktop
 
 ## 阶段 4：删除运行时 JS
 
-### T4.1 删除
+### T4.1 删除 ✅
 
 - `rquickjs` 依赖、`js_host.rs`、`hook_backend.rs` 的 Js 分支、`snapshot.rs` 里模块校验相关代码、`js-compat` feature。
 - `compile-spec-ir.mjs` 停止输出 `hooks/`、`source-modules/`、`hook-modules.json`；`audit-spec-hooks.mjs`/`spec-pair.mjs`/`build-app.sh` 中相应检查改为 "出现即失败"。
 - `capture-hook-reference*.mjs`、`reference-hook-worker.mjs` 保留为**构建期**基线采集工具（它们跑的是 Node，不进 `.app`）。
 
-### T4.2 发布门槛（写进 `ci.yml` 与 `release.yml`）
+### T4.2 发布门槛（写进 `ci.yml` 与 `release.yml`） ✅
 
 ```bash
 test "$(cargo tree -p fig_desktop -e normal | grep -c rquickjs)" = 0
@@ -374,7 +374,7 @@ test "$(du -sm 'build/Easy Complete.app/Contents/Resources/specs-ir' | cut -f1)"
 cargo test --workspace --locked        # 基线 parity + 引擎 golden + fig_desktop
 ```
 
-### T4.3 文档
+### T4.3 文档 ✅
 
 - `CLAUDE.md`：重写 Completion engine 的 hook 表（typed IR / adapter 两类）与 Bundled Specs 段落；删除 QuickJS 相关段落；把 "JsHost.sources 缓存" 等描述删掉。
 - `docs/native-migration-plan.md` 标记完成；CHANGELOG（中英）记 "桌面零运行时 JS"。

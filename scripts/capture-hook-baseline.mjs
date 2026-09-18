@@ -65,6 +65,14 @@ function assertInputMatchesGroup(input, group) {
       `${input.field}/${input.bodySha256} has ${input.cases.length} cases; need at least 3`,
     );
   }
+  // The 50 ms is the parent watchdog's budget for the whole child: process
+  // start, module compile under --experimental-vm-modules, then the body. 595
+  // of the 603 bodies do not finish inside it and record `timeout`; the eight
+  // that throw immediately record that error instead. A body near that
+  // boundary therefore records a different outcome on a faster or less loaded
+  // machine, which reads as drift. Check where the boundary sits before
+  // running --update to settle one: a re-record taken on the fast side turns
+  // the check red everywhere slower.
   if (!input.cases.some((item) => item.id === "timeout" && item.timeoutMs === 50)) {
     throw new Error(`${input.field}/${input.bodySha256} is missing a timeout case`);
   }

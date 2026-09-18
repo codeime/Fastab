@@ -248,7 +248,7 @@ fn build_index(
             // Fig parsed history with `exec` replaced by a function that
             // throws, so no hook could run a process; skipping hooks
             // outright is the same outcome without the failed attempts.
-            crate::js_host::without_hooks(|| {
+            crate::hook_backend::without_hooks(|| {
                 crate::lookup::annotate_history_command(root, &mut command, registry, &mut trace);
             });
             for (slot, value) in trace.values {

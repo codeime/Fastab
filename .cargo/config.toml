@@ -1,0 +1,10 @@
+# Test-harness threads default to 2 MB (RUST_MIN_STACK). Deserializing typed
+# hook IR through `serde_json::Value` recurses three layers per JSON level
+# (Value -> serde Content -> `TypedExpr`), and with `preserve_order` on — which
+# gpui forces on the desktop, and the workspace now pins so tests match it — a
+# debug build spends >20 KB of stack per level. The checked-in reference
+# baselines nest up to 32 levels, so `cargo test` overflowed. Production
+# threads size themselves (`worker::ENGINE_THREAD_STACK`); this covers the
+# harness and any dev binary run through cargo.
+[env]
+RUST_MIN_STACK = "16777216"

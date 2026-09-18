@@ -4,29 +4,33 @@
 //! generators run in Rust.
 
 mod cobra;
+#[cfg(test)]
+mod engine_golden;
+mod fig_spec;
 mod filegen;
 mod generate;
 mod history;
+mod hook_backend;
+#[cfg(test)]
+mod hook_baseline;
+mod hook_cache;
+mod hook_types;
 mod ir;
-mod js_host;
 mod lookup;
+mod native_adapters;
 mod process;
 mod query;
 mod rank;
 mod runtime;
 mod snapshot;
 mod spec_pair;
-// Native sidecar loading will consume these APIs in later migration slices.
-// Keep the not-yet-wired parsers/evaluators test-only until that production
-// path is reviewed and connected.
-#[cfg(test)]
-mod hook_baseline;
-#[cfg(test)]
 mod typed_hook;
+mod versioned;
 mod worker;
 
 pub use ir::{ArgSpec, Builtin, OptionSpec, Registry, Spec, Template};
 pub use lookup::{completion_buffer, current_command_slice, tokenize};
+pub use native_adapters::{dump_native_adapter_catalog, native_adapter_catalog_path};
 pub use rank::{ACCEPTANCE_STATE_KEY, AcceptanceIndex};
 pub use runtime::{CompleteRequest, CompleteResult, CurrentArg, Engine, Suggestion, ranking_root_command};
 pub use worker::{EngineClient, default_specs_dir, engine_attempt_timeout, ui_completion_deadline};

@@ -6,11 +6,16 @@ import test from "node:test";
 
 import {
   ASDF_GET_QUERY_TERM_CANDIDATE_IDS,
+  FIELD_REFERENCE_CORPORA,
+  buildTypedFieldReference,
   buildTypedGetQueryTermReference,
   buildTypedTriggerReference,
   GET_QUERY_TERM_INPUT_CORPUS,
+  checkTypedFieldReference,
   checkTypedTriggerReference,
+  runCaptureCli,
   INPUT_CORPUS,
+  updateTypedFieldReference,
   updateTypedTriggerReference,
 } from "./capture-typed-trigger-reference.mjs";
 import { compileSpecsIr } from "./compile-spec-ir.mjs";
@@ -55,13 +60,24 @@ test("reference baseline covers every audited typed hook and corpus case", async
     const sidecar = JSON.parse(
       await readFile(join(irRoot, "typed-hooks.json"), "utf8"),
     );
+    const triggerIds = Object.entries(sidecar.hooks)
+      .filter(([, entry]) => entry.sourceField === "trigger")
+      .map(([id]) => id);
+    assert.deepEqual(Object.keys(baseline.catalog.hooks), triggerIds);
+    assert.deepEqual(Object.keys(baseline.expected), triggerIds);
     assert.deepEqual(
-      Object.keys(baseline.catalog.hooks),
-      Object.keys(sidecar.hooks),
-    );
-    assert.deepEqual(
-      Object.keys(baseline.expected),
-      Object.keys(sidecar.hooks),
+      Object.keys(baseline.catalog.contracts),
+      [
+        "trigger",
+        "getQueryTerm",
+        "postProcess",
+        "script",
+        "filterTemplateSuggestions",
+        "custom",
+        "alias",
+        "loadSpec",
+        "generateSpec",
+      ],
     );
     assert.equal(baseline.cases.length, INPUT_CORPUS.length);
     assert.ok(
@@ -188,21 +204,162 @@ test("source and closure-module changes fail the strict reference check", async 
     );
     await writeFile(sourcePath, source);
 
-    const manifest = JSON.parse(
-      await readFile(join(irRoot, "hook-modules.json"), "utf8"),
-    );
-    const module = Object.values(manifest.hooks)[0].module;
-    const modulePath = join(irRoot, "source-modules", module);
-    const moduleSource = await readFile(modulePath, "utf8");
-    const moduleInfo = await lstat(modulePath);
-    assert.equal(moduleInfo.isFile(), true);
-    await writeFile(modulePath, `${moduleSource}// module drift\n`);
+    await writeFile(join(irRoot, "hook-modules.json"), "{}\n");
     await assert.rejects(
       checkTypedTriggerReference({ sourceRoot, irRoot, baselinePath }),
-      /strict source\/IR audit failed|IR tree does not match \.spec-pair\.json/,
+      /strict source\/IR audit failed|IR tree contains leftover|leftover runtime JS/,
     );
-    await writeFile(modulePath, moduleSource);
+    await rm(join(irRoot, "hook-modules.json"));
     await checkTypedTriggerReference({ sourceRoot, irRoot, baselinePath });
+  });
+});
+
+async function withSidecarFieldFixture(run) {
+  const sourceRoot = await mkdtemp(join(tmpdir(), "easy-complete-typed-field-src-"));
+  const irRoot = await mkdtemp(join(tmpdir(), "easy-complete-typed-field-ir-"));
+  const baselineRoot = await mkdtemp(
+    join(tmpdir(), "easy-complete-typed-field-baseline-"),
+  );
+  try {
+    await writeFile(
+      join(sourceRoot, "fields.js"),
+      `export default {
+         name: "fields",
+         args: { generators: {
+           getQueryTerm: (term) => term.slice(term.lastIndexOf("/") + 1),
+           script: (tokens) => tokens.length < 2 ? tokens[0].repeat(-1).split("") : ["echo", tokens[0]],
+           postProcess: (out) => out.split("\\n").filter(Boolean).map((name) => ({ name })),
+           filterTemplateSuggestions: (rows) => rows.filter((row) => row.type === "file"),
+         } }
+       };\n`,
+    );
+    await compileSpecsIr({ srcDir: sourceRoot, outDir: irRoot });
+    await run({
+      sourceRoot,
+      irRoot,
+      baselineRoot,
+    });
+  } finally {
+    await Promise.all([
+      rm(sourceRoot, { recursive: true, force: true }),
+      rm(irRoot, { recursive: true, force: true }),
+      rm(baselineRoot, { recursive: true, force: true }),
+    ]);
+  }
+}
+
+test("field references cover sidecar hooks and record runtime errors", async () => {
+  await withSidecarFieldFixture(async ({ sourceRoot, irRoot }) => {
+    const sidecar = JSON.parse(
+      await readFile(join(irRoot, "typed-hooks.json"), "utf8"),
+    );
+    for (const field of [
+      "getQueryTerm",
+      "script",
+      "postProcess",
+      "filterTemplateSuggestions",
+    ]) {
+      const baseline = await buildTypedFieldReference({
+        sourceRoot,
+        irRoot,
+        field,
+      });
+      const ids = Object.entries(sidecar.hooks)
+        .filter(([, entry]) => entry.sourceField === field)
+        .map(([id]) => id);
+      assert.deepEqual(Object.keys(baseline.catalog.hooks), ids);
+      assert.deepEqual(Object.keys(baseline.expected), ids);
+      assert.equal(baseline.field, field);
+      assert.equal(baseline.cases.length, FIELD_REFERENCE_CORPORA[field].length);
+      assert.ok(
+        Object.values(baseline.expected).every(
+          (values) => values.length === baseline.cases.length,
+        ),
+      );
+    }
+    const script = await buildTypedFieldReference({
+      sourceRoot,
+      irRoot,
+      field: "script",
+    });
+    const scriptExpected = Object.values(script.expected)[0];
+    assert.equal(scriptExpected[0].kind, "error");
+    assert.equal(typeof scriptExpected[0].name, "string");
+    assert.equal(typeof scriptExpected[0].message, "string");
+    assert.notDeepEqual(scriptExpected[0], []);
+    assert.ok(
+      scriptExpected.slice(1).every((value) => Array.isArray(value)),
+      "later script corpus rows must stay successful arrays",
+    );
+  });
+});
+
+test("field reference --field accepts a separate argv value", async () => {
+  await withSidecarFieldFixture(async ({ sourceRoot, irRoot, baselineRoot }) => {
+    const baselinePath = join(baselineRoot, "script-reference.json");
+    const previous = process.exitCode;
+    process.exitCode = 0;
+    try {
+      await runCaptureCli([
+        "node",
+        "scripts/capture-typed-reference.mjs",
+        "--field",
+        "script",
+        "--update",
+        "--source-root",
+        sourceRoot,
+        "--ir-root",
+        irRoot,
+        "--baseline",
+        baselinePath,
+      ]);
+      assert.equal(process.exitCode, 0);
+      const written = JSON.parse(await readFile(baselinePath, "utf8"));
+      assert.equal(written.field, "script");
+      assert.equal(written.kind, "typed-field-reference");
+      await checkTypedFieldReference({
+        sourceRoot,
+        irRoot,
+        field: "script",
+        baselinePath,
+      });
+    } finally {
+      process.exitCode = previous;
+    }
+  });
+});
+
+test("field reference check rejects a tampered expected value", async () => {
+  await withSidecarFieldFixture(async ({ sourceRoot, irRoot, baselineRoot }) => {
+    const baselinePath = join(baselineRoot, "postProcess-reference.json");
+    await updateTypedFieldReference({
+      sourceRoot,
+      irRoot,
+      field: "postProcess",
+      baselinePath,
+    });
+    const original = await readFile(baselinePath, "utf8");
+    const tampered = JSON.parse(original);
+    tampered.expected[Object.keys(tampered.expected)[0]][0] = [
+      { name: "tampered" },
+    ];
+    await writeFile(baselinePath, `${JSON.stringify(tampered)}\n`);
+    await assert.rejects(
+      checkTypedFieldReference({
+        sourceRoot,
+        irRoot,
+        field: "postProcess",
+        baselinePath,
+      }),
+      /stale or differs/,
+    );
+    await writeFile(baselinePath, original);
+    await checkTypedFieldReference({
+      sourceRoot,
+      irRoot,
+      field: "postProcess",
+      baselinePath,
+    });
   });
 });
 
@@ -218,6 +375,7 @@ test("asdf getQueryTerm research baseline covers exactly two source/closure cand
   for (const candidate of Object.values(baseline.candidates)) {
     assert.equal(candidate.sourceField, "getQueryTerm");
     assert.equal(candidate.descriptor.sourceField, "getQueryTerm");
-    assert.equal(candidate.descriptor.expr.then.op, "string-slice-after-first");
+    assert.equal(candidate.descriptor.expr.then.op, "string-slice");
+    assert.equal(candidate.descriptor.expr.then.start.op, "add");
   }
 });

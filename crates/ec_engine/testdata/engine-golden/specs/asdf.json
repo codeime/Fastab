@@ -1,0 +1,21 @@
+{
+  "names": ["asdf"],
+  "description": "Extendable version manager",
+  "subcommands": [
+    {
+      "names": ["install"],
+      "description": "Install a plugin version",
+      "args": [
+        {
+          "name": "plugin-version",
+          "getQueryTerm": ":",
+          "suggestions": [
+            { "names": ["18.20.0"], "description": "Node 18", "priority": 60 },
+            { "names": ["20.11.0"], "description": "Node 20", "priority": 70 },
+            { "names": ["3.12.0"], "description": "Python 3.12", "priority": 50 }
+          ]
+        }
+      ]
+    }
+  ]
+}

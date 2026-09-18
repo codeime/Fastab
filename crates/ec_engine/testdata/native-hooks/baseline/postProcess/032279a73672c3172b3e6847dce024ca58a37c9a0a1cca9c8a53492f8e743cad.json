@@ -1,0 +1,126 @@
+{
+  "bodySha256": "032279a73672c3172b3e6847dce024ca58a37c9a0a1cca9c8a53492f8e743cad",
+  "cases": [
+    {
+      "args": [
+        "main\nfeature\n",
+        [
+          "fig",
+          "app",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "error",
+        "value": "Error"
+      },
+      "id": "normal",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "",
+        [
+          "fig",
+          "app",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "error",
+        "value": "Error"
+      },
+      "id": "empty",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "not json\n{{{",
+        [
+          "fig",
+          "app",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [],
+      "expected": {
+        "kind": "error",
+        "value": "Error"
+      },
+      "id": "malformed",
+      "timeoutMs": 5000
+    },
+    {
+      "args": [
+        "main\nfeature\n",
+        [
+          "fig",
+          "app",
+          ""
+        ]
+      ],
+      "context": {
+        "currentProcess": "zsh",
+        "currentWorkingDirectory": "/repo",
+        "environmentVariables": {
+          "HOME": "/home/user",
+          "PATH": "/usr/bin:/bin"
+        },
+        "isDangerous": false,
+        "searchTerm": "",
+        "sshPrefix": ""
+      },
+      "exec": [
+        {
+          "delayMs": 10000
+        }
+      ],
+      "expected": {
+        "kind": "error",
+        "value": "Error"
+      },
+      "id": "timeout",
+      "timeoutMs": 50
+    }
+  ],
+  "field": "postProcess",
+  "hookCount": 1,
+  "kind": "native-hook-baseline",
+  "representativeHookId": "fig/1.0.0#postProcess#11",
+  "version": 1
+}
