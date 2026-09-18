@@ -52,13 +52,10 @@ fi
 allocated="$(du -sm "$specs_ir" | cut -f1)"
 # File payload is ~34 MiB. `du -sm` counts 4 KiB blocks, so a tree of many
 # small JSON files reads ~37 on ext4. T4.2's 35 MiB is the payload ceiling.
-apparent="$(python3 -c '
-from pathlib import Path
-import sys
-root = Path(sys.argv[1])
-total = sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
-print(int(total / (1024 * 1024)))
-' "$specs_ir")"
+# Summed with `cat | wc -c` rather than `stat`, whose size flag differs
+# between the BSD stat on the release runner and the GNU stat in CI.
+apparent_bytes="$(find "$specs_ir" -type f -exec cat {} + | wc -c)"
+apparent="$((apparent_bytes / 1024 / 1024))"
 echo "specs-ir $specs_ir: ${apparent} MiB apparent, ${allocated} MiB allocated"
 if [ "$apparent" -gt 35 ]; then
   echo "error: specs-ir payload is ${apparent} MiB; must be ≤ 35 MiB" >&2

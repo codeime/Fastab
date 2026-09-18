@@ -342,7 +342,7 @@ cargo test -p fig_desktop
 **改动**
 
 - `crates/ec_cli/src/cli/engine.rs`：`ec engine complete` 加 `--compare`（两路都跑，打印 JSON diff，非零退出表示有差异）。
-- `scripts/dual-path-session.sh`：读 `tests/dual-path/sessions/*.jsonl`（每行 `{buffer, cwd}`），在 git/npm/docker/kubectl/cargo 五类真实仓库目录下逐条调用 `ec engine complete --compare`。录制 5 个 session，每个 ≥ 100 条 buffer（含逐字符输入序列）。
+- `scripts/dual-path-session.sh`：读 `tests/dual-path/sessions/*.jsonl`（每行 `{buffer, cwd}`），在 git/npm/docker/kubectl/cargo 五类真实仓库目录下逐条调用 `ec engine complete --compare`。录制 5 个 session，每个 ≥ 100 条 buffer（含逐字符输入序列）。T4.1 删掉 `--compare` 之后，脚本与数据改名为 `scripts/replay-sessions.sh` / `tests/session-replay/`，只做冒烟回放。
 - `fig_desktop`：新写一个测试驱动器（CLAUDE.md 的 Native UI 一节描述了帧格式：在 `remote.sock` 握手，向 `desktop.sock` 发 `EditBufferHook` + caret 帧，caret 帧编码见 `crates/fig_input_method/src/wire.rs`），回放 T3.3 的 session，`EC_HOOK_BACKEND=native` 下 overlay 测试全部通过。
 
 **验收**

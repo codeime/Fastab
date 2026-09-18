@@ -96,7 +96,7 @@ gate 当前阻断项（`inventory.json` → `gate.blockers`）：`requires-nativ
 | 编号 | 内容 | 验收 |
 | --- | --- | --- |
 | 3.1 | `ec_engine` 增加 feature `js-compat`（默认开）；`#[cfg(test)] mod dual_path` 对 1.2 基线与 1.3 golden 同时跑 typed/native 与 QuickJS，断言 JSON 逐字节相等（允许的归一化逐条写明） | 594/594 函数体、全部 golden 双路径零差异 |
-| 3.2 | `ec engine complete --compare` 开发标志：真实 CLI 场景下两路都跑并打印 diff；`scripts/dual-path-session.sh` 用录制的 buffer/cwd 序列回放 | 在 git/npm/docker/kubectl/cd 五类真实仓库目录下零差异 |
+| 3.2 | `ec engine complete --compare` 开发标志：真实 CLI 场景下两路都跑并打印 diff；`scripts/dual-path-session.sh` 用录制的 buffer/cwd 序列回放（T4.1 删掉 `--compare` 后改名 `scripts/replay-sessions.sh`，录制数据在 `tests/session-replay/`） | 在 git/npm/docker/kubectl/cd 五类真实仓库目录下零差异 |
 | 3.3 | 终端 + GPUI 场景：用 CLAUDE.md 提到的 `remote.sock`/`desktop.sock` 驱动器回放 `EditBufferHook` + caret 帧，overlay 走 native 路径 | `fig_desktop` 测试通过；人工在 Terminal/iTerm/Ghostty/VS Code 各跑一轮无回归 |
 | 3.4 | 切换条件全部满足后，把默认后端切到 native，QuickJS 留在 `js-compat` feature 后一个版本 | `inventory.gate.pathSwitchAllowed == true`，并且是 CI 强制项 |
 

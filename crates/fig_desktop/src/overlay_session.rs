@@ -9,7 +9,7 @@ use fig_proto::FigProtobufEncodable;
 use fig_proto::hooks::{hook_to_message, new_caret_position_hook};
 use fig_proto::local::caret_position_hook::Origin;
 
-const SESSION_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/dual-path/sessions");
+const SESSION_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/session-replay/sessions");
 
 #[derive(Debug, serde::Deserialize)]
 struct SessionRow {

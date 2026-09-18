@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 #
-# Replay T3.3 session buffers through `ec engine complete` (Native only).
+# Replay recorded session buffers through `ec engine complete`.
 #
-#   scripts/dual-path-session.sh
-#   scripts/dual-path-session.sh tests/dual-path/sessions/git.jsonl
+#   scripts/replay-sessions.sh
+#   scripts/replay-sessions.sh tests/session-replay/sessions/git.jsonl
 #
 # Each session is a JSONL of `{buffer, cwd}` where `cwd` is a repo key under
-# tests/dual-path/repos/{git,npm,docker,kubectl,cargo}. Runtime JS is gone.
+# tests/session-replay/repos/{git,npm,docker,kubectl,cargo}. This recorded the
+# T3.2 dual-path diff; with one path left it is a smoke replay, so a completion
+# that panics or exits non-zero fails the run.
 #
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SESSIONS_DIR="$ROOT/tests/dual-path/sessions"
-REPOS_DIR="$ROOT/tests/dual-path/repos"
+SESSIONS_DIR="$ROOT/tests/session-replay/sessions"
+REPOS_DIR="$ROOT/tests/session-replay/repos"
 SPECS_DIR="${EC_SPECS_DIR:-$ROOT/bundle/specs-ir}"
 
 usage() {
@@ -37,8 +39,8 @@ setup_repos() {
     if [[ ! -d "$git_dir/.git" ]]; then
         git init -b main "$git_dir" >/dev/null
         git -C "$git_dir" add README.md
-        git -C "$git_dir" -c user.email=dual-path@example.com -c user.name=dual-path \
-            commit -m "dual-path fixture" >/dev/null
+        git -C "$git_dir" -c user.email=session-replay@example.com -c user.name=session-replay \
+            commit -m "session replay fixture" >/dev/null
     fi
 }
 

@@ -274,7 +274,8 @@ mod tests {
     #[test]
     #[test]
     fn loads_t3_session_keystroke_frames() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/dual-path/sessions/git.jsonl");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/session-replay/sessions/git.jsonl");
         let session = load_session_frames(&path).expect("git session");
         assert!(session.buffers.len() >= 100);
         assert_eq!(session.cwd.as_deref(), Some("git"));
