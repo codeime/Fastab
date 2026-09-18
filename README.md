@@ -104,7 +104,7 @@ installer:
 ```bash
 git clone https://github.com/codeime/easy-complete.git
 cd easy-complete
-./install.sh
+./scripts/install.sh
 ```
 
 The source installer will:
@@ -113,7 +113,7 @@ The source installer will:
 2. Assemble `Fastab.app` and copy it to `/Applications`.
 3. Symlink the `ftab` and `fastabterm` CLIs into `~/.local/bin`.
 4. Let you enable **Launch at Login** from Settings (a system Login Item on macOS 13+, with a LaunchAgent fallback on macOS 12).
-5. Set up shell integration. `./install.sh` also registers the optional input method (DMG first launch does not).
+5. Set up shell integration. `./scripts/install.sh` also registers the optional input method (DMG first launch does not).
 6. Leave Accessibility for you to grant from Fastab Settings (required — see below).
 
 When it finishes, reload your shell:

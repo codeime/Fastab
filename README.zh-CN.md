@@ -99,7 +99,7 @@ ftab doctor
 ```bash
 git clone https://github.com/codeime/easy-complete.git
 cd easy-complete
-./install.sh
+./scripts/install.sh
 ```
 
 源码安装脚本会：
@@ -108,7 +108,7 @@ cd easy-complete
 2. 组装出 `Fastab.app` 并复制到 `/Applications`。
 3. 把 `ftab` 和 `fastabterm` 两个 CLI 软链到 `~/.local/bin`。
 4. 可在设置中开启**登录时启动**（macOS 13+ 使用系统登录项，macOS 12 回退到 LaunchAgent）。
-5. 配置 shell 集成。`./install.sh` 还会注册可选输入法（DMG 首次启动不会）。
+5. 配置 shell 集成。`./scripts/install.sh` 还会注册可选输入法（DMG 首次启动不会）。
 6. **辅助功能**需要你在 Fastab 设置里手动授予（必需，见下文）。
 
 完成后，重新加载你的 shell：

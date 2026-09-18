@@ -21,30 +21,22 @@ const PREVIOUS_VERSION_KEY: &str = "desktop.versionAtPreviousLaunch";
 const MIGRATED_KEY: &str = "desktop.migratedFromFig";
 
 #[cfg(target_os = "macos")]
-pub async fn migrate_data_dir() {
-    // Easy Complete users keep their settings/history under the new Fastab dir.
-    // The older Fig/CodeWhisperer path is still accepted if that is all they have.
-    migrate_one_data_dir(fig_util::directories::previous_product_data_dir(), fig_data_dir()).await;
-    migrate_one_data_dir(fig_util::directories::old_fig_data_dir(), fig_data_dir()).await;
+pub fn migrate_data_dir() {
+    // Easy Complete users keep their settings/history under the new Fastab dir,
+    // including when install.sh already created `fastab/shell/`. The older
+    // Fig/CodeWhisperer path is still accepted if that is all they have.
+    migrate_one_data_dir(fig_util::directories::previous_product_data_dir(), fig_data_dir());
+    migrate_one_data_dir(fig_util::directories::old_fig_data_dir(), fig_data_dir());
 }
 
 #[cfg(target_os = "macos")]
-async fn migrate_one_data_dir(
+fn migrate_one_data_dir(
     old: Result<std::path::PathBuf, fig_util::directories::DirectoryError>,
     new: Result<std::path::PathBuf, fig_util::directories::DirectoryError>,
 ) {
     if let (Ok(old), Ok(new)) = (old, new) {
-        if !old.is_symlink() && old.is_dir() && !new.is_dir() {
-            match tokio::fs::rename(&old, &new).await {
-                Ok(()) => {
-                    if let Err(err) = symlink(&new, &old).await {
-                        error!(%err, "Failed to symlink old user data dir");
-                    }
-                },
-                Err(err) => {
-                    error!(%err, "Failed to migrate user data dir");
-                },
-            }
+        if let Err(err) = fig_util::directories::migrate_product_data_dir(&old, &new) {
+            error!(%err, "Failed to migrate user data dir");
         }
     }
 }

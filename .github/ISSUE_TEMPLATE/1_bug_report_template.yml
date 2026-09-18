@@ -22,16 +22,16 @@ body:
     options:
     - label: "I have searched [existing issues](https://github.com/codeime/easy-complete/issues?q=) and found no duplicate / 我已搜索过现有 issue，没有重复"
       required: true
-    - label: "I have run `ec doctor` in the affected terminal / 我已在出问题的终端里运行过 `ec doctor`"
+    - label: "I have run `ftab doctor` in the affected terminal / 我已在出问题的终端里运行过 `ftab doctor`"
       required: true
-    - label: "I have run `ec restart` and the problem still happens / 我已运行过 `ec restart`，问题依旧"
+    - label: "I have run `ftab restart` and the problem still happens / 我已运行过 `ftab restart`，问题依旧"
       required: true
 
 - type: input
   id: "app-version"
   attributes:
     label: "Fastab version"
-    description: "Output of `ec --version` / `ec --version` 的输出"
+    description: "Output of `ftab --version` / `ftab --version` 的输出"
     placeholder: "2.2.1"
   validations:
     required: true
@@ -115,7 +115,7 @@ body:
   id: "environment"
   attributes:
     label: "Diagnostics"
-    description: "Paste the output of `ec diagnostic` / 粘贴 `ec diagnostic` 的输出"
+    description: "Paste the output of `ftab diagnostic` / 粘贴 `ftab diagnostic` 的输出"
     render: yaml
 
 - type: textarea

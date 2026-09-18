@@ -627,7 +627,7 @@ impl Integration for InputMethod {
             // Restart only when the on-disk binary is not what we last launched.
             // TIS recognition is not a reason to kill: a CLI process has no
             // NSApplication, so that check is almost always false and used to
-            // pkill a healthy IME on every `ec integrations install`.
+            // pkill a healthy IME on every `ftab integrations install`.
             self.ensure_current_binary_running(&destination);
 
             // The IME self-registers ~500 ms after NSApplication starts. Poll
@@ -832,7 +832,7 @@ where
         if #[cfg(feature = "dispatch")] {
             // `dispatch_sync` onto the main queue *from the main thread itself* is a
             // deadlock that libdispatch traps with SIGTRAP. This happens in the CLI
-            // (`ec integrations install input-method`), whose work runs on the main
+            // (`ftab integrations install input-method`), whose work runs on the main
             // thread and where the `dispatch` feature is enabled via workspace feature
             // unification. Run inline in that case; only dispatch when we are on another
             // thread (e.g. fig_desktop, which has a live main run loop to service it).

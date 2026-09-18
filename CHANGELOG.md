@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- change: product name and identity are now Fastab (`app.fastab`, `Fastab.app`, CLI `ftab`, PTY `fastabterm`). Easy Complete settings and history migrate into the Fastab data directory when that directory is absent. The old IME palette entry is dropped on install. Telemetry UI is hidden and reporting stays unconfigured.
+- change: product name and identity are now Fastab (`app.fastab`, `Fastab.app`, CLI `ftab`, PTY `fastabterm`). Easy Complete settings and history migrate into the Fastab data directory, including when `shell/` already exists under the new name. Install/repair treats Easy Complete rc blocks as legacy and rewrites them. The old IME palette entry is dropped on install. Telemetry UI is hidden and reporting stays unconfigured. Issue template, SECURITY, NOTICE, and hidden `ftab telemetry status` now use Fastab / default-off.
 
 ## v3.0.0-beta.16
 

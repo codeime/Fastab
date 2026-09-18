@@ -41,7 +41,7 @@ enum JobKind {
         accepted_name: String,
         timestamp: u64,
     },
-    /// `ec hook clear-autocomplete-cache`: drop every cached spec and
+    /// `ftab hook clear-autocomplete-cache`: drop every cached spec and
     /// generator result before the next completion runs.
     ClearCaches,
 }

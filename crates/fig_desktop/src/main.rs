@@ -139,7 +139,7 @@ async fn async_main() -> Result<Launch, ExitCode> {
     );
 
     #[cfg(target_os = "macos")]
-    install::migrate_data_dir().await;
+    install::migrate_data_dir();
 
     if let Err(err) = fig_settings::settings::init_global() {
         error!(%err, "failed to init global settings");
