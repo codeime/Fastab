@@ -48,7 +48,7 @@ test("classifies pure, input, command, closure, complex, and gated syntax bodies
     field: "jsCustom",
     body: 'async (tokens, exec) => (await exec({ command: "list" })).stdout',
   });
-  assert.equal(command.status, "requires-native-adapter");
+  assert.equal(command.status, "typed-ir");
   assert.equal(command.dependencies.command, true);
   assert.ok(command.risks.includes("async"));
   assert.ok(command.risks.includes("exec"));
@@ -185,8 +185,8 @@ test("compiles a real helper fixture and reports deterministic native readiness"
     assert.equal(first.nativeFilepathsRewrites.byField.trigger, 1);
     assert.equal(first.nativeFilepathsRewrites.byField.getQueryTerm, 1);
     assert.equal(first.nativeFilepathsRewrites.byField.custom, 1);
-    assert.equal(first.counts.extractedHooks["typed-ir"], 3);
-    assert.equal(first.counts.extractedHooks["requires-native-adapter"], 2);
+    assert.equal(first.counts.extractedHooks["typed-ir"], 4);
+    assert.equal(first.counts.extractedHooks["requires-native-adapter"], 1);
 
     // The versioned-spec allowlist describes the bundled tree, so a fixture
     // tree reports every entry as absent but still lists it: the gap is a

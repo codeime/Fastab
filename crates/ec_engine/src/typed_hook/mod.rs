@@ -4257,7 +4257,7 @@ mod tests {
         assert!(parse_typed_hook_catalog(&tampered_path).is_err());
 
         let mut tampered_field = valid.clone();
-        tampered_field["hooks"]["hook#one"]["sourceField"] = json!("custom");
+        tampered_field["hooks"]["hook#one"]["sourceField"] = json!("unknownField");
         assert!(parse_typed_hook_catalog(&tampered_field).is_err());
 
         let mut tampered_contract = valid.clone();
