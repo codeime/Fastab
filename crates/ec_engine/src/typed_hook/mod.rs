@@ -50,9 +50,13 @@ enum TypedValueType {
     Integer,
     StringArray,
     Json,
+    JsonArray,
     Suggestion,
     SuggestionArray,
     StringRecord,
+    StringSet,
+    ValueArray,
+    Regex,
     Null,
 }
 
@@ -257,6 +261,266 @@ enum TypedExpr {
         #[serde(rename = "else")]
         else_branch: Box<TypedExpr>,
     },
+    #[serde(rename = "lambda")]
+    Lambda { params: Vec<String>, body: Box<TypedExpr> },
+    #[serde(rename = "var")]
+    Var { name: String },
+    #[serde(rename = "let")]
+    Let {
+        name: String,
+        value: Box<TypedExpr>,
+        body: Box<TypedExpr>,
+    },
+    #[serde(rename = "block")]
+    Block { items: Vec<TypedExpr> },
+    #[serde(rename = "return")]
+    Return { value: Box<TypedExpr> },
+    #[serde(rename = "break")]
+    Break,
+    #[serde(rename = "continue")]
+    Continue,
+    #[serde(rename = "try")]
+    Try {
+        body: Box<TypedExpr>,
+        catch: Box<TypedExpr>,
+    },
+    #[serde(rename = "for-of")]
+    ForOf {
+        names: Vec<String>,
+        value: Box<TypedExpr>,
+        body: Box<TypedExpr>,
+    },
+    #[serde(rename = "assign-var")]
+    AssignVar { name: String, value: Box<TypedExpr> },
+    #[serde(rename = "assign-prop")]
+    AssignProp {
+        object: Box<TypedExpr>,
+        key: Box<TypedExpr>,
+        value: Box<TypedExpr>,
+    },
+    #[serde(rename = "seq")]
+    Seq { items: Vec<TypedExpr> },
+    #[serde(rename = "truthy")]
+    Truthy { value: Box<TypedExpr> },
+    #[serde(rename = "loose-eq")]
+    LooseEq {
+        left: Box<TypedExpr>,
+        right: Box<TypedExpr>,
+    },
+    #[serde(rename = "loose-ne")]
+    LooseNe {
+        left: Box<TypedExpr>,
+        right: Box<TypedExpr>,
+    },
+    #[serde(rename = "typeof")]
+    Typeof { value: Box<TypedExpr> },
+    #[serde(rename = "object")]
+    Object { fields: Vec<TypedObjectField> },
+    #[serde(rename = "spread")]
+    Spread {
+        value: Box<TypedExpr>,
+        fields: Vec<TypedObjectField>,
+    },
+    #[serde(rename = "get")]
+    Get { value: Box<TypedExpr>, key: Box<TypedExpr> },
+    #[serde(rename = "object-keys")]
+    ObjectKeys { value: Box<TypedExpr> },
+    #[serde(rename = "object-entries")]
+    ObjectEntries { value: Box<TypedExpr> },
+    #[serde(rename = "object-values")]
+    ObjectValues { value: Box<TypedExpr> },
+    #[serde(rename = "array-map")]
+    ArrayMap {
+        value: Box<TypedExpr>,
+        #[serde(rename = "fn")]
+        callback: Box<TypedExpr>,
+    },
+    #[serde(rename = "array-filter")]
+    ArrayFilter {
+        value: Box<TypedExpr>,
+        #[serde(rename = "fn")]
+        callback: Box<TypedExpr>,
+    },
+    #[serde(rename = "array-flat-map")]
+    ArrayFlatMap {
+        value: Box<TypedExpr>,
+        #[serde(rename = "fn")]
+        callback: Box<TypedExpr>,
+    },
+    #[serde(rename = "array-slice")]
+    ArraySlice {
+        value: Box<TypedExpr>,
+        start: Box<TypedExpr>,
+        end: Box<TypedExpr>,
+    },
+    #[serde(rename = "array-join")]
+    ArrayJoin {
+        value: Box<TypedExpr>,
+        separator: Box<TypedExpr>,
+    },
+    #[serde(rename = "array-some")]
+    ArraySome {
+        value: Box<TypedExpr>,
+        #[serde(rename = "fn")]
+        callback: Box<TypedExpr>,
+    },
+    #[serde(rename = "array-every")]
+    ArrayEvery {
+        value: Box<TypedExpr>,
+        #[serde(rename = "fn")]
+        callback: Box<TypedExpr>,
+    },
+    #[serde(rename = "array-find")]
+    ArrayFind {
+        value: Box<TypedExpr>,
+        #[serde(rename = "fn")]
+        callback: Box<TypedExpr>,
+    },
+    #[serde(rename = "array-find-index")]
+    ArrayFindIndex {
+        value: Box<TypedExpr>,
+        #[serde(rename = "fn")]
+        callback: Box<TypedExpr>,
+    },
+    #[serde(rename = "array-index-of")]
+    ArrayIndexOf {
+        value: Box<TypedExpr>,
+        needle: Box<TypedExpr>,
+    },
+    #[serde(rename = "array-concat")]
+    ArrayConcat { parts: Vec<TypedExpr> },
+    #[serde(rename = "array-reverse")]
+    ArrayReverse { value: Box<TypedExpr> },
+    #[serde(rename = "array-sort")]
+    ArraySort {
+        value: Box<TypedExpr>,
+        #[serde(rename = "fn")]
+        callback: Box<TypedExpr>,
+    },
+    #[serde(rename = "array-index")]
+    ArrayIndex {
+        value: Box<TypedExpr>,
+        index: Box<TypedExpr>,
+    },
+    #[serde(rename = "array-push")]
+    ArrayPush { name: String, item: Box<TypedExpr> },
+    #[serde(rename = "array-pop")]
+    ArrayPop { value: Box<TypedExpr> },
+    #[serde(rename = "array-entries")]
+    ArrayEntries { value: Box<TypedExpr> },
+    #[serde(rename = "array-shift")]
+    ArrayShift { name: String },
+    #[serde(rename = "array-from")]
+    ArrayFrom { value: Box<TypedExpr> },
+    #[serde(rename = "array-flat")]
+    ArrayFlat {
+        value: Box<TypedExpr>,
+        depth: Box<TypedExpr>,
+    },
+    #[serde(rename = "json-parse")]
+    JsonParse { value: Box<TypedExpr> },
+    #[serde(rename = "json-get")]
+    JsonGet { value: Box<TypedExpr>, key: Box<TypedExpr> },
+    #[serde(rename = "json-array-items")]
+    JsonArrayItems { value: Box<TypedExpr> },
+    #[serde(rename = "json-as-string")]
+    JsonAsString { value: Box<TypedExpr> },
+    #[serde(rename = "json-as-number")]
+    JsonAsNumber { value: Box<TypedExpr> },
+    #[serde(rename = "json-as-bool")]
+    JsonAsBool { value: Box<TypedExpr> },
+    #[serde(rename = "json-object")]
+    JsonObject { fields: Vec<TypedObjectField> },
+    #[serde(rename = "json-stringify")]
+    JsonStringify { value: Box<TypedExpr> },
+    #[serde(rename = "regex-test")]
+    RegexTest {
+        value: Box<TypedExpr>,
+        pattern: String,
+        flags: String,
+    },
+    #[serde(rename = "regex-match")]
+    RegexMatch {
+        value: Box<TypedExpr>,
+        pattern: String,
+        flags: String,
+    },
+    #[serde(rename = "regex-match-all")]
+    RegexMatchAll {
+        value: Box<TypedExpr>,
+        pattern: String,
+        flags: String,
+    },
+    #[serde(rename = "regex-replace")]
+    RegexReplace {
+        value: Box<TypedExpr>,
+        pattern: String,
+        flags: String,
+        replacement: Box<TypedExpr>,
+    },
+    #[serde(rename = "regex-search")]
+    RegexSearch {
+        value: Box<TypedExpr>,
+        pattern: String,
+        flags: String,
+    },
+    #[serde(rename = "string-split-regex")]
+    StringSplitRegex {
+        value: Box<TypedExpr>,
+        pattern: String,
+        flags: String,
+    },
+    #[serde(rename = "string-split-limit")]
+    StringSplitLimit {
+        value: Box<TypedExpr>,
+        separator: Box<TypedExpr>,
+        limit: Box<TypedExpr>,
+    },
+    #[serde(rename = "string-index-of-from")]
+    StringIndexOfFrom {
+        value: Box<TypedExpr>,
+        needle: Box<TypedExpr>,
+        start: Box<TypedExpr>,
+    },
+    #[serde(rename = "array-index-of-from")]
+    ArrayIndexOfFrom {
+        value: Box<TypedExpr>,
+        needle: Box<TypedExpr>,
+        start: Box<TypedExpr>,
+    },
+    #[serde(rename = "math-max")]
+    MathMax { values: Box<TypedExpr> },
+    #[serde(rename = "string-set")]
+    StringSet { value: Box<TypedExpr> },
+    #[serde(rename = "string-set-add")]
+    StringSetAdd { name: String, item: Box<TypedExpr> },
+    #[serde(rename = "regex")]
+    Regex { pattern: String, flags: String },
+    #[serde(rename = "while")]
+    While {
+        condition: Box<TypedExpr>,
+        body: Box<TypedExpr>,
+    },
+    #[serde(rename = "to-string")]
+    ToString { value: Box<TypedExpr> },
+    #[serde(rename = "locale-compare")]
+    LocaleCompare {
+        left: Box<TypedExpr>,
+        right: Box<TypedExpr>,
+    },
+    #[serde(rename = "string-slice-range")]
+    StringSliceRange {
+        value: Box<TypedExpr>,
+        start: Box<TypedExpr>,
+        end: Box<TypedExpr>,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct TypedObjectField {
+    key: String,
+    value: TypedExpr,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -415,33 +679,44 @@ impl std::error::Error for TypedHookError {}
 
 type TypedHookResult<T> = Result<T, TypedHookError>;
 
+mod eval;
+
 /// A string represented as JavaScript UTF-16 code units.  Rust's `str` is
 /// UTF-8, so keeping this representation through every string operation is
 /// what preserves JavaScript's length, indexing, and surrogate-boundary
 /// behavior.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Utf16String(Vec<u16>);
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Utf16String(pub(super) Vec<u16>);
 
 impl Utf16String {
-    fn from_str(value: &str) -> Self {
+    pub(super) fn from_str(value: &str) -> Self {
         Self(value.encode_utf16().collect())
     }
 
-    fn from_units(value: impl Into<Vec<u16>>) -> Self {
+    pub(super) fn from_units(value: impl Into<Vec<u16>>) -> Self {
         Self(value.into())
     }
 
-    fn len(&self) -> usize {
+    pub(super) fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub(super) fn to_string_lossy(&self) -> String {
+        String::from_utf16_lossy(&self.0)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum TypedValue {
     String(Utf16String),
     Bool(bool),
     Integer(i64),
     StringArray(Vec<Utf16String>),
+    Array(Vec<TypedValue>),
+    Object(BTreeMap<String, TypedValue>),
+    StringSet(BTreeSet<Utf16String>),
+    Regex { pattern: String, flags: String },
+    Json(JsonValue),
     Null,
 }
 
@@ -1077,13 +1352,36 @@ fn validate_typed_hook_ir(descriptor: &TypedHookIr) -> TypedHookResult<()> {
 
     let mut state = ValidationState::default();
     let result_type = validate_expr(&descriptor.expr, &descriptor.params, &mut state, 0, "expr")?;
-    if result_type != descriptor.result_type {
+    if result_type != descriptor.result_type && !types_compatible(result_type, descriptor.result_type) {
         return Err(TypedHookError::new(format!(
             "expression result type {result_type:?} does not match descriptor resultType {:?}",
             descriptor.result_type
         )));
     }
     Ok(())
+}
+
+fn types_compatible(actual: TypedValueType, expected: TypedValueType) -> bool {
+    matches!(
+        (actual, expected),
+        (
+            TypedValueType::ValueArray
+                | TypedValueType::Json
+                | TypedValueType::JsonArray
+                | TypedValueType::Suggestion
+                | TypedValueType::StringArray
+                | TypedValueType::Null,
+            TypedValueType::SuggestionArray
+        ) | (
+            TypedValueType::ValueArray | TypedValueType::Json | TypedValueType::JsonArray | TypedValueType::Null,
+            TypedValueType::StringArray
+        ) | (
+            TypedValueType::Json | TypedValueType::Null | TypedValueType::StringRecord,
+            TypedValueType::Suggestion
+        ) | (TypedValueType::Suggestion, TypedValueType::Json)
+            | (TypedValueType::StringSet, TypedValueType::StringArray)
+            | (TypedValueType::StringArray, TypedValueType::ValueArray)
+    )
 }
 
 fn typed_hook_contract(source_field: &str) -> Option<(&'static str, TypedValueType, &'static [TypedValueType])> {
@@ -1169,17 +1467,12 @@ fn validate_expr(
         },
         TypedExpr::Array { items } => {
             for (index, item) in items.iter().enumerate() {
-                child(item, Some(TypedValueType::String), &format!("items[{index}]"), state)?;
+                child(item, None, &format!("items[{index}]"), state)?;
             }
-            Ok(TypedValueType::StringArray)
+            Ok(TypedValueType::ValueArray)
         },
         TypedExpr::Length { value } => {
-            let value_type = child(value, None, "value", state)?;
-            if !matches!(value_type, TypedValueType::String | TypedValueType::StringArray) {
-                return Err(TypedHookError::new(format!(
-                    "{path}.value must be a string or string-array"
-                )));
-            }
+            child(value, None, "value", state)?;
             Ok(TypedValueType::Integer)
         },
         TypedExpr::StringIncludes { value, needle } => {
@@ -1265,7 +1558,7 @@ fn validate_expr(
                 return Err(TypedHookError::new(format!("{path}.parts must be a non-empty array")));
             }
             for (index, part) in parts.iter().enumerate() {
-                child(part, Some(TypedValueType::String), &format!("parts[{index}]"), state)?;
+                child(part, None, &format!("parts[{index}]"), state)?;
             }
             Ok(TypedValueType::String)
         },
@@ -1275,17 +1568,21 @@ fn validate_expr(
             Ok(TypedValueType::String)
         },
         TypedExpr::ArrayIncludes { value, needle } => {
-            child(value, Some(TypedValueType::StringArray), "value", state)?;
-            child(needle, Some(TypedValueType::String), "needle", state)?;
+            child(value, None, "value", state)?;
+            child(needle, None, "needle", state)?;
             Ok(TypedValueType::Bool)
         },
         TypedExpr::StrictEq { left, right } | TypedExpr::StrictNe { left, right } => {
             let left_type = child(left, None, "left", state)?;
             child(right, Some(left_type), "right", state)?;
-            if left_type == TypedValueType::StringArray {
-                return Err(TypedHookError::new(format!(
-                    "{path} cannot compare string arrays by identity"
-                )));
+            if matches!(
+                left_type,
+                TypedValueType::StringArray
+                    | TypedValueType::ValueArray
+                    | TypedValueType::SuggestionArray
+                    | TypedValueType::JsonArray
+            ) {
+                return Err(TypedHookError::new(format!("{path} cannot compare arrays by identity")));
             }
             Ok(TypedValueType::Bool)
         },
@@ -1303,39 +1600,320 @@ fn validate_expr(
             Ok(TypedValueType::Bool)
         },
         TypedExpr::Not { value } => {
-            child(value, Some(TypedValueType::Bool), "value", state)?;
+            child(value, None, "value", state)?;
             Ok(TypedValueType::Bool)
         },
         TypedExpr::Nullish { left, right } => {
             let left_type = child(left, None, "left", state)?;
             let right_type = child(right, None, "right", state)?;
-            let result_type = if left_type == TypedValueType::Null {
+            Ok(if left_type == TypedValueType::Null {
                 right_type
             } else if right_type == TypedValueType::Null || left_type == right_type {
                 left_type
             } else {
-                return Err(TypedHookError::new(format!(
-                    "{path} ?? operands must share a type or be null"
-                )));
-            };
-            Ok(result_type)
+                TypedValueType::Json
+            })
         },
         TypedExpr::And { left, right } | TypedExpr::Or { left, right } => {
-            child(left, Some(TypedValueType::Bool), "left", state)?;
-            child(right, Some(TypedValueType::Bool), "right", state)?;
-            Ok(TypedValueType::Bool)
+            let left_type = child(left, None, "left", state)?;
+            let right_type = child(right, None, "right", state)?;
+            Ok(if left_type == right_type {
+                left_type
+            } else {
+                TypedValueType::Json
+            })
         },
         TypedExpr::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            child(condition, Some(TypedValueType::Bool), "condition", state)?;
+            child(condition, None, "condition", state)?;
             let then_type = child(then_branch, None, "then", state)?;
-            child(else_branch, Some(then_type), "else", state)?;
-            Ok(then_type)
+            let else_type = child(else_branch, None, "else", state)?;
+            Ok(if then_type == else_type {
+                then_type
+            } else {
+                TypedValueType::Json
+            })
+        },
+        TypedExpr::Lambda { params, body } => {
+            if params.iter().any(String::is_empty) {
+                return Err(TypedHookError::new(format!("{path}.params must be non-empty names")));
+            }
+            child(body, None, "body", state)?;
+            Ok(TypedValueType::Json)
+        },
+        TypedExpr::Var { name } | TypedExpr::ArrayShift { name } => {
+            if name.is_empty() {
+                return Err(TypedHookError::new(format!("{path}.name must be a non-empty string")));
+            }
+            Ok(TypedValueType::Json)
+        },
+        TypedExpr::Let { name, value, body } => {
+            if name.is_empty() {
+                return Err(TypedHookError::new(format!("{path}.name must be a non-empty string")));
+            }
+            child(value, None, "value", state)?;
+            child(body, None, "body", state)
+        },
+        TypedExpr::Block { items } | TypedExpr::Seq { items } => {
+            let mut result = TypedValueType::Null;
+            for (index, item) in items.iter().enumerate() {
+                result = child(item, None, &format!("items[{index}]"), state)?;
+            }
+            Ok(result)
+        },
+        TypedExpr::Return { value } => child(value, None, "value", state),
+        TypedExpr::Break | TypedExpr::Continue => Ok(TypedValueType::Null),
+        TypedExpr::Try { body, catch } => {
+            child(body, None, "body", state)?;
+            child(catch, None, "catch", state)
+        },
+        TypedExpr::ForOf { names, value, body } => {
+            if names.is_empty() || names.iter().any(String::is_empty) {
+                return Err(TypedHookError::new(format!(
+                    "{path}.names must be a non-empty string array"
+                )));
+            }
+            child(value, None, "value", state)?;
+            child(body, None, "body", state)?;
+            Ok(TypedValueType::Null)
+        },
+        TypedExpr::AssignVar { name, value } => {
+            if name.is_empty() {
+                return Err(TypedHookError::new(format!("{path}.name must be a non-empty string")));
+            }
+            child(value, None, "value", state)
+        },
+        TypedExpr::AssignProp { object, key, value } => {
+            child(object, None, "object", state)?;
+            child(key, None, "key", state)?;
+            child(value, None, "value", state)
+        },
+        TypedExpr::Truthy { value } => {
+            child(value, None, "value", state)?;
+            Ok(TypedValueType::Bool)
+        },
+        TypedExpr::LooseEq { left, right } | TypedExpr::LooseNe { left, right } => {
+            child(left, None, "left", state)?;
+            child(right, None, "right", state)?;
+            Ok(TypedValueType::Bool)
+        },
+        TypedExpr::Typeof { value } | TypedExpr::ToString { value } | TypedExpr::JsonStringify { value } => {
+            child(value, None, "value", state)?;
+            Ok(TypedValueType::String)
+        },
+        TypedExpr::Object { fields } | TypedExpr::JsonObject { fields } => {
+            for (index, field) in fields.iter().enumerate() {
+                child(&field.value, None, &format!("fields[{index}].value"), state)?;
+            }
+            Ok(if matches!(expression, TypedExpr::JsonObject { .. }) {
+                TypedValueType::Json
+            } else {
+                TypedValueType::Suggestion
+            })
+        },
+        TypedExpr::Spread { value, fields } => {
+            child(value, None, "value", state)?;
+            for (index, field) in fields.iter().enumerate() {
+                child(&field.value, None, &format!("fields[{index}].value"), state)?;
+            }
+            Ok(TypedValueType::Suggestion)
+        },
+        TypedExpr::Get { value, key } | TypedExpr::JsonGet { value, key } => {
+            child(value, None, "value", state)?;
+            child(key, None, "key", state)?;
+            Ok(TypedValueType::Json)
+        },
+        TypedExpr::ObjectKeys { value } => {
+            child(value, None, "value", state)?;
+            Ok(TypedValueType::StringArray)
+        },
+        TypedExpr::ObjectEntries { value }
+        | TypedExpr::ObjectValues { value }
+        | TypedExpr::ArrayEntries { value }
+        | TypedExpr::ArrayFrom { value }
+        | TypedExpr::JsonArrayItems { value } => {
+            child(value, None, "value", state)?;
+            Ok(TypedValueType::ValueArray)
+        },
+        TypedExpr::ArrayMap { value, callback }
+        | TypedExpr::ArrayFilter { value, callback }
+        | TypedExpr::ArrayFlatMap { value, callback }
+        | TypedExpr::ArraySort { value, callback } => {
+            child(value, None, "value", state)?;
+            child(callback, None, "fn", state)?;
+            Ok(TypedValueType::ValueArray)
+        },
+        TypedExpr::ArraySome { value, callback } | TypedExpr::ArrayEvery { value, callback } => {
+            child(value, None, "value", state)?;
+            child(callback, None, "fn", state)?;
+            Ok(TypedValueType::Bool)
+        },
+        TypedExpr::ArrayFind { value, callback } => {
+            child(value, None, "value", state)?;
+            child(callback, None, "fn", state)?;
+            Ok(TypedValueType::Json)
+        },
+        TypedExpr::ArrayFindIndex { value, callback } => {
+            child(value, None, "value", state)?;
+            child(callback, None, "fn", state)?;
+            Ok(TypedValueType::Integer)
+        },
+        TypedExpr::ArraySlice { value, start, end } => {
+            child(value, None, "value", state)?;
+            child(start, None, "start", state)?;
+            child(end, None, "end", state)?;
+            Ok(TypedValueType::ValueArray)
+        },
+        TypedExpr::ArrayJoin { value, separator } => {
+            child(value, None, "value", state)?;
+            child(separator, None, "separator", state)?;
+            Ok(TypedValueType::String)
+        },
+        TypedExpr::ArrayIndexOf { value, needle } => {
+            child(value, None, "value", state)?;
+            child(needle, None, "needle", state)?;
+            Ok(TypedValueType::Integer)
+        },
+        TypedExpr::ArrayIndexOfFrom { value, needle, start } => {
+            child(value, None, "value", state)?;
+            child(needle, None, "needle", state)?;
+            child(start, None, "start", state)?;
+            Ok(TypedValueType::Integer)
+        },
+        TypedExpr::ArrayConcat { parts } => {
+            for (index, part) in parts.iter().enumerate() {
+                child(part, None, &format!("parts[{index}]"), state)?;
+            }
+            Ok(TypedValueType::ValueArray)
+        },
+        TypedExpr::ArrayReverse { value } | TypedExpr::ArrayPop { value } => {
+            child(value, None, "value", state)?;
+            Ok(TypedValueType::ValueArray)
+        },
+        TypedExpr::ArrayIndex { value, index } => {
+            child(value, None, "value", state)?;
+            child(index, None, "index", state)?;
+            Ok(TypedValueType::Json)
+        },
+        TypedExpr::ArrayPush { name, item } | TypedExpr::StringSetAdd { name, item } => {
+            if name.is_empty() {
+                return Err(TypedHookError::new(format!("{path}.name must be a non-empty string")));
+            }
+            child(item, None, "item", state)?;
+            Ok(if matches!(expression, TypedExpr::ArrayPush { .. }) {
+                TypedValueType::Integer
+            } else {
+                TypedValueType::StringSet
+            })
+        },
+        TypedExpr::ArrayFlat { value, depth } => {
+            child(value, None, "value", state)?;
+            child(depth, None, "depth", state)?;
+            Ok(TypedValueType::ValueArray)
+        },
+        TypedExpr::JsonParse { value } => {
+            child(value, None, "value", state)?;
+            Ok(TypedValueType::Json)
+        },
+        TypedExpr::JsonAsString { value } => {
+            child(value, None, "value", state)?;
+            Ok(TypedValueType::String)
+        },
+        TypedExpr::JsonAsNumber { value } => {
+            child(value, None, "value", state)?;
+            Ok(TypedValueType::Integer)
+        },
+        TypedExpr::JsonAsBool { value } => {
+            child(value, None, "value", state)?;
+            Ok(TypedValueType::Bool)
+        },
+        TypedExpr::RegexTest { value, pattern, flags }
+        | TypedExpr::RegexMatch { value, pattern, flags }
+        | TypedExpr::RegexMatchAll { value, pattern, flags }
+        | TypedExpr::RegexSearch { value, pattern, flags }
+        | TypedExpr::StringSplitRegex { value, pattern, flags } => {
+            child(value, None, "value", state)?;
+            validate_regex_literal(pattern, flags, path)?;
+            Ok(match expression {
+                TypedExpr::RegexTest { .. } => TypedValueType::Bool,
+                TypedExpr::RegexSearch { .. } => TypedValueType::Integer,
+                TypedExpr::StringSplitRegex { .. } => TypedValueType::StringArray,
+                _ => TypedValueType::ValueArray,
+            })
+        },
+        TypedExpr::RegexReplace {
+            value,
+            pattern,
+            flags,
+            replacement,
+        } => {
+            child(value, None, "value", state)?;
+            validate_regex_literal(pattern, flags, path)?;
+            child(replacement, None, "replacement", state)?;
+            Ok(TypedValueType::String)
+        },
+        TypedExpr::StringSplitLimit {
+            value,
+            separator,
+            limit,
+        } => {
+            child(value, None, "value", state)?;
+            child(separator, None, "separator", state)?;
+            child(limit, None, "limit", state)?;
+            Ok(TypedValueType::StringArray)
+        },
+        TypedExpr::StringIndexOfFrom { value, needle, start } => {
+            child(value, None, "value", state)?;
+            child(needle, None, "needle", state)?;
+            child(start, None, "start", state)?;
+            Ok(TypedValueType::Integer)
+        },
+        TypedExpr::MathMax { values } => {
+            child(values, None, "values", state)?;
+            Ok(TypedValueType::Integer)
+        },
+        TypedExpr::StringSet { value } => {
+            child(value, None, "value", state)?;
+            Ok(TypedValueType::StringSet)
+        },
+        TypedExpr::Regex { pattern, flags } => {
+            validate_regex_literal(pattern, flags, path)?;
+            Ok(TypedValueType::Regex)
+        },
+        TypedExpr::While { condition, body } => {
+            child(condition, None, "condition", state)?;
+            child(body, None, "body", state)?;
+            Ok(TypedValueType::Null)
+        },
+        TypedExpr::LocaleCompare { left, right } => {
+            child(left, None, "left", state)?;
+            child(right, None, "right", state)?;
+            Ok(TypedValueType::Integer)
+        },
+        TypedExpr::StringSliceRange { value, start, end } => {
+            child(value, None, "value", state)?;
+            child(start, None, "start", state)?;
+            child(end, None, "end", state)?;
+            Ok(TypedValueType::String)
         },
     }
+}
+
+fn validate_regex_literal(pattern: &str, flags: &str, path: &str) -> TypedHookResult<()> {
+    if pattern.encode_utf16().count() > 4 * 1024 {
+        return Err(TypedHookError::new(format!(
+            "{path}.pattern exceeds the regex unit limit"
+        )));
+    }
+    if flags.contains('v') {
+        return Err(TypedHookError::new(format!("{path}.flags must not include v")));
+    }
+    fancy_regex::Regex::new(pattern)
+        .map(|_| ())
+        .map_err(|error| TypedHookError::new(format!("{path}.pattern is not a valid regex: {error}")))
 }
 
 fn ensure_safe_integer(value: i64, path: &str) -> TypedHookResult<()> {
@@ -1386,253 +1964,7 @@ pub(crate) fn evaluate_typed_get_query_term(descriptor: &TypedHookIr, search_ter
 }
 
 fn evaluate_expr(expression: &TypedExpr, arguments: &[TypedValue]) -> TypedHookResult<TypedValue> {
-    match expression {
-        TypedExpr::Arg { index } => {
-            let index = usize::try_from(*index)
-                .map_err(|error| TypedHookError::new(format!("argument index {index} is unavailable: {error}")))?;
-            arguments
-                .get(index)
-                .cloned()
-                .ok_or_else(|| TypedHookError::new(format!("argument index {index} is unavailable")))
-        },
-        TypedExpr::String { value } => Ok(TypedValue::String(Utf16String::from_str(value))),
-        TypedExpr::Bool { value } => Ok(TypedValue::Bool(*value)),
-        TypedExpr::Null => Ok(TypedValue::Null),
-        TypedExpr::Integer { value } => {
-            ensure_safe_integer(*value, "integer")?;
-            Ok(TypedValue::Integer(*value))
-        },
-        TypedExpr::Array { items } => items
-            .iter()
-            .map(|item| match evaluate_expr(item, arguments)? {
-                TypedValue::String(value) => Ok(value),
-                _ => Err(TypedHookError::new("array item did not evaluate to string")),
-            })
-            .collect::<TypedHookResult<Vec<_>>>()
-            .map(TypedValue::StringArray),
-        TypedExpr::Length { value } => match evaluate_expr(value, arguments)? {
-            TypedValue::String(value) => safe_length(value.len()),
-            TypedValue::StringArray(value) => safe_length(value.len()),
-            _ => Err(TypedHookError::new("length receiver was not string-like")),
-        },
-        TypedExpr::StringIncludes { value, needle } => {
-            let value = evaluate_string(value, arguments, "string-includes.value")?;
-            let needle = evaluate_string(needle, arguments, "string-includes.needle")?;
-            Ok(TypedValue::Bool(utf16_index_of(&value, &needle).is_some()))
-        },
-        TypedExpr::StringIndexOf { value, needle } => {
-            let value = evaluate_string(value, arguments, "string-index-of.value")?;
-            let needle = evaluate_string(needle, arguments, "string-index-of.needle")?;
-            Ok(TypedValue::Integer(utf16_index_of_i64(&value, &needle)?))
-        },
-        TypedExpr::StringLastIndexOf { value, needle } => {
-            let value = evaluate_string(value, arguments, "string-last-index-of.value")?;
-            let needle = evaluate_string(needle, arguments, "string-last-index-of.needle")?;
-            Ok(TypedValue::Integer(utf16_last_index_of_i64(&value, &needle)?))
-        },
-        TypedExpr::StringSlice { value, start } => {
-            let value = evaluate_string(value, arguments, "string-slice.value")?;
-            let start = evaluate_integer(start, arguments, "string-slice.start")?;
-            Ok(TypedValue::String(js_slice(&value, start)?))
-        },
-        TypedExpr::StringSliceAfterFirst { value, needle } => {
-            let value = evaluate_string(value, arguments, "string-slice-after-first.value")?;
-            let needle = evaluate_string(needle, arguments, "string-slice-after-first.needle")?;
-            let Some(index) = utf16_index_of(&value, &needle) else {
-                return Ok(TypedValue::String(value));
-            };
-            let start = index
-                .checked_add(1)
-                .ok_or_else(|| TypedHookError::new("string slice start overflowed"))?;
-            let start = i64::try_from(start)
-                .map_err(|error| TypedHookError::new(format!("string slice start is too large: {error}")))?;
-            Ok(TypedValue::String(js_slice(&value, start)?))
-        },
-        TypedExpr::StringSubstring { value, start, end } => {
-            let value = evaluate_string(value, arguments, "string-substring.value")?;
-            let start = evaluate_integer(start, arguments, "string-substring.start")?;
-            let end = evaluate_integer(end, arguments, "string-substring.end")?;
-            Ok(TypedValue::String(js_substring(&value, start, end)?))
-        },
-        TypedExpr::StringSplit { value, separator } => {
-            let value = evaluate_string(value, arguments, "string-split.value")?;
-            let separator = evaluate_string(separator, arguments, "string-split.separator")?;
-            Ok(TypedValue::StringArray(js_split(&value, &separator)))
-        },
-        TypedExpr::StringTrim { value } => {
-            let value = evaluate_string(value, arguments, "string-trim.value")?;
-            Ok(TypedValue::String(js_trim(&value, true, true)))
-        },
-        TypedExpr::StringTrimStart { value } => {
-            let value = evaluate_string(value, arguments, "string-trim-start.value")?;
-            Ok(TypedValue::String(js_trim(&value, true, false)))
-        },
-        TypedExpr::StringTrimEnd { value } => {
-            let value = evaluate_string(value, arguments, "string-trim-end.value")?;
-            Ok(TypedValue::String(js_trim(&value, false, true)))
-        },
-        TypedExpr::StringReplace {
-            value,
-            needle,
-            replacement,
-        } => {
-            let value = evaluate_string(value, arguments, "string-replace.value")?;
-            let needle = evaluate_string(needle, arguments, "string-replace.needle")?;
-            let replacement = evaluate_string(replacement, arguments, "string-replace.replacement")?;
-            Ok(TypedValue::String(js_replace(&value, &needle, &replacement, false)?))
-        },
-        TypedExpr::StringReplaceAll {
-            value,
-            needle,
-            replacement,
-        } => {
-            let value = evaluate_string(value, arguments, "string-replace-all.value")?;
-            let needle = evaluate_string(needle, arguments, "string-replace-all.needle")?;
-            let replacement = evaluate_string(replacement, arguments, "string-replace-all.replacement")?;
-            Ok(TypedValue::String(js_replace(&value, &needle, &replacement, true)?))
-        },
-        TypedExpr::StringStartsWith { value, needle } => {
-            let value = evaluate_string(value, arguments, "string-starts-with.value")?;
-            let needle = evaluate_string(needle, arguments, "string-starts-with.needle")?;
-            Ok(TypedValue::Bool(utf16_starts_with(&value, &needle)))
-        },
-        TypedExpr::StringEndsWith { value, needle } => {
-            let value = evaluate_string(value, arguments, "string-ends-with.value")?;
-            let needle = evaluate_string(needle, arguments, "string-ends-with.needle")?;
-            Ok(TypedValue::Bool(utf16_ends_with(&value, &needle)))
-        },
-        TypedExpr::StringToLower { value } => {
-            let value = evaluate_string(value, arguments, "string-to-lower.value")?;
-            Ok(TypedValue::String(js_map_case(&value, false)))
-        },
-        TypedExpr::StringToUpper { value } => {
-            let value = evaluate_string(value, arguments, "string-to-upper.value")?;
-            Ok(TypedValue::String(js_map_case(&value, true)))
-        },
-        TypedExpr::StringPadStart { value, target, pad } => {
-            let value = evaluate_string(value, arguments, "string-pad-start.value")?;
-            let target = evaluate_integer(target, arguments, "string-pad-start.target")?;
-            let pad = evaluate_string(pad, arguments, "string-pad-start.pad")?;
-            Ok(TypedValue::String(js_pad(&value, target, &pad, false)?))
-        },
-        TypedExpr::StringPadEnd { value, target, pad } => {
-            let value = evaluate_string(value, arguments, "string-pad-end.value")?;
-            let target = evaluate_integer(target, arguments, "string-pad-end.target")?;
-            let pad = evaluate_string(pad, arguments, "string-pad-end.pad")?;
-            Ok(TypedValue::String(js_pad(&value, target, &pad, true)?))
-        },
-        TypedExpr::StringRepeat { value, count } => {
-            let value = evaluate_string(value, arguments, "string-repeat.value")?;
-            let count = evaluate_integer(count, arguments, "string-repeat.count")?;
-            Ok(TypedValue::String(js_repeat(&value, count)?))
-        },
-        TypedExpr::StringConcat { parts } => {
-            let mut units = Vec::new();
-            for part in parts {
-                let part = evaluate_string(part, arguments, "string-concat.parts")?;
-                units.extend_from_slice(&part.0);
-            }
-            Ok(TypedValue::String(ensure_string_limit(units)?))
-        },
-        TypedExpr::StringCharAt { value, index } => {
-            let value = evaluate_string(value, arguments, "string-char-at.value")?;
-            let index = evaluate_integer(index, arguments, "string-char-at.index")?;
-            Ok(TypedValue::String(js_char_at(&value, index)))
-        },
-        TypedExpr::StringAt { value, index } => {
-            let value = evaluate_string(value, arguments, "string-at.value")?;
-            let index = evaluate_integer(index, arguments, "string-at.index")?;
-            Ok(TypedValue::String(js_at(&value, index)?))
-        },
-        TypedExpr::ArrayIncludes { value, needle } => {
-            let value = evaluate_array(value, arguments, "array-includes.value")?;
-            let needle = evaluate_string(needle, arguments, "array-includes.needle")?;
-            Ok(TypedValue::Bool(value.iter().any(|item| item == &needle)))
-        },
-        TypedExpr::StrictEq { left, right } => {
-            let left = evaluate_expr(left, arguments)?;
-            let right = evaluate_expr(right, arguments)?;
-            Ok(TypedValue::Bool(strict_equal(&left, &right)?))
-        },
-        TypedExpr::StrictNe { left, right } => {
-            let left = evaluate_expr(left, arguments)?;
-            let right = evaluate_expr(right, arguments)?;
-            Ok(TypedValue::Bool(!strict_equal(&left, &right)?))
-        },
-        TypedExpr::Add { left, right } => {
-            let left = evaluate_integer(left, arguments, "add.left")?;
-            let right = evaluate_integer(right, arguments, "add.right")?;
-            Ok(TypedValue::Integer(safe_arithmetic(left.checked_add(right), "add")?))
-        },
-        TypedExpr::Sub { left, right } => {
-            let left = evaluate_integer(left, arguments, "sub.left")?;
-            let right = evaluate_integer(right, arguments, "sub.right")?;
-            Ok(TypedValue::Integer(safe_arithmetic(left.checked_sub(right), "sub")?))
-        },
-        TypedExpr::Mul { left, right } => {
-            let left = evaluate_integer(left, arguments, "mul.left")?;
-            let right = evaluate_integer(right, arguments, "mul.right")?;
-            Ok(TypedValue::Integer(safe_arithmetic(left.checked_mul(right), "mul")?))
-        },
-        TypedExpr::LessThan { left, right } => {
-            let left = evaluate_integer(left, arguments, "lt.left")?;
-            let right = evaluate_integer(right, arguments, "lt.right")?;
-            Ok(TypedValue::Bool(left < right))
-        },
-        TypedExpr::LessThanOrEqual { left, right } => {
-            let left = evaluate_integer(left, arguments, "le.left")?;
-            let right = evaluate_integer(right, arguments, "le.right")?;
-            Ok(TypedValue::Bool(left <= right))
-        },
-        TypedExpr::GreaterThan { left, right } => {
-            let left = evaluate_integer(left, arguments, "gt.left")?;
-            let right = evaluate_integer(right, arguments, "gt.right")?;
-            Ok(TypedValue::Bool(left > right))
-        },
-        TypedExpr::GreaterThanOrEqual { left, right } => {
-            let left = evaluate_integer(left, arguments, "ge.left")?;
-            let right = evaluate_integer(right, arguments, "ge.right")?;
-            Ok(TypedValue::Bool(left >= right))
-        },
-        TypedExpr::Not { value } => {
-            let value = evaluate_bool(value, arguments, "not.value")?;
-            Ok(TypedValue::Bool(!value))
-        },
-        TypedExpr::Nullish { left, right } => {
-            let left = evaluate_expr(left, arguments)?;
-            if matches!(left, TypedValue::Null) {
-                evaluate_expr(right, arguments)
-            } else {
-                Ok(left)
-            }
-        },
-        TypedExpr::And { left, right } => {
-            let left = evaluate_bool(left, arguments, "and.left")?;
-            if !left {
-                return Ok(TypedValue::Bool(false));
-            }
-            Ok(TypedValue::Bool(evaluate_bool(right, arguments, "and.right")?))
-        },
-        TypedExpr::Or { left, right } => {
-            let left = evaluate_bool(left, arguments, "or.left")?;
-            if left {
-                return Ok(TypedValue::Bool(true));
-            }
-            Ok(TypedValue::Bool(evaluate_bool(right, arguments, "or.right")?))
-        },
-        TypedExpr::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            let condition = evaluate_bool(condition, arguments, "if.condition")?;
-            if condition {
-                evaluate_expr(then_branch, arguments)
-            } else {
-                evaluate_expr(else_branch, arguments)
-            }
-        },
-    }
+    eval::evaluate(expression, arguments)
 }
 
 fn safe_length(length: usize) -> TypedHookResult<TypedValue> {
@@ -1641,6 +1973,7 @@ fn safe_length(length: usize) -> TypedHookResult<TypedValue> {
     Ok(TypedValue::Integer(value))
 }
 
+#[allow(dead_code)]
 fn evaluate_string(expression: &TypedExpr, arguments: &[TypedValue], label: &str) -> TypedHookResult<Utf16String> {
     match evaluate_expr(expression, arguments)? {
         TypedValue::String(value) => Ok(value),
@@ -1648,6 +1981,7 @@ fn evaluate_string(expression: &TypedExpr, arguments: &[TypedValue], label: &str
     }
 }
 
+#[allow(dead_code)]
 fn evaluate_array(expression: &TypedExpr, arguments: &[TypedValue], label: &str) -> TypedHookResult<Vec<Utf16String>> {
     match evaluate_expr(expression, arguments)? {
         TypedValue::StringArray(value) => Ok(value),
@@ -1655,6 +1989,7 @@ fn evaluate_array(expression: &TypedExpr, arguments: &[TypedValue], label: &str)
     }
 }
 
+#[allow(dead_code)]
 fn evaluate_integer(expression: &TypedExpr, arguments: &[TypedValue], label: &str) -> TypedHookResult<i64> {
     match evaluate_expr(expression, arguments)? {
         TypedValue::Integer(value) => Ok(value),
@@ -1662,6 +1997,7 @@ fn evaluate_integer(expression: &TypedExpr, arguments: &[TypedValue], label: &st
     }
 }
 
+#[allow(dead_code)]
 fn evaluate_bool(expression: &TypedExpr, arguments: &[TypedValue], label: &str) -> TypedHookResult<bool> {
     match evaluate_expr(expression, arguments)? {
         TypedValue::Bool(value) => Ok(value),
@@ -1669,6 +2005,7 @@ fn evaluate_bool(expression: &TypedExpr, arguments: &[TypedValue], label: &str) 
     }
 }
 
+#[allow(dead_code)]
 fn strict_equal(left: &TypedValue, right: &TypedValue) -> TypedHookResult<bool> {
     match (left, right) {
         (TypedValue::String(left), TypedValue::String(right)) => Ok(left == right),
@@ -1974,11 +2311,44 @@ fn json_to_typed_value(value: &JsonValue, expected: TypedValueType) -> TypedHook
             }
         },
         TypedValueType::Json
+        | TypedValueType::JsonArray
         | TypedValueType::Suggestion
         | TypedValueType::SuggestionArray
-        | TypedValueType::StringRecord => Err(TypedHookError::new(
-            "json/suggestion value types are compile-only until object ops land",
-        )),
+        | TypedValueType::StringRecord
+        | TypedValueType::ValueArray => Ok(json_value_to_typed(value)),
+        TypedValueType::StringSet => {
+            let items = value
+                .as_array()
+                .ok_or_else(|| TypedHookError::new("argument is not a string set"))?;
+            let mut set = BTreeSet::new();
+            for item in items {
+                let text = item
+                    .as_str()
+                    .ok_or_else(|| TypedHookError::new("string-set item is not a string"))?;
+                set.insert(Utf16String::from_str(text));
+            }
+            Ok(TypedValue::StringSet(set))
+        },
+        TypedValueType::Regex => Err(TypedHookError::new("regex arguments are compile-only")),
+    }
+}
+
+fn json_value_to_typed(value: &JsonValue) -> TypedValue {
+    match value {
+        JsonValue::Null => TypedValue::Null,
+        JsonValue::Bool(flag) => TypedValue::Bool(*flag),
+        JsonValue::Number(number) => number
+            .as_i64()
+            .map(TypedValue::Integer)
+            .unwrap_or_else(|| TypedValue::Json(value.clone())),
+        JsonValue::String(text) => TypedValue::String(Utf16String::from_str(text)),
+        JsonValue::Array(items) => TypedValue::Array(items.iter().map(json_value_to_typed).collect()),
+        JsonValue::Object(fields) => TypedValue::Object(
+            fields
+                .iter()
+                .map(|(key, child)| (key.clone(), json_value_to_typed(child)))
+                .collect(),
+        ),
     }
 }
 
@@ -2003,6 +2373,37 @@ fn typed_value_to_json(value: &TypedValue) -> TypedHookResult<JsonValue> {
             Ok(JsonValue::Array(values))
         },
         TypedValue::Null => Ok(JsonValue::Null),
+        TypedValue::Array(items) => Ok(JsonValue::Array(
+            items
+                .iter()
+                .map(typed_value_to_json)
+                .collect::<TypedHookResult<Vec<_>>>()?,
+        )),
+        TypedValue::Object(fields) => {
+            let mut object = serde_json::Map::new();
+            for (key, child) in fields {
+                object.insert(key.clone(), typed_value_to_json(child)?);
+            }
+            Ok(JsonValue::Object(object))
+        },
+        TypedValue::StringSet(items) => {
+            let values = items
+                .iter()
+                .map(|item| {
+                    String::from_utf16(&item.0)
+                        .map(JsonValue::String)
+                        .map_err(|error| TypedHookError::new(format!("evaluated string is not valid UTF-16: {error}")))
+                })
+                .collect::<TypedHookResult<Vec<_>>>()?;
+            Ok(JsonValue::Array(values))
+        },
+        TypedValue::Regex { pattern, flags } => {
+            let mut object = serde_json::Map::new();
+            object.insert("pattern".to_string(), JsonValue::String(pattern.clone()));
+            object.insert("flags".to_string(), JsonValue::String(flags.clone()));
+            Ok(JsonValue::Object(object))
+        },
+        TypedValue::Json(value) => Ok(value.clone()),
     }
 }
 
@@ -2098,7 +2499,9 @@ mod tests {
         "scripts/reference-safe-io.mjs",
         "scripts/spec-hook-contract.mjs",
         "scripts/spec-pair.mjs",
+        "scripts/typed-hook-inline.mjs",
         "scripts/typed-hook-ir.mjs",
+        "scripts/typed-regex.mjs",
     ];
 
     fn arg(index: u64) -> TypedExpr {
@@ -3520,12 +3923,107 @@ mod tests {
             "expr": {"op": "arg", "index": 0}
         });
         assert!(parse_typed_hook_ir(&filter).is_ok());
-        assert!(
+        assert_eq!(
             evaluate_typed_hook_json(
                 &parse_typed_hook_ir(&filter).expect("filter"),
                 &[json!([{"name": "a"}])]
             )
-            .is_err()
+            .expect("filter eval"),
+            json!([{"name": "a"}])
+        );
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct TypedBaselineDescriptors {
+        counts: BTreeMap<String, TypedBaselineCount>,
+        descriptors: BTreeMap<String, JsonValue>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct TypedBaselineCount {
+        total: u64,
+        ok: u64,
+    }
+
+    fn expected_baseline_json(expected: &crate::hook_baseline::Expected) -> Option<JsonValue> {
+        match expected {
+            crate::hook_baseline::Expected::Suggestions { value } => serde_json::to_value(value).ok(),
+            crate::hook_baseline::Expected::String { value } => Some(JsonValue::String(value.clone())),
+            crate::hook_baseline::Expected::Bool { value } => Some(JsonValue::Bool(*value)),
+            crate::hook_baseline::Expected::Argv { value } => serde_json::to_value(value).ok(),
+            crate::hook_baseline::Expected::Spec { value } => Some(value.clone()),
+            crate::hook_baseline::Expected::Error { .. } | crate::hook_baseline::Expected::Timeout { .. } => None,
+        }
+    }
+
+    #[test]
+    fn typed_hook_baseline_parity() {
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let script = repo.join("scripts/emit-typed-hook-descriptors.mjs");
+        let output = std::process::Command::new("node")
+            .arg(&script)
+            .current_dir(&repo)
+            .output()
+            .expect("emit typed hook descriptors");
+        assert!(
+            output.status.success(),
+            "emit-typed-hook-descriptors failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let catalog: TypedBaselineDescriptors =
+            serde_json::from_slice(&output.stdout).expect("typed baseline descriptor catalog");
+        let require = |field: &str, minimum: u64, exact_total: u64| {
+            let count = catalog.counts.get(field).expect(field);
+            assert_eq!(count.total, exact_total, "{field} unique-body total");
+            assert!(
+                count.ok >= minimum,
+                "{field} typed compile {ok}/{total} is below {minimum}",
+                ok = count.ok,
+                total = count.total
+            );
+        };
+        require("postProcess", 330, 373);
+        require("script", 31, 31);
+        require("filterTemplateSuggestions", 5, 5);
+        require("trigger", 30, 30);
+        require("getQueryTerm", 16, 16);
+
+        let baselines = crate::hook_baseline::load_all().expect("T1.2 baselines");
+        let mut compared = 0usize;
+        let mut failures = Vec::new();
+        for baseline in &baselines {
+            let key = format!("{}:{}", baseline.field, baseline.body_sha256);
+            let Some(descriptor_json) = catalog.descriptors.get(&key) else {
+                continue;
+            };
+            let descriptor = match parse_typed_hook_ir(descriptor_json) {
+                Ok(descriptor) => descriptor,
+                Err(error) => {
+                    failures.push(format!("{key}: parse {error}"));
+                    continue;
+                },
+            };
+            for case in &baseline.cases {
+                let Some(expected) = expected_baseline_json(&case.expected) else {
+                    continue;
+                };
+                match evaluate_typed_hook_json(&descriptor, &case.args) {
+                    Ok(actual) if actual == expected => compared += 1,
+                    Ok(actual) => failures.push(format!("{key} {} actual={actual} expected={expected}", case.id)),
+                    Err(error) => failures.push(format!("{key} {} eval {error}", case.id)),
+                }
+            }
+        }
+        assert!(
+            compared >= 330,
+            "typed baseline parity compared {compared} cases; failures: {}",
+            failures.iter().take(12).cloned().collect::<Vec<_>>().join(" | ")
+        );
+        assert!(
+            failures.is_empty(),
+            "typed baseline parity mismatches ({}): {}",
+            failures.len(),
+            failures.iter().take(20).cloned().collect::<Vec<_>>().join(" | ")
         );
     }
 }

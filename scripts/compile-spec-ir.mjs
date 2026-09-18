@@ -2316,9 +2316,94 @@ async function assertCliDestinationPair(srcDir, outDir) {
 const isMain =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
+export async function typedHookCompileReport({
+  irRoot = join(repoDir, "bundle", "specs-ir"),
+} = {}) {
+  const manifest = JSON.parse(
+    await readFile(join(irRoot, HOOK_MODULE_MANIFEST), "utf8"),
+  );
+  const modules = new Map();
+  const fields = Object.keys(TYPED_HOOK_CONTRACTS);
+  const groups = new Map();
+  for (const [id, entry] of Object.entries(manifest.hooks ?? {})) {
+    if (!fields.includes(entry.sourceField)) continue;
+    const key = `${entry.sourceField}\0${entry.functionBodySha256}`;
+    if (groups.has(key)) {
+      groups.get(key).ids.push(id);
+      continue;
+    }
+    groups.set(key, {
+      id,
+      field: entry.sourceField,
+      sha: entry.functionBodySha256,
+      module: entry.module,
+      ids: [id],
+    });
+  }
+  const byField = Object.fromEntries(
+    fields.map((field) => [field, { total: 0, ok: 0, codes: {} }]),
+  );
+  for (const group of groups.values()) {
+    const bucket = byField[group.field];
+    bucket.total += 1;
+    const hookPath = join(irRoot, "hooks", hookFileName(group.id));
+    const text = await readFile(hookPath, "utf8");
+    const body = text.startsWith("export default ")
+      ? text.slice("export default ".length).replace(/;\n$/, "").replace(/;$/, "")
+      : text;
+    let moduleSource = "";
+    if (group.module) {
+      if (!modules.has(group.module)) {
+        modules.set(
+          group.module,
+          await readFile(join(irRoot, HOOK_MODULES_DIR, group.module), "utf8"),
+        );
+      }
+      moduleSource = modules.get(group.module);
+    }
+    try {
+      compileTypedHook({
+        body,
+        sourceField: group.field,
+        moduleSource,
+      });
+      bucket.ok += 1;
+    } catch (error) {
+      const code =
+        error instanceof TypedHookCompileError ? error.code : "throw";
+      const key = error.nodeType ? `${code}:${error.nodeType}` : code;
+      bucket.codes[key] = (bucket.codes[key] ?? 0) + 1;
+    }
+  }
+  return { byField, uniqueBodies: groups.size };
+}
+
+function printTypedHookReport(report) {
+  const rows = [];
+  for (const [field, bucket] of Object.entries(report.byField)) {
+    const codes = Object.entries(bucket.codes).sort((left, right) => right[1] - left[1]);
+    process.stdout.write(
+      `${field}: ${bucket.ok}/${bucket.total} compiled\n`,
+    );
+    for (const [code, count] of codes.slice(0, 20)) {
+      process.stdout.write(`  ${count}\t${code}\n`);
+      rows.push({ field, code, count });
+    }
+  }
+  const top = [...rows].sort((left, right) => right.count - left.count).slice(0, 20);
+  process.stdout.write("Top 20 TypedHookCompileError.code:\n");
+  for (const row of top) {
+    process.stdout.write(`  ${row.count}\t${row.field}\t${row.code}\n`);
+  }
+}
+
 if (isMain) {
+  const typedReport = process.argv.includes("--typed-report");
   const srcDir = process.env.EC_SPECS_SRC || canonicalSourceDir;
   const outDir = process.env.EC_SPECS_IR || join(repoDir, "bundle", "specs-ir");
   await assertCliDestinationPair(srcDir, outDir);
   await compileSpecsIr({ srcDir, outDir });
+  if (typedReport) {
+    printTypedHookReport(await typedHookCompileReport({ irRoot: outDir }));
+  }
 }

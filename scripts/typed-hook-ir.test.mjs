@@ -323,10 +323,9 @@ test("unsupported syntax and free variables fail closed", () => {
   const cases = [
     [`(a,b)=>unknown`, "free-variable"],
     [`(a,b)=>a.foo`, "unsupported-property"],
-    [`(a,b)=>a[0]`, "dynamic-property"],
-    [`(a,b)=>a.match(/x/)`, "unknown-call"],
+    [`(a,b)=>new Date()`, "unknown-call"],
     [`async (a,b)=>true`, "async"],
-    [`(a,b)=>{const value=true;return value}`, "function-shape"],
+    [`(a,b)=>a.reduce((x,y)=>x)`, "unknown-call"],
   ];
   for (const [body, code] of cases) {
     assert.throws(
@@ -796,22 +795,25 @@ test("replace needles must be string literals and arithmetic stays fail-closed",
       }),
     (error) => error.code === "unsupported-syntax",
   );
-  assert.throws(
-    () =>
+  assert.equal(
+    evaluateTypedHook(
       compileTypedHook({
-        body: `(a,b)=>a+1===b.length`,
+        body: `(a,b)=>a.length+1===b.length`,
         sourceField: "trigger",
       }),
-    (error) => error.code === "type-mismatch",
+      ["ab", "xyz"],
+    ),
+    true,
   );
-  assert.throws(
-    () =>
-      compileTypedExpression({
-        body: `()=>1??"x"`,
-        parameterTypes: [],
-        resultType: "integer",
+  assert.equal(
+    evaluateTypedHook(
+      compileTypedHook({
+        body: `(a,b)=> (null ?? a.length) === 2`,
+        sourceField: "trigger",
       }),
-    (error) => error.code === "type-mismatch",
+      ["ab", "z"],
+    ),
+    true,
   );
 });
 
@@ -959,4 +961,85 @@ test("cross-language v2 op golden matches compile and evaluate", async () => {
       entry.id,
     );
   }
+});
+
+test("T2.2 compiles array, control-flow, regex, and helper-inline shapes", () => {
+  const post = (body, args, moduleSource) =>
+    evaluateTypedHook(
+      compileTypedHook({ body, sourceField: "postProcess", moduleSource }),
+      args,
+    );
+
+  assert.deepEqual(
+    post(
+      `out => out.split("\\n").filter(Boolean).map(name => ({name}))`,
+      ["alpha\n\nbeta", []],
+    ),
+    [{ name: "alpha" }, { name: "beta" }],
+  );
+  assert.deepEqual(
+    post(`out => { const [name, rest] = out.split(" - ", 2); return [{name, description: rest}]; }`, [
+      "one - two extra",
+      [],
+    ]),
+    [{ name: "one", description: "two extra" }],
+  );
+  assert.deepEqual(
+    post(`out => { const rows = out.split("\\n"); rows.shift(); return rows.map(name => ({name})); }`, [
+      "header\na\nb",
+      [],
+    ]),
+    [{ name: "a" }, { name: "b" }],
+  );
+  assert.deepEqual(
+    post(
+      `out => { const seen = new Set(); for (const name of out.split(",")) seen.add(name); return [...seen].map(name => ({name})); }`,
+      ["a,b,a", []],
+    ),
+    [{ name: "a" }, { name: "b" }],
+  );
+  assert.deepEqual(
+    post(
+      `out => { const cmp = (a, b) => a.localeCompare(b); return out.split(",").sort(cmp).map(name => ({name})); }`,
+      ["c,a,b", []],
+    ),
+    [{ name: "a" }, { name: "b" }, { name: "c" }],
+  );
+  assert.deepEqual(
+    post(`out => ((lines) => lines.filter(Boolean).map(name => ({name})))(out.split("\\n"))`, [
+      "keep\n\n",
+      [],
+    ]),
+    [{ name: "keep" }],
+  );
+  assert.deepEqual(
+    post(
+      `function (out, tokens = []) { try { return JSON.parse(out).map(name => ({name})); } catch (error) { return console.error(error), []; } }`,
+      ["not-json", []],
+    ),
+    [],
+  );
+  assert.deepEqual(
+    post(`out => out.split(/\\s+/).map(name => ({name}))`, ["a  b", []]),
+    [{ name: "a" }, { name: "b" }],
+  );
+
+  const script = compileTypedHook({
+    body: `tokens => tokens.filter(Boolean)`,
+    sourceField: "script",
+  });
+  assert.deepEqual(evaluateTypedHook(script, [["echo", "", "hi"]]), ["echo", "hi"]);
+
+  const filter = compileTypedHook({
+    body: `rows => rows.filter(row => !row.hidden)`,
+    sourceField: "filterTemplateSuggestions",
+  });
+  assert.deepEqual(
+    evaluateTypedHook(filter, [[{ name: "a", hidden: true }, { name: "b" }]]),
+    [{ name: "b" }],
+  );
+
+  assert.equal(MAX_NODES, 512);
+  assert.ok(TYPED_EXPRESSION_OPERATIONS.includes("array-map"));
+  assert.ok(TYPED_VALUE_TYPES.includes("regex"));
 });

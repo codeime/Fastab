@@ -649,7 +649,7 @@ function analyzeAst(ast, field, body) {
  * Analyze and classify one extracted body without evaluating it.
  * Exported for focused fixtures; the full report uses the same function.
  */
-export function classifyHookBody({ body, field }) {
+export function classifyHookBody({ body, field, moduleSource }) {
   if (typeof body !== "string" || !body.trim()) {
     return {
       status: FAILURE_STATUS,
@@ -691,15 +691,15 @@ export function classifyHookBody({ body, field }) {
       field,
     };
   }
-  return upgradeWithTypedCompile(analyzeAst(ast, field, body), body, field);
+  return upgradeWithTypedCompile(analyzeAst(ast, field, body), body, field, moduleSource);
 }
 
-function upgradeWithTypedCompile(analysis, body, field) {
+function upgradeWithTypedCompile(analysis, body, field, moduleSource) {
   if (analysis.status === FAILURE_STATUS) return analysis;
   const sourceField = IR_TO_SOURCE_FIELD[field] ?? field;
   if (!Object.hasOwn(TYPED_HOOK_CONTRACTS, sourceField)) return analysis;
   try {
-    compileTypedHook({ body, sourceField });
+    compileTypedHook({ body, sourceField, moduleSource });
   } catch {
     return analysis;
   }
@@ -959,6 +959,15 @@ export async function classifyNativeHooks({
   const hooks = [];
   const groupsByHash = new Map();
   const readErrors = [];
+  let hookModules = {};
+  try {
+    hookModules =
+      JSON.parse(await readFile(join(irRoot, "hook-modules.json"), "utf8"))
+        .hooks ?? {};
+  } catch {
+    hookModules = {};
+  }
+  const moduleSourceCache = new Map();
 
   for (const entry of manifest) {
     const field = entry.field;
@@ -1011,7 +1020,22 @@ export async function classifyNativeHooks({
     }
     const body = bodyFromHookFile(text);
     const bodySha256 = body == null ? null : sha256(body);
-    const analysis = classifyHookBody({ body, field });
+    const moduleName = hookModules[entry.id]?.module;
+    let moduleSource;
+    if (moduleName) {
+      if (!moduleSourceCache.has(moduleName)) {
+        try {
+          moduleSourceCache.set(
+            moduleName,
+            await readFile(join(irRoot, "source-modules", moduleName), "utf8"),
+          );
+        } catch {
+          moduleSourceCache.set(moduleName, "");
+        }
+      }
+      moduleSource = moduleSourceCache.get(moduleName) || undefined;
+    }
+    const analysis = classifyHookBody({ body, field, moduleSource });
     const hook = {
       id: entry.id,
       file: entry.file,

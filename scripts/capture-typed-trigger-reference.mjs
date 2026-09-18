@@ -137,7 +137,9 @@ const HARNESS_FILES = Object.freeze([
   "scripts/reference-safe-io.mjs",
   "scripts/spec-hook-contract.mjs",
   "scripts/spec-pair.mjs",
+  "scripts/typed-hook-inline.mjs",
   "scripts/typed-hook-ir.mjs",
+  "scripts/typed-regex.mjs",
 ]);
 
 function sha256(value) {
