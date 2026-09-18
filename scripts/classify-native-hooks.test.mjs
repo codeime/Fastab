@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -101,6 +102,30 @@ test("classifies pure, input, command, closure, complex, and gated syntax bodies
   });
   assert.equal(compileUpgrade.status, "typed-ir");
   assert.ok(compileUpgrade.risks.includes("complexity"));
+
+  const leftover = "(rows) => rows.map((row) => External(row))";
+  const leftoverSha = createHash("sha256").update(leftover).digest("hex");
+  const upgraded = classifyHookBody({
+    field: "jsPostProcess",
+    body: leftover,
+    adapters: {
+      version: 1,
+      kind: "native-hook-adapters",
+      adapters: [
+        {
+          bodySha256: leftoverSha,
+          field: "postProcess",
+          representativeHookId: "fixture#postProcess#0",
+          reason: "unbound External",
+        },
+      ],
+    },
+  });
+  assert.equal(upgraded.status, "native-adapter");
+  assert.equal(
+    classifyHookBody({ field: "jsPostProcess", body: leftover }).status,
+    "requires-native-adapter",
+  );
 });
 
 test("compiles a real helper fixture and reports deterministic native readiness", async () => {

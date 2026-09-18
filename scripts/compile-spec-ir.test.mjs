@@ -2021,6 +2021,49 @@ export { spec as default, versions };\n`,
   }
 });
 
+test("side-effect-free leftovers hard-fail unless a named adapter or EC_ALLOW_UNADAPTED is set", async () => {
+  const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-specs-unadapted-"));
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-unadapted-"));
+  const previous = process.env.EC_ALLOW_UNADAPTED;
+  try {
+    delete process.env.EC_ALLOW_UNADAPTED;
+    await writeFile(
+      join(srcDir, "leftover.js"),
+      `export default {
+        name: "leftover",
+        args: {
+          generators: {
+            postProcess(stdout) {
+              return stdout.split("\\n").reduce((rows, line) => {
+                rows.push({ name: line });
+                return rows;
+              }, []);
+            },
+          },
+        },
+      };\n`,
+    );
+    await assert.rejects(
+      compileSpecsIr({ srcDir, outDir, enforceNamedAdapters: true }),
+      /typed compile failed for 1 side-effect-free hook/,
+    );
+    process.env.EC_ALLOW_UNADAPTED = "1";
+    const result = await compileSpecsIr({
+      srcDir,
+      outDir,
+      enforceNamedAdapters: true,
+    });
+    assert.equal(result.compiled, 1);
+  } finally {
+    if (previous === undefined) delete process.env.EC_ALLOW_UNADAPTED;
+    else process.env.EC_ALLOW_UNADAPTED = previous;
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
 test("compiler blocks Node-only regexp syntax until a native adapter exists", async () => {
   const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-specs-regexp-v-"));
   const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-regexp-v-"));

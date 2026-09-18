@@ -3221,7 +3221,7 @@
         "direnv#filterTemplateSuggestions#2"
       ],
       "sourceField": "filterTemplateSuggestions",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -4830,7 +4830,7 @@
         "npx#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -5079,7 +5079,7 @@
         "just#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -5650,7 +5650,7 @@
         "rush#postProcess#12"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -5700,7 +5700,7 @@
         "dcli#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -6348,7 +6348,7 @@
         "limactl#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -6400,7 +6400,7 @@
         "git#postProcess#20"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -6682,7 +6682,7 @@
         "react-native#postProcess#5"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -6781,7 +6781,7 @@
         "asdf#postProcess#13"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -7488,7 +7488,7 @@
         "cargo#postProcess#261"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -7542,7 +7542,7 @@
         "fnm#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -7569,7 +7569,7 @@
         "dcli#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -7693,7 +7693,7 @@
         "rustup#postProcess#8"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -7746,7 +7746,7 @@
         "tldr#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -7776,7 +7776,7 @@
         "rustup#postProcess#11"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -7983,7 +7983,7 @@
         "rustup#postProcess#6"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -8090,7 +8090,7 @@
         "pre-commit#postProcess#5"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -8815,7 +8815,7 @@
         "brew#postProcess#17"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -8844,7 +8844,7 @@
         "deno#postProcess#18"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -9417,7 +9417,7 @@
         "yarn#postProcess#14"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -9575,7 +9575,7 @@
         "yo#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -9608,7 +9608,7 @@
         "task/taskwarrior#postProcess#10"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -10141,7 +10141,7 @@
         "asdf#postProcess#19"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -10321,7 +10321,7 @@
         "open#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -10455,7 +10455,7 @@
         "snaplet#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -10480,7 +10480,7 @@
         "sake#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -10668,7 +10668,7 @@
         "task/taskwarrior#postProcess#35"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -11028,7 +11028,7 @@
         "tailscale#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -11106,7 +11106,7 @@
         "snaplet#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -11134,7 +11134,7 @@
         "pnpm#postProcess#14"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -11307,7 +11307,7 @@
         "tccutil#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -11466,7 +11466,7 @@
         "turbo#postProcess#1"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -11749,7 +11749,7 @@
         "just#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -12031,7 +12031,7 @@
         "task/taskwarrior#postProcess#51"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -12185,7 +12185,7 @@
         "pre-commit#postProcess#4"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -12367,7 +12367,7 @@
         "just#postProcess#5"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -12681,7 +12681,7 @@
         "hub#postProcess#8"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -12712,7 +12712,7 @@
         "vr#postProcess#2"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -12791,7 +12791,7 @@
         "kubectl#postProcess#40"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -12997,7 +12997,7 @@
         "snaplet#postProcess#5"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -13106,7 +13106,7 @@
         "deno#postProcess#3"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -13179,7 +13179,7 @@
         "gource#postProcess#0"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -13671,7 +13671,7 @@
         "cf#postProcess#10"
       ],
       "sourceField": "postProcess",
-      "status": "requires-native-adapter"
+      "status": "native-adapter"
     },
     {
       "baselineCases": 4,
@@ -15804,6 +15804,7 @@
   "counts": {
     "byField": {
       "jsAlias": {
+        "native-adapter": 0,
         "native-filepaths-rewrite": 0,
         "requires-native-adapter": 6,
         "syntax-or-analysis-failure": 0,
@@ -15811,6 +15812,7 @@
         "unclassified": 0
       },
       "jsCustom": {
+        "native-adapter": 0,
         "native-filepaths-rewrite": 0,
         "requires-native-adapter": 457,
         "syntax-or-analysis-failure": 0,
@@ -15818,13 +15820,15 @@
         "unclassified": 0
       },
       "jsFilterTemplateSuggestions": {
+        "native-adapter": 3,
         "native-filepaths-rewrite": 0,
-        "requires-native-adapter": 3,
+        "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
         "typed-ir": 9,
         "unclassified": 0
       },
       "jsGenerateSpec": {
+        "native-adapter": 0,
         "native-filepaths-rewrite": 0,
         "requires-native-adapter": 35,
         "syntax-or-analysis-failure": 0,
@@ -15832,6 +15836,7 @@
         "unclassified": 0
       },
       "jsGetQueryTerm": {
+        "native-adapter": 0,
         "native-filepaths-rewrite": 0,
         "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
@@ -15839,6 +15844,7 @@
         "unclassified": 0
       },
       "jsLoadSpec": {
+        "native-adapter": 0,
         "native-filepaths-rewrite": 0,
         "requires-native-adapter": 2,
         "syntax-or-analysis-failure": 0,
@@ -15846,13 +15852,15 @@
         "unclassified": 0
       },
       "jsPostProcess": {
+        "native-adapter": 274,
         "native-filepaths-rewrite": 0,
-        "requires-native-adapter": 274,
+        "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
         "typed-ir": 2277,
         "unclassified": 0
       },
       "jsScript": {
+        "native-adapter": 0,
         "native-filepaths-rewrite": 0,
         "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
@@ -15860,6 +15868,7 @@
         "unclassified": 0
       },
       "jsTrigger": {
+        "native-adapter": 0,
         "native-filepaths-rewrite": 0,
         "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
@@ -15884,22 +15893,25 @@
       }
     },
     "extractedHooks": {
+      "native-adapter": 277,
       "native-filepaths-rewrite": 0,
-      "requires-native-adapter": 777,
+      "requires-native-adapter": 500,
       "syntax-or-analysis-failure": 0,
       "typed-ir": 2915,
       "unclassified": 0
     },
     "hooks": {
+      "native-adapter": 277,
       "native-filepaths-rewrite": 0,
-      "requires-native-adapter": 777,
+      "requires-native-adapter": 500,
       "syntax-or-analysis-failure": 0,
       "typed-ir": 2915,
       "unclassified": 0
     },
     "uniqueBodies": {
+      "native-adapter": 43,
       "native-filepaths-rewrite": 0,
-      "requires-native-adapter": 182,
+      "requires-native-adapter": 139,
       "syntax-or-analysis-failure": 0,
       "typed-ir": 412,
       "unclassified": 0

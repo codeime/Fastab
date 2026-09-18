@@ -5,7 +5,8 @@
  * This is a build-time inventory only. It never evaluates hook JavaScript and
  * it does not select a runtime implementation. A body is `typed-ir` only when
  * `compileTypedHook` succeeds for its field contract; every other valid body
- * stays `requires-native-adapter` until a named adapter exists. The report is
+ * stays `requires-native-adapter` until a named adapter exists in
+ * `adapters.json`. Registered leftovers become `native-adapter`. The report is
  * deterministic so it can be used as an input to that work.
  */
 import { createHash } from "node:crypto";
@@ -29,6 +30,10 @@ import {
   KNOWN_VERSION_SELECTORS,
 } from "./spec-hook-contract.mjs";
 import { comparePath } from "./spec-pair.mjs";
+import {
+  isRegisteredNativeAdapter,
+  loadNativeHookAdapters,
+} from "./native-hook-adapters.mjs";
 import {
   TYPED_HOOK_CONTRACTS,
   compileTypedHook,
@@ -65,6 +70,7 @@ const VERSIONED_SPEC_BLOCKER = "versioned-spec-behaviour-unadapted";
 
 export const CLASSIFICATION_STATUSES = Object.freeze([
   "typed-ir",
+  "native-adapter",
   "native-filepaths-rewrite",
   "requires-native-adapter",
   "syntax-or-analysis-failure",
@@ -74,11 +80,12 @@ export const CLASSIFICATION_STATUSES = Object.freeze([
 const STATUS_ORDER = new Map(
   CLASSIFICATION_STATUSES.map((status, index) => [status, index]),
 );
-const TYPED_IR_STATUS = CLASSIFICATION_STATUSES[0];
-const NATIVE_FILEPATHS_STATUS = CLASSIFICATION_STATUSES[1];
-const ADAPTER_STATUS = CLASSIFICATION_STATUSES[2];
-const FAILURE_STATUS = CLASSIFICATION_STATUSES[3];
-const UNCLASSIFIED_STATUS = CLASSIFICATION_STATUSES[4];
+const TYPED_IR_STATUS = "typed-ir";
+const NATIVE_ADAPTER_STATUS = "native-adapter";
+const NATIVE_FILEPATHS_STATUS = "native-filepaths-rewrite";
+const ADAPTER_STATUS = "requires-native-adapter";
+const FAILURE_STATUS = "syntax-or-analysis-failure";
+const UNCLASSIFIED_STATUS = "unclassified";
 
 const IR_TO_SOURCE_FIELD = Object.fromEntries(
   Object.entries(SUPPORTED_HOOK_FIELDS).map(([source, ir]) => [ir, source]),
@@ -648,7 +655,7 @@ function analyzeAst(ast, field, body) {
  * Analyze and classify one extracted body without evaluating it.
  * Exported for focused fixtures; the full report uses the same function.
  */
-export function classifyHookBody({ body, field, moduleSource }) {
+export function classifyHookBody({ body, field, moduleSource, adapters = null }) {
   if (typeof body !== "string" || !body.trim()) {
     return {
       status: FAILURE_STATUS,
@@ -690,7 +697,12 @@ export function classifyHookBody({ body, field, moduleSource }) {
       field,
     };
   }
-  return upgradeWithTypedCompile(analyzeAst(ast, field, body), body, field, moduleSource);
+  return upgradeWithNamedAdapter(
+    upgradeWithTypedCompile(analyzeAst(ast, field, body), body, field, moduleSource),
+    body,
+    field,
+    adapters,
+  );
 }
 
 function upgradeWithTypedCompile(analysis, body, field, moduleSource) {
@@ -705,6 +717,21 @@ function upgradeWithTypedCompile(analysis, body, field, moduleSource) {
   return {
     ...analysis,
     status: TYPED_IR_STATUS,
+    researchCandidate: false,
+  };
+}
+
+function upgradeWithNamedAdapter(analysis, body, field, adapters) {
+  if (analysis.status !== ADAPTER_STATUS || !adapters || typeof body !== "string") {
+    return analysis;
+  }
+  const sourceField = IR_TO_SOURCE_FIELD[field] ?? field;
+  if (!isRegisteredNativeAdapter(sha256(body), sourceField, adapters)) {
+    return analysis;
+  }
+  return {
+    ...analysis,
+    status: NATIVE_ADAPTER_STATUS,
     researchCandidate: false,
   };
 }
@@ -946,7 +973,9 @@ export async function classifyNativeHooks({
   irRoot = process.env.EC_SPECS_IR || defaultIrRoot,
   hooksRoot = process.env.EC_SPECS_HOOKS || join(irRoot, "hooks"),
   baselineRoot = defaultBaselineRoot,
+  adapters = null,
 } = {}) {
+  const adapterCatalog = adapters ?? (await loadNativeHookAdapters());
   const audit = await auditSpecsHooks({ sourceRoot, irRoot, hooksRoot });
   const locationsById = sourceLocations(audit);
   const manifest = [...(audit.hookManifest ?? [])].sort((left, right) =>
@@ -1033,7 +1062,12 @@ export async function classifyNativeHooks({
       }
       moduleSource = moduleSourceCache.get(moduleName) || undefined;
     }
-    const analysis = classifyHookBody({ body, field, moduleSource });
+    const analysis = classifyHookBody({
+      body,
+      field,
+      moduleSource,
+      adapters: adapterCatalog,
+    });
     const hook = {
       id: entry.id,
       file: entry.file,

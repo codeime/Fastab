@@ -73,7 +73,7 @@ jobs:
         run: node scripts/capture-hook-baseline.mjs --check
 
       - name: Test native inventory and test-only source reference
-        run: node --test --test-concurrency=1 scripts/classify-native-hooks.test.mjs scripts/reference-audit-worker.test.mjs scripts/capture-hook-reference.test.mjs scripts/capture-hook-reference-batch.test.mjs scripts/capture-typed-trigger-reference.test.mjs
+        run: node --test --test-concurrency=1 scripts/native-hook-adapters.test.mjs scripts/classify-native-hooks.test.mjs scripts/reference-audit-worker.test.mjs scripts/capture-hook-reference.test.mjs scripts/capture-hook-reference-batch.test.mjs scripts/capture-typed-trigger-reference.test.mjs
 
       - name: Build packages
         run: pnpm build

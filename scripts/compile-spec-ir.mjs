@@ -74,6 +74,13 @@ import {
   writePairMarker,
 } from "./spec-pair.mjs";
 import {
+  allowUnadaptedHooks,
+  formatUnadaptedHookError,
+  isRegisteredNativeAdapter,
+  loadNativeHookAdapters,
+  SIDE_EFFECT_FREE_ADAPTER_FIELDS,
+} from "./native-hook-adapters.mjs";
+import {
   compileTypedHook,
   TYPED_HOOK_CONTRACTS,
   TYPED_HOOK_SIDECAR_FIELDS,
@@ -454,9 +461,12 @@ async function writeTypedHookSidecar({
   compilerBindings,
   manifestHooks,
   moduleSources,
+  enforceNamedAdapters = false,
 }) {
   const typedHooks = new Map();
   const fields = new Set(TYPED_HOOK_SIDECAR_FIELDS);
+  const adapterCatalog = await loadNativeHookAdapters();
+  const unadapted = [];
   const bindings = compilerBindings
     .filter((binding) => fields.has(binding.field))
     .sort((left, right) => comparePath(left.id, right.id));
@@ -489,7 +499,25 @@ async function writeTypedHookSidecar({
       sourceField: binding.field,
       moduleSource,
     });
-    if (!descriptor) continue;
+    if (!descriptor) {
+      if (
+        isRegisteredNativeAdapter(
+          binding.functionBodySha256,
+          binding.field,
+          adapterCatalog,
+        )
+      ) {
+        continue;
+      }
+      if (SIDE_EFFECT_FREE_ADAPTER_FIELDS.includes(binding.field)) {
+        unadapted.push({
+          id: binding.id,
+          field: binding.field,
+          bodySha256: binding.functionBodySha256,
+        });
+      }
+      continue;
+    }
     const entry = {
       module: manifestEntry.module,
       moduleSha256: manifestEntry.moduleSha256,
@@ -524,6 +552,13 @@ async function writeTypedHookSidecar({
     );
   }
   await writeOutputFile(stagedOutDir, TYPED_HOOK_SIDECAR, text);
+  if (
+    enforceNamedAdapters &&
+    unadapted.length > 0 &&
+    !allowUnadaptedHooks()
+  ) {
+    throw new Error(formatUnadaptedHookError(unadapted));
+  }
   return typedHooks.size;
 }
 
@@ -1556,6 +1591,7 @@ async function writeClosurePreservingHookModules({
   srcDir,
   stagedOutDir,
   compiledSpecs,
+  enforceNamedAdapters = false,
 }) {
   // The audit remains a pre-manifest completeness gate, but it is deliberately
   // not the source of the module mapping. The compiler already has the actual
@@ -1714,6 +1750,7 @@ async function writeClosurePreservingHookModules({
     compilerBindings,
     manifestHooks,
     moduleSources,
+    enforceNamedAdapters,
   });
   return { modules: moduleCount, hooks: hookCount, typedHooks };
 }
@@ -1847,6 +1884,7 @@ async function assertManagedIrOutput(
 async function compileSpecsIrUnlocked({
   srcDir = join(repoDir, "bundle", "specs"),
   outDir = join(repoDir, "bundle", "specs-ir"),
+  enforceNamedAdapters = false,
 } = {}) {
   // The caller may supply an arbitrary output directory. Check every existing
   // parent (including a dangling final link) before mkdir/rename so a compile
@@ -2039,6 +2077,7 @@ async function compileSpecsIrUnlocked({
       srcDir,
       stagedOutDir,
       compiledSpecs,
+      enforceNamedAdapters,
     });
 
     const commandFiles = new Map();
@@ -2188,9 +2227,10 @@ async function compileSpecsIrUnlocked({
 export async function compileSpecsIr({
   srcDir = join(repoDir, "bundle", "specs"),
   outDir = join(repoDir, "bundle", "specs-ir"),
+  enforceNamedAdapters = false,
 } = {}) {
   return withPairLock(pairLockPath, () =>
-    compileSpecsIrUnlocked({ srcDir, outDir }),
+    compileSpecsIrUnlocked({ srcDir, outDir, enforceNamedAdapters }),
   );
 }
 
@@ -2399,7 +2439,11 @@ if (isMain) {
   const srcDir = process.env.EC_SPECS_SRC || canonicalSourceDir;
   const outDir = process.env.EC_SPECS_IR || join(repoDir, "bundle", "specs-ir");
   await assertCliDestinationPair(srcDir, outDir);
-  await compileSpecsIr({ srcDir, outDir });
+  await compileSpecsIr({
+    srcDir,
+    outDir,
+    enforceNamedAdapters: !allowUnadaptedHooks(),
+  });
   if (typedReport) {
     printTypedHookReport(await typedHookCompileReport({ irRoot: outDir }));
   }
