@@ -38,6 +38,10 @@ use crate::{AUTOCOMPLETE_ID, AUTOCOMPLETE_WINDOW_TITLE, DASHBOARD_ID, EventLoopP
 
 pub const DEFAULT_CARET_WIDTH: f64 = 10.0;
 
+fn should_refresh_x_term_cache(bundle_id: &str) -> bool {
+    Terminal::from_bundle_id(bundle_id).is_some_and(|terminal| terminal.is_xterm())
+}
+
 /// IME-only terminals (Otty, Ghostty, Kitty, …) report the caret through IMK,
 /// not AX, so an in-window focused-element change is noise we cannot follow
 /// rather than a pane switch we should park the list for. No built-in terminal
@@ -572,11 +576,17 @@ impl PlatformStateImpl {
                     return Ok(());
                 }
 
-                // The overlay is anchored to one pane. A focused xterm helper
-                // textarea is that pane's caret — keep / retarget the cache
-                // instead of forcing a ~60 ms window walk on the next key.
-                // Anything else (sidebar, editor) still drops the cache.
-                focused_window.refresh_x_term_cache_from(&element);
+                // The overlay is anchored to one pane. VS Code / Cursor /
+                // Windsurf: a focused helper textarea is that pane's caret —
+                // keep / retarget the cache instead of a ~60 ms window walk
+                // on the next key. Anything else in that window still drops
+                // it. IME and other AX terminals never use this cache, so
+                // skip the extra AX queries and just clear it.
+                if should_refresh_x_term_cache(focused_window.bundle_id()) {
+                    focused_window.refresh_x_term_cache_from(&element);
+                } else {
+                    focused_window.invalidate_x_term_cache();
+                }
                 // Otty / Ghostty / Kitty do not expose an AX caret. Their IME
                 // controller also fires element-changed noise (palette switch,
                 // IMK activate/deactivate). Hiding here parks the list, and
@@ -712,7 +722,10 @@ pub const fn autocomplete_active() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{XTermCacheUpdate, hide_overlay_on_element_change, x_term_cache_update_for_focused_element};
+    use super::{
+        XTermCacheUpdate, hide_overlay_on_element_change, should_refresh_x_term_cache,
+        x_term_cache_update_for_focused_element,
+    };
 
     #[test]
     fn xterm_helper_textarea_keeps_the_caret_cache() {
@@ -736,6 +749,15 @@ mod tests {
             x_term_cache_update_for_focused_element(true, None),
             XTermCacheUpdate::Invalidate
         );
+    }
+
+    #[test]
+    fn only_xterm_terminals_refresh_the_caret_cache() {
+        assert!(should_refresh_x_term_cache("com.microsoft.VSCode"));
+        assert!(should_refresh_x_term_cache("com.todesktop.230313mzl4w4u92"));
+        assert!(!should_refresh_x_term_cache("io.appmakes.otty"));
+        assert!(!should_refresh_x_term_cache("com.mitchellh.ghostty"));
+        assert!(!should_refresh_x_term_cache("com.googlecode.iterm2"));
     }
 
     #[test]
