@@ -87,7 +87,7 @@ impl EngineArgs {
                     buffer: buffer.clone(),
                     cwd: cwd.clone(),
                     cursor: None,
-                    include_history: false,
+                    include_history: !compare,
                     ..CompleteRequest::default()
                 };
                 if compare {
