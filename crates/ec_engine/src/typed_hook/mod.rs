@@ -16,9 +16,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 
 use crate::hook_types::ScriptCommand;
@@ -628,6 +630,80 @@ struct TypedHookContracts {
     generate_spec: TypedHookContract,
 }
 
+/// A catalog descriptor kept as raw JSON until the first evaluation.
+///
+/// Compile and `--check` still validate every body. The engine only builds
+/// the `TypedHookIr` tree for hooks that actually run (G1 in
+/// `docs/memory-goals.md`).
+#[derive(Debug)]
+pub(crate) struct LazyTypedHookIr {
+    raw: Box<RawValue>,
+    parsed: OnceLock<TypedHookIr>,
+}
+
+impl LazyTypedHookIr {
+    pub(crate) fn get(&self) -> TypedHookResult<&TypedHookIr> {
+        if let Some(descriptor) = self.parsed.get() {
+            return Ok(descriptor);
+        }
+        let descriptor = parse_typed_hook_ir_bytes(self.raw.get().as_bytes())?;
+        let _ = self.parsed.set(descriptor);
+        Ok(self.parsed.get().expect("descriptor was just stored"))
+    }
+
+    pub(crate) fn is_parsed(&self) -> bool {
+        self.parsed.get().is_some()
+    }
+}
+
+impl From<TypedHookIr> for LazyTypedHookIr {
+    fn from(descriptor: TypedHookIr) -> Self {
+        let raw = serde_json::value::to_raw_value(&descriptor).expect("TypedHookIr always serializes to JSON");
+        let parsed = OnceLock::new();
+        let _ = parsed.set(descriptor);
+        Self { raw, parsed }
+    }
+}
+
+impl Clone for LazyTypedHookIr {
+    fn clone(&self) -> Self {
+        let parsed = OnceLock::new();
+        if let Some(descriptor) = self.parsed.get() {
+            let _ = parsed.set(descriptor.clone());
+        }
+        Self {
+            raw: RawValue::from_string(self.raw.get().to_owned()).expect("stored descriptor JSON is valid"),
+            parsed,
+        }
+    }
+}
+
+impl PartialEq for LazyTypedHookIr {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.get(), other.get()) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => self.raw.get() == other.raw.get(),
+        }
+    }
+}
+
+impl Eq for LazyTypedHookIr {}
+
+impl Serialize for LazyTypedHookIr {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.raw.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for LazyTypedHookIr {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self {
+            raw: Box::<RawValue>::deserialize(deserializer)?,
+            parsed: OnceLock::new(),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TypedHookCatalogEntry {
@@ -639,7 +715,7 @@ pub(crate) struct TypedHookCatalogEntry {
     pub(crate) source_field: String,
     #[serde(rename = "functionBodySha256")]
     pub(crate) function_body_sha256: String,
-    pub(crate) descriptor: TypedHookIr,
+    pub(crate) descriptor: LazyTypedHookIr,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -663,6 +739,12 @@ pub(crate) struct TypedHookCatalog {
     /// Absent from older sidecars; empty means every hook is typed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) adapters: BTreeMap<String, TypedHookAdapterBinding>,
+}
+
+impl TypedHookCatalog {
+    pub(crate) fn parsed_descriptor_count(&self) -> usize {
+        self.hooks.values().filter(|entry| entry.descriptor.is_parsed()).count()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -920,7 +1002,9 @@ pub(crate) fn parse_typed_hook_catalog_bytes(bytes: &[u8]) -> TypedHookResult<Ty
     }
     let catalog = serde_json::from_slice::<TypedHookCatalog>(bytes)
         .map_err(|error| TypedHookError::new(format!("typed hook catalog schema: {error}")))?;
-    validate_typed_hook_catalog(&catalog)?;
+    // Production load validates the index only. Descriptor trees are parsed
+    // on first use so an idle engine does not hold 3136 IR graphs (G1).
+    validate_typed_hook_catalog_index(&catalog)?;
     Ok(catalog)
 }
 
@@ -1391,6 +1475,17 @@ fn validate_sidecar_contract(
 }
 
 fn validate_typed_hook_catalog(catalog: &TypedHookCatalog) -> TypedHookResult<()> {
+    validate_typed_hook_catalog_index(catalog)?;
+    for entry in catalog.hooks.values() {
+        let descriptor = entry.descriptor.get()?;
+        let descriptor_value = serde_json::to_value(descriptor)
+            .map_err(|error| TypedHookError::new(format!("typed hook descriptor schema: {error}")))?;
+        ensure_descriptor_size(&descriptor_value)?;
+    }
+    Ok(())
+}
+
+fn validate_typed_hook_catalog_index(catalog: &TypedHookCatalog) -> TypedHookResult<()> {
     if catalog.version != IR_VERSION {
         return Err(TypedHookError::new(format!(
             "typed hook catalog version {} is unsupported",
@@ -1479,10 +1574,11 @@ fn validate_typed_hook_catalog(catalog: &TypedHookCatalog) -> TypedHookResult<()
                 "typed hook {id:?} sourceField must be one of the sidecar contracts"
             )));
         }
-        validate_typed_hook_ir(&entry.descriptor)?;
-        let descriptor_value = serde_json::to_value(&entry.descriptor)
-            .map_err(|error| TypedHookError::new(format!("typed hook descriptor schema: {error}")))?;
-        ensure_descriptor_size(&descriptor_value)?;
+        if entry.descriptor.raw.get().len() > MAX_SERIALIZED_DESCRIPTOR_BYTES {
+            return Err(TypedHookError::new(format!(
+                "typed hook descriptor exceeds {MAX_SERIALIZED_DESCRIPTOR_BYTES} bytes"
+            )));
+        }
     }
     for (id, entry) in &catalog.adapters {
         validate_hook_id(id)?;
@@ -1645,7 +1741,7 @@ pub(crate) fn evaluate_typed_hook_by_id(
             "typed hook {hook_id:?} is not a trigger catalog entry"
         )));
     }
-    evaluate_typed_trigger(&entry.descriptor, search_term, previous_search_term)
+    evaluate_typed_trigger(entry.descriptor.get()?, search_term, previous_search_term)
 }
 
 fn ensure_descriptor_size(value: &JsonValue) -> TypedHookResult<()> {
@@ -4252,7 +4348,9 @@ mod tests {
 
         let bytes = serde_json::to_vec(&value).expect("catalog JSON");
         let from_bytes = parse_typed_hook_catalog_bytes(&bytes).expect("catalog bytes");
+        assert_eq!(from_bytes.parsed_descriptor_count(), 0);
         assert_eq!(from_bytes, catalog);
+        assert_eq!(from_bytes.parsed_descriptor_count(), 2);
 
         let descriptor = parse_expression(bool_value(true));
         let descriptor_bytes = serde_json::to_vec(&descriptor).expect("descriptor JSON");
@@ -4319,6 +4417,17 @@ mod tests {
         valid["hooks"]["hook#one"]["functionBodySha256"] = json!("0".repeat(63));
         assert!(parse_typed_hook_catalog(&valid).is_err());
 
+        let mut unknown_on_load = catalog_value(serde_json::Map::from_iter([(
+            "hook#one".to_owned(),
+            catalog_entry(bool_value(true)),
+        )]));
+        unknown_on_load["hooks"]["hook#one"]["descriptor"]["expr"]["extra"] = json!(true);
+        let delayed = serde_json::to_vec(&unknown_on_load).expect("catalog JSON");
+        let catalog = parse_typed_hook_catalog_bytes(&delayed).expect("index accepts a raw descriptor");
+        assert_eq!(catalog.parsed_descriptor_count(), 0);
+        assert!(evaluate_typed_hook_by_id(&catalog, "hook#one", "", "").is_err());
+        assert_eq!(catalog.parsed_descriptor_count(), 0);
+
         let unpaired_surrogate = br#"{"version":1,"kind":"typed-hook-expression","sourceField":"trigger","resultType":"bool","params":[{"index":0,"type":"string"},{"index":1,"type":"string"}],"expr":{"op":"strict-eq","left":{"op":"string","value":"\ud800"},"right":{"op":"string","value":"x"}}}"#;
         assert!(parse_typed_hook_ir_bytes(unpaired_surrogate).is_err());
     }
@@ -4380,7 +4489,7 @@ mod tests {
                     path: "root.args[0]".to_owned(),
                     source_field: SOURCE_FIELD.to_owned(),
                     function_body_sha256: "b".repeat(64),
-                    descriptor: parse_expression(bool_value(true)),
+                    descriptor: parse_expression(bool_value(true)).into(),
                 },
             );
         }
@@ -4392,6 +4501,29 @@ mod tests {
             adapters: BTreeMap::new(),
         };
         assert!(validate_typed_hook_catalog(&catalog).is_err());
+    }
+
+    #[test]
+    fn production_sidecar_stays_unparsed_until_a_hook_runs() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bundle/specs-ir/typed-hooks.json");
+        let Ok(bytes) = fs::read(&path) else {
+            return;
+        };
+        let catalog = parse_typed_hook_catalog_bytes(&bytes).expect("production sidecar");
+        assert!(
+            catalog.hooks.len() > 1_000,
+            "expected the bundled catalog, got {}",
+            catalog.hooks.len()
+        );
+        assert_eq!(
+            catalog.parsed_descriptor_count(),
+            0,
+            "loading typed-hooks.json must not materialize every IR tree"
+        );
+        let hook_id = catalog.hooks.keys().next().expect("catalog is non-empty").clone();
+        let entry = catalog.hooks.get(&hook_id).expect("first hook");
+        let _ = entry.descriptor.get();
+        assert_eq!(catalog.parsed_descriptor_count(), 1);
     }
 
     fn typed_trigger_reference_value() -> JsonValue {
@@ -4409,8 +4541,9 @@ mod tests {
             let entry = baseline.catalog.hooks.get(hook_id).expect("catalog hook");
             assert_eq!(expected_values.len(), baseline.cases.len());
             for (index, case) in baseline.cases.iter().enumerate() {
-                let actual = evaluate_typed_trigger(&entry.descriptor, &case.args[0], &case.args[1])
-                    .expect("native typed trigger evaluation");
+                let actual =
+                    evaluate_typed_trigger(entry.descriptor.get().expect("lazy ir"), &case.args[0], &case.args[1])
+                        .expect("native typed trigger evaluation");
                 assert_eq!(actual, expected_values[index], "hook {hook_id}, case {}", case.id);
             }
         }
@@ -5064,7 +5197,7 @@ mod tests {
             assert_eq!(expected_values.len(), baseline.cases.len());
             for (index, case) in baseline.cases.iter().enumerate() {
                 let expected = &expected_values[index];
-                match evaluate_typed_hook_json(&entry.descriptor, &case.args) {
+                match evaluate_typed_hook_json(entry.descriptor.get().expect("lazy ir"), &case.args) {
                     Ok(actual) => {
                         assert!(
                             !typed_eval_error_shape(expected),

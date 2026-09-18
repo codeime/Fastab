@@ -4,7 +4,6 @@
 //! and returns empty — there is no QuickJS fallback.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -17,51 +16,23 @@ use crate::process::{self, CommandError};
 use crate::runtime::Suggestion;
 use crate::snapshot::DirectorySnapshot;
 use crate::typed_hook::{
-    TypedExecRequest, TypedExecResult, TypedHookCatalog, TypedHookContext, TypedHookIr, evaluate_typed_alias,
-    evaluate_typed_custom, evaluate_typed_filter_template_suggestions, evaluate_typed_generate_spec,
-    evaluate_typed_get_query_term, evaluate_typed_load_spec, evaluate_typed_post_process, evaluate_typed_script,
-    evaluate_typed_trigger, lookup_typed_hook, parse_typed_hook_catalog_bytes, suggestions_from_typed_json,
+    TypedExecRequest, TypedExecResult, TypedHookCatalog, TypedHookContext, TypedHookError, TypedHookIr,
+    evaluate_typed_alias, evaluate_typed_custom, evaluate_typed_filter_template_suggestions,
+    evaluate_typed_generate_spec, evaluate_typed_get_query_term, evaluate_typed_load_spec, evaluate_typed_post_process,
+    evaluate_typed_script, evaluate_typed_trigger, lookup_typed_hook, parse_typed_hook_catalog_bytes,
+    suggestions_from_typed_json,
 };
 
 const TYPED_HOOKS_FILE: &str = "typed-hooks.json";
 
-#[derive(Debug, Clone)]
-struct HookMeta {
-    field: String,
-    body_sha256: String,
-}
-
 pub struct NativeHooks {
     catalog: Option<TypedHookCatalog>,
-    hooks: HashMap<String, HookMeta>,
 }
 
 impl NativeHooks {
     #[cfg(test)]
     pub(crate) fn from_catalog(catalog: crate::typed_hook::TypedHookCatalog) -> Self {
-        let mut hooks = HashMap::new();
-        for (id, entry) in catalog.hooks.iter() {
-            hooks.insert(
-                id.clone(),
-                HookMeta {
-                    field: entry.source_field.clone(),
-                    body_sha256: entry.function_body_sha256.clone(),
-                },
-            );
-        }
-        for (id, entry) in catalog.adapters.iter() {
-            hooks.insert(
-                id.clone(),
-                HookMeta {
-                    field: entry.source_field.clone(),
-                    body_sha256: entry.function_body_sha256.clone(),
-                },
-            );
-        }
-        Self {
-            catalog: Some(catalog),
-            hooks,
-        }
+        Self { catalog: Some(catalog) }
     }
 
     pub fn load(specs_dir: &Path, snapshot: Option<&DirectorySnapshot>) -> Self {
@@ -75,28 +46,7 @@ impl NativeHooks {
                     None
                 },
             });
-        let mut hooks = HashMap::new();
-        if let Some(catalog) = &catalog {
-            for (id, entry) in catalog.hooks.iter() {
-                hooks.insert(
-                    id.clone(),
-                    HookMeta {
-                        field: entry.source_field.clone(),
-                        body_sha256: entry.function_body_sha256.clone(),
-                    },
-                );
-            }
-            for (id, entry) in catalog.adapters.iter() {
-                hooks.insert(
-                    id.clone(),
-                    HookMeta {
-                        field: entry.source_field.clone(),
-                        body_sha256: entry.function_body_sha256.clone(),
-                    },
-                );
-            }
-        }
-        Self { catalog, hooks }
+        Self { catalog }
     }
 }
 
@@ -336,37 +286,56 @@ pub fn dispatch_generate_spec(hook_id: &str, tokens: &[String], cwd: &str, timeo
     native_generate_spec(hook_id, tokens, cwd, timeout)
 }
 
-fn typed_entry<'a>(native: &'a NativeHooks, hook_id: &str) -> Option<&'a TypedHookIr> {
-    lookup_typed_hook(native.catalog.as_ref()?, hook_id).map(|entry| &entry.descriptor)
+fn typed_entry<'a>(native: &'a NativeHooks, hook_id: &str) -> Result<Option<&'a TypedHookIr>, TypedHookError> {
+    let Some(catalog) = native.catalog.as_ref() else {
+        return Ok(None);
+    };
+    match lookup_typed_hook(catalog, hook_id) {
+        Some(entry) => entry.descriptor.get().map(Some),
+        None => Ok(None),
+    }
 }
 
 fn adapter_sha<'a>(native: &'a NativeHooks, hook_id: &str, field: &str) -> Option<&'a str> {
-    let meta = native.hooks.get(hook_id)?;
-    (meta.field == field).then_some(meta.body_sha256.as_str())
+    let entry = native.catalog.as_ref()?.adapters.get(hook_id)?;
+    (entry.source_field == field).then_some(entry.function_body_sha256.as_str())
+}
+
+fn finish_typed<T>(
+    native: &NativeHooks,
+    hook_id: &str,
+    run: impl FnOnce(&TypedHookIr) -> Result<T, TypedHookError>,
+    empty: impl Fn(&T) -> bool,
+) -> Option<T> {
+    match typed_entry(native, hook_id) {
+        Ok(Some(descriptor)) => match run(descriptor) {
+            Ok(value) => finish_option(hook_id, Some(value), empty),
+            Err(error) => eval_err(hook_id, &error),
+        },
+        Ok(None) => {
+            let _ = missing(hook_id);
+            None
+        },
+        Err(error) => eval_err(hook_id, &error),
+    }
 }
 
 fn native_trigger(hook_id: &str, search_term: &str, previous: &str) -> Option<bool> {
-    let native = native()?;
-    if let Some(descriptor) = typed_entry(&native, hook_id) {
-        return match evaluate_typed_trigger(descriptor, search_term, previous) {
-            Ok(value) => finish_option(hook_id, Some(value), |_| false),
-            Err(error) => eval_err(hook_id, &error),
-        };
-    }
-    let _ = missing(hook_id);
-    None
+    finish_typed(
+        native()?.as_ref(),
+        hook_id,
+        |descriptor| evaluate_typed_trigger(descriptor, search_term, previous),
+        |_| false,
+    )
 }
 
 fn native_get_query_term(hook_id: &str, search_term: &str) -> Option<String> {
-    let native = native()?;
-    if let Some(descriptor) = typed_entry(&native, hook_id) {
-        return match evaluate_typed_get_query_term(descriptor, search_term) {
-            Ok(value) => finish_option(hook_id, Some(value), String::is_empty),
-            Err(error) => eval_err(hook_id, &error),
-        };
-    }
-    let _ = missing(hook_id);
-    None
+    finish_typed(
+        native()?.as_ref(),
+        hook_id,
+        |descriptor| evaluate_typed_get_query_term(descriptor, search_term),
+        String::is_empty,
+    )
 }
 
 fn native_post_process(hook_id: &str, stdout: &str, tokens: &[String], script: &[String]) -> Option<Vec<Suggestion>> {
@@ -383,26 +352,21 @@ fn native_post_process(hook_id: &str, stdout: &str, tokens: &[String], script: &
     {
         return json_suggestions(hook_id, json, None);
     }
-    if let Some(descriptor) = typed_entry(&native, hook_id) {
-        return match evaluate_typed_post_process(descriptor, stdout, tokens) {
-            Ok(value) => finish_option(hook_id, Some(value), Vec::is_empty),
-            Err(error) => eval_err(hook_id, &error),
-        };
-    }
-    let _ = missing(hook_id);
-    None
+    finish_typed(
+        &native,
+        hook_id,
+        |descriptor| evaluate_typed_post_process(descriptor, stdout, tokens),
+        Vec::is_empty,
+    )
 }
 
 fn native_script(hook_id: &str, tokens: &[String]) -> Option<ScriptCommand> {
-    let native = native()?;
-    if let Some(descriptor) = typed_entry(&native, hook_id) {
-        return match evaluate_typed_script(descriptor, tokens) {
-            Ok(value) => finish_option(hook_id, Some(value), |command| command.command.is_empty()),
-            Err(error) => eval_err(hook_id, &error),
-        };
-    }
-    let _ = missing(hook_id);
-    None
+    finish_typed(
+        native()?.as_ref(),
+        hook_id,
+        |descriptor| evaluate_typed_script(descriptor, tokens),
+        |command| command.command.is_empty(),
+    )
 }
 
 fn native_filter(hook_id: &str, suggestions: &[Suggestion], tokens: &[String]) -> Option<Vec<Suggestion>> {
@@ -431,14 +395,12 @@ fn native_filter(hook_id: &str, suggestions: &[Suggestion], tokens: &[String]) -
             return json_suggestions(hook_id, json, None);
         }
     }
-    if let Some(descriptor) = typed_entry(&native, hook_id) {
-        return match evaluate_typed_filter_template_suggestions(descriptor, suggestions) {
-            Ok(value) => finish_option(hook_id, Some(value), Vec::is_empty),
-            Err(error) => eval_err(hook_id, &error),
-        };
-    }
-    let _ = missing(hook_id);
-    None
+    finish_typed(
+        &native,
+        hook_id,
+        |descriptor| evaluate_typed_filter_template_suggestions(descriptor, suggestions),
+        Vec::is_empty,
+    )
 }
 
 fn native_custom(
@@ -459,49 +421,51 @@ fn native_custom(
             return json_suggestions(hook_id, json, Some(deadline));
         }
     }
-    if let Some(descriptor) = typed_entry(&native, hook_id) {
-        let typed_ctx = typed_context(&context);
-        let exec = live_typed_exec(cwd, timeout);
-        let deadline = Some(deadline);
-        return match evaluate_typed_custom(descriptor, tokens, &typed_ctx, &exec, deadline) {
-            Ok(value) => finish_option(hook_id, Some(value), Vec::is_empty),
-            Err(error) => eval_err(hook_id, &error),
-        };
-    }
-    let _ = missing(hook_id);
-    None
+    finish_typed(
+        &native,
+        hook_id,
+        |descriptor| {
+            let typed_ctx = typed_context(&context);
+            let exec = live_typed_exec(cwd, timeout);
+            evaluate_typed_custom(descriptor, tokens, &typed_ctx, &exec, Some(deadline))
+        },
+        Vec::is_empty,
+    )
 }
 
 fn native_alias(hook_id: &str, token: &str, cwd: &str, timeout: Duration) -> Option<String> {
     let native = native()?;
     let context = HookContext::from_shell(cwd, &session_shell(), token, false);
-    if let Some(descriptor) = typed_entry(&native, hook_id) {
-        let typed_ctx = typed_context(&context);
-        let exec = live_typed_exec(cwd, timeout);
-        let deadline = Some(hook_deadline(timeout));
-        return match evaluate_typed_alias(descriptor, token, &typed_ctx, &exec, deadline) {
-            Ok(value) => finish_option(hook_id, Some(value), String::is_empty),
-            Err(error) => eval_err(hook_id, &error),
-        };
-    }
-    let _ = missing(hook_id);
-    None
+    finish_typed(
+        &native,
+        hook_id,
+        |descriptor| {
+            let typed_ctx = typed_context(&context);
+            let exec = live_typed_exec(cwd, timeout);
+            evaluate_typed_alias(descriptor, token, &typed_ctx, &exec, Some(hook_deadline(timeout)))
+        },
+        String::is_empty,
+    )
 }
 
 fn native_load_spec(hook_id: &str, token: &str, cwd: &str, timeout: Duration) -> Option<Spec> {
     let native = native()?;
     let context = HookContext::from_shell(cwd, &session_shell(), token, false);
-    if let Some(descriptor) = typed_entry(&native, hook_id) {
-        let typed_ctx = typed_context(&context);
-        let exec = live_typed_exec(cwd, timeout);
-        let deadline = Some(hook_deadline(timeout));
-        return match evaluate_typed_load_spec(descriptor, token, &typed_ctx, &exec, deadline) {
-            Ok(json) => spec_from_json(hook_id, json),
-            Err(error) => eval_err(hook_id, &error),
-        };
+    match typed_entry(&native, hook_id) {
+        Ok(Some(descriptor)) => {
+            let typed_ctx = typed_context(&context);
+            let exec = live_typed_exec(cwd, timeout);
+            match evaluate_typed_load_spec(descriptor, token, &typed_ctx, &exec, Some(hook_deadline(timeout))) {
+                Ok(json) => spec_from_json(hook_id, json),
+                Err(error) => eval_err(hook_id, &error),
+            }
+        },
+        Ok(None) => {
+            let _ = missing(hook_id);
+            None
+        },
+        Err(error) => eval_err(hook_id, &error),
     }
-    let _ = missing(hook_id);
-    None
 }
 
 fn native_generate_spec(hook_id: &str, tokens: &[String], cwd: &str, timeout: Duration) -> Option<Spec> {
@@ -514,17 +478,21 @@ fn native_generate_spec(hook_id: &str, tokens: &[String], cwd: &str, timeout: Du
             return spec_from_json_result(hook_id, json, Some(deadline));
         }
     }
-    if let Some(descriptor) = typed_entry(&native, hook_id) {
-        let typed_ctx = typed_context(&context);
-        let exec = live_typed_exec(cwd, timeout);
-        let deadline = Some(deadline);
-        return match evaluate_typed_generate_spec(descriptor, tokens, &typed_ctx, &exec, deadline) {
-            Ok(json) => spec_from_json(hook_id, json),
-            Err(error) => eval_err(hook_id, &error),
-        };
+    match typed_entry(&native, hook_id) {
+        Ok(Some(descriptor)) => {
+            let typed_ctx = typed_context(&context);
+            let exec = live_typed_exec(cwd, timeout);
+            match evaluate_typed_generate_spec(descriptor, tokens, &typed_ctx, &exec, Some(deadline)) {
+                Ok(json) => spec_from_json(hook_id, json),
+                Err(error) => eval_err(hook_id, &error),
+            }
+        },
+        Ok(None) => {
+            let _ = missing(hook_id);
+            None
+        },
+        Err(error) => eval_err(hook_id, &error),
     }
-    let _ = missing(hook_id);
-    None
 }
 
 fn json_suggestions(
@@ -923,10 +891,7 @@ mod tests {
 
     #[test]
     fn native_miss_records_source_missing_and_returns_empty() {
-        let native = Arc::new(NativeHooks {
-            catalog: None,
-            hooks: HashMap::new(),
-        });
+        let native = Arc::new(NativeHooks { catalog: None });
         let _bound = bind_native(Arc::clone(&native));
         assert!(dispatch_trigger("missing#trigger#0", "a", "b").is_none());
         let record = last_diagnostic().expect("native miss records a diagnostic");
