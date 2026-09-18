@@ -1354,6 +1354,11 @@ fn git_flow_branches(tokens: &[String], exec: &AdapterExec<'_>) -> AdapterResult
     Ok(JsonValue::Array(out))
 }
 
+/// Fig's shared `ai({ name, prompt, message, … })` factory. Disabled matches
+/// the JS early return. Enabled still returns `[]`: the body then called
+/// site-specific `prompt`/`message` closures and `fig _ request --route
+/// /ai/chat`, which this fork does not ship. Reconstructing those closures
+/// without the route would still produce no rows.
 fn fig_ai(tokens: &[String], exec: &AdapterExec<'_>, context: &HookContext) -> AdapterResult {
     let _ = (tokens, context);
     let enabled = exec_object(exec, "fig", ["settings", "--format", "json", "autocomplete.ai.enabled"])?;

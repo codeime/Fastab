@@ -2679,6 +2679,9 @@ fn suggestions_to_typed_json(suggestions: &[Suggestion]) -> JsonValue {
 }
 
 pub(crate) fn suggestions_from_typed_json(value: &JsonValue) -> TypedHookResult<Vec<Suggestion>> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
     let Some(items) = value.as_array() else {
         return Err(TypedHookError::new("typed suggestion result must be an array"));
     };
@@ -5107,6 +5110,12 @@ mod tests {
         value.as_object_mut().expect("object").remove("unexpected");
         value["field"] = json!("custom");
         assert!(parse_typed_field_reference(&value).is_err());
+    }
+
+    #[test]
+    fn suggestions_from_typed_json_treats_null_as_empty() {
+        assert_eq!(suggestions_from_typed_json(&JsonValue::Null).expect("null"), Vec::<Suggestion>::new());
+        assert!(suggestions_from_typed_json(&json!({"name": "x"})).is_err());
     }
 
     #[test]

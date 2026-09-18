@@ -486,13 +486,23 @@ pub(super) fn tldr_pages(stdout: &str) -> AdapterResult {
     ))
 }
 
+/// rustup's `generateSpec` merges `+nightly`-style options onto the root.
+/// `words()` keeps those (they do not start with `-`), so site checks have
+/// to skip them or `rustup +nightly toolchain uninstall` looks like `default`.
+fn rustup_subcommand_words(site: HookSite<'_>) -> Vec<&str> {
+    site.words()
+        .into_iter()
+        .skip_while(|word| word.starts_with('+'))
+        .collect()
+}
+
 /// `5cde47b7…` rustup toolchains, `i({excludeShort})`. Nine sites list the
 /// channel prefixes (`stable`, `nightly`, …) ahead of the full names;
 /// `toolchain uninstall` passes `excludeShort: true` and lists only the
 /// full names — a bare channel there would remove whichever toolchain
 /// it currently resolves to.
 pub(super) fn rustup_toolchains(stdout: &str, site: HookSite<'_>) -> AdapterResult {
-    let words = site.words();
+    let words = rustup_subcommand_words(site);
     let exclude_short = words.first() == Some(&"toolchain") && words.get(1) == Some(&"uninstall");
     let names: Vec<String> = js_split_lines(stdout)
         .into_iter()
@@ -522,7 +532,7 @@ pub(super) fn rustup_toolchains(stdout: &str, site: HookSite<'_>) -> AdapterResu
 /// `target add`, `toolchain install --target` and `set default-host`
 /// list every target.
 pub(super) fn rustup_targets(stdout: &str, site: HookSite<'_>) -> AdapterResult {
-    let words = site.words();
+    let words = rustup_subcommand_words(site);
     let installed_only = words.first() == Some(&"target") && words.get(1) == Some(&"remove");
     Ok(JsonValue::Array(
         js_split_lines(stdout)
@@ -1817,6 +1827,15 @@ mod tests {
         );
         let list = tokens(&["rustup", "toolchain", "install", ""]);
         assert_eq!(rows(rustup_toolchains(stdout, HookSite::tokens(&list))).len(), 5);
+        let list = tokens(&["rustup", "+nightly", "toolchain", "uninstall", ""]);
+        assert_eq!(
+            names(&rows(rustup_toolchains(stdout, HookSite::tokens(&list)))),
+            [
+                "stable-aarch64-apple-darwin",
+                "nightly-aarch64-apple-darwin",
+                "nightly-x86_64-apple-darwin"
+            ]
+        );
     }
 
     #[test]
@@ -1827,8 +1846,14 @@ mod tests {
             names(&rows(rustup_targets(stdout, HookSite::tokens(&list)))),
             ["aarch64-apple-darwin", "x86_64-apple-darwin"]
         );
+        let list = tokens(&["rustup", "+nightly", "target", "remove", ""]);
+        assert_eq!(
+            names(&rows(rustup_targets(stdout, HookSite::tokens(&list)))),
+            ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+        );
         for site in [
             &["rustup", "target", "add", ""][..],
+            &["rustup", "+nightly", "target", "add", ""][..],
             &["rustup", "toolchain", "install", "--target", ""],
             &["rustup", "set", "default-host", ""],
         ] {

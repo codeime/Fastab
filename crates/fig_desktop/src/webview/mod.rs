@@ -38,11 +38,9 @@ fn map_theme(theme: &str) -> Option<TaoTheme> {
 }
 
 pub type FigIdMap = HashSet<WindowId, FnvBuildHasher>;
-pub type WryIdMap = HashSet<u64, FnvBuildHasher>;
 
 pub struct WebviewManager {
     pub(crate) fig_id_map: FigIdMap,
-    pub(crate) window_id_map: WryIdMap,
     pub(crate) event_rx: flume::Receiver<Event>,
     pub(crate) proxy: EventLoopProxy,
     pub(crate) figterm_state: Arc<FigtermState>,
@@ -79,7 +77,6 @@ impl WebviewManager {
 
         Self {
             fig_id_map: Default::default(),
-            window_id_map: Default::default(),
             event_rx,
             proxy,
             figterm_state,
@@ -126,9 +123,6 @@ impl WebviewManager {
                 proxy: self.proxy.clone(),
             },
         ));
-
-        // JS WebView is gone; keep a disconnected sender so DesktopHost's field type stays.
-        let (api_handler_tx, _api_handler_rx) = tokio::sync::mpsc::unbounded_channel::<(WindowId, String)>();
 
         file_watcher::setup_listeners(self.notifications_state.clone(), self.proxy.clone()).await;
 
@@ -179,7 +173,6 @@ impl WebviewManager {
         let event_rx = self.event_rx;
         let proxy = self.proxy.clone();
         let fig_id_map = self.fig_id_map;
-        let window_id_map = self.window_id_map;
         let figterm_state = self.figterm_state;
         let platform_state = self.platform_state;
         let notifications_state = self.notifications_state;
@@ -196,7 +189,6 @@ impl WebviewManager {
             )?;
             let host = cx.new(|_| crate::gpui_host::DesktopHost {
                 fig_id_map,
-                window_id_map,
                 figterm_state,
                 platform_state,
                 notifications_state,
@@ -204,7 +196,6 @@ impl WebviewManager {
                 show_dashboard_after_normal_launch,
                 proxy,
                 window_target,
-                api_handler_tx,
                 overlay,
                 settings: None,
                 tray,

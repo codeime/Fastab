@@ -16,16 +16,13 @@ use crate::overlay::OverlayController;
 use crate::platform::PlatformState;
 use crate::tray::{self, get_context_menu, get_icon};
 use crate::webview::notification::WebviewNotificationsState;
-use crate::webview::{DASHBOARD_ID, FigIdMap, WindowId, WryIdMap};
+use crate::webview::{DASHBOARD_ID, FigIdMap, WindowId};
 use crate::{EventLoopProxy, EventLoopWindowTarget};
 use fig_os_shim::Context;
 use fig_remote_ipc::figterm::FigtermState;
-use tokio::sync::mpsc::UnboundedSender;
 
 pub struct DesktopHost {
     pub fig_id_map: FigIdMap,
-    #[allow(dead_code)]
-    pub window_id_map: WryIdMap,
     pub figterm_state: Arc<FigtermState>,
     pub platform_state: Arc<PlatformState>,
     pub notifications_state: Arc<WebviewNotificationsState>,
@@ -39,8 +36,6 @@ pub struct DesktopHost {
     pub show_dashboard_after_normal_launch: bool,
     pub proxy: EventLoopProxy,
     pub window_target: EventLoopWindowTarget,
-    #[allow(dead_code)]
-    pub api_handler_tx: UnboundedSender<(WindowId, String)>,
     pub overlay: OverlayController,
     pub settings: Option<crate::settings_ui::SettingsHandle>,
     pub tray: TrayIcon,
