@@ -49,6 +49,13 @@ import {
   utf8ByteLength,
 } from "./spec-hook-contract.mjs";
 import {
+  applySpecDiff,
+  derivedVersionIrBaseSource,
+  derivedVersionIrFamily,
+  isDerivedVersionIr,
+  versionDiffKeys,
+} from "./spec-versions.mjs";
+import {
   PAIR_LOCK_NAME,
   PAIR_MARKER_NAME,
   comparePath,
@@ -404,18 +411,38 @@ async function importAuditedSourceModule(
             `${label} re-exports a module but this Node runtime does not expose vm.SourceTextModule`,
           );
         }
-        const defaultSpecifier = node.specifiers?.find((specifier) => {
-          const exported = specifier.exported;
-          return exported?.name === "default" || exported?.value === "default";
-        });
+        if (node.declaration) {
+          edits.push({
+            start: node.start,
+            end: node.declaration.start,
+            text: "",
+          });
+          continue;
+        }
+        const assignments = [];
+        for (const specifier of node.specifiers ?? []) {
+          const exported =
+            specifier.exported?.name ?? specifier.exported?.value;
+          if (specifier.local?.type !== "Identifier") {
+            if (exported === "default") {
+              throw new Error(`${label} has a non-identifier default export`);
+            }
+            continue;
+          }
+          const local = source.slice(
+            specifier.local.start,
+            specifier.local.end,
+          );
+          if (exported === "default") {
+            assignments.push(`globalThis.__auditDefault = ${local};`);
+          } else if (exported === "versions") {
+            assignments.push(`globalThis.__auditVersions = ${local};`);
+          }
+        }
         edits.push({
           start: node.start,
-          end: node.declaration?.start ?? node.end,
-          text: node.declaration
-            ? ""
-            : defaultSpecifier
-              ? `globalThis.__auditDefault = ${source.slice(defaultSpecifier.local.start, defaultSpecifier.local.end)};`
-              : "",
+          end: node.end,
+          text: assignments.join(""),
         });
       } else if (node.type === "ExportAllDeclaration") {
         throw new Error(
@@ -431,6 +458,10 @@ async function importAuditedSourceModule(
         edit.text +
         isolatedSource.slice(edit.end);
     }
+    // `const versions` is script-local and would otherwise be dropped. The
+    // named export is what compile-spec-ir applies; keep it on the namespace
+    // so derived IR can be matched against the merged trees.
+    isolatedSource = `${isolatedSource}\n;if (typeof versions !== "undefined") globalThis.__auditVersions = versions;`;
     const commonJsModule = { exports: {} };
     const context = vm.createContext({
       console: Object.freeze({
@@ -450,7 +481,10 @@ async function importAuditedSourceModule(
     if (!("__auditDefault" in context)) {
       throw new Error(`${label} has no default export`);
     }
-    return { default: context.__auditDefault };
+    return {
+      default: context.__auditDefault,
+      versions: context.__auditVersions,
+    };
   }
 
   const context = vm.createContext({
@@ -907,10 +941,13 @@ async function validateTypedHookSidecar({
           ([, irField]) => irField === ref.field,
         )?.[0] ?? null;
       if (!TYPED_HOOK_SIDECAR_FIELDS.includes(sourceField)) continue;
-      const source = ref.ir.replace(/\.json$/, ".js");
+      const source = sourceRelForIr(ref.ir);
       const sourceRecord = sourceRecords.get(source);
-      const sourceFunction = sourceRecord?.functions?.[sourceField]?.find(
-        (candidate) => candidate.path === manifestEntry.path,
+      const sourceFunction = findSourceFunction(
+        sourceRecord,
+        sourceField,
+        manifestEntry.path,
+        manifestEntry.functionBodySha256,
       );
       if (!sourceFunction) continue;
       const body = functionSource(sourceFunction.identity);
@@ -1018,6 +1055,111 @@ function isSafeSourceHookPath(value) {
     typeof value === "string" &&
     /^root(?:\.[A-Za-z_$][\w$]*|\[\d+\])*$/.test(value)
   );
+}
+
+function sourceRelForIr(ir) {
+  if (isDerivedVersionIr(ir)) {
+    return derivedVersionIrBaseSource(ir);
+  }
+  return String(ir).replace(/\.json$/, ".js");
+}
+
+function findSourceFunction(
+  sourceRecord,
+  sourceField,
+  path,
+  functionBodySha256,
+) {
+  if (!sourceRecord || !SOURCE_FIELDS.includes(sourceField)) return undefined;
+  const pools = [
+    sourceRecord.functions?.[sourceField] ?? [],
+    sourceRecord.mergedFunctions?.[sourceField] ?? [],
+  ];
+  for (const pool of pools) {
+    const byPath = pool.find((candidate) => candidate.path === path);
+    if (byPath) return byPath;
+  }
+  if (typeof functionBodySha256 === "string" && functionBodySha256) {
+    for (const pool of pools) {
+      const byHash = pool.find(
+        (candidate) => candidate.sha256 === functionBodySha256,
+      );
+      if (byHash) return byHash;
+    }
+  }
+  return undefined;
+}
+
+function irRecordsForSource(irRecords, source) {
+  return [...irRecords.entries()]
+    .filter(([ir]) => sourceRelForIr(ir) === source)
+    .sort(([left], [right]) => {
+      const leftDerived = isDerivedVersionIr(left);
+      const rightDerived = isDerivedVersionIr(right);
+      if (leftDerived !== rightDerived) return leftDerived ? 1 : -1;
+      return comparePath(left, right);
+    });
+}
+
+function uniqueFamilyRefs(familyRecords) {
+  const byId = new Map();
+  for (const [, irRecord] of familyRecords) {
+    for (const ref of irRecord.refs ?? []) {
+      if (!byId.has(ref.id)) byId.set(ref.id, ref);
+    }
+  }
+  return [...byId.values()];
+}
+
+function familySourceInstances(record, sourceField) {
+  const seen = new Set();
+  const out = [];
+  for (const pool of [
+    record.functions?.[sourceField] ?? [],
+    record.mergedFunctions?.[sourceField] ?? [],
+  ]) {
+    for (const item of compilerFunctionInstances(pool, {
+      includeNative: false,
+    })) {
+      const key = `${item.path}\0${item.sha256}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(item);
+    }
+  }
+  return out;
+}
+
+function collectMergedVersionFunctions(baseSpec, versions, errors, sourceRel) {
+  const mergedFunctions = emptyFieldMap();
+  if (!isRecord(versions) || !isObject(baseSpec) || Array.isArray(baseSpec)) {
+    return mergedFunctions;
+  }
+  let current = baseSpec;
+  for (const version of versionDiffKeys(versions)) {
+    current = applySpecDiff(current, versions[version]);
+    for (const item of collectFunctions(current)) {
+      const functionRecord = sourceFunctionRecord(item);
+      functionRecord.mergeThrough = version;
+      addFunctionRecord(mergedFunctions, functionRecord);
+      if (!SOURCE_FIELDS.includes(item.field)) {
+        errors.unknownFunctionFields.push({
+          source: sourceRel,
+          path: item.path,
+          field: item.field,
+          version,
+        });
+      } else if (!functionRecord.extractable) {
+        errors.unextractableFunctions.push({
+          source: sourceRel,
+          path: item.path,
+          field: item.field,
+          version,
+        });
+      }
+    }
+  }
+  return sortFunctionRecords(mergedFunctions);
 }
 
 function sortedStrings(values) {
@@ -1551,7 +1693,7 @@ async function validateHookModules({
   // matching algorithm.
   const expectedById = new Map();
   for (const [id, ref] of refsById) {
-    const source = ref.ir.replace(/\.json$/, ".js");
+    const source = sourceRelForIr(ref.ir);
     const sourceRecord = sourceRecords.get(source);
     expectedById.set(id, {
       source,
@@ -1660,14 +1802,12 @@ async function validateHookModules({
           actual: descriptor.sourceField ?? null,
         });
       }
-      const sourceFunctions = SOURCE_FIELDS.includes(descriptor.sourceField)
-        ? expected.sourceRecord?.functions?.[descriptor.sourceField]
-        : [];
-      const sourceFunction = Array.isArray(sourceFunctions)
-        ? sourceFunctions.find(
-            (candidate) => candidate.path === descriptor.path,
-          )
-        : undefined;
+      const sourceFunction = findSourceFunction(
+        expected.sourceRecord,
+        descriptor.sourceField,
+        descriptor.path,
+        descriptor.functionBodySha256,
+      );
       if (!sourceFunction) {
         addHookModuleMismatch(errors, {
           id,
@@ -2033,6 +2173,7 @@ async function auditSpecsHooksUnlocked({
       sourceSha256: sha256(source),
       allowlisted: KNOWN_NON_SPEC_FILES.has(rel),
       functions: emptyFieldMap(),
+      mergedFunctions: emptyFieldMap(),
       moduleError: null,
       isSpec: false,
       names: [],
@@ -2076,6 +2217,12 @@ async function auditSpecsHooksUnlocked({
           }
         }
         sortFunctionRecords(record.functions);
+        record.mergedFunctions = collectMergedVersionFunctions(
+          value,
+          isRecord(mod.versions) ? mod.versions : null,
+          errors,
+          rel,
+        );
       } catch (error) {
         record.moduleError = error.message;
         errors.sourceReadErrors.push({ source: rel, message: error.message });
@@ -2214,7 +2361,13 @@ async function auditSpecsHooksUnlocked({
     locationsById.set(ref.id, locations);
     const expectedSpecId = ref.ir.replace(/\.json$/, "");
     const separator = ref.id.indexOf("#");
-    if (separator <= 0 || ref.id.slice(0, separator) !== expectedSpecId) {
+    const hookFamily = ref.id.slice(0, separator);
+    const irFamily = derivedVersionIrFamily(ref.ir);
+    if (
+      separator <= 0 ||
+      (hookFamily !== expectedSpecId &&
+        !(isDerivedVersionIr(ref.ir) && hookFamily === irFamily))
+    ) {
       errors.invalidHookRefs.push({
         id: ref.id,
         ir: ref.ir,
@@ -2228,14 +2381,19 @@ async function auditSpecsHooksUnlocked({
   }
 
   for (const [id, locations] of locationsById) {
-    if (locations.size > 1) {
-      errors.invalidHookRefs.push({
-        id,
-        reason: `hook id is referenced by multiple IR specs: ${[...locations]
-          .sort(comparePath)
-          .join(", ")}`,
-      });
-    }
+    if (locations.size <= 1) continue;
+    const families = new Set(
+      [...locations].map((ir) => derivedVersionIrFamily(ir)),
+    );
+    const separator = id.indexOf("#");
+    const hookFamily = separator > 0 ? id.slice(0, separator) : "";
+    if (families.size === 1 && families.has(hookFamily)) continue;
+    errors.invalidHookRefs.push({
+      id,
+      reason: `hook id is referenced by multiple IR specs: ${[...locations]
+        .sort(comparePath)
+        .join(", ")}`,
+    });
   }
 
   const expectedHookFiles = new Set(
@@ -2305,9 +2463,11 @@ async function auditSpecsHooksUnlocked({
       });
       continue;
     }
+    const familyRecords = irRecordsForSource(irRecords, source);
+    const familyRefs = uniqueFamilyRefs(familyRecords);
     const refsByField = emptyIrFieldMap();
     const refsByFieldRecords = emptyIrFieldMap();
-    for (const ref of irRecord.refs) {
+    for (const ref of familyRefs) {
       refsByField[ref.field].push(ref.id);
       refsByFieldRecords[ref.field].push(ref);
     }
@@ -2327,20 +2487,24 @@ async function auditSpecsHooksUnlocked({
         ).values(),
       ];
       const used = new Set();
-      const sourceInstances = compilerFunctionInstances(
+      const sourceInstances = familySourceInstances(record, sourceField);
+      const baseInstances = compilerFunctionInstances(
         record.functions[sourceField] ?? [],
         { includeNative: false },
       );
-      if (
-        (manifestHooksForMapping ? candidates.length : candidates.length) !==
-        sourceInstances.length
-      ) {
+      const hasDerivedFamily = familyRecords.some(([familyIr]) =>
+        isDerivedVersionIr(familyIr),
+      );
+      // Version diffs add hook ids that exist only on derived IR. Those are
+      // matched through mergedFunctions / findSourceFunction below; the 1:1
+      // base-file count would false-fail as soon as a merged-only id appears.
+      if (!hasDerivedFamily && candidates.length !== baseInstances.length) {
         errors.sourceHookMismatches.push({
           source,
           ir,
           field: sourceField,
           irField,
-          reason: `compiler hook instances (${sourceInstances.length}) do not match IR hook ids (${candidates.length})`,
+          reason: `compiler hook instances (${baseInstances.length}) do not match IR hook ids (${candidates.length})`,
         });
       }
       if (manifestHooksForMapping) {
@@ -2380,8 +2544,11 @@ async function auditSpecsHooksUnlocked({
               actual: descriptor.sourceField ?? null,
             });
           }
-          const sourceFunction = (record.functions[sourceField] ?? []).find(
-            (candidate) => candidate.path === descriptor.path,
+          const sourceFunction = findSourceFunction(
+            record,
+            sourceField,
+            descriptor.path,
+            descriptor.functionBodySha256,
           );
           if (!sourceFunction) {
             errors.sourceHookMismatches.push({
@@ -2473,6 +2640,7 @@ async function auditSpecsHooksUnlocked({
   }
 
   for (const ir of irRecords.keys()) {
+    if (isDerivedVersionIr(ir)) continue;
     const source = ir.replace(/\.json$/, ".js");
     if (!sourceRecords.has(source)) errors.orphanIrSpecs.push(ir);
   }

@@ -17,6 +17,7 @@ mod rank;
 mod runtime;
 mod snapshot;
 mod spec_pair;
+mod versioned;
 // Native sidecar loading will consume these APIs in later migration slices.
 // Keep the not-yet-wired parsers/evaluators test-only until that production
 // path is reviewed and connected.

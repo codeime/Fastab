@@ -10,6 +10,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::snapshot::{DirectorySnapshot, EntryKind};
+use crate::versioned::VersionedCommand;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -420,6 +421,12 @@ pub struct Registry {
     /// meant to replace — that fallback was silent, and for a command the
     /// bundle does not know it left no completion at all.
     pinned: Vec<Arc<Spec>>,
+    /// `index.json` `versioned` map: command → selector + version files.
+    versioned: HashMap<String, VersionedCommand>,
+    /// Per-session CLI versions (`None` = detection failed). Keyed by command.
+    version_cache: HashMap<String, Option<String>>,
+    /// Specs loaded by relative IR path for versioned selection.
+    path_specs: HashMap<PathBuf, Arc<Spec>>,
 }
 
 /// How [`Registry::overlay_specs_dir`] treats a name the bundle already has.
@@ -609,6 +616,50 @@ impl Registry {
     pub fn get_arc(&mut self, name: &str) -> Option<Arc<Spec>> {
         self.ensure_loaded(name);
         self.specs.get(name).cloned()
+    }
+
+    pub fn versioned_command(&self, name: &str) -> Option<&VersionedCommand> {
+        self.versioned.get(name)
+    }
+
+    /// Session-cached versioned root spec. Detection failures load the
+    /// highest file (with that file's diffs applied), matching WebView.
+    pub fn get_versioned_arc(&mut self, name: &str, cwd: &str, timeout: std::time::Duration) -> Option<Arc<Spec>> {
+        let entry = self.versioned.get(name)?.clone();
+        let detected = self
+            .version_cache
+            .entry(name.to_string())
+            .or_insert_with(|| crate::versioned::detect_cli_version(&entry, cwd, timeout))
+            .clone();
+        let relative = crate::versioned::resolve_versioned_path(&entry, detected.as_deref())?;
+        self.load_relative_spec(&relative, name)
+    }
+
+    fn load_relative_spec(&mut self, relative: &str, name: &str) -> Option<Arc<Spec>> {
+        let path = safe_index_path(&self.root, relative)?;
+        if let Some(spec) = self.path_specs.get(&path).cloned() {
+            return Some(spec);
+        }
+        let files = self.files.clone();
+        let loaded = if let Some(snapshot) = self.snapshot.as_ref() {
+            load_snapshot_file(snapshot, &path, &files, &mut Vec::new())
+        } else {
+            load_spec_file(&path, &self.root, &files, &mut Vec::new())
+        };
+        match loaded {
+            Ok(mut spec) => {
+                if !spec.names.iter().any(|candidate| candidate == name) {
+                    spec.names.push(name.to_string());
+                }
+                let spec = Arc::new(spec);
+                self.path_specs.insert(path, spec.clone());
+                Some(spec)
+            },
+            Err(error) => {
+                tracing::warn!(command = %name, path = %relative, %error, "versioned spec load failed");
+                None
+            },
+        }
     }
 
     pub fn command_names_matching(&self, query: &str) -> Vec<(String, String)> {
@@ -847,6 +898,7 @@ fn overlay_json_dir(registry: &mut Registry, dir: &Path, mode: OverlayMode) {
 #[derive(Debug, Default, Deserialize)]
 struct IrIndex {
     files: Option<HashMap<String, String>>,
+    versioned: Option<HashMap<String, VersionedCommand>>,
 }
 
 fn safe_index_path(root: &Path, relative: &str) -> Option<PathBuf> {
@@ -874,6 +926,12 @@ fn read_index_snapshot(snapshot: &DirectorySnapshot, registry: &mut Registry) ->
     let Some(files) = index.files else {
         return Ok(false);
     };
+    if let Some(versioned) = index.versioned {
+        registry.versioned = versioned
+            .into_iter()
+            .filter(|(command, _)| !command.is_empty())
+            .collect();
+    }
     for (command, relative) in files {
         if command.is_empty() {
             continue;

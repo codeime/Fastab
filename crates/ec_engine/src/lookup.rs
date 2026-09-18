@@ -2234,10 +2234,25 @@ fn root_spec_for_command(
             return Some(Arc::new(local));
         }
         let basename = local_spec_name(command);
-        if let Some(bundled) = registry.get_arc(basename) {
+        if let Some(bundled) = versioned_or_bundled(registry, request, basename, settings) {
             return Some(bundled);
         }
-        return registry.get_arc(slash_command_spec_name(command));
+        return versioned_or_bundled(registry, request, slash_command_spec_name(command), settings);
+    }
+    versioned_or_bundled(registry, request, command, settings)
+}
+
+fn versioned_or_bundled(
+    registry: &mut Registry,
+    request: &CompleteRequest,
+    command: &str,
+    settings: &fig_settings::settings::Settings,
+) -> Option<Arc<Spec>> {
+    if registry.versioned_command(command).is_some() {
+        let timeout = dynamic_hook_timeout_from_settings(settings);
+        if let Some(spec) = registry.get_versioned_arc(command, &request.cwd, timeout) {
+            return Some(spec);
+        }
     }
     registry.get_arc(command)
 }
@@ -2857,7 +2872,171 @@ fn add_current_token_auto_execute(
 mod tests {
     use super::*;
     use crate::ir::Registry;
+    use crate::process;
     use std::fs;
+
+    #[test]
+    fn heroku_8_3_0_uses_the_8_0_0_file_and_8_11_1_diff() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("heroku")).unwrap();
+        fs::write(
+            dir.path().join("heroku/8.0.0.json"),
+            r#"{"names":["heroku"],"subcommands":[{"names":["old"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("heroku/8.0.0+8.11.1.json"),
+            r#"{"names":["heroku"],"subcommands":[{"names":["old"]},{"names":["domains"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("heroku/8.6.0.json"),
+            r#"{"names":["heroku"],"subcommands":[{"names":["new"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{
+              "completions":["heroku"],
+              "files":{"heroku":"heroku/8.6.0.json"},
+              "versioned":{
+                "heroku":{
+                  "command":["heroku","--version"],
+                  "parse":"regex",
+                  "regex":"heroku\\/([0-9]+\\.[0-9]+\\.[0.9]+)",
+                  "regexGroup":1,
+                  "parseFallback":"8.0.0",
+                  "fallback":"8.6.0",
+                  "files":{"8.0.0":"heroku/8.0.0.json","8.6.0":"heroku/8.6.0.json"},
+                  "applied":{"8.0.0":{"8.11.1":"heroku/8.0.0+8.11.1.json"}}
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let _guard = process::mock::install(vec![process::mock::ExecRule {
+            command: Some("heroku".into()),
+            args: Some(vec!["--version".into()]),
+            stdout: "heroku/8.3.0 darwin-arm64".into(),
+            ..process::mock::ExecRule::default()
+        }]);
+        let result = complete(
+            &mut registry,
+            &CompleteRequest {
+                buffer: "heroku ".into(),
+                cwd: "/".into(),
+                include_history: false,
+                ..CompleteRequest::default()
+            },
+        );
+        let names: Vec<_> = result.suggestions.iter().map(|item| item.name.as_str()).collect();
+        assert!(names.contains(&"domains"), "{names:?}");
+        assert!(names.contains(&"old"), "{names:?}");
+        assert!(!names.contains(&"new"), "{names:?}");
+    }
+
+    #[test]
+    fn fig_2_16_0_includes_diff_subcommands() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("fig")).unwrap();
+        fs::write(
+            dir.path().join("fig/2.0.0.json"),
+            r#"{"names":["fig"],"subcommands":[{"names":["app"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("fig/2.0.0+2.16.0.json"),
+            r#"{"names":["fig"],"subcommands":[{"names":["app"]},{"names":["export"]},{"names":["help"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{
+              "completions":["fig"],
+              "files":{"fig":"fig/2.0.0+2.16.0.json"},
+              "versioned":{
+                "fig":{
+                  "command":["fig","--version"],
+                  "parse":"after-first-space",
+                  "fallback":"2.0.0",
+                  "files":{"2.0.0":"fig/2.0.0.json"},
+                  "applied":{"2.0.0":{"2.16.0":"fig/2.0.0+2.16.0.json"}}
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let _guard = process::mock::install(vec![process::mock::ExecRule {
+            command: Some("fig".into()),
+            args: Some(vec!["--version".into()]),
+            stdout: "fig 2.16.0".into(),
+            ..process::mock::ExecRule::default()
+        }]);
+        let result = complete(
+            &mut registry,
+            &CompleteRequest {
+                buffer: "fig ".into(),
+                cwd: "/".into(),
+                include_history: false,
+                ..CompleteRequest::default()
+            },
+        );
+        let names: Vec<_> = result.suggestions.iter().map(|item| item.name.as_str()).collect();
+        assert!(names.contains(&"export"), "{names:?}");
+        assert!(names.contains(&"help"), "{names:?}");
+        assert!(names.contains(&"app"), "{names:?}");
+    }
+
+    #[test]
+    fn heroku_version_detect_failure_uses_the_highest_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("heroku")).unwrap();
+        fs::write(
+            dir.path().join("heroku/8.0.0.json"),
+            r#"{"names":["heroku"],"subcommands":[{"names":["old"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("heroku/8.6.0.json"),
+            r#"{"names":["heroku"],"subcommands":[{"names":["new"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{
+              "completions":["heroku"],
+              "files":{"heroku":"heroku/8.6.0.json"},
+              "versioned":{
+                "heroku":{
+                  "command":["heroku","--version"],
+                  "parse":"regex",
+                  "regex":"heroku\\/([0-9]+\\.[0-9]+\\.[0.9]+)",
+                  "regexGroup":1,
+                  "parseFallback":"8.0.0",
+                  "fallback":"8.6.0",
+                  "files":{"8.0.0":"heroku/8.0.0.json","8.6.0":"heroku/8.6.0.json"}
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let _guard = process::mock::install(vec![]);
+        let result = complete(
+            &mut registry,
+            &CompleteRequest {
+                buffer: "heroku ".into(),
+                cwd: "/".into(),
+                include_history: false,
+                ..CompleteRequest::default()
+            },
+        );
+        let names: Vec<_> = result.suggestions.iter().map(|item| item.name.as_str()).collect();
+        assert!(names.contains(&"new"), "{names:?}");
+        assert!(!names.contains(&"old"), "{names:?}");
+    }
 
     fn load_git() -> (tempfile::TempDir, Registry) {
         let dir = tempfile::tempdir().unwrap();

@@ -24,12 +24,9 @@ import {
   SUPPORTED_HOOK_FIELDS,
   SUPPORTED_IR_HOOK_FIELDS,
 } from "./compile-spec-ir.mjs";
-import {
-  countFunctionsInValue,
-  KNOWN_UNAPPLIED_VERSION_DIFFS,
-  KNOWN_VERSION_SELECTORS,
-} from "./spec-hook-contract.mjs";
+import { countFunctionsInValue, KNOWN_NON_SPEC_FILES } from "./spec-hook-contract.mjs";
 import { comparePath } from "./spec-pair.mjs";
+import { derivedVersionIrRel } from "./spec-versions.mjs";
 import {
   isRegisteredNativeAdapter,
   loadNativeHookAdapters,
@@ -876,67 +873,149 @@ async function isRegularFile(path) {
 }
 
 /**
- * Inventory of diff-versioned spec behaviour the compiler does not adapt yet.
- *
- * Both lists come from the reviewed allowlist in spec-hook-contract.mjs; the
- * compiler already fails closed when the bundle drifts from it. The version
- * diffs are imported here only to count the functions they carry (hooks the
- * WebView could run after merging a diff). No hook is invoked.
+ * Inventory of versioned spec behaviour. After T2.6 the compiler applies
+ * every `versions` diff and records selectors in `index.json`, so a present
+ * IR `versioned` map is `adapted`. A selector or non-empty diff with no IR
+ * entry is still `unadapted` and blocks the gate.
  */
-async function versionedSpecInventory(sourceRoot) {
+async function versionedSpecInventory(sourceRoot, irRoot) {
   const selectors = [];
-  for (const file of [...KNOWN_VERSION_SELECTORS].sort(comparePath)) {
+  for (const file of [...KNOWN_NON_SPEC_FILES].sort(comparePath)) {
+    if (!file.endsWith("/index.js")) continue;
+    const path = join(sourceRoot, file);
+    if (!(await isRegularFile(path))) continue;
+    let namespace = null;
+    try {
+      namespace = await import(pathToFileURL(path).href);
+    } catch {
+      namespace = null;
+    }
+    if (typeof namespace?.getVersionCommand !== "function") continue;
     selectors.push({
       file,
-      present: await isRegularFile(join(sourceRoot, file)),
-      resolution: "highest-version-file",
+      present: true,
+      resolution: "version-command",
     });
   }
-  const unappliedDiffs = [];
-  for (const [file, versions] of Object.entries(
-    KNOWN_UNAPPLIED_VERSION_DIFFS,
-  ).sort(([left], [right]) => comparePath(left, right))) {
+  const appliedDiffs = [];
+  for (const file of await listJsFiles(sourceRoot)) {
+    if (KNOWN_NON_SPEC_FILES.has(file)) continue;
     const path = join(sourceRoot, file);
     let namespace = null;
-    if (await isRegularFile(path)) {
-      try {
-        namespace = await import(pathToFileURL(path).href);
-      } catch {
-        namespace = null;
-      }
+    try {
+      namespace = await import(pathToFileURL(path).href);
+    } catch {
+      continue;
     }
-    unappliedDiffs.push({
+    const versions = namespace?.versions;
+    if (!versions || typeof versions !== "object" || Array.isArray(versions)) {
+      continue;
+    }
+    const keys = Object.keys(versions).filter((key) => {
+      const diff = versions[key];
+      return (
+        diff !== null &&
+        typeof diff === "object" &&
+        !Array.isArray(diff) &&
+        Object.keys(diff).length > 0
+      );
+    });
+    if (!keys.length) continue;
+    appliedDiffs.push({
       file,
-      present: namespace !== null,
-      versions: [...versions].map((version) => ({
+      present: true,
+      versions: keys.map((version) => ({
         version,
-        functions:
-          namespace === null
-            ? null
-            : countFunctionsInValue(namespace.versions?.[version]),
+        functions: countFunctionsInValue(versions[version]),
       })),
     });
   }
-  const diffCount = unappliedDiffs.reduce(
-    (sum, entry) => sum + entry.versions.length,
-    0,
+  let irVersioned = null;
+  const indexPath = join(irRoot, "index.json");
+  if (await isRegularFile(indexPath)) {
+    try {
+      irVersioned = JSON.parse(await readFile(indexPath, "utf8")).versioned ?? {};
+    } catch {
+      irVersioned = null;
+    }
+  }
+  const selectorCommands = selectors.map((entry) =>
+    entry.file.replace(/\/index\.js$/, ""),
   );
-  const functionCount = unappliedDiffs.reduce(
-    (sum, entry) =>
-      sum +
-      entry.versions.reduce((inner, item) => inner + (item.functions ?? 0), 0),
-    0,
+  const missingSelectors = selectorCommands.filter(
+    (name) => !irVersioned || !irVersioned[name],
   );
+  const coveredDerived = new Set();
+  for (const entry of Object.values(irVersioned || {})) {
+    for (const diffs of Object.values(entry.applied || {})) {
+      for (const destRel of Object.values(diffs)) {
+        coveredDerived.add(destRel);
+      }
+    }
+  }
+  const missingAppliedDiffs = [];
+  for (const entry of appliedDiffs) {
+    for (const item of entry.versions) {
+      const destRel = derivedVersionIrRel(entry.file, item.version);
+      if (!coveredDerived.has(destRel)) {
+        missingAppliedDiffs.push({
+          file: entry.file,
+          version: item.version,
+          destRel,
+        });
+      }
+    }
+  }
+  const status =
+    selectors.length === 0 && appliedDiffs.length === 0
+      ? "none"
+      : missingSelectors.length || missingAppliedDiffs.length
+        ? "unadapted"
+        : "adapted";
   return {
-    status: selectors.length || diffCount ? "unadapted" : "none",
+    status,
     selectors,
-    unappliedDiffs,
+    appliedDiffs,
+    missingSelectors,
+    missingAppliedDiffs,
     totals: {
       selectors: selectors.length,
-      unappliedDiffs: diffCount,
-      functionsInUnappliedDiffs: functionCount,
+      appliedDiffs: appliedDiffs.reduce(
+        (sum, entry) => sum + entry.versions.length,
+        0,
+      ),
+      functionsInAppliedDiffs: appliedDiffs.reduce(
+        (sum, entry) =>
+          sum +
+          entry.versions.reduce((inner, item) => inner + (item.functions ?? 0), 0),
+        0,
+      ),
     },
   };
+}
+
+async function listJsFiles(root) {
+  const files = [];
+  async function walk(dir, prefix) {
+    let entries = [];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries.sort((left, right) =>
+      comparePath(left.name, right.name),
+    )) {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        await walk(join(dir, entry.name), rel);
+      } else if (entry.isFile() && entry.name.endsWith(".js")) {
+        files.push(rel);
+      }
+    }
+  }
+  await walk(root, "");
+  return files;
 }
 
 /**
@@ -1216,7 +1295,7 @@ export async function classifyNativeHooks({
     },
   };
   const nativeRewrites = nativeRewriteSummary(audit);
-  const versionedSpecs = await versionedSpecInventory(sourceRoot);
+  const versionedSpecs = await versionedSpecInventory(sourceRoot, irRoot);
   const auditErrors = sanitizeAuditErrors(audit.errors, {
     sourceRoot,
     irRoot,
@@ -1240,7 +1319,8 @@ export async function classifyNativeHooks({
     gateBlockers.push(OUTPUT_BASELINE_BLOCKER);
   }
   if (structuralErrorCount > 0) gateBlockers.push("audit-errors");
-  if (versionedSpecs.status !== "none") gateBlockers.push(VERSIONED_SPEC_BLOCKER);
+  if (versionedSpecs.status === "unadapted")
+    gateBlockers.push(VERSIONED_SPEC_BLOCKER);
   const report = {
     version: 1,
     kind: "native-hook-readiness",
@@ -1287,7 +1367,8 @@ export async function classifyNativeHooks({
         counts.extractedHooks[FAILURE_STATUS] === 0 &&
         counts.uniqueBodies[ADAPTER_STATUS] === 0 &&
         counts.uniqueBodies[FAILURE_STATUS] === 0 &&
-        versionedSpecs.status === "none" &&
+        (versionedSpecs.status === "none" ||
+          versionedSpecs.status === "adapted") &&
         outputBaseline.status === "established",
       researchOnlyStatuses: [],
       blockers: sortStrings(gateBlockers),

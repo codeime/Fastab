@@ -47,8 +47,11 @@ pub(super) fn evaluate(
         "3acab33d9a4fa0871aa2a9d41fbed3b5e02743b609bb4381524cb4ab5c9ba9f5" => rails(exec),
         "40e584e98997164e1b77338ae696000029dd1fe8f0cc3ba753d0517b0ef74e9c" => zoxide(exec),
         "4bba28e7b0bec9d3b055fd4b3fe7c26d8ca69ab2d4777aae6e7c7266cf5756d0" => dotnet_tools(exec),
+        "5d4536ed0dfc0baf31213c9ad56a6c76fb78350512cf98c1299b997ec0b32df8"
+        | "f4eecad7e6457e73322dbcf599e0c63cb1ef8ec83bb1fc7b0982642b81007465" => fig_scripts(exec),
         "65622e2681477974a4e8314edfdc88e3550d5201e2948f1a9f3e5b99326208b4"
         | "ac3c6daaedebddcfa9871f54fa397f2d61807997debd7ea8b051ac516b94c89d" => fig_settings(exec),
+        "7569b7431758d1decc7ac769e222a32a280439661b93d963bcc4e16134e95d62" => fig_cli(exec),
         "682679dc8ba7e238f7470ed62e6215129b2901203bbd3c36385dab9f0872463e" => serverless(tokens, exec),
         "7685c9fbc459a05d9f68bf80ede922a9b8e7c4b6968ec9db4dab14407af3e26c" => php(exec),
         "77bd90323f3a9b1c7f94ea21f7660327748a3fbf5f6c988672501f326d5b0d59" => composer(exec),
@@ -58,7 +61,6 @@ pub(super) fn evaluate(
         "d56f9ed1b9eb112da968b87d8ecbd2a2c24d31c4b4ee6a1512aaf1f103546dc3" => pnpm_install(tokens),
         "db71cdeee0cb1c325e95fcee6db9e70169915a026edb6bc5da8e5b0073d44f38" => pnpm_scripts(tokens, exec),
         "de30ca8db08f693bea3d309d4ac7d974534296b3cba283840927ad716a56295e" => nx(exec),
-        "f4eecad7e6457e73322dbcf599e0c63cb1ef8ec83bb1fc7b0982642b81007465" => fig_scripts(exec),
         _ => return None,
     })
 }
@@ -412,10 +414,19 @@ fn nx(exec: &AdapterExec<'_>) -> AdapterResult {
 
 fn fig_scripts(exec: &AdapterExec<'_>) -> AdapterResult {
     const BODY: &str = r#"{"query":"query Scripts {\n    currentUser {\n      namespace {\n        username\n        scripts {\n          ...ScriptFields\n        }\n      }\n      teamMemberships {\n        team {\n          namespace {\n            username\n            scripts {\n              ...ScriptFields\n            }\n          }\n        }\n      }\n    }\n  }\n\n  fragment ScriptFields on Script {\n  name\n  fields {\n    icon\n    displayName\n    description\n    templateVersion\n    tags\n    parameters {\n      type\n      name\n      displayName\n      description\n      text {\n        placeholder\n      }\n      checkbox {\n        trueValueSubstitution\n        falseValueSubstitution\n      }\n      selector {\n        generators {\n          named {\n            name\n          }\n          shellScript {\n            script\n          }\n          type\n        }\n        placeholder\n        suggestions\n      }\n      path {\n        extensions\n        fileType\n      }\n    }\n    runtime\n  }\n  relevanceScore\n  lastInvokedAt\n  lastInvokedAtByUser\n  isOwnedByCurrentUser\n}"}"#;
+    fig_graphql(exec, BODY)
+}
+
+fn fig_cli(exec: &AdapterExec<'_>) -> AdapterResult {
+    const BODY: &str = r#"{"query":"query CommandLineTool {\n      currentUser {\n        namespace {\n          username\n          commandlineTools {\n            ...CommandlineToolFields\n          }\n        }\n        teamMemberships {\n          team {\n            namespace {\n              username\n              commandlineTools {\n                ...CommandlineToolFields\n              }\n            }\n          }\n        }\n      }\n    }\n    \n    fragment CommandlineToolFields on CommandlineTool {\n      root {\n        ...CLICommandFields\n      }\n      flattenedCommands {\n        ...CLICommandFields\n      }\n    }\n    \n    fragment CLICommandFields on ICLICommand {\n      uuid\n      name\n      description\n      ... on NestedCommand {\n        subcommands {\n          uuid\n        }\n      }\n      ... on ScriptCommand {\n        script {\n          ...ScriptFields\n        }\n      }\n    }\n    \n    fragment ScriptFields on Script {\n  name\n  fields {\n    icon\n    displayName\n    description\n    templateVersion\n    tags\n    parameters {\n      type\n      name\n      displayName\n      description\n      text {\n        placeholder\n      }\n      checkbox {\n        trueValueSubstitution\n        falseValueSubstitution\n      }\n      selector {\n        generators {\n          named {\n            name\n          }\n          shellScript {\n            script\n          }\n          type\n        }\n        placeholder\n        suggestions\n      }\n      path {\n        extensions\n        fileType\n      }\n    }\n    runtime\n  }\n  relevanceScore\n  lastInvokedAt\n  lastInvokedAtByUser\n  isOwnedByCurrentUser\n}"}"#;
+    fig_graphql(exec, BODY)
+}
+
+fn fig_graphql(exec: &AdapterExec<'_>, body: &str) -> AdapterResult {
     let result = exec_object(
         exec,
         "fig",
-        ["_", "request", "--route", "/graphql", "--method", "--body", BODY],
+        ["_", "request", "--route", "/graphql", "--method", "--body", body],
     )?;
     parse_json(&result.stdout)
 }

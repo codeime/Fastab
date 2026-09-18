@@ -21,6 +21,7 @@ import {
 } from "./capture-hook-reference.mjs";
 import { withReferenceAudit } from "./reference-audit-worker.mjs";
 import { comparePath } from "./spec-pair.mjs";
+import { sameVersionedIrFamily } from "./spec-versions.mjs";
 import {
   aggregateStats,
   assessEvidenceStability,
@@ -58,6 +59,7 @@ const HARNESS_FILES = Object.freeze([
   "scripts/spec-hook-contract.mjs",
   "scripts/capture-hook-reference-batch.mjs",
   "scripts/capture-hook-reference-batch-logic.mjs",
+  "scripts/spec-versions.mjs",
 ]);
 
 export const BATCH_REPORT_VERSION = 2;
@@ -586,16 +588,16 @@ function validateSelectedMappings(selected, sourceIndex) {
   const hookFiles = new Map();
   for (const entry of selected) {
     const instance = sourceIndex.get(entry.id);
-    if (!instance || entry.ir !== instance.ir) {
+    if (!instance || !sameVersionedIrFamily(entry.ir, instance.ir)) {
       throw new Error(`hook ${entry.id} has a stale source/IR mapping`);
     }
     const hookSha256 = requireSha(entry.sha256, `hook ${entry.id}.sha256`);
-    const irSha256 = requireSha(instance.irSha256, `IR ${entry.ir}.irSha256`);
-    const previousIr = irFiles.get(entry.ir);
+    const irSha256 = requireSha(instance.irSha256, `IR ${instance.ir}.irSha256`);
+    const previousIr = irFiles.get(instance.ir);
     if (previousIr && previousIr !== irSha256) {
-      throw new Error(`IR ${entry.ir} has inconsistent audited SHA`);
+      throw new Error(`IR ${instance.ir} has inconsistent audited SHA`);
     }
-    irFiles.set(entry.ir, irSha256);
+    irFiles.set(instance.ir, irSha256);
     const previousHook = hookFiles.get(entry.file);
     if (previousHook && previousHook !== hookSha256) {
       throw new Error(`hook file ${entry.file} has inconsistent audited SHA`);

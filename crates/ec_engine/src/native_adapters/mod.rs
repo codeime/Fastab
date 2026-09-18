@@ -677,6 +677,12 @@ const ADAPTERS: &[AdapterMeta] = &[
         "spread calls are unsupported"
     ),
     meta!(
+        "5d4536ed0dfc0baf31213c9ad56a6c76fb78350512cf98c1299b997ec0b32df8",
+        "generateSpec",
+        "fig/1.0.0#generateSpec#9",
+        "fig 1.4.1 run generateSpec closes over graphql helper x"
+    ),
+    meta!(
         "65622e2681477974a4e8314edfdc88e3550d5201e2948f1a9f3e5b99326208b4",
         "generateSpec",
         "fig/2.0.0#generateSpec#1",
@@ -687,6 +693,12 @@ const ADAPTERS: &[AdapterMeta] = &[
         "generateSpec",
         "serverless#generateSpec#0",
         "free identifier ps is not representable"
+    ),
+    meta!(
+        "7569b7431758d1decc7ac769e222a32a280439661b93d963bcc4e16134e95d62",
+        "generateSpec",
+        "fig/2.0.0#generateSpec#17",
+        "fig 2.10.0 cli generateSpec closes over graphql helper P"
     ),
     meta!(
         "7685c9fbc459a05d9f68bf80ede922a9b8e7c4b6968ec9db4dab14407af3e26c",

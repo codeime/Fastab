@@ -1980,13 +1980,10 @@ test("audit rejects a hook file whose body cannot run as a standalone expression
   }
 });
 
-test("compiler fails closed on unlisted version diffs and ignores empty ones", async () => {
+test("compiler applies version diffs and ignores empty ones", async () => {
   const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-specs-versions-"));
   const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-versions-"));
   try {
-    // A non-empty `versions` diff the WebView would have merged at load time
-    // is unadapted behaviour. It is only allowed when the reviewed allowlist
-    // names the file and the exact key, so this fixture must be rejected.
     await mkdir(join(srcDir, "tool"), { recursive: true });
     await writeFile(
       join(srcDir, "tool", "1.0.0.js"),
@@ -2001,14 +1998,35 @@ export { spec as default, versions };\n`,
         diffVersionedCompletions: ["tool"],
       }),
     );
-    await assert.rejects(
-      compileSpecsIr({ srcDir, outDir }),
-      /tool\/1\.0\.0\.js exports non-empty `versions` diff\(s\) \["1\.2\.0"\] that are not applied by the compiler and are not listed in KNOWN_UNAPPLIED_VERSION_DIFFS/,
+    const applied = await compileSpecsIr({ srcDir, outDir });
+    assert.equal(applied.compiled, 1);
+    assert.deepEqual(
+      applied.appliedVersionDiffs.map((entry) => entry.file),
+      ["tool/1.0.0.js"],
+    );
+    const base = JSON.parse(
+      await readFile(join(outDir, "tool", "1.0.0.json"), "utf8"),
+    );
+    const merged = JSON.parse(
+      await readFile(join(outDir, "tool", "1.0.0+1.2.0.json"), "utf8"),
+    );
+    assert.deepEqual(
+      base.subcommands.map((subcommand) => subcommand.names),
+      [["base"]],
+    );
+    assert.deepEqual(
+      merged.subcommands.map((subcommand) => subcommand.names),
+      [["added"], ["base"]],
+    );
+    assert.equal(
+      merged.subcommands[0].args[0].jsPostProcess,
+      "tool/1.0.0#postProcess#0",
+    );
+    assert.equal(
+      merged.subcommands[0].args[0].generators[0].jsPostProcess,
+      "tool/1.0.0#postProcess#0",
     );
 
-    // An empty diff is a no-op in `getVersionFromVersionedSpec`, so it is not
-    // a loss and does not need review. (A new file name: Node caches ESM
-    // namespaces by URL, so rewriting 1.0.0.js would re-import the old text.)
     await rm(join(srcDir, "tool", "1.0.0.js"));
     await writeFile(
       join(srcDir, "tool", "2.0.0.js"),
@@ -2023,15 +2041,72 @@ export { spec as default, versions };\n`,
         diffVersionedCompletions: ["tool"],
       }),
     );
-    const result = await compileSpecsIr({ srcDir, outDir });
-    assert.equal(result.compiled, 1);
-    assert.deepEqual(result.unappliedVersionDiffs, []);
+    const empty = await compileSpecsIr({ srcDir, outDir });
+    assert.equal(empty.compiled, 1);
     const ir = JSON.parse(
       await readFile(join(outDir, "tool", "2.0.0.json"), "utf8"),
     );
     assert.deepEqual(
       ir.subcommands.map((subcommand) => subcommand.names),
       [["base"]],
+    );
+  } finally {
+    await Promise.all([
+      rm(srcDir, { recursive: true, force: true }),
+      rm(outDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("compiler records two-level versioned selectors in index.json", async () => {
+  const srcDir = await mkdtemp(join(tmpdir(), "easy-complete-specs-selector-"));
+  const outDir = await mkdtemp(join(tmpdir(), "easy-complete-ir-selector-"));
+  try {
+    await mkdir(join(srcDir, "heroku"), { recursive: true });
+    await writeFile(
+      join(srcDir, "heroku", "8.0.0.js"),
+      `const spec = { name: "heroku", subcommands: [{ name: "old" }] };
+const versions = { "8.11.1": { subcommands: [{ name: "domains" }] } };
+export { spec as default, versions };\n`,
+    );
+    await writeFile(
+      join(srcDir, "heroku", "8.6.0.js"),
+      `export default { name: "heroku", subcommands: [{ name: "new" }] };\n`,
+    );
+    await writeFile(
+      join(srcDir, "heroku", "index.js"),
+      `export const getVersionCommand = async (exec) => {
+  const { stdout } = await exec({ command: "heroku", args: ["--version"] });
+  const match = /heroku\\/([0-9]+\\.[0-9]+\\.[0.9]+)/.exec(stdout);
+  return match ? match[1] : "8.0.0";
+};
+export default getVersionCommand;\n`,
+    );
+    await writeFile(
+      join(srcDir, "index.json"),
+      JSON.stringify({
+        completions: ["heroku"],
+        diffVersionedCompletions: ["heroku"],
+      }),
+    );
+    const compiled = await compileSpecsIr({ srcDir, outDir });
+    assert.deepEqual(compiled.versionedCommands, ["heroku"]);
+    const index = JSON.parse(await readFile(join(outDir, "index.json"), "utf8"));
+    assert.deepEqual(index.versioned.heroku.command, ["heroku", "--version"]);
+    assert.equal(index.versioned.heroku.parse, "regex");
+    assert.equal(index.versioned.heroku.files["8.0.0"], "heroku/8.0.0.json");
+    assert.equal(index.versioned.heroku.files["8.6.0"], "heroku/8.6.0.json");
+    assert.equal(
+      index.versioned.heroku.applied["8.0.0"]["8.11.1"],
+      "heroku/8.0.0+8.11.1.json",
+    );
+    assert.equal(index.files.heroku, "heroku/8.6.0.json");
+    const merged = JSON.parse(
+      await readFile(join(outDir, "heroku", "8.0.0+8.11.1.json"), "utf8"),
+    );
+    assert.deepEqual(
+      merged.subcommands.map((subcommand) => subcommand.names),
+      [["domains"], ["old"]],
     );
   } finally {
     await Promise.all([

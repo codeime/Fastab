@@ -82,6 +82,31 @@
     {
       "baselineCases": 4,
       "baselineCovered": true,
+      "bodySha256": "0244dc88a68835cea8b9bf7c9bdce85dba735cec646c4d8867f849887cd94baf",
+      "dependencies": {
+        "buildTimePureStatic": false,
+        "command": true,
+        "environment": false,
+        "input": true
+      },
+      "field": "jsCustom",
+      "freeVariables": [],
+      "hookCount": 1,
+      "nodeCount": 62,
+      "risks": [
+        "async",
+        "complexity",
+        "unsupported-syntax"
+      ],
+      "sampleHookIds": [
+        "fig/1.0.0#custom#10"
+      ],
+      "sourceField": "custom",
+      "status": "typed-ir"
+    },
+    {
+      "baselineCases": 4,
+      "baselineCovered": true,
       "bodySha256": "03b126c52218b618b258b4113e23cf47ef5a0197646c1f48f7983f6bf146ead8",
       "dependencies": {
         "buildTimePureStatic": false,
@@ -1269,6 +1294,57 @@
     {
       "baselineCases": 4,
       "baselineCovered": true,
+      "bodySha256": "5c9f72176ae11c5f6f43ddfb8c99ded4013613cab7f8c094fa3474374e5f55b9",
+      "dependencies": {
+        "buildTimePureStatic": false,
+        "command": true,
+        "environment": false,
+        "input": true
+      },
+      "field": "jsCustom",
+      "freeVariables": [],
+      "hookCount": 1,
+      "nodeCount": 115,
+      "risks": [
+        "async",
+        "complexity",
+        "dynamic-property",
+        "unsupported-syntax"
+      ],
+      "sampleHookIds": [
+        "fig/1.0.0#custom#6"
+      ],
+      "sourceField": "custom",
+      "status": "typed-ir"
+    },
+    {
+      "baselineCases": 4,
+      "baselineCovered": true,
+      "bodySha256": "6030913dd5428c852fcd745c608080cd4a2eeaac4157192ba0e2799592e60da1",
+      "dependencies": {
+        "buildTimePureStatic": false,
+        "command": true,
+        "environment": false,
+        "input": true
+      },
+      "field": "jsCustom",
+      "freeVariables": [],
+      "hookCount": 1,
+      "nodeCount": 56,
+      "risks": [
+        "async",
+        "complexity",
+        "unsupported-syntax"
+      ],
+      "sampleHookIds": [
+        "fig/1.0.0#custom#8"
+      ],
+      "sourceField": "custom",
+      "status": "typed-ir"
+    },
+    {
+      "baselineCases": 4,
+      "baselineCovered": true,
       "bodySha256": "61c3b8a8846c19ae82d4c833b36fec1e52cebac1e8ebbd976587556ea427847d",
       "dependencies": {
         "buildTimePureStatic": false,
@@ -2213,6 +2289,31 @@
       ],
       "sourceField": "custom",
       "status": "native-adapter"
+    },
+    {
+      "baselineCases": 4,
+      "baselineCovered": true,
+      "bodySha256": "a515c36d7e4910a4cb68074255f5e38aa6ca11e90298988d1f4950f7eef335d0",
+      "dependencies": {
+        "buildTimePureStatic": false,
+        "command": true,
+        "environment": false,
+        "input": true
+      },
+      "field": "jsCustom",
+      "freeVariables": [],
+      "hookCount": 1,
+      "nodeCount": 56,
+      "risks": [
+        "async",
+        "complexity",
+        "unsupported-syntax"
+      ],
+      "sampleHookIds": [
+        "fig/1.0.0#custom#7"
+      ],
+      "sourceField": "custom",
+      "status": "typed-ir"
     },
     {
       "baselineCases": 4,
@@ -3577,6 +3678,37 @@
     {
       "baselineCases": 3,
       "baselineCovered": true,
+      "bodySha256": "5d4536ed0dfc0baf31213c9ad56a6c76fb78350512cf98c1299b997ec0b32df8",
+      "dependencies": {
+        "buildTimePureStatic": false,
+        "command": true,
+        "environment": false,
+        "input": false
+      },
+      "field": "jsGenerateSpec",
+      "freeVariables": [
+        "G",
+        "T",
+        "x"
+      ],
+      "hookCount": 1,
+      "nodeCount": 195,
+      "risks": [
+        "async",
+        "complexity",
+        "dynamic-property",
+        "unbound-identifiers",
+        "unsupported-syntax"
+      ],
+      "sampleHookIds": [
+        "fig/1.0.0#generateSpec#9"
+      ],
+      "sourceField": "generateSpec",
+      "status": "native-adapter"
+    },
+    {
+      "baselineCases": 3,
+      "baselineCovered": true,
       "bodySha256": "65622e2681477974a4e8314edfdc88e3550d5201e2948f1a9f3e5b99326208b4",
       "dependencies": {
         "buildTimePureStatic": false,
@@ -3660,6 +3792,37 @@
       ],
       "sourceField": "generateSpec",
       "status": "typed-ir"
+    },
+    {
+      "baselineCases": 3,
+      "baselineCovered": true,
+      "bodySha256": "7569b7431758d1decc7ac769e222a32a280439661b93d963bcc4e16134e95d62",
+      "dependencies": {
+        "buildTimePureStatic": false,
+        "command": true,
+        "environment": false,
+        "input": false
+      },
+      "field": "jsGenerateSpec",
+      "freeVariables": [
+        "F",
+        "P",
+        "x"
+      ],
+      "hookCount": 1,
+      "nodeCount": 239,
+      "risks": [
+        "async",
+        "complexity",
+        "dynamic-property",
+        "unbound-identifiers",
+        "unsupported-syntax"
+      ],
+      "sampleHookIds": [
+        "fig/2.0.0#generateSpec#17"
+      ],
+      "sourceField": "generateSpec",
+      "status": "native-adapter"
     },
     {
       "baselineCases": 3,
@@ -4807,6 +4970,30 @@
     {
       "baselineCases": 4,
       "baselineCovered": true,
+      "bodySha256": "032279a73672c3172b3e6847dce024ca58a37c9a0a1cca9c8a53492f8e743cad",
+      "dependencies": {
+        "buildTimePureStatic": false,
+        "command": false,
+        "environment": false,
+        "input": true
+      },
+      "field": "jsPostProcess",
+      "freeVariables": [],
+      "hookCount": 1,
+      "nodeCount": 56,
+      "risks": [
+        "complexity",
+        "unsupported-syntax"
+      ],
+      "sampleHookIds": [
+        "fig/1.0.0#postProcess#11"
+      ],
+      "sourceField": "postProcess",
+      "status": "typed-ir"
+    },
+    {
+      "baselineCases": 4,
+      "baselineCovered": true,
       "bodySha256": "06cf60a4db4009e789aa2efbfd2e826a8fc7be284a20bc56a257ff0ba2524a33",
       "dependencies": {
         "buildTimePureStatic": false,
@@ -5903,6 +6090,30 @@
     {
       "baselineCases": 4,
       "baselineCovered": true,
+      "bodySha256": "2d66df5015cb8fb6d431f17bf872c6f7b0d83b1f7b11b28bce30d66a3e20bf18",
+      "dependencies": {
+        "buildTimePureStatic": false,
+        "command": false,
+        "environment": false,
+        "input": true
+      },
+      "field": "jsPostProcess",
+      "freeVariables": [],
+      "hookCount": 1,
+      "nodeCount": 32,
+      "risks": [
+        "complexity",
+        "unsupported-syntax"
+      ],
+      "sampleHookIds": [
+        "fig/1.0.0#postProcess#12"
+      ],
+      "sourceField": "postProcess",
+      "status": "typed-ir"
+    },
+    {
+      "baselineCases": 4,
+      "baselineCovered": true,
       "bodySha256": "30832a549b2f205d16eb599ba9072639f2ed2fb46a004dca1b8cd9ee8230da61",
       "dependencies": {
         "buildTimePureStatic": false,
@@ -6423,6 +6634,29 @@
       "sampleHookIds": [
         "multipass#postProcess#8",
         "multipass#postProcess#9"
+      ],
+      "sourceField": "postProcess",
+      "status": "typed-ir"
+    },
+    {
+      "baselineCases": 4,
+      "baselineCovered": true,
+      "bodySha256": "41adabe5bc70e43795dde4c0ea393c74113257abb4a68622c0ce887241ad9093",
+      "dependencies": {
+        "buildTimePureStatic": false,
+        "command": false,
+        "environment": false,
+        "input": true
+      },
+      "field": "jsPostProcess",
+      "freeVariables": [],
+      "hookCount": 1,
+      "nodeCount": 23,
+      "risks": [
+        "unsupported-syntax"
+      ],
+      "sampleHookIds": [
+        "fig/1.0.0#postProcess#5"
       ],
       "sourceField": "postProcess",
       "status": "typed-ir"
@@ -15816,7 +16050,7 @@
         "native-filepaths-rewrite": 0,
         "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
-        "typed-ir": 175,
+        "typed-ir": 179,
         "unclassified": 0
       },
       "jsFilterTemplateSuggestions": {
@@ -15828,7 +16062,7 @@
         "unclassified": 0
       },
       "jsGenerateSpec": {
-        "native-adapter": 21,
+        "native-adapter": 23,
         "native-filepaths-rewrite": 0,
         "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
@@ -15856,7 +16090,7 @@
         "native-filepaths-rewrite": 0,
         "requires-native-adapter": 0,
         "syntax-or-analysis-failure": 0,
-        "typed-ir": 2294,
+        "typed-ir": 2297,
         "unclassified": 0
       },
       "jsScript": {
@@ -15879,62 +16113,60 @@
     "dependencies": {
       "byBody": {
         "buildTimePureStatic": 2,
-        "command": 104,
+        "command": 110,
         "environment": 22,
-        "input": 530,
+        "input": 537,
         "noRuntimeInputCommandEnvironment": 11
       },
       "byHook": {
         "buildTimePureStatic": 30,
-        "command": 360,
+        "command": 366,
         "environment": 84,
-        "input": 3502,
+        "input": 3509,
         "noRuntimeInputCommandEnvironment": 43
       }
     },
     "extractedHooks": {
-      "native-adapter": 563,
+      "native-adapter": 565,
       "native-filepaths-rewrite": 0,
       "requires-native-adapter": 0,
       "syntax-or-analysis-failure": 0,
-      "typed-ir": 3129,
+      "typed-ir": 3136,
       "unclassified": 0
     },
     "hooks": {
-      "native-adapter": 563,
+      "native-adapter": 565,
       "native-filepaths-rewrite": 0,
       "requires-native-adapter": 0,
       "syntax-or-analysis-failure": 0,
-      "typed-ir": 3129,
+      "typed-ir": 3136,
       "unclassified": 0
     },
     "uniqueBodies": {
-      "native-adapter": 117,
+      "native-adapter": 119,
       "native-filepaths-rewrite": 0,
       "requires-native-adapter": 0,
       "syntax-or-analysis-failure": 0,
-      "typed-ir": 477,
+      "typed-ir": 484,
       "unclassified": 0
     }
   },
   "coverage": {
     "auditErrors": 0,
-    "classifiedHooks": 3692,
-    "extractedHooks": 3692,
-    "hookFilesOnDisk": 3692,
+    "classifiedHooks": 3701,
+    "extractedHooks": 3701,
+    "hookFilesOnDisk": 3701,
     "nativeFilepathsRewrite": 576,
     "unclassifiedHooks": 0,
-    "uniqueBodies": 594
+    "uniqueBodies": 603
   },
   "gate": {
     "allBundledHooksMustPass": true,
-    "blockers": [
-      "versioned-spec-behaviour-unadapted"
-    ],
+    "blockers": [],
     "classificationComplete": true,
     "outputBaselineEstablished": true,
     "outputBaselineRequired": true,
-    "pathSwitchAllowed": false,
+    "pathSwitchAllowed": true,
     "researchOnlyStatuses": []
   },
   "kind": "native-hook-inventory",
@@ -15954,46 +16186,13 @@
     "total": 576
   },
   "outputBaseline": {
-    "coveredUniqueBodies": 594,
+    "coveredUniqueBodies": 603,
     "status": "established",
-    "totalUniqueBodies": 594
+    "totalUniqueBodies": 603
   },
   "version": 1,
   "versionedSpecs": {
-    "selectors": [
-      {
-        "file": "@usermn/sdc/index.js",
-        "present": true,
-        "resolution": "highest-version-file"
-      },
-      {
-        "file": "fig/index.js",
-        "present": true,
-        "resolution": "highest-version-file"
-      },
-      {
-        "file": "heroku/index.js",
-        "present": true,
-        "resolution": "highest-version-file"
-      },
-      {
-        "file": "infracost/index.js",
-        "present": true,
-        "resolution": "highest-version-file"
-      },
-      {
-        "file": "shopify/index.js",
-        "present": true,
-        "resolution": "highest-version-file"
-      }
-    ],
-    "status": "unadapted",
-    "totals": {
-      "functionsInUnappliedDiffs": 9,
-      "selectors": 5,
-      "unappliedDiffs": 15
-    },
-    "unappliedDiffs": [
+    "appliedDiffs": [
       {
         "file": "@usermn/sdc/0.0.0.js",
         "present": true,
@@ -16078,6 +16277,41 @@
           }
         ]
       }
-    ]
+    ],
+    "missingAppliedDiffs": [],
+    "missingSelectors": [],
+    "selectors": [
+      {
+        "file": "@usermn/sdc/index.js",
+        "present": true,
+        "resolution": "version-command"
+      },
+      {
+        "file": "fig/index.js",
+        "present": true,
+        "resolution": "version-command"
+      },
+      {
+        "file": "heroku/index.js",
+        "present": true,
+        "resolution": "version-command"
+      },
+      {
+        "file": "infracost/index.js",
+        "present": true,
+        "resolution": "version-command"
+      },
+      {
+        "file": "shopify/index.js",
+        "present": true,
+        "resolution": "version-command"
+      }
+    ],
+    "status": "adapted",
+    "totals": {
+      "appliedDiffs": 15,
+      "functionsInAppliedDiffs": 9,
+      "selectors": 5
+    }
   }
 }

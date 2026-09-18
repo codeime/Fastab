@@ -467,7 +467,7 @@ mod tests {
         assert_eq!(loaded, vec![baseline]);
 
         let committed = load_all().expect("committed hook baselines");
-        assert_eq!(committed.len(), 594);
+        assert_eq!(committed.len(), 603);
     }
 
     #[test]

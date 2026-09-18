@@ -41,12 +41,10 @@ import {
 } from "./filepaths-helper.mjs";
 import {
   countFunctionsInValue,
-  describeVersionDiffAllowlistDrift,
   HOOK_MODULE_MANIFEST,
   HOOK_MODULES_DIR,
   hookFileName,
   KNOWN_NON_SPEC_FILES,
-  KNOWN_UNAPPLIED_VERSION_DIFFS,
   SUPPORTED_HOOK_FIELDS,
   SUPPORTED_IR_HOOK_FIELDS,
   TYPED_HOOK_CATALOG_MAX_BYTES,
@@ -58,9 +56,18 @@ import {
   TYPED_HOOK_SIDECAR,
   TYPED_HOOK_SIDECAR_KIND,
   TYPED_HOOK_SIDECAR_VERSION,
-  unappliedVersionDiffKeys,
   utf8ByteLength,
 } from "./spec-hook-contract.mjs";
+import {
+  applySpecDiff,
+  applySpecDiffModuleSource,
+  compileGetVersionCommand,
+  compareSemver,
+  derivedVersionIrRel,
+  isEmptyVersionDiff,
+  resolveVersionedPath,
+  versionDiffKeys,
+} from "./spec-versions.mjs";
 import {
   assertNoSymlinkInPath,
   PAIR_LOCK_NAME,
@@ -237,6 +244,7 @@ export function createHookBag(specId) {
     extracted: new Map(),
     extractions: [],
     bindings: new Map(),
+    reuseByIdentity: false,
   };
 }
 
@@ -361,6 +369,11 @@ export function closurePreservingHookModule(source, sourcePath, instances) {
     source,
     sourcePath,
   );
+  const needsMergedRoot = instances.some((instance) => instance.mergeThrough);
+  const rootExpression = (instance) => {
+    if (!instance.mergeThrough) return defaultExpression;
+    return `__ec_mergedThrough(${defaultExpression}, typeof versions === "undefined" ? {} : versions, ${JSON.stringify(instance.mergeThrough)})`;
+  };
   const entries = [...instances]
     .sort((left, right) => comparePath(left.id, right.id))
     .map((instance) => {
@@ -368,7 +381,8 @@ export function closurePreservingHookModule(source, sourcePath, instances) {
       if (segments.length === 0) {
         throw new Error(`hook ${instance.id} cannot target the spec root`);
       }
-      const target = propertyAccess(defaultExpression, segments);
+      const root = rootExpression(instance);
+      const target = propertyAccess(root, segments);
       if (instance.sourceField !== "custom") {
         return `${JSON.stringify(instance.id)}: ${target}`;
       }
@@ -378,15 +392,16 @@ export function closurePreservingHookModule(source, sourcePath, instances) {
         );
       }
       const ownerSegments = sourcePathSegments(instance.ownerPath);
-      const owner = propertyAccess(defaultExpression, ownerSegments);
+      const owner = propertyAccess(root, ownerSegments);
       const args = `__ec_args_${suffix}`;
       return `${JSON.stringify(instance.id)}: (...${args}) => Reflect.apply(${target}, ${owner}, ${args})`;
     });
+  const prefix = needsMergedRoot ? `${applySpecDiffModuleSource()}\n` : "";
   // QuickJS strips `export default` and evaluates the remaining expression as
   // a script. An explicit strict function preserves the original ESM module's
   // top-level semantics in both loaders: `this` is undefined and accidental
   // globals are rejected.
-  return `export default (function () {\n"use strict";\n${body}\nreturn Object.freeze({\n${entries.join(",\n")}\n});\n})();\n`;
+  return `export default (function () {\n"use strict";\n${prefix}${body}\nreturn Object.freeze({\n${entries.join(",\n")}\n});\n})();\n`;
 }
 
 function typedHookContracts() {
@@ -577,6 +592,12 @@ function extractHook(hooks, kind, fn, { owner = null } = {}) {
   if (!hooks) {
     throw new Error(`cannot extract ${kind} hook without a hook bag`);
   }
+  if (hooks.reuseByIdentity) {
+    const existing = hooks.extractions.find(
+      (item) => item.field === kind && item.fn === fn,
+    );
+    if (existing) return existing.id;
+  }
   const src = functionSource(fn);
   if (!src) {
     throw new Error(
@@ -647,6 +668,7 @@ function assertNoUnknownFunctionFields(
           fn: value[key],
           owner: value,
           ownerPath: path,
+          mergeThrough: null,
           nativeRewrite:
             isFilepathsHelper(value) && NATIVE_REWRITE_FIELDS.has(key),
         });
@@ -701,14 +723,17 @@ function bindExtractedHooks(hooks, sourceFunctions, specId) {
     // function object (and therefore its closure) is identical.  Selecting a
     // stable path makes the provenance deterministic without changing the
     // callable value.  Custom hooks always retain their exact owner path.
-    const [selected] = [...matching].sort((left, right) =>
-      comparePath(left.path, right.path),
-    );
+    const [selected] = [...matching].sort((left, right) => {
+      if (!left.mergeThrough && right.mergeThrough) return -1;
+      if (left.mergeThrough && !right.mergeThrough) return 1;
+      return comparePath(left.path, right.path);
+    });
     hooks.bindings.set(extraction.id, {
       id: extraction.id,
       field: extraction.field,
       path: selected.path,
       ownerPath: selected.ownerPath,
+      mergeThrough: selected.mergeThrough ?? null,
       functionBodySha256: sha256(functionSource(extraction.fn)),
       fn: extraction.fn,
       owner: selected.owner,
@@ -1917,13 +1942,8 @@ async function compileSpecsIrUnlocked({
     let skipped = 0;
     let hooksWritten = 0;
     const failures = [];
-    // Non-empty `versions` diffs the WebView merged at load time. They are
-    // not applied here, so each one must be on the reviewed allowlist and is
-    // reported as unadapted behaviour rather than dropped silently.
-    const unappliedVersionDiffs = [];
-    const seenVersionDiffFiles = new Set();
-    const compilingCanonicalSource =
-      resolve(srcDir) === resolve(canonicalSourceDir);
+    const appliedVersionDiffs = [];
+    const versionedByCommand = new Map();
     const hooksDir = join(stagedOutDir, "hooks");
     assertSafeSourceRelativePath("hooks");
     assertPathInsideRoot(stagedOutDir, hooksDir, "compiled IR hook directory");
@@ -1962,27 +1982,6 @@ async function compileSpecsIrUnlocked({
         const binder = createFilepathsBinder(source);
         const mod = await import(pathToFileURL(src).href);
         const rawSpec = mod.default ?? mod;
-        const versionDiffDrift = describeVersionDiffAllowlistDrift(
-          normalizedRel,
-          mod,
-          { enforceStale: compilingCanonicalSource },
-        );
-        if (versionDiffDrift) {
-          throw new Error(versionDiffDrift);
-        }
-        const allowlistedDiffs = (
-          KNOWN_UNAPPLIED_VERSION_DIFFS[normalizedRel] ?? []
-        ).filter((version) => unappliedVersionDiffKeys(mod).includes(version));
-        if (allowlistedDiffs.length) {
-          seenVersionDiffFiles.add(normalizedRel);
-          unappliedVersionDiffs.push({
-            file: normalizedRel,
-            versions: [...allowlistedDiffs].map((version) => ({
-              version,
-              functions: countFunctionsInValue(mod.versions[version]),
-            })),
-          });
-        }
         const sourceFunctions = [];
         assertNoUnknownFunctionFields(
           rawSpec,
@@ -1997,14 +1996,44 @@ async function compileSpecsIrUnlocked({
             `source did not produce a static spec (add the file to ${"KNOWN_NON_SPEC_FILES"} only when it is a reviewed helper/barrel)`,
           );
         }
+        const destRel = normalizedRel.replace(/\.js$/, ".json");
+        const versionVariants = await compileAppliedVersionDiffs({
+          rawSpec,
+          mod,
+          specId,
+          sourceRel: normalizedRel,
+          destRel,
+          hooks,
+          source,
+          binder,
+          sourceFunctions,
+        });
         assertFunctionsExtracted(sourceFunctions, hooks, specId);
         bindExtractedHooks(hooks, sourceFunctions, specId);
-        const destRel = normalizedRel.replace(/\.js$/, ".json");
         await writeOutputFile(
           stagedOutDir,
           destRel,
           `${JSON.stringify(spec)}\n`,
         );
+        for (const variant of versionVariants) {
+          if (variant.spec) {
+            await writeOutputFile(
+              stagedOutDir,
+              variant.destRel,
+              `${JSON.stringify(variant.spec)}\n`,
+            );
+          }
+        }
+        if (versionVariants.length) {
+          appliedVersionDiffs.push({
+            file: normalizedRel,
+            versions: versionVariants.map((variant) => ({
+              version: variant.version,
+              destRel: variant.destRel,
+              functions: countFunctionsInValue(mod.versions?.[variant.version]),
+            })),
+          });
+        }
         for (const [id, hookSource] of hooks.files) {
           const filename = hookFileName(id);
           const previousId = hookFilesByName.get(filename);
@@ -2022,7 +2051,13 @@ async function compileSpecsIrUnlocked({
           hooksWritten += 1;
         }
         compiled += 1;
-        compiledSpecs.push({ rel: normalizedRel, destRel, spec, hooks });
+        compiledSpecs.push({
+          rel: normalizedRel,
+          destRel,
+          spec,
+          hooks,
+          versionVariants,
+        });
       } catch (err) {
         failed += 1;
         failures.push({ rel: normalizedRel, message: err.message });
@@ -2054,22 +2089,7 @@ async function compileSpecsIrUnlocked({
       );
     }
 
-    // The allowlist describes the canonical bundle. A listed file that has
-    // disappeared from that bundle is stale review data and must be removed,
-    // otherwise the inventory would keep reporting a gap that no longer
-    // exists. Fixture trees compiled through the API are exempt: they never
-    // contain the bundled versioned specs.
-    if (compilingCanonicalSource) {
-      const stale = Object.keys(KNOWN_UNAPPLIED_VERSION_DIFFS)
-        .filter((file) => !seenVersionDiffFiles.has(file))
-        .sort(comparePath);
-      if (stale.length) {
-        throw new Error(
-          `KNOWN_UNAPPLIED_VERSION_DIFFS lists ${JSON.stringify(stale)} but the bundled source tree has no such spec file(s); remove the stale entries`,
-        );
-      }
-    }
-    unappliedVersionDiffs.sort((left, right) =>
+    appliedVersionDiffs.sort((left, right) =>
       comparePath(left.file, right.file),
     );
 
@@ -2141,7 +2161,26 @@ async function compileSpecsIrUnlocked({
       }
     }
 
+    await collectVersionedSelectors({
+      srcDir,
+      files,
+      compiledSpecs,
+      sourceIndex,
+      versionedByCommand,
+    });
+    for (const [name, entry] of versionedByCommand) {
+      const fallbackPath = resolveVersionedPath(entry, undefined);
+      if (fallbackPath && sourceCommandAllowed(sourceIndex, name)) {
+        candidateFor(name, { destRel: fallbackPath, priority: 2.5 });
+      }
+    }
+
     const unique = [...commandFiles.keys()].sort();
+    const versioned = Object.fromEntries(
+      [...versionedByCommand.entries()].sort(([left], [right]) =>
+        left < right ? -1 : left > right ? 1 : 0,
+      ),
+    );
     await writeOutputFile(
       stagedOutDir,
       "index.json",
@@ -2157,6 +2196,7 @@ async function compileSpecsIrUnlocked({
             )
             .map(([name, candidate]) => [name, candidate.destRel]),
         ),
+        ...(Object.keys(versioned).length ? { versioned } : {}),
       })}\n`,
     );
     const pairMarker = await createPairMarker({
@@ -2181,7 +2221,13 @@ async function compileSpecsIrUnlocked({
     if (!finalAudit.ok) {
       const failures = Object.entries(finalAudit.errors)
         .filter(([, entries]) => entries.length)
-        .map(([name, entries]) => `${name}=${entries.length}`);
+        .map(([name, entries]) => {
+          const samples = entries
+            .slice(0, 3)
+            .map((entry) => JSON.stringify(entry))
+            .join("; ");
+          return `${name}=${entries.length}${samples ? ` [${samples}]` : ""}`;
+        });
       throw new Error(
         `Spec IR pre-publish audit failed: ${failures.join(", ")}`,
       );
@@ -2191,19 +2237,9 @@ async function compileSpecsIrUnlocked({
     process.stdout.write(
       `Wrote ${compiled} IR specs (${unique.length} names, ${hooksWritten} hooks in ${hookModules.modules} closure-preserving modules, ${hookModules.typedHooks} typed hooks; ${skipped} allowlisted skipped) to ${outDir}\n`,
     );
-    if (unappliedVersionDiffs.length) {
-      const diffCount = unappliedVersionDiffs.reduce(
-        (sum, entry) => sum + entry.versions.length,
-        0,
-      );
-      const functionCount = unappliedVersionDiffs.reduce(
-        (sum, entry) =>
-          sum +
-          entry.versions.reduce((inner, item) => inner + item.functions, 0),
-        0,
-      );
+    if (appliedVersionDiffs.length || versionedByCommand.size) {
       process.stdout.write(
-        `Unadapted: ${diffCount} allowlisted version diff(s) containing ${functionCount} function(s) in ${unappliedVersionDiffs.length} file(s) are not applied (${unappliedVersionDiffs.map((entry) => entry.file).join(", ")})\n`,
+        `Adapted: ${appliedVersionDiffs.reduce((sum, entry) => sum + entry.versions.length, 0)} version diff(s) in ${appliedVersionDiffs.length} file(s); ${versionedByCommand.size} version selector(s)\n`,
       );
     }
     return {
@@ -2215,7 +2251,8 @@ async function compileSpecsIrUnlocked({
       hooks: hooksWritten,
       hookModules: hookModules.modules,
       typedHooks: hookModules.typedHooks,
-      unappliedVersionDiffs,
+      appliedVersionDiffs,
+      versionedCommands: [...versionedByCommand.keys()],
     };
   } finally {
     if (!published && !(await pairJournalExists(pairLockPath))) {
@@ -2286,6 +2323,110 @@ function compareFileCandidates(left, right) {
   if (left.version && right.version)
     return compareVersions(left.version, right.version);
   return comparePath(left.destRel, right.destRel);
+}
+
+async function compileAppliedVersionDiffs({
+  rawSpec,
+  mod,
+  specId,
+  sourceRel,
+  destRel,
+  hooks,
+  source,
+  binder,
+  sourceFunctions,
+}) {
+  const keys = versionDiffKeys(mod.versions);
+  if (!keys.length) return [];
+  hooks.reuseByIdentity = true;
+  const variants = [];
+  let current = rawSpec;
+  let previousDestRel = destRel;
+  for (const version of keys) {
+    const diff = mod.versions[version];
+    current = applySpecDiff(current, diff);
+    if (isEmptyVersionDiff(diff)) {
+      variants.push({ version, destRel: previousDestRel, spec: null });
+      continue;
+    }
+    const mergedFunctions = [];
+    assertNoUnknownFunctionFields(
+      current,
+      specId,
+      "root",
+      new WeakSet(),
+      mergedFunctions,
+    );
+    for (const record of mergedFunctions) {
+      record.mergeThrough = version;
+      sourceFunctions.push(record);
+    }
+    const spec = await convertNode(current, { hooks, source, binder });
+    if (!spec) {
+      throw new Error(
+        `${sourceRel} versions[${JSON.stringify(version)}] did not produce a static spec after applySpecDiff`,
+      );
+    }
+    const variantDestRel = derivedVersionIrRel(sourceRel, version);
+    variants.push({ version, destRel: variantDestRel, spec });
+    previousDestRel = variantDestRel;
+  }
+  return variants;
+}
+
+async function collectVersionedSelectors({
+  srcDir,
+  files,
+  compiledSpecs,
+  sourceIndex,
+  versionedByCommand,
+}) {
+  for (const rel of files) {
+    const normalizedRel = rel.replaceAll("\\", "/");
+    if (!normalizedRel.endsWith("/index.js")) continue;
+    if (!KNOWN_NON_SPEC_FILES.has(normalizedRel)) continue;
+    const directory = dirname(normalizedRel);
+    if (!sourceVersionedRoot(sourceIndex, directory)) continue;
+    const src = join(srcDir, normalizedRel);
+    const mod = await import(pathToFileURL(src).href);
+    if (typeof mod.getVersionCommand !== "function") continue;
+    const versionFiles = compiledSpecs.filter((item) => {
+      const itemRel = item.rel.replaceAll("\\", "/");
+      if (dirname(itemRel) !== directory) return false;
+      return parseVersionFilename(itemRel.slice(itemRel.lastIndexOf("/") + 1));
+    });
+    if (!versionFiles.length) {
+      throw new Error(
+        `${normalizedRel} exports getVersionCommand but ${directory} has no compiled version files`,
+      );
+    }
+    const filesMap = {};
+    const applied = {};
+    for (const item of versionFiles.sort((left, right) =>
+      compareSemver(
+        parseVersionFilename(left.rel.slice(left.rel.lastIndexOf("/") + 1)).raw,
+        parseVersionFilename(right.rel.slice(right.rel.lastIndexOf("/") + 1)).raw,
+      ),
+    )) {
+      const version = parseVersionFilename(
+        item.rel.slice(item.rel.lastIndexOf("/") + 1),
+      ).raw;
+      filesMap[version] = item.destRel;
+      if (item.versionVariants?.length) {
+        applied[version] = Object.fromEntries(
+          item.versionVariants.map((variant) => [variant.version, variant.destRel]),
+        );
+      }
+    }
+    const selector = compileGetVersionCommand(mod.getVersionCommand, directory);
+    const fileVersions = Object.keys(filesMap).sort(compareSemver);
+    versionedByCommand.set(directory, {
+      ...selector,
+      fallback: fileVersions[fileVersions.length - 1],
+      files: filesMap,
+      ...(Object.keys(applied).length ? { applied } : {}),
+    });
+  }
 }
 
 async function canonicalDestination(path) {

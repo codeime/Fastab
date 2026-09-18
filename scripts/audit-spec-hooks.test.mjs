@@ -619,6 +619,66 @@ test("audit rejects module path traversal and metadata hook-id drift", async () 
   }
 });
 
+test("audit captures a minified versions named export alias", async () => {
+  const sourceRoot = await mkdtemp(
+    join(tmpdir(), "easy-complete-minified-versions-src-"),
+  );
+  const irRoot = await mkdtemp(
+    join(tmpdir(), "easy-complete-minified-versions-ir-"),
+  );
+  try {
+    await writeFile(
+      join(sourceRoot, "tool.js"),
+      `var s={name:"tool",subcommands:[{name:"base"}]},v={};v["1.2.0"]={subcommands:[{name:"added",args:{generators:{postProcess:t=>[{name:t}]}}}]};export{s as default,v as versions};\n`,
+    );
+    await compileSpecsIr({ srcDir: sourceRoot, outDir: irRoot });
+    const report = await auditSpecsHooks({ sourceRoot, irRoot });
+    assert.equal(report.ok, true, JSON.stringify(report.errors, null, 2));
+  } finally {
+    await Promise.all([
+      rm(sourceRoot, { recursive: true, force: true }),
+      rm(irRoot, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("audit matches derived version IR hooks against the merged source tree", async () => {
+  const sourceRoot = await mkdtemp(
+    join(tmpdir(), "easy-complete-version-audit-src-"),
+  );
+  const irRoot = await mkdtemp(
+    join(tmpdir(), "easy-complete-version-audit-ir-"),
+  );
+  try {
+    await mkdir(join(sourceRoot, "tool"), { recursive: true });
+    await writeFile(
+      join(sourceRoot, "tool", "1.0.0.js"),
+      `const spec = { name: "tool", subcommands: [{ name: "base" }] };
+const versions = { "1.2.0": { subcommands: [{ name: "added", args: { generators: { postProcess: (out) => [{ name: out }] } } }] } };
+export { spec as default, versions };\n`,
+    );
+    await compileSpecsIr({ srcDir: sourceRoot, outDir: irRoot });
+    const report = await auditSpecsHooks({ sourceRoot, irRoot });
+    assert.equal(report.ok, true, JSON.stringify(report.errors, null, 2));
+    assert.equal(report.errors.hookModuleMismatches.length, 0);
+    assert.equal(report.errors.orphanTypedHooks.length, 0);
+    assert.equal(report.errors.sourceHookMismatches.length, 0);
+    const derivedHook = report.sourceToIr[0].hookInstances.postProcess.find(
+      (instance) => instance.id === "tool/1.0.0#postProcess#0",
+    );
+    assert.ok(derivedHook, JSON.stringify(report.sourceToIr[0].hookInstances));
+    assert.equal(derivedHook.path, "root.subcommands[0].args.generators.postProcess");
+    assert.ok(
+      Object.keys(JSON.parse(await readFile(join(irRoot, TYPED_HOOK_SIDECAR), "utf8")).hooks).length >= 1,
+    );
+  } finally {
+    await Promise.all([
+      rm(sourceRoot, { recursive: true, force: true }),
+      rm(irRoot, { recursive: true, force: true }),
+    ]);
+  }
+});
+
 test("audit rejects compiler provenance tampering in path, field, or body hash", async () => {
   const fixture = await createFixture();
   try {

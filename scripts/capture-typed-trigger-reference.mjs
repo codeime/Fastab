@@ -26,6 +26,7 @@ import {
 } from "./capture-hook-reference.mjs";
 import { withReferenceAudit } from "./reference-audit-worker.mjs";
 import { comparePath, verifyPair } from "./spec-pair.mjs";
+import { sameVersionedIrFamily } from "./spec-versions.mjs";
 import { writeReferenceFile } from "./reference-safe-io.mjs";
 import {
   HOOK_MODULE_MANIFEST,
@@ -207,6 +208,7 @@ const HARNESS_FILES = Object.freeze([
   "scripts/reference-safe-io.mjs",
   "scripts/spec-hook-contract.mjs",
   "scripts/spec-pair.mjs",
+  "scripts/spec-versions.mjs",
   "scripts/typed-hook-inline.mjs",
   "scripts/typed-hook-ir.mjs",
   "scripts/typed-regex.mjs",
@@ -730,7 +732,7 @@ function auditedTypedIds(audit, sidecar, hookManifest, field = "trigger") {
     const moduleMetadata = hookManifest.modules[descriptor.module];
     if (
       audited.file !== hookFileName(id) ||
-      audited.ir !== source.record.ir ||
+      !sameVersionedIrFamily(audited.ir, source.record.ir) ||
       !/^[a-f0-9]{64}$/.test(audited.sha256) ||
       source.sourceField !== field ||
       descriptor.path !== source.instance.path ||

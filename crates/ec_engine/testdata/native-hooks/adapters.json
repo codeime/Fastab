@@ -399,6 +399,12 @@
       "reason": "spread calls are unsupported"
     },
     {
+      "bodySha256": "5d4536ed0dfc0baf31213c9ad56a6c76fb78350512cf98c1299b997ec0b32df8",
+      "field": "generateSpec",
+      "representativeHookId": "fig/1.0.0#generateSpec#9",
+      "reason": "fig 1.4.1 run generateSpec closes over graphql helper x"
+    },
+    {
       "bodySha256": "65622e2681477974a4e8314edfdc88e3550d5201e2948f1a9f3e5b99326208b4",
       "field": "generateSpec",
       "representativeHookId": "fig/2.0.0#generateSpec#1",
@@ -409,6 +415,12 @@
       "field": "generateSpec",
       "representativeHookId": "serverless#generateSpec#0",
       "reason": "free identifier ps is not representable"
+    },
+    {
+      "bodySha256": "7569b7431758d1decc7ac769e222a32a280439661b93d963bcc4e16134e95d62",
+      "field": "generateSpec",
+      "representativeHookId": "fig/2.0.0#generateSpec#17",
+      "reason": "fig 2.10.0 cli generateSpec closes over graphql helper P"
     },
     {
       "bodySha256": "7685c9fbc459a05d9f68bf80ede922a9b8e7c4b6968ec9db4dab14407af3e26c",

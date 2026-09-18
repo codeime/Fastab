@@ -49,6 +49,9 @@ const referenceSafeIoPath = fileURLToPath(
 const nativeHookAdaptersPath = fileURLToPath(
   new URL("./native-hook-adapters.mjs", import.meta.url),
 );
+const specVersionsPath = fileURLToPath(
+  new URL("./spec-versions.mjs", import.meta.url),
+);
 const pairPath = fileURLToPath(new URL("./spec-pair.mjs", import.meta.url));
 const repoNodeModules = fileURLToPath(
   new URL("../node_modules/", import.meta.url),
@@ -130,6 +133,7 @@ test("sync guards empty packages, missing icons, and lock drift without replacin
     nativeHookAdaptersPath,
     join(root, "scripts", "native-hook-adapters.mjs"),
   );
+  await copyFile(specVersionsPath, join(root, "scripts", "spec-versions.mjs"));
   await mkdir(join(packageRoot, "build"), { recursive: true });
   for (const dependency of ["acorn", "eslint-scope"]) {
     await symlink(

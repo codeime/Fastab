@@ -20,6 +20,7 @@ import {
 } from "./spec-hook-contract.mjs";
 import { withReferenceAudit } from "./reference-audit-worker.mjs";
 import { comparePath } from "./spec-pair.mjs";
+import { sameVersionedIrFamily } from "./spec-versions.mjs";
 
 const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const worker = join(repoDir, "scripts", "reference-hook-worker.mjs");
@@ -275,7 +276,7 @@ function auditedIdentity(audit, hookId) {
     throw new Error(`hook ${hookId} manifest identity differs from the audit`);
   }
   if (
-    auditedHook.ir !== source.ir ||
+    !sameVersionedIrFamily(auditedHook.ir, source.ir) ||
     !isSha256(auditedHook.sha256)
   ) {
     throw new Error(`hook ${hookId} manifest provenance is invalid`);
