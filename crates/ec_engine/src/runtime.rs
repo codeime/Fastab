@@ -1011,6 +1011,7 @@ mod tests {
         assert_eq!(ranking_root_command("echo x && git checkout", Some(6)), "echo");
     }
 
+    #[cfg(feature = "js-compat")]
     #[test]
     fn generate_spec_merges_dynamic_subcommands() {
         let _lock = engine_lock();
