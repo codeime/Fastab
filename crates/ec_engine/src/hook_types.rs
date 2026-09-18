@@ -20,24 +20,19 @@ pub struct ScriptCommand {
 }
 
 /// Development/test diagnostic side channel. The normal hook APIs keep their
-/// historical `Option` returns so a missing source, a JavaScript failure, and
-/// a valid empty result do not look identical while investigating the native
-/// migration. It intentionally carries no hook input, cwd, shell, environment,
-/// command, or error text.
+/// historical `Option` returns so a missing source, a failed evaluation, and
+/// a valid empty result do not look identical. It intentionally carries no
+/// hook input, cwd, shell, environment, command, or error text.
+///
+/// Every variant is reachable. The QuickJS-era promise and runtime outcomes
+/// were dropped with the runtime; do not re-add a variant nothing records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum HookDiagnostic {
     Success,
     EmptyResult,
     SourceMissing,
-    RuntimeUnavailable,
-    EvalError,
     InvokeError,
-    PromiseRejected,
-    PromiseError,
-    PromisePending,
     Timeout,
-    JsonConversionError,
     ResultConversionError,
 }
 

@@ -1964,7 +1964,7 @@
       }
     },
     {
-      "diagnostic": "PromiseRejected",
+      "diagnostic": "Timeout",
       "dimension": "timeout",
       "exec": [
         {
@@ -1977,7 +1977,7 @@
         }
       ],
       "expectCalls": 1,
-      "name": "timeout-exec-promise-rejected",
+      "name": "timeout-exec-aborted",
       "request": {
         "buffer": "slowexec ",
         "cwd": "$CWD",
@@ -2000,7 +2000,7 @@
       "diagnostic": "Timeout",
       "dimension": "timeout",
       "expectCalls": 0,
-      "name": "timeout-js-loop",
+      "name": "timeout-runaway-loop",
       "request": {
         "buffer": "spinloop ",
         "cwd": "$CWD",

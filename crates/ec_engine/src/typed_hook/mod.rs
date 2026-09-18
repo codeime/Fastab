@@ -776,6 +776,7 @@ pub(crate) struct TypedGetQueryTermReferenceBaseline {
 pub(crate) struct TypedHookError {
     message: String,
     js_class: Option<String>,
+    timed_out: bool,
 }
 
 impl TypedHookError {
@@ -783,13 +784,29 @@ impl TypedHookError {
         Self {
             message: message.into(),
             js_class: None,
+            timed_out: false,
         }
+    }
+
+    /// The hook ran out of its wall-clock budget. QuickJS reported this
+    /// through its interrupt handler; the evaluator carries the reason on the
+    /// error so the diagnostic stays `Timeout` and not a generic failure.
+    pub(crate) fn timed_out(message: impl Into<String>) -> Self {
+        Self {
+            timed_out: true,
+            ..Self::new(message)
+        }
+    }
+
+    pub(crate) fn is_timed_out(&self) -> bool {
+        self.timed_out
     }
 
     fn throw(class: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             js_class: Some(class.into()),
+            timed_out: false,
         }
     }
 

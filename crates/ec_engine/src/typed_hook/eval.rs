@@ -53,6 +53,28 @@ fn fail(message: impl Into<String>) -> Abort {
     Abort::Error(TypedHookError::new(message))
 }
 
+/// The hook's wall-clock budget, checked inside the two loop forms. QuickJS
+/// enforced this from an interrupt handler on any JS; typed IR only has to
+/// guard the places that can run unbounded. Checked every `DEADLINE_STRIDE`
+/// iterations so a hot loop does not pay for a clock read per step.
+const DEADLINE_STRIDE: u32 = 1024;
+
+fn loop_deadline_expired(effects: Option<&TypedHookEffects<'_>>, iterations: u32) -> bool {
+    if !iterations.is_multiple_of(DEADLINE_STRIDE) {
+        return false;
+    }
+    let Some(deadline) = effects.and_then(|effects| effects.deadline) else {
+        return false;
+    };
+    deadline.checked_duration_since(std::time::Instant::now()).is_none()
+}
+
+fn loop_timed_out(op: &str) -> Abort {
+    Abort::Error(TypedHookError::timed_out(format!(
+        "typed hook {op} exceeded its deadline"
+    )))
+}
+
 fn evaluate_inner(
     expression: &TypedExpr,
     arguments: &[TypedValue],
@@ -344,7 +366,12 @@ fn evaluate_inner(
         },
         TypedExpr::ForOf { names, value, body } => {
             let items = as_array(&ev(value, locals)?);
+            let mut iterations = 0_u32;
             for item in items {
+                iterations = iterations.saturating_add(1);
+                if loop_deadline_expired(effects, iterations) {
+                    return Err(loop_timed_out("for-of"));
+                }
                 bind_for_of(locals, names, item);
                 match ev(body, locals) {
                     Ok(_) | Err(Abort::Continue) => {},
@@ -751,14 +778,22 @@ fn evaluate_inner(
             flags: flags.clone(),
         }),
         TypedExpr::While { condition, body } => {
-            let mut guard = 0;
+            let mut guard = 0_u32;
             loop {
                 if !is_truthy(&ev(condition, locals)?) {
                     break;
                 }
                 guard += 1;
+                if loop_deadline_expired(effects, guard) {
+                    return Err(loop_timed_out("while loop"));
+                }
                 if guard > 100_000 {
-                    return Err(fail("while loop exceeded iteration cap"));
+                    // The runaway guard stands in for the wall clock on a loop
+                    // whose body is too cheap to reach the deadline, so it
+                    // reports the same outcome a budget overrun does.
+                    return Err(Abort::Error(TypedHookError::timed_out(
+                        "while loop exceeded iteration cap",
+                    )));
                 }
                 match ev(body, locals) {
                     Ok(_) | Err(Abort::Continue) => {},
@@ -854,7 +889,7 @@ fn evaluate_exec(
     let effects = require_effects(effects)?;
     if let Some(deadline) = effects.deadline {
         if deadline.checked_duration_since(std::time::Instant::now()).is_none() {
-            return Err(Abort::Error(TypedHookError::new(
+            return Err(Abort::Error(TypedHookError::timed_out(
                 "typed hook exec exceeded its deadline",
             )));
         }

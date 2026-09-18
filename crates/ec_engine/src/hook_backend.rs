@@ -256,6 +256,17 @@ fn invoke_err<T>(hook_id: &str) -> Option<T> {
     None
 }
 
+/// A hook that ran out of its `autocomplete.scriptTimeout` budget is not a
+/// broken hook. Keep the two apart in the diagnostic, as the QuickJS
+/// interrupt handler did.
+fn eval_err<T>(hook_id: &str, error: &crate::typed_hook::TypedHookError) -> Option<T> {
+    if error.is_timed_out() {
+        record(hook_id, HookDiagnostic::Timeout);
+        return None;
+    }
+    invoke_err(hook_id)
+}
+
 pub fn dispatch_trigger(hook_id: &str, search_term: &str, previous: &str) -> Option<bool> {
     if hooks_skipped() {
         return None;
@@ -358,7 +369,7 @@ fn native_trigger(hook_id: &str, search_term: &str, previous: &str) -> Option<bo
     if let Some(descriptor) = typed_entry(&native, hook_id) {
         return match evaluate_typed_trigger(descriptor, search_term, previous) {
             Ok(value) => finish_option(hook_id, Some(value), |_| false),
-            Err(_) => invoke_err(hook_id),
+            Err(error) => eval_err(hook_id, &error),
         };
     }
     let _ = missing(hook_id);
@@ -370,7 +381,7 @@ fn native_get_query_term(hook_id: &str, search_term: &str) -> Option<String> {
     if let Some(descriptor) = typed_entry(&native, hook_id) {
         return match evaluate_typed_get_query_term(descriptor, search_term) {
             Ok(value) => finish_option(hook_id, Some(value), String::is_empty),
-            Err(_) => invoke_err(hook_id),
+            Err(error) => eval_err(hook_id, &error),
         };
     }
     let _ = missing(hook_id);
@@ -390,7 +401,7 @@ fn native_post_process(hook_id: &str, stdout: &str, tokens: &[String]) -> Option
     if let Some(descriptor) = typed_entry(&native, hook_id) {
         return match evaluate_typed_post_process(descriptor, stdout, tokens) {
             Ok(value) => finish_option(hook_id, Some(value), Vec::is_empty),
-            Err(_) => invoke_err(hook_id),
+            Err(error) => eval_err(hook_id, &error),
         };
     }
     let _ = missing(hook_id);
@@ -402,7 +413,7 @@ fn native_script(hook_id: &str, tokens: &[String]) -> Option<ScriptCommand> {
     if let Some(descriptor) = typed_entry(&native, hook_id) {
         return match evaluate_typed_script(descriptor, tokens) {
             Ok(value) => finish_option(hook_id, Some(value), |command| command.command.is_empty()),
-            Err(_) => invoke_err(hook_id),
+            Err(error) => eval_err(hook_id, &error),
         };
     }
     let _ = missing(hook_id);
@@ -436,7 +447,7 @@ fn native_filter(hook_id: &str, suggestions: &[Suggestion]) -> Option<Vec<Sugges
     if let Some(descriptor) = typed_entry(&native, hook_id) {
         return match evaluate_typed_filter_template_suggestions(descriptor, suggestions) {
             Ok(value) => finish_option(hook_id, Some(value), Vec::is_empty),
-            Err(_) => invoke_err(hook_id),
+            Err(error) => eval_err(hook_id, &error),
         };
     }
     let _ = missing(hook_id);
@@ -466,7 +477,7 @@ fn native_custom(
         let deadline = Some(Instant::now() + timeout + Duration::from_secs(2));
         return match evaluate_typed_custom(descriptor, tokens, &typed_ctx, &exec, deadline) {
             Ok(value) => finish_option(hook_id, Some(value), Vec::is_empty),
-            Err(_) => invoke_err(hook_id),
+            Err(error) => eval_err(hook_id, &error),
         };
     }
     let _ = missing(hook_id);
@@ -482,7 +493,7 @@ fn native_alias(hook_id: &str, token: &str, cwd: &str, timeout: Duration) -> Opt
         let deadline = Some(Instant::now() + timeout + Duration::from_secs(2));
         return match evaluate_typed_alias(descriptor, token, &typed_ctx, &exec, deadline) {
             Ok(value) => finish_option(hook_id, Some(value), String::is_empty),
-            Err(_) => invoke_err(hook_id),
+            Err(error) => eval_err(hook_id, &error),
         };
     }
     let _ = missing(hook_id);
@@ -498,7 +509,7 @@ fn native_load_spec(hook_id: &str, token: &str, cwd: &str, timeout: Duration) ->
         let deadline = Some(Instant::now() + timeout + Duration::from_secs(2));
         return match evaluate_typed_load_spec(descriptor, token, &typed_ctx, &exec, deadline) {
             Ok(json) => spec_from_json(hook_id, json),
-            Err(_) => invoke_err(hook_id),
+            Err(error) => eval_err(hook_id, &error),
         };
     }
     let _ = missing(hook_id);
@@ -520,7 +531,7 @@ fn native_generate_spec(hook_id: &str, tokens: &[String], cwd: &str, timeout: Du
         let deadline = Some(Instant::now() + timeout + Duration::from_secs(2));
         return match evaluate_typed_generate_spec(descriptor, tokens, &typed_ctx, &exec, deadline) {
             Ok(json) => spec_from_json(hook_id, json),
-            Err(_) => invoke_err(hook_id),
+            Err(error) => eval_err(hook_id, &error),
         };
     }
     let _ = missing(hook_id);
@@ -599,7 +610,7 @@ fn live_typed_exec(
                 stderr: output.stderr,
                 status: i64::from(output.status),
             }),
-            Err(CommandError::TimedOut) => Err(crate::typed_hook::TypedHookError::new("timeout")),
+            Err(CommandError::TimedOut) => Err(crate::typed_hook::TypedHookError::timed_out("timeout")),
             Err(CommandError::Failed) => Err(crate::typed_hook::TypedHookError::new("exec failed")),
         }
     }
