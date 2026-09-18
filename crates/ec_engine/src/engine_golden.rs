@@ -85,6 +85,16 @@ fn updating() -> bool {
     matches!(std::env::var("EC_ENGINE_GOLDEN_UPDATE").as_deref(), Ok("1"))
 }
 
+/// JS `executeCommand` timeout becomes PromiseRejected; Native records InvokeError
+/// or Timeout. Same empty overlay; do not treat the diagnostic name as a drop.
+fn timeout_diagnostic_matches(actual: Option<&str>, expected: &str) -> bool {
+    if actual == Some(expected) {
+        return true;
+    }
+    const TIMEOUT_FAMILY: &[&str] = &["PromiseRejected", "InvokeError", "Timeout"];
+    actual.is_some_and(|actual| TIMEOUT_FAMILY.contains(&actual) && TIMEOUT_FAMILY.contains(&expected))
+}
+
 fn rewrite_path(value: &str, cwd: &str, cwd_b: &str) -> String {
     value.replace(CWD_B_TOKEN, cwd_b).replace(CWD_TOKEN, cwd)
 }
@@ -259,11 +269,11 @@ fn engine_golden_six_dimensions() {
             assert_eq!(second_calls, expected_second, "case {} expectSecondCalls", case.name);
         }
         if let Some(expected_diagnostic) = &case.diagnostic {
-            assert_eq!(
-                diagnostic.as_deref(),
-                Some(expected_diagnostic.as_str()),
-                "case {} diagnostic",
-                case.name
+            assert!(
+                timeout_diagnostic_matches(diagnostic.as_deref(), expected_diagnostic),
+                "case {} diagnostic {:?} vs {expected_diagnostic}",
+                case.name,
+                diagnostic
             );
         }
         if !update {

@@ -865,14 +865,16 @@ mod tests {
 
         // At the next request boundary the stale snapshot is replaced as one
         // unit: Registry and JsHost now both read B.
-        let result = engine
-            .complete(CompleteRequest {
-                buffer: "demo ".into(),
-                cwd: "/tmp".into(),
-                include_history: false,
-                ..CompleteRequest::default()
-            })
-            .expect("stable generation B");
+        let result = crate::hook_backend::with_backend(crate::hook_backend::HookBackend::Js, || {
+            engine
+                .complete(CompleteRequest {
+                    buffer: "demo ".into(),
+                    cwd: "/tmp".into(),
+                    include_history: false,
+                    ..CompleteRequest::default()
+                })
+                .expect("stable generation B")
+        });
         assert!(
             result.suggestions.iter().any(|suggestion| suggestion.name == "from-B"),
             "{result:?}"
@@ -885,14 +887,16 @@ mod tests {
         write_generation(&generation_c, "from generation C", "from-C");
         let backup_b = root.path().join("specs-ir.backup-b");
         fs::rename(&canonical, &backup_b).unwrap();
-        let during_gap = engine
-            .complete(CompleteRequest {
-                buffer: "demo ".into(),
-                cwd: "/tmp".into(),
-                include_history: false,
-                ..CompleteRequest::default()
-            })
-            .expect("gap should not poison the old engine");
+        let during_gap = crate::hook_backend::with_backend(crate::hook_backend::HookBackend::Js, || {
+            engine
+                .complete(CompleteRequest {
+                    buffer: "demo ".into(),
+                    cwd: "/tmp".into(),
+                    include_history: false,
+                    ..CompleteRequest::default()
+                })
+                .expect("gap should not poison the old engine")
+        });
         assert!(
             during_gap
                 .suggestions
@@ -902,14 +906,16 @@ mod tests {
         );
         fs::rename(&generation_c, &canonical).unwrap();
         fs::remove_dir_all(&backup_b).unwrap();
-        let recovered = engine
-            .complete(CompleteRequest {
-                buffer: "demo ".into(),
-                cwd: "/tmp".into(),
-                include_history: false,
-                ..CompleteRequest::default()
-            })
-            .expect("generation C should be retried");
+        let recovered = crate::hook_backend::with_backend(crate::hook_backend::HookBackend::Js, || {
+            engine
+                .complete(CompleteRequest {
+                    buffer: "demo ".into(),
+                    cwd: "/tmp".into(),
+                    include_history: false,
+                    ..CompleteRequest::default()
+                })
+                .expect("generation C should be retried")
+        });
         assert!(
             recovered
                 .suggestions
@@ -1042,13 +1048,15 @@ mod tests {
             r#"{"names":["php"],"jsGenerateSpec":"php#generateSpec#0"}"#,
         );
         let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).expect("engine");
-        let result = engine
-            .complete(CompleteRequest {
-                buffer: "php ".into(),
-                cwd: dir.path().display().to_string(),
-                ..CompleteRequest::default()
-            })
-            .expect("complete");
+        let result = crate::hook_backend::with_backend(crate::hook_backend::HookBackend::Js, || {
+            engine
+                .complete(CompleteRequest {
+                    buffer: "php ".into(),
+                    cwd: dir.path().display().to_string(),
+                    ..CompleteRequest::default()
+                })
+                .expect("complete")
+        });
         assert!(
             result.suggestions.iter().any(|row| row.name == "artisan"),
             "{:?}",

@@ -1423,6 +1423,11 @@ mod tests {
     use crate::ir::{ArgSpec, OptionSpec, Spec, SuggestionMeta, SuggestionSeed, Template};
     use std::fs;
 
+    #[cfg(feature = "js-compat")]
+    fn with_js_host<R>(host: &crate::js_host::JsHost, cwd: &str, f: impl FnOnce() -> R) -> R {
+        crate::hook_backend::with_backend(crate::hook_backend::HookBackend::Js, || host.enter(cwd, f))
+    }
+
     #[test]
     fn script_generator_filters_prefix() {
         let spec = Spec {
@@ -2267,12 +2272,12 @@ mod tests {
             js_post_process: Some("demo#postProcess#0".into()),
             ..ArgSpec::default()
         };
-        let rows = host.enter("/", || generate_for_arg(&arg, &["demo".into()], "", "/", false));
+        let rows = with_js_host(&host, "/", || generate_for_arg(&arg, &["demo".into()], "", "/", false));
         let names: Vec<_> = rows.iter().map(|row| row.name.as_str()).collect();
         assert!(names.contains(&"x-alpha"), "{names:?}");
         assert!(names.contains(&"x-beta"), "{names:?}");
 
-        let empty = host.enter("", || generate_for_arg(&arg, &["demo".into()], "", "", false));
+        let empty = with_js_host(&host, "", || generate_for_arg(&arg, &["demo".into()], "", "", false));
         assert!(empty.is_empty(), "{empty:?}");
     }
 
@@ -2296,7 +2301,7 @@ mod tests {
             js_post_process: Some("demo#postProcess#0".into()),
             ..ArgSpec::default()
         };
-        let rows = host.enter("/", || generate_for_arg(&arg, &["demo".into()], "", "/", false));
+        let rows = with_js_host(&host, "/", || generate_for_arg(&arg, &["demo".into()], "", "/", false));
         let names: Vec<_> = rows.iter().map(|row| row.name.as_str()).collect();
         assert_eq!(names, vec!["alpha", "beta"]);
 
@@ -2308,7 +2313,7 @@ mod tests {
         };
         // A different command slot avoids reusing the generator-session
         // result from the preceding request.
-        let rows = host.enter("/", || {
+        let rows = with_js_host(&host, "/", || {
             generate_for_arg(&empty_split, &["demo-empty".into()], "", "/", false)
         });
         let names: Vec<_> = rows.iter().map(|row| row.name.as_str()).collect();
@@ -2331,7 +2336,7 @@ mod tests {
             split_on: Some(String::new()),
             ..ArgSpec::default()
         };
-        let rows = host.enter("/", || {
+        let rows = with_js_host(&host, "/", || {
             generate_for_arg(&arg, &["empty-split-no-hook".into()], "", "/", false)
         });
         assert!(rows.is_empty(), "{rows:?}");
@@ -2354,7 +2359,7 @@ mod tests {
             js_post_process: Some("demo#postProcess#0".into()),
             ..ArgSpec::default()
         };
-        let rows = host.enter("/", || generate_for_arg(&arg, &["demo".into()], "", "/", false));
+        let rows = with_js_host(&host, "/", || generate_for_arg(&arg, &["demo".into()], "", "/", false));
         assert!(rows.is_empty(), "{rows:?}");
     }
 
@@ -2381,7 +2386,7 @@ mod tests {
             },
             ..ArgSpec::default()
         };
-        let rows = host.enter(&cwd, || {
+        let rows = with_js_host(&host, &cwd, || {
             generate_for_arg_with_search_term(&arg, &["demo".into(), "src/foo".into()], "foo", "'src/foo", &cwd, false)
         });
         assert_eq!(
@@ -2410,7 +2415,7 @@ mod tests {
         };
         let raw = r"$'foo\'bar";
         let normalized = r"foo\'bar";
-        let rows = host.enter(&cwd, || {
+        let rows = with_js_host(&host, &cwd, || {
             generate_for_arg_with_search_term(&arg, &["demo".into(), normalized.into()], normalized, raw, &cwd, false)
         });
         assert_eq!(
@@ -2439,8 +2444,12 @@ mod tests {
             cache_ttl_ms: Some(60_000),
             ..ArgSpec::default()
         };
-        let first = host.enter(&cwd, || generate_for_arg(&arg, &["demo".into()], "", &cwd, false));
-        let second = host.enter(&cwd, || generate_for_arg(&arg, &["demo".into()], "", &cwd, false));
+        let first = with_js_host(&host, &cwd, || {
+            generate_for_arg(&arg, &["demo".into()], "", &cwd, false)
+        });
+        let second = with_js_host(&host, &cwd, || {
+            generate_for_arg(&arg, &["demo".into()], "", &cwd, false)
+        });
         assert_eq!(
             first.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
             vec!["from-custom"]
@@ -2475,10 +2484,10 @@ mod tests {
             ..ArgSpec::default()
         };
         let cwd = dir.path().display().to_string();
-        let first = host.enter(&cwd, || {
+        let first = with_js_host(&host, &cwd, || {
             generate_for_arg(&arg, &["demo".into(), "w".into()], "w", &cwd, false)
         });
-        let second = host.enter(&cwd, || {
+        let second = with_js_host(&host, &cwd, || {
             generate_for_arg(&arg, &["demo".into(), "we".into()], "we", &cwd, false)
         });
         assert_eq!(
@@ -2507,10 +2516,10 @@ mod tests {
         };
         let cwd = dir.path().display().to_string();
         let host = crate::js_host::JsHost::new(dir.path().join("hooks"));
-        let first = host.enter(&cwd, || {
+        let first = with_js_host(&host, &cwd, || {
             generate_for_arg(&arg, &["demo".into(), "w".into()], "w", &cwd, false)
         });
-        let second = host.enter(&cwd, || {
+        let second = with_js_host(&host, &cwd, || {
             generate_for_arg(&arg, &["demo".into(), "we".into()], "we", &cwd, false)
         });
         assert!(first.iter().any(|row| row.name == "web"), "{first:?}");
@@ -2552,10 +2561,10 @@ mod tests {
             ..pods.clone()
         };
         let cwd = dir.path().display().to_string();
-        let first = host.enter(&cwd, || {
+        let first = with_js_host(&host, &cwd, || {
             generate_for_arg(&pods, &["kdemo".into(), "pods".into()], "", &cwd, false)
         });
-        let second = host.enter(&cwd, || {
+        let second = with_js_host(&host, &cwd, || {
             generate_for_arg(&nodes, &["kdemo".into(), "nodes".into()], "", &cwd, false)
         });
         assert_eq!(
@@ -2589,8 +2598,12 @@ mod tests {
         let host = crate::js_host::JsHost::new(dir.path().join("hooks"));
         let cwd_a = a.display().to_string();
         let cwd_b = b.display().to_string();
-        let first = host.enter(&cwd_a, || generate_for_arg(&arg, &["demo".into()], "", &cwd_a, false));
-        let second = host.enter(&cwd_b, || generate_for_arg(&arg, &["demo".into()], "", &cwd_b, false));
+        let first = with_js_host(&host, &cwd_a, || {
+            generate_for_arg(&arg, &["demo".into()], "", &cwd_a, false)
+        });
+        let second = with_js_host(&host, &cwd_b, || {
+            generate_for_arg(&arg, &["demo".into()], "", &cwd_b, false)
+        });
         assert!(first.iter().any(|row| row.name.ends_with("/a")), "{first:?}");
         assert!(second.iter().any(|row| row.name.ends_with("/b")), "{second:?}");
         assert_eq!(fs::read_to_string(&count).unwrap_or_default().matches('x').count(), 2);
@@ -2620,10 +2633,10 @@ mod tests {
             ..ArgSpec::default()
         };
         let cwd = dir.path().display().to_string();
-        let first = host.enter(&cwd, || {
+        let first = with_js_host(&host, &cwd, || {
             generate_for_arg(&arg, &["demo".into(), "one".into()], "", &cwd, false)
         });
-        let second = host.enter(&cwd, || {
+        let second = with_js_host(&host, &cwd, || {
             generate_for_arg(&arg, &["demo".into(), "two".into()], "", &cwd, false)
         });
         assert_eq!(
@@ -2650,7 +2663,9 @@ mod tests {
             ..ArgSpec::default()
         };
         let cwd = dir.path().display().to_string();
-        let rows = host.enter(&cwd, || generate_for_arg(&arg, &["demo".into()], "", &cwd, false));
+        let rows = with_js_host(&host, &cwd, || {
+            generate_for_arg(&arg, &["demo".into()], "", &cwd, false)
+        });
         assert!(rows.is_empty(), "{rows:?}");
         let rows = generate_for_arg(&arg, &["demo".into()], "", &cwd, false);
         assert!(rows.is_empty(), "{rows:?}");
@@ -2667,7 +2682,7 @@ mod tests {
             split_on: Some("\n".into()),
             ..ArgSpec::default()
         };
-        let rows = host.enter("", || generate_for_arg(&arg, &["demo".into()], "", "", false));
+        let rows = with_js_host(&host, "", || generate_for_arg(&arg, &["demo".into()], "", "", false));
         assert!(rows.is_empty(), "{rows:?}");
         let rows = generate_for_arg(&arg, &["demo".into()], "", "", false);
         assert!(rows.is_empty(), "{rows:?}");
