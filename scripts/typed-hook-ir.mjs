@@ -18,14 +18,17 @@ export const TYPED_VALUE_TYPES = Object.freeze([
   "bool",
   "integer",
   "string-array",
+  "json",
+  "suggestion",
+  "suggestion-array",
+  "string-record",
+  "null",
 ]);
 
-// Trigger is the production typed-hook slice.  `getQueryTerm` is a research
-// contract only: its descriptor is captured in a separate differential
-// baseline and is deliberately not emitted into the production sidecar or
-// selected by the runtime.  Keeping the contract here lets the compiler and
-// Rust research evaluator share one closed schema while an unsupported field
-// still fails closed instead of producing an untyped node.
+// Trigger remains the production sidecar field.  The other contracts are the
+// T2.1/T2.3 typed-hook shapes: `compileTypedHook` accepts them so research
+// and tests can compile those fields, but the production sidecar writer still
+// emits trigger only until T2.3.
 export const TYPED_HOOK_CONTRACTS = Object.freeze({
   trigger: Object.freeze({
     params: Object.freeze(["string", "string"]),
@@ -35,6 +38,18 @@ export const TYPED_HOOK_CONTRACTS = Object.freeze({
     params: Object.freeze(["string"]),
     resultType: "string",
   }),
+  postProcess: Object.freeze({
+    params: Object.freeze(["string", "string-array"]),
+    resultType: "suggestion-array",
+  }),
+  script: Object.freeze({
+    params: Object.freeze(["string-array"]),
+    resultType: "string-array",
+  }),
+  filterTemplateSuggestions: Object.freeze({
+    params: Object.freeze(["suggestion-array"]),
+    resultType: "suggestion-array",
+  }),
 });
 
 export const TYPED_EXPRESSION_OPERATIONS = Object.freeze([
@@ -42,17 +57,43 @@ export const TYPED_EXPRESSION_OPERATIONS = Object.freeze([
   "string",
   "bool",
   "integer",
+  "null",
   "array",
   "length",
   "string-includes",
   "string-index-of",
+  "string-last-index-of",
   "string-slice",
   "string-slice-after-first",
+  "string-substring",
   "string-split",
+  "string-trim",
+  "string-trim-start",
+  "string-trim-end",
+  "string-replace",
+  "string-replace-all",
+  "string-starts-with",
+  "string-ends-with",
+  "string-to-lower",
+  "string-to-upper",
+  "string-pad-start",
+  "string-pad-end",
+  "string-repeat",
+  "string-concat",
+  "string-char-at",
+  "string-at",
   "array-includes",
   "strict-eq",
   "strict-ne",
+  "add",
+  "sub",
+  "mul",
+  "lt",
+  "le",
   "gt",
+  "ge",
+  "not",
+  "nullish",
   "and",
   "or",
   "if",
@@ -63,10 +104,15 @@ const TYPE = Object.freeze({
   BOOL: "bool",
   INTEGER: "integer",
   STRING_ARRAY: "string-array",
+  JSON: "json",
+  SUGGESTION: "suggestion",
+  SUGGESTION_ARRAY: "suggestion-array",
+  STRING_RECORD: "string-record",
+  NULL: "null",
 });
 
-const MAX_NODES = 64;
-const MAX_DEPTH = 12;
+export const MAX_NODES = 512;
+export const MAX_DEPTH = 24;
 const MAX_SOURCE_BYTES = 128 * 1024;
 const MAX_STRING_CODE_UNITS = 32 * 1024;
 const MAX_SERIALIZED_IR_BYTES = 256 * 1024;
@@ -82,17 +128,43 @@ const OP_KEYS = Object.freeze({
   string: ["op", "value"],
   bool: ["op", "value"],
   integer: ["op", "value"],
+  null: ["op"],
   array: ["op", "items"],
   length: ["op", "value"],
   "string-includes": ["op", "value", "needle"],
   "string-index-of": ["op", "value", "needle"],
+  "string-last-index-of": ["op", "value", "needle"],
   "string-slice": ["op", "value", "start"],
   "string-slice-after-first": ["op", "value", "needle"],
+  "string-substring": ["op", "value", "start", "end"],
   "string-split": ["op", "value", "separator"],
+  "string-trim": ["op", "value"],
+  "string-trim-start": ["op", "value"],
+  "string-trim-end": ["op", "value"],
+  "string-replace": ["op", "value", "needle", "replacement"],
+  "string-replace-all": ["op", "value", "needle", "replacement"],
+  "string-starts-with": ["op", "value", "needle"],
+  "string-ends-with": ["op", "value", "needle"],
+  "string-to-lower": ["op", "value"],
+  "string-to-upper": ["op", "value"],
+  "string-pad-start": ["op", "value", "target", "pad"],
+  "string-pad-end": ["op", "value", "target", "pad"],
+  "string-repeat": ["op", "value", "count"],
+  "string-concat": ["op", "parts"],
+  "string-char-at": ["op", "value", "index"],
+  "string-at": ["op", "value", "index"],
   "array-includes": ["op", "value", "needle"],
   "strict-eq": ["op", "left", "right"],
   "strict-ne": ["op", "left", "right"],
+  add: ["op", "left", "right"],
+  sub: ["op", "left", "right"],
+  mul: ["op", "left", "right"],
+  lt: ["op", "left", "right"],
+  le: ["op", "left", "right"],
   gt: ["op", "left", "right"],
+  ge: ["op", "left", "right"],
+  not: ["op", "value"],
+  nullish: ["op", "left", "right"],
   and: ["op", "left", "right"],
   or: ["op", "left", "right"],
   if: ["op", "condition", "then", "else"],
@@ -180,6 +252,9 @@ function assertIndex(value, path) {
 }
 
 function literalExpression(value, path) {
+  if (value === null) {
+    return { type: TYPE.NULL, expr: { op: "null" } };
+  }
   if (typeof value === "string") {
     assertString(value, path);
     return { type: TYPE.STRING, expr: { op: "string", value } };
@@ -328,8 +403,8 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
       });
     }
     case "Literal": {
-      if (node.regex || node.bigint != null || node.value === null) {
-        fail("regular expression, bigint, and null literals are unsupported", {
+      if (node.regex || node.bigint != null) {
+        fail("regular expression and bigint literals are unsupported", {
           code: "unsupported-literal",
           nodeType: node.type,
         });
@@ -337,25 +412,61 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
       return finish(literalExpression(node.value, "literal"));
     }
     case "UnaryExpression": {
-      // The current trigger inventory contains `!0` only.  Fold numeric
-      // constants at build time instead of adding JS truthiness to runtime.
+      if (node.operator === "-") {
+        if (
+          node.argument.type === "Literal" &&
+          typeof node.argument.value === "number" &&
+          Number.isSafeInteger(node.argument.value)
+        ) {
+          const value = -node.argument.value;
+          if (!Number.isSafeInteger(value)) {
+            fail("unary negation overflowed the JavaScript safe integer range", {
+              code: "overflow",
+              nodeType: node.type,
+            });
+          }
+          return finish({
+            type: TYPE.INTEGER,
+            expr: { op: "integer", value },
+          });
+        }
+        const operand = child(node.argument, TYPE.INTEGER);
+        return finish({
+          type: TYPE.INTEGER,
+          expr: {
+            op: "sub",
+            left: { op: "integer", value: 0 },
+            right: operand.expr,
+          },
+        });
+      }
       if (node.operator !== "!") {
         fail(`unary operator ${node.operator} is unsupported`, {
           code: "unsupported-syntax",
           nodeType: node.type,
         });
       }
-      if (
-        node.argument.type !== "Literal" ||
-        typeof node.argument.value !== "number"
-      ) {
-        fail("only constant numeric negation can be folded", {
-          code: "unsupported-syntax",
-          nodeType: node.type,
-        });
+      // Fold `!0` / `!1` / `!true` so the existing trigger inventory stays a
+      // bool literal.  Any other operand is a typed `not` of a bool.
+      if (node.argument.type === "Literal") {
+        if (typeof node.argument.value === "number") {
+          return finish({
+            type: TYPE.BOOL,
+            expr: { op: "bool", value: !Boolean(node.argument.value) },
+          });
+        }
+        if (typeof node.argument.value === "boolean") {
+          return finish({
+            type: TYPE.BOOL,
+            expr: { op: "bool", value: !node.argument.value },
+          });
+        }
       }
-      const value = Boolean(node.argument.value);
-      return finish({ type: TYPE.BOOL, expr: { op: "bool", value: !value } });
+      const operand = child(node.argument, TYPE.BOOL);
+      return finish({
+        type: TYPE.BOOL,
+        expr: { op: "not", value: operand.expr },
+      });
     }
     case "MemberExpression": {
       const name = propertyName(node);
@@ -398,6 +509,14 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
       }
       const method = propertyName(node.callee);
       const receiver = child(node.callee.object);
+      const zeroArguments = () => {
+        if (node.arguments.length !== 0) {
+          fail(`${method} expects no arguments`, {
+            code: "call-arity",
+            nodeType: node.type,
+          });
+        }
+      };
       const oneArgument = (expected) => {
         if (node.arguments.length !== 1) {
           fail(`${method} expects exactly one argument`, {
@@ -407,10 +526,25 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
         }
         return child(node.arguments[0], expected);
       };
+      const requireStringReceiver = () => {
+        if (receiver.type !== TYPE.STRING) {
+          fail(`.${method} is supported only on strings`, {
+            code: "type-mismatch",
+            nodeType: node.type,
+          });
+        }
+      };
+      const literalNeedle = (argument) => {
+        if (argument.expr.op !== "string") {
+          fail(`.${method} needle must be a string literal`, {
+            code: "unsupported-syntax",
+            nodeType: node.type,
+          });
+        }
+        return argument;
+      };
       if (method === "includes") {
-        const needle = oneArgument(
-          receiver.type === TYPE.STRING ? TYPE.STRING : TYPE.STRING,
-        );
+        const needle = oneArgument(TYPE.STRING);
         if (receiver.type === TYPE.STRING) {
           return finish({
             type: TYPE.BOOL,
@@ -483,24 +617,224 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
           },
         });
       }
+      if (method === "lastIndexOf") {
+        requireStringReceiver();
+        const needle = oneArgument(TYPE.STRING);
+        return finish({
+          type: TYPE.INTEGER,
+          expr: {
+            op: "string-last-index-of",
+            value: receiver.expr,
+            needle: needle.expr,
+          },
+        });
+      }
+      if (method === "startsWith" || method === "endsWith") {
+        requireStringReceiver();
+        const needle = oneArgument(TYPE.STRING);
+        return finish({
+          type: TYPE.BOOL,
+          expr: {
+            op: method === "startsWith" ? "string-starts-with" : "string-ends-with",
+            value: receiver.expr,
+            needle: needle.expr,
+          },
+        });
+      }
+      if (method === "trim" || method === "trimStart" || method === "trimEnd") {
+        requireStringReceiver();
+        zeroArguments();
+        const op =
+          method === "trim"
+            ? "string-trim"
+            : method === "trimStart"
+              ? "string-trim-start"
+              : "string-trim-end";
+        return finish({
+          type: TYPE.STRING,
+          expr: { op, value: receiver.expr },
+        });
+      }
+      if (method === "toLowerCase" || method === "toUpperCase") {
+        requireStringReceiver();
+        zeroArguments();
+        return finish({
+          type: TYPE.STRING,
+          expr: {
+            op: method === "toLowerCase" ? "string-to-lower" : "string-to-upper",
+            value: receiver.expr,
+          },
+        });
+      }
+      if (method === "replace" || method === "replaceAll") {
+        requireStringReceiver();
+        if (node.arguments.length !== 2) {
+          fail(`${method} expects exactly two arguments`, {
+            code: "call-arity",
+            nodeType: node.type,
+          });
+        }
+        const needle = literalNeedle(child(node.arguments[0], TYPE.STRING));
+        const replacement = child(node.arguments[1], TYPE.STRING);
+        return finish({
+          type: TYPE.STRING,
+          expr: {
+            op: method === "replace" ? "string-replace" : "string-replace-all",
+            value: receiver.expr,
+            needle: needle.expr,
+            replacement: replacement.expr,
+          },
+        });
+      }
+      if (method === "substring") {
+        requireStringReceiver();
+        if (node.arguments.length < 1 || node.arguments.length > 2) {
+          fail("substring expects one or two arguments", {
+            code: "call-arity",
+            nodeType: node.type,
+          });
+        }
+        const start = child(node.arguments[0], TYPE.INTEGER);
+        const end =
+          node.arguments.length === 2
+            ? child(node.arguments[1], TYPE.INTEGER)
+            : { expr: { op: "length", value: receiver.expr } };
+        return finish({
+          type: TYPE.STRING,
+          expr: {
+            op: "string-substring",
+            value: receiver.expr,
+            start: start.expr,
+            end: end.expr,
+          },
+        });
+      }
+      if (method === "padStart" || method === "padEnd") {
+        requireStringReceiver();
+        if (node.arguments.length < 1 || node.arguments.length > 2) {
+          fail(`${method} expects one or two arguments`, {
+            code: "call-arity",
+            nodeType: node.type,
+          });
+        }
+        const target = child(node.arguments[0], TYPE.INTEGER);
+        const pad =
+          node.arguments.length === 2
+            ? child(node.arguments[1], TYPE.STRING)
+            : { expr: { op: "string", value: " " } };
+        return finish({
+          type: TYPE.STRING,
+          expr: {
+            op: method === "padStart" ? "string-pad-start" : "string-pad-end",
+            value: receiver.expr,
+            target: target.expr,
+            pad: pad.expr,
+          },
+        });
+      }
+      if (method === "repeat") {
+        requireStringReceiver();
+        const count = oneArgument(TYPE.INTEGER);
+        return finish({
+          type: TYPE.STRING,
+          expr: {
+            op: "string-repeat",
+            value: receiver.expr,
+            count: count.expr,
+          },
+        });
+      }
+      if (method === "concat") {
+        requireStringReceiver();
+        if (node.arguments.some((argument) => argument.type === "SpreadElement")) {
+          fail("spread concat is unsupported", {
+            code: "unsupported-syntax",
+            nodeType: node.type,
+          });
+        }
+        const parts = [
+          receiver.expr,
+          ...node.arguments.map((argument) => child(argument, TYPE.STRING).expr),
+        ];
+        return finish({
+          type: TYPE.STRING,
+          expr: { op: "string-concat", parts },
+        });
+      }
+      if (method === "charAt" || method === "at") {
+        requireStringReceiver();
+        const index = oneArgument(TYPE.INTEGER);
+        return finish({
+          type: TYPE.STRING,
+          expr: {
+            op: method === "charAt" ? "string-char-at" : "string-at",
+            value: receiver.expr,
+            index: index.expr,
+          },
+        });
+      }
       fail(`method .${method} is not in the typed hook allowlist`, {
         code: "unknown-call",
         nodeType: node.type,
       });
     }
     case "BinaryExpression": {
-      if (!["===", "!==", ">"].includes(node.operator)) {
+      if (
+        !["===", "!==", ">", ">=", "<", "<=", "+", "-", "*"].includes(
+          node.operator,
+        )
+      ) {
         fail(`binary operator ${node.operator} is unsupported`, {
           code: "unsupported-syntax",
           nodeType: node.type,
         });
       }
-      if (node.operator === ">") {
+      if (node.operator === "+") {
+        const left = child(node.left);
+        const right = child(node.right);
+        if (left.type === TYPE.INTEGER && right.type === TYPE.INTEGER) {
+          return finish({
+            type: TYPE.INTEGER,
+            expr: { op: "add", left: left.expr, right: right.expr },
+          });
+        }
+        if (left.type === TYPE.STRING && right.type === TYPE.STRING) {
+          return finish({
+            type: TYPE.STRING,
+            expr: { op: "string-concat", parts: [left.expr, right.expr] },
+          });
+        }
+        fail("addition requires two integers or two strings", {
+          code: "type-mismatch",
+          nodeType: node.type,
+        });
+      }
+      if (node.operator === "-" || node.operator === "*") {
         const left = child(node.left, TYPE.INTEGER);
         const right = child(node.right, TYPE.INTEGER);
         return finish({
+          type: TYPE.INTEGER,
+          expr: {
+            op: node.operator === "-" ? "sub" : "mul",
+            left: left.expr,
+            right: right.expr,
+          },
+        });
+      }
+      if (["<", "<=", ">", ">="].includes(node.operator)) {
+        const left = child(node.left, TYPE.INTEGER);
+        const right = child(node.right, TYPE.INTEGER);
+        const op =
+          node.operator === "<"
+            ? "lt"
+            : node.operator === "<="
+              ? "le"
+              : node.operator === ">"
+                ? "gt"
+                : "ge";
+        return finish({
           type: TYPE.BOOL,
-          expr: { op: "gt", left: left.expr, right: right.expr },
+          expr: { op, left: left.expr, right: right.expr },
         });
       }
       const left = child(node.left);
@@ -521,6 +855,23 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
       });
     }
     case "LogicalExpression": {
+      if (node.operator === "??") {
+        const left = child(node.left);
+        const right = child(node.right);
+        let resultType = left.type;
+        if (left.type === TYPE.NULL) resultType = right.type;
+        else if (right.type === TYPE.NULL) resultType = left.type;
+        else if (left.type !== right.type) {
+          fail("?? operands must share a type or be null", {
+            code: "type-mismatch",
+            nodeType: node.type,
+          });
+        }
+        return finish({
+          type: resultType,
+          expr: { op: "nullish", left: left.expr, right: right.expr },
+        });
+      }
       if (node.operator !== "&&" && node.operator !== "||") {
         fail(`logical operator ${node.operator} is unsupported`, {
           code: "unsupported-syntax",
@@ -536,6 +887,41 @@ function compileExpression(node, environment, expectedType, state, depth = 0) {
           left: left.expr,
           right: right.expr,
         },
+      });
+    }
+    case "TemplateLiteral": {
+      if (node.expressions.length !== node.quasis.length - 1) {
+        fail("template literal is malformed", {
+          code: "unsupported-syntax",
+          nodeType: node.type,
+        });
+      }
+      const parts = [];
+      for (let index = 0; index < node.quasis.length; index += 1) {
+        const cooked = node.quasis[index].value.cooked;
+        if (typeof cooked !== "string") {
+          fail("template quasi must be a cooked string", {
+            code: "unsupported-literal",
+            nodeType: node.type,
+          });
+        }
+        if (cooked.length > 0) {
+          assertString(cooked, "template");
+          parts.push({ op: "string", value: cooked });
+        }
+        if (index < node.expressions.length) {
+          parts.push(child(node.expressions[index], TYPE.STRING).expr);
+        }
+      }
+      if (parts.length === 0) {
+        return finish({ type: TYPE.STRING, expr: { op: "string", value: "" } });
+      }
+      if (parts.length === 1 && parts[0].op === "string") {
+        return finish({ type: TYPE.STRING, expr: parts[0] });
+      }
+      return finish({
+        type: TYPE.STRING,
+        expr: { op: "string-concat", parts },
       });
     }
     case "ConditionalExpression": {
@@ -606,156 +992,13 @@ function compileFunction({ body, parameterTypes, resultType }) {
   return { expression: result.expr, nodes: state.nodes };
 }
 
-function isStringLiteral(node, value) {
-  return (
-    node?.type === "Literal" &&
-    typeof node.value === "string" &&
-    node.value === value &&
-    !node.regex &&
-    node.bigint == null
-  );
-}
-
-function isIntegerLiteral(node, value) {
-  return (
-    node?.type === "Literal" &&
-    typeof node.value === "number" &&
-    Number.isSafeInteger(node.value) &&
-    node.value === value &&
-    !node.regex &&
-    node.bigint == null
-  );
-}
-
-function isInputIdentifier(node, name) {
-  return node?.type === "Identifier" && node.name === name;
-}
-
-function memberCall(node, receiverName, method, argumentPredicate) {
-  if (
-    node?.type !== "CallExpression" ||
-    node.optional ||
-    node.callee?.type !== "MemberExpression" ||
-    node.callee.computed ||
-    node.callee.object?.type !== "Identifier" ||
-    node.callee.object.name !== receiverName ||
-    node.callee.property?.type !== "Identifier" ||
-    node.callee.property.name !== method ||
-    node.arguments.length !== 1 ||
-    node.arguments[0]?.type === "SpreadElement" ||
-    !argumentPredicate(node.arguments[0])
-  ) {
-    return false;
-  }
-  return true;
-}
-
 /**
- * Match the one deliberately closed getQueryTerm research shape.
- *
- * This is intentionally separate from the general expression compiler.  In
- * particular, accepting a general integer `+` here would make a future hook
- * look equivalent while changing JavaScript coercion/overflow semantics.  The
- * only accepted source shape is:
- *
- *   n => n.includes("latest") ? n.slice(n.indexOf(":") + 1) : n
- */
-function assertClosedGetQueryTermShape(body) {
-  const { fn, names, expression } = parseFunctionBody(body);
-  if (fn.params.length !== 1) {
-    fail("getQueryTerm research hook must have exactly one parameter", {
-      code: "parameter-count",
-    });
-  }
-  const [name] = names;
-  if (expression.type !== "ConditionalExpression") {
-    fail("getQueryTerm research hook has an unsupported function shape", {
-      code: "function-shape",
-    });
-  }
-  if (
-    !memberCall(
-      expression.test,
-      name,
-      "includes",
-      (argument) => isStringLiteral(argument, "latest"),
-    )
-  ) {
-    fail("getQueryTerm research hook must test includes(\"latest\")", {
-      code: "function-shape",
-    });
-  }
-
-  const consequent = expression.consequent;
-  if (
-    consequent?.type !== "CallExpression" ||
-    consequent.optional ||
-    consequent.callee?.type !== "MemberExpression" ||
-    consequent.callee.computed ||
-    !isInputIdentifier(consequent.callee.object, name) ||
-    consequent.callee.property?.type !== "Identifier" ||
-    consequent.callee.property.name !== "slice" ||
-    consequent.arguments.length !== 1
-  ) {
-    fail("getQueryTerm research hook must slice its input", {
-      code: "function-shape",
-    });
-  }
-  const start = consequent.arguments[0];
-  if (
-    start?.type !== "BinaryExpression" ||
-    start.operator !== "+" ||
-    !memberCall(
-      start.left,
-      name,
-      "indexOf",
-      (argument) => isStringLiteral(argument, ":"),
-    ) ||
-    !isIntegerLiteral(start.right, 1)
-  ) {
-    fail(
-      "getQueryTerm research hook must use input.indexOf(\":\") + 1 as slice start",
-      { code: "function-shape" },
-    );
-  }
-  if (!isInputIdentifier(expression.alternate, name)) {
-    fail("getQueryTerm research hook must return its input on the false branch", {
-      code: "function-shape",
-    });
-  }
-  return name;
-}
-
-/**
- * Compile the research-only getQueryTerm shape.  This is not used by the
- * production sidecar writer; callers must separately restrict which hook ids
- * are admitted to a baseline.
+ * Compile getQueryTerm through the general expression compiler.  The closed
+ * asdf `includes("latest") ? slice(indexOf(":")+1)` shape is now just one
+ * successful program that uses `add` + `string-slice`.
  */
 export function compileTypedGetQueryTerm({ body } = {}) {
-  assertClosedGetQueryTermShape(body);
-  const descriptor = {
-    version: TYPED_HOOK_IR_VERSION,
-    kind: TYPED_HOOK_IR_KIND,
-    sourceField: "getQueryTerm",
-    resultType: "string",
-    params: [{ index: 0, type: TYPE.STRING }],
-    expr: {
-      op: "if",
-      condition: {
-        op: "string-includes",
-        value: { op: "arg", index: 0 },
-        needle: { op: "string", value: "latest" },
-      },
-      then: {
-        op: "string-slice-after-first",
-        value: { op: "arg", index: 0 },
-        needle: { op: "string", value: ":" },
-      },
-      else: { op: "arg", index: 0 },
-    },
-  };
-  validateTypedHookIr(descriptor);
-  return descriptor;
+  return compileTypedHook({ body, sourceField: "getQueryTerm" });
 }
 
 /**
@@ -778,15 +1021,6 @@ export function compileTypedHook({
     fail(`no typed hook contract exists for ${sourceField}`, {
       code: "unknown-field",
     });
-  }
-  if (sourceField === "getQueryTerm") {
-    if (resultType !== undefined && resultType !== contract.resultType) {
-      fail(
-        `${sourceField} requires result type ${contract.resultType}, got ${resultType}`,
-        { code: "type-mismatch" },
-      );
-    }
-    return compileTypedGetQueryTerm({ body });
   }
   if (resultType !== undefined && resultType !== contract.resultType) {
     fail(
@@ -887,6 +1121,8 @@ function validateExpression(
     case "integer":
       assertInteger(node.value, `${path}.value`);
       return ensureResult(TYPE.INTEGER);
+    case "null":
+      return ensureResult(TYPE.NULL);
     case "array":
       if (!Array.isArray(node.items))
         fail(`${path}.items must be an array`, { code: "schema" });
@@ -904,14 +1140,67 @@ function validateExpression(
       return ensureResult(TYPE.INTEGER);
     }
     case "string-includes":
-    case "string-index-of": {
+    case "string-index-of":
+    case "string-last-index-of":
+    case "string-starts-with":
+    case "string-ends-with": {
       child(node.value, TYPE.STRING, "value");
       child(node.needle, TYPE.STRING, "needle");
-      return ensureResult(op === "string-includes" ? TYPE.BOOL : TYPE.INTEGER);
+      return ensureResult(
+        op === "string-includes" ||
+          op === "string-starts-with" ||
+          op === "string-ends-with"
+          ? TYPE.BOOL
+          : TYPE.INTEGER,
+      );
     }
     case "string-slice":
       child(node.value, TYPE.STRING, "value");
       child(node.start, TYPE.INTEGER, "start");
+      return ensureResult(TYPE.STRING);
+    case "string-substring":
+      child(node.value, TYPE.STRING, "value");
+      child(node.start, TYPE.INTEGER, "start");
+      child(node.end, TYPE.INTEGER, "end");
+      return ensureResult(TYPE.STRING);
+    case "string-trim":
+    case "string-trim-start":
+    case "string-trim-end":
+    case "string-to-lower":
+    case "string-to-upper":
+      child(node.value, TYPE.STRING, "value");
+      return ensureResult(TYPE.STRING);
+    case "string-replace":
+    case "string-replace-all":
+      child(node.value, TYPE.STRING, "value");
+      child(node.needle, TYPE.STRING, "needle");
+      if (node.needle.op !== "string") {
+        fail(`${path}.needle must be a string literal`, { code: "schema" });
+      }
+      child(node.replacement, TYPE.STRING, "replacement");
+      return ensureResult(TYPE.STRING);
+    case "string-pad-start":
+    case "string-pad-end":
+      child(node.value, TYPE.STRING, "value");
+      child(node.target, TYPE.INTEGER, "target");
+      child(node.pad, TYPE.STRING, "pad");
+      return ensureResult(TYPE.STRING);
+    case "string-repeat":
+      child(node.value, TYPE.STRING, "value");
+      child(node.count, TYPE.INTEGER, "count");
+      return ensureResult(TYPE.STRING);
+    case "string-concat":
+      if (!Array.isArray(node.parts) || node.parts.length === 0) {
+        fail(`${path}.parts must be a non-empty array`, { code: "schema" });
+      }
+      node.parts.forEach((part, index) =>
+        child(part, TYPE.STRING, `parts[${index}]`),
+      );
+      return ensureResult(TYPE.STRING);
+    case "string-char-at":
+    case "string-at":
+      child(node.value, TYPE.STRING, "value");
+      child(node.index, TYPE.INTEGER, "index");
       return ensureResult(TYPE.STRING);
     case "string-slice-after-first":
       child(node.value, TYPE.STRING, "value");
@@ -945,10 +1234,35 @@ function validateExpression(
       }
       return ensureResult(TYPE.BOOL);
     }
+    case "add":
+    case "sub":
+    case "mul":
+      child(node.left, TYPE.INTEGER, "left");
+      child(node.right, TYPE.INTEGER, "right");
+      return ensureResult(TYPE.INTEGER);
+    case "lt":
+    case "le":
     case "gt":
+    case "ge":
       child(node.left, TYPE.INTEGER, "left");
       child(node.right, TYPE.INTEGER, "right");
       return ensureResult(TYPE.BOOL);
+    case "not":
+      child(node.value, TYPE.BOOL, "value");
+      return ensureResult(TYPE.BOOL);
+    case "nullish": {
+      const leftType = child(node.left, null, "left");
+      const rightType = child(node.right, null, "right");
+      let resultType = leftType;
+      if (leftType === TYPE.NULL) resultType = rightType;
+      else if (rightType === TYPE.NULL) resultType = leftType;
+      else if (leftType !== rightType) {
+        fail(`${path} ?? operands must share a type or be null`, {
+          code: "type-mismatch",
+        });
+      }
+      return ensureResult(resultType);
+    }
     case "and":
     case "or":
       child(node.left, TYPE.BOOL, "left");
@@ -1004,4 +1318,330 @@ export function validateTypedHookIr(value) {
   validateExpression(value.expr, value.resultType, contract.params);
   assertSerializedSize(value, "hook");
   return true;
+}
+
+function safeIntegerResult(value, path) {
+  if (!Number.isSafeInteger(value)) {
+    fail(`${path} overflowed the JavaScript safe integer range`, {
+      code: "overflow",
+    });
+  }
+  return value;
+}
+
+function jsSlice(value, start) {
+  const length = value.length;
+  const index = start < 0 ? Math.max(length + start, 0) : Math.min(start, length);
+  return value.slice(index);
+}
+
+function jsSubstring(value, start, end) {
+  const length = value.length;
+  const clamp = (n) => {
+    if (n < 0) return 0;
+    if (n > length) return length;
+    return n;
+  };
+  let from = clamp(start);
+  let to = clamp(end);
+  if (from > to) {
+    const swap = from;
+    from = to;
+    to = swap;
+  }
+  return value.slice(from, to);
+}
+
+function jsLastIndexOf(value, needle) {
+  return value.lastIndexOf(needle);
+}
+
+function jsReplace(value, needle, replacement, all) {
+  return all
+    ? value.replaceAll(needle, replacement)
+    : value.replace(needle, replacement);
+}
+
+function jsPad(value, target, pad, end) {
+  if (target <= value.length) return value;
+  if (pad.length === 0) return value;
+  const needed = target - value.length;
+  let fill = "";
+  while (fill.length < needed) fill += pad;
+  fill = fill.slice(0, needed);
+  return end ? value + fill : fill + value;
+}
+
+function jsCharAt(value, index) {
+  if (index < 0 || index >= value.length) return "";
+  return value.charAt(index);
+}
+
+function jsAt(value, index) {
+  const actual = index < 0 ? value.length + index : index;
+  if (actual < 0 || actual >= value.length) return "";
+  return value.charAt(actual);
+}
+
+function jsRepeat(value, count) {
+  if (count < 0) {
+    fail("string-repeat count must be non-negative", { code: "overflow" });
+  }
+  const units = safeIntegerResult(value.length * count, "string-repeat");
+  if (units > MAX_STRING_CODE_UNITS) {
+    fail("string-repeat exceeds the UTF-16 code-unit limit", {
+      code: "complexity",
+    });
+  }
+  return value.repeat(count);
+}
+
+function evaluateExpression(node, arguments_) {
+  switch (node.op) {
+    case "arg":
+      return arguments_[node.index];
+    case "string":
+      return node.value;
+    case "bool":
+      return node.value;
+    case "integer":
+      return node.value;
+    case "null":
+      return null;
+    case "array":
+      return node.items.map((item) => evaluateExpression(item, arguments_));
+    case "length": {
+      const value = evaluateExpression(node.value, arguments_);
+      return safeIntegerResult(value.length, "length");
+    }
+    case "string-includes":
+      return evaluateExpression(node.value, arguments_).includes(
+        evaluateExpression(node.needle, arguments_),
+      );
+    case "string-index-of":
+      return evaluateExpression(node.value, arguments_).indexOf(
+        evaluateExpression(node.needle, arguments_),
+      );
+    case "string-last-index-of":
+      return jsLastIndexOf(
+        evaluateExpression(node.value, arguments_),
+        evaluateExpression(node.needle, arguments_),
+      );
+    case "string-slice":
+      return jsSlice(
+        evaluateExpression(node.value, arguments_),
+        evaluateExpression(node.start, arguments_),
+      );
+    case "string-slice-after-first": {
+      const value = evaluateExpression(node.value, arguments_);
+      const needle = evaluateExpression(node.needle, arguments_);
+      const index = value.indexOf(needle);
+      return index === -1 ? value : jsSlice(value, index + 1);
+    }
+    case "string-substring":
+      return jsSubstring(
+        evaluateExpression(node.value, arguments_),
+        evaluateExpression(node.start, arguments_),
+        evaluateExpression(node.end, arguments_),
+      );
+    case "string-split":
+      return evaluateExpression(node.value, arguments_).split(
+        evaluateExpression(node.separator, arguments_),
+      );
+    case "string-trim":
+      return evaluateExpression(node.value, arguments_).trim();
+    case "string-trim-start":
+      return evaluateExpression(node.value, arguments_).trimStart();
+    case "string-trim-end":
+      return evaluateExpression(node.value, arguments_).trimEnd();
+    case "string-replace":
+      return jsReplace(
+        evaluateExpression(node.value, arguments_),
+        evaluateExpression(node.needle, arguments_),
+        evaluateExpression(node.replacement, arguments_),
+        false,
+      );
+    case "string-replace-all":
+      return jsReplace(
+        evaluateExpression(node.value, arguments_),
+        evaluateExpression(node.needle, arguments_),
+        evaluateExpression(node.replacement, arguments_),
+        true,
+      );
+    case "string-starts-with":
+      return evaluateExpression(node.value, arguments_).startsWith(
+        evaluateExpression(node.needle, arguments_),
+      );
+    case "string-ends-with":
+      return evaluateExpression(node.value, arguments_).endsWith(
+        evaluateExpression(node.needle, arguments_),
+      );
+    case "string-to-lower":
+      return evaluateExpression(node.value, arguments_).toLowerCase();
+    case "string-to-upper":
+      return evaluateExpression(node.value, arguments_).toUpperCase();
+    case "string-pad-start":
+      return jsPad(
+        evaluateExpression(node.value, arguments_),
+        evaluateExpression(node.target, arguments_),
+        evaluateExpression(node.pad, arguments_),
+        false,
+      );
+    case "string-pad-end":
+      return jsPad(
+        evaluateExpression(node.value, arguments_),
+        evaluateExpression(node.target, arguments_),
+        evaluateExpression(node.pad, arguments_),
+        true,
+      );
+    case "string-repeat":
+      return jsRepeat(
+        evaluateExpression(node.value, arguments_),
+        evaluateExpression(node.count, arguments_),
+      );
+    case "string-concat":
+      return node.parts
+        .map((part) => evaluateExpression(part, arguments_))
+        .join("");
+    case "string-char-at":
+      return jsCharAt(
+        evaluateExpression(node.value, arguments_),
+        evaluateExpression(node.index, arguments_),
+      );
+    case "string-at":
+      return jsAt(
+        evaluateExpression(node.value, arguments_),
+        evaluateExpression(node.index, arguments_),
+      );
+    case "array-includes":
+      return evaluateExpression(node.value, arguments_).includes(
+        evaluateExpression(node.needle, arguments_),
+      );
+    case "strict-eq":
+      return (
+        evaluateExpression(node.left, arguments_) ===
+        evaluateExpression(node.right, arguments_)
+      );
+    case "strict-ne":
+      return (
+        evaluateExpression(node.left, arguments_) !==
+        evaluateExpression(node.right, arguments_)
+      );
+    case "add":
+      return safeIntegerResult(
+        evaluateExpression(node.left, arguments_) +
+          evaluateExpression(node.right, arguments_),
+        "add",
+      );
+    case "sub":
+      return safeIntegerResult(
+        evaluateExpression(node.left, arguments_) -
+          evaluateExpression(node.right, arguments_),
+        "sub",
+      );
+    case "mul":
+      return safeIntegerResult(
+        evaluateExpression(node.left, arguments_) *
+          evaluateExpression(node.right, arguments_),
+        "mul",
+      );
+    case "lt":
+      return (
+        evaluateExpression(node.left, arguments_) <
+        evaluateExpression(node.right, arguments_)
+      );
+    case "le":
+      return (
+        evaluateExpression(node.left, arguments_) <=
+        evaluateExpression(node.right, arguments_)
+      );
+    case "gt":
+      return (
+        evaluateExpression(node.left, arguments_) >
+        evaluateExpression(node.right, arguments_)
+      );
+    case "ge":
+      return (
+        evaluateExpression(node.left, arguments_) >=
+        evaluateExpression(node.right, arguments_)
+      );
+    case "not":
+      return !evaluateExpression(node.value, arguments_);
+    case "nullish": {
+      const left = evaluateExpression(node.left, arguments_);
+      return left === null ? evaluateExpression(node.right, arguments_) : left;
+    }
+    case "and":
+      return (
+        evaluateExpression(node.left, arguments_) &&
+        evaluateExpression(node.right, arguments_)
+      );
+    case "or":
+      return (
+        evaluateExpression(node.left, arguments_) ||
+        evaluateExpression(node.right, arguments_)
+      );
+    case "if":
+      return evaluateExpression(node.condition, arguments_)
+        ? evaluateExpression(node.then, arguments_)
+        : evaluateExpression(node.else, arguments_);
+    default:
+      fail(`unhandled expression operation ${node.op}`, { code: "schema" });
+  }
+}
+
+/**
+ * Evaluate a validated typed-hook descriptor.  Arguments are raw JS values
+ * matching the field contract (strings, bools, integers, string arrays, or
+ * null).  The result is the same closed JSON-friendly value the Rust
+ * evaluator must produce.
+ */
+function assertEvaluateArg(value, type, index) {
+  switch (type) {
+    case TYPE.STRING:
+      if (typeof value !== "string") {
+        fail(`args[${index}] must be a string`, { code: "input" });
+      }
+      return;
+    case TYPE.BOOL:
+      if (typeof value !== "boolean") {
+        fail(`args[${index}] must be a bool`, { code: "input" });
+      }
+      return;
+    case TYPE.INTEGER:
+      if (!Number.isSafeInteger(value)) {
+        fail(`args[${index}] must be a safe integer`, { code: "input" });
+      }
+      return;
+    case TYPE.STRING_ARRAY:
+      if (
+        !Array.isArray(value) ||
+        value.some((item) => typeof item !== "string")
+      ) {
+        fail(`args[${index}] must be a string array`, { code: "input" });
+      }
+      return;
+    case TYPE.NULL:
+      if (value !== null) {
+        fail(`args[${index}] must be null`, { code: "input" });
+      }
+      return;
+    default:
+      fail(`args[${index}] type ${type} is compile-only until later ops`, {
+        code: "input",
+      });
+  }
+}
+
+export function evaluateTypedHook(descriptor, args) {
+  validateTypedHookIr(descriptor);
+  if (!Array.isArray(args) || args.length !== descriptor.params.length) {
+    fail("evaluateTypedHook args must match the field contract", {
+      code: "input",
+    });
+  }
+  descriptor.params.forEach((param, index) =>
+    assertEvaluateArg(args[index], param.type, index),
+  );
+  return evaluateExpression(descriptor.expr, args);
 }

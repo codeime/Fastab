@@ -30,6 +30,10 @@ import {
   KNOWN_VERSION_SELECTORS,
 } from "./spec-hook-contract.mjs";
 import { comparePath } from "./spec-pair.mjs";
+import {
+  TYPED_HOOK_CONTRACTS,
+  compileTypedHook,
+} from "./typed-hook-ir.mjs";
 
 const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultSourceRoot = join(repoDir, "bundle", "specs");
@@ -94,7 +98,12 @@ const PURE_METHODS = new Set([
   "includes",
   "indexOf",
   "lastIndexOf",
+  "concat",
+  "padEnd",
+  "padStart",
+  "repeat",
   "replace",
+  "replaceAll",
   "slice",
   "split",
   "startsWith",
@@ -682,7 +691,24 @@ export function classifyHookBody({ body, field }) {
       field,
     };
   }
-  return analyzeAst(ast, field, body);
+  return upgradeWithTypedCompile(analyzeAst(ast, field, body), body, field);
+}
+
+function upgradeWithTypedCompile(analysis, body, field) {
+  if (analysis.status === FAILURE_STATUS) return analysis;
+  const sourceField = IR_TO_SOURCE_FIELD[field] ?? field;
+  if (!Object.hasOwn(TYPED_HOOK_CONTRACTS, sourceField)) return analysis;
+  try {
+    compileTypedHook({ body, sourceField });
+  } catch {
+    return analysis;
+  }
+  if (analysis.status === CANDIDATE_STATUS) return analysis;
+  return {
+    ...analysis,
+    status: CANDIDATE_STATUS,
+    researchCandidate: true,
+  };
 }
 
 function nativeRewriteSummary(audit) {

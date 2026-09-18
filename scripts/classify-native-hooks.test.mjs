@@ -94,6 +94,13 @@ test("classifies pure, input, command, closure, complex, and gated syntax bodies
   });
   assert.equal(invalid.status, "syntax-or-analysis-failure");
   assert.equal(invalid.failureKind, "syntax");
+
+  const compileUpgrade = classifyHookBody({
+    field: "jsTrigger",
+    body: '(a, b) => a.trim().toLowerCase().startsWith(b) && a.trimEnd().length > 0',
+  });
+  assert.equal(compileUpgrade.status, "typed-ir-research-candidate");
+  assert.ok(compileUpgrade.risks.includes("complexity"));
 });
 
 test("compiles a real helper fixture and reports deterministic native readiness", async () => {

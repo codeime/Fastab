@@ -218,6 +218,7 @@ test("asdf getQueryTerm research baseline covers exactly two source/closure cand
   for (const candidate of Object.values(baseline.candidates)) {
     assert.equal(candidate.sourceField, "getQueryTerm");
     assert.equal(candidate.descriptor.sourceField, "getQueryTerm");
-    assert.equal(candidate.descriptor.expr.then.op, "string-slice-after-first");
+    assert.equal(candidate.descriptor.expr.then.op, "string-slice");
+    assert.equal(candidate.descriptor.expr.then.start.op, "add");
   }
 });

@@ -1468,7 +1468,8 @@ test("production compiler keeps the reviewed getQueryTerm hook on its compatibil
     );
     const body = functionSource(imported.default.args[0].generators.getQueryTerm);
     const descriptor = compileTypedHook({ body, sourceField: "getQueryTerm" });
-    assert.equal(descriptor.expr.then.op, "string-slice-after-first");
+    assert.equal(descriptor.expr.then.op, "string-slice");
+    assert.equal(descriptor.expr.then.start.op, "add");
     assert.equal(descriptor.sourceField, "getQueryTerm");
   } finally {
     await Promise.all([

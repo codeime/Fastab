@@ -1,11 +1,13 @@
 //! The closed, typed expression language used by native hook adapters.
 //!
 //! The JavaScript compiler emits this descriptor at build time.  This module
-//! deliberately does not know a command name or a hook id: it only accepts the
-//! versioned `trigger` contract and evaluates the expression supplied by that
-//! contract.  Keeping the JSON boundary strict is important here.  A new
-//! operation or a field with a different meaning must be rejected until both
-//! the compiler and this evaluator have been updated.
+//! deliberately does not know a command name or a hook id: it accepts the
+//! versioned field contracts and evaluates the expression supplied by that
+//! contract.  Production sidecars still emit `trigger` only; the other field
+//! contracts exist so research descriptors and T2.1 goldens share one parser.
+//! Keeping the JSON boundary strict is important here.  A new operation or a
+//! field with a different meaning must be rejected until both the compiler and
+//! this evaluator have been updated.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -21,8 +23,8 @@ const GET_QUERY_TERM_SOURCE_FIELD: &str = "getQueryTerm";
 const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 const MAX_STRING_LITERAL_UNITS: usize = 32_768;
 const MAX_SERIALIZED_DESCRIPTOR_BYTES: usize = 256 * 1024;
-const MAX_NODES: usize = 64;
-const MAX_DEPTH: usize = 12;
+const MAX_NODES: usize = 512;
+const MAX_DEPTH: usize = 24;
 const TRIGGER_PARAM_COUNT: usize = 2;
 const GET_QUERY_TERM_PARAM_COUNT: usize = 1;
 const CATALOG_KIND: &str = "typed-hook-expressions";
@@ -47,6 +49,11 @@ enum TypedValueType {
     Bool,
     Integer,
     StringArray,
+    Json,
+    Suggestion,
+    SuggestionArray,
+    StringRecord,
+    Null,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -72,6 +79,8 @@ enum TypedExpr {
     Bool { value: bool },
     #[serde(rename = "integer")]
     Integer { value: i64 },
+    #[serde(rename = "null")]
+    Null,
     #[serde(rename = "array")]
     Array { items: Vec<TypedExpr> },
     #[serde(rename = "length")]
@@ -86,6 +95,11 @@ enum TypedExpr {
         value: Box<TypedExpr>,
         needle: Box<TypedExpr>,
     },
+    #[serde(rename = "string-last-index-of")]
+    StringLastIndexOf {
+        value: Box<TypedExpr>,
+        needle: Box<TypedExpr>,
+    },
     #[serde(rename = "string-slice")]
     StringSlice {
         value: Box<TypedExpr>,
@@ -96,10 +110,77 @@ enum TypedExpr {
         value: Box<TypedExpr>,
         needle: Box<TypedExpr>,
     },
+    #[serde(rename = "string-substring")]
+    StringSubstring {
+        value: Box<TypedExpr>,
+        start: Box<TypedExpr>,
+        end: Box<TypedExpr>,
+    },
     #[serde(rename = "string-split")]
     StringSplit {
         value: Box<TypedExpr>,
         separator: Box<TypedExpr>,
+    },
+    #[serde(rename = "string-trim")]
+    StringTrim { value: Box<TypedExpr> },
+    #[serde(rename = "string-trim-start")]
+    StringTrimStart { value: Box<TypedExpr> },
+    #[serde(rename = "string-trim-end")]
+    StringTrimEnd { value: Box<TypedExpr> },
+    #[serde(rename = "string-replace")]
+    StringReplace {
+        value: Box<TypedExpr>,
+        needle: Box<TypedExpr>,
+        replacement: Box<TypedExpr>,
+    },
+    #[serde(rename = "string-replace-all")]
+    StringReplaceAll {
+        value: Box<TypedExpr>,
+        needle: Box<TypedExpr>,
+        replacement: Box<TypedExpr>,
+    },
+    #[serde(rename = "string-starts-with")]
+    StringStartsWith {
+        value: Box<TypedExpr>,
+        needle: Box<TypedExpr>,
+    },
+    #[serde(rename = "string-ends-with")]
+    StringEndsWith {
+        value: Box<TypedExpr>,
+        needle: Box<TypedExpr>,
+    },
+    #[serde(rename = "string-to-lower")]
+    StringToLower { value: Box<TypedExpr> },
+    #[serde(rename = "string-to-upper")]
+    StringToUpper { value: Box<TypedExpr> },
+    #[serde(rename = "string-pad-start")]
+    StringPadStart {
+        value: Box<TypedExpr>,
+        target: Box<TypedExpr>,
+        pad: Box<TypedExpr>,
+    },
+    #[serde(rename = "string-pad-end")]
+    StringPadEnd {
+        value: Box<TypedExpr>,
+        target: Box<TypedExpr>,
+        pad: Box<TypedExpr>,
+    },
+    #[serde(rename = "string-repeat")]
+    StringRepeat {
+        value: Box<TypedExpr>,
+        count: Box<TypedExpr>,
+    },
+    #[serde(rename = "string-concat")]
+    StringConcat { parts: Vec<TypedExpr> },
+    #[serde(rename = "string-char-at")]
+    StringCharAt {
+        value: Box<TypedExpr>,
+        index: Box<TypedExpr>,
+    },
+    #[serde(rename = "string-at")]
+    StringAt {
+        value: Box<TypedExpr>,
+        index: Box<TypedExpr>,
     },
     #[serde(rename = "array-includes")]
     ArrayIncludes {
@@ -116,8 +197,45 @@ enum TypedExpr {
         left: Box<TypedExpr>,
         right: Box<TypedExpr>,
     },
+    #[serde(rename = "add")]
+    Add {
+        left: Box<TypedExpr>,
+        right: Box<TypedExpr>,
+    },
+    #[serde(rename = "sub")]
+    Sub {
+        left: Box<TypedExpr>,
+        right: Box<TypedExpr>,
+    },
+    #[serde(rename = "mul")]
+    Mul {
+        left: Box<TypedExpr>,
+        right: Box<TypedExpr>,
+    },
+    #[serde(rename = "lt")]
+    LessThan {
+        left: Box<TypedExpr>,
+        right: Box<TypedExpr>,
+    },
+    #[serde(rename = "le")]
+    LessThanOrEqual {
+        left: Box<TypedExpr>,
+        right: Box<TypedExpr>,
+    },
     #[serde(rename = "gt")]
     GreaterThan {
+        left: Box<TypedExpr>,
+        right: Box<TypedExpr>,
+    },
+    #[serde(rename = "ge")]
+    GreaterThanOrEqual {
+        left: Box<TypedExpr>,
+        right: Box<TypedExpr>,
+    },
+    #[serde(rename = "not")]
+    Not { value: Box<TypedExpr> },
+    #[serde(rename = "nullish")]
+    Nullish {
         left: Box<TypedExpr>,
         right: Box<TypedExpr>,
     },
@@ -324,6 +442,7 @@ pub(crate) enum TypedValue {
     Bool(bool),
     Integer(i64),
     StringArray(Vec<Utf16String>),
+    Null,
 }
 
 #[derive(Debug, Default)]
@@ -930,30 +1049,28 @@ fn validate_typed_hook_ir(descriptor: &TypedHookIr) -> TypedHookResult<()> {
             descriptor.kind
         )));
     }
-    let (expected_result, expected_params, label) = match descriptor.source_field.as_str() {
-        SOURCE_FIELD => (TypedValueType::Bool, TRIGGER_PARAM_COUNT, "trigger"),
-        GET_QUERY_TERM_SOURCE_FIELD => (TypedValueType::String, GET_QUERY_TERM_PARAM_COUNT, "getQueryTerm"),
-        _ => {
-            return Err(TypedHookError::new(format!(
-                "typed hook source field {:?} is unsupported",
-                descriptor.source_field
-            )));
-        },
-    };
+    let (label, expected_result, expected_params) = typed_hook_contract(&descriptor.source_field).ok_or_else(|| {
+        TypedHookError::new(format!(
+            "typed hook source field {:?} is unsupported",
+            descriptor.source_field
+        ))
+    })?;
     if descriptor.result_type != expected_result {
         return Err(TypedHookError::new(format!(
             "{label} typed hook resultType does not match its contract"
         )));
     }
-    if descriptor.params.len() != expected_params {
+    if descriptor.params.len() != expected_params.len() {
         return Err(TypedHookError::new(format!(
-            "{label} typed hook requires exactly {expected_params} params"
+            "{label} typed hook requires exactly {} params",
+            expected_params.len()
         )));
     }
     for (expected_index, param) in descriptor.params.iter().enumerate() {
-        if param.index != expected_index as u64 || param.value_type != TypedValueType::String {
+        if param.index != expected_index as u64 || param.value_type != expected_params[expected_index] {
             return Err(TypedHookError::new(format!(
-                "{label} parameter {expected_index} must be a string with matching index"
+                "{label} parameter {expected_index} must be {:?} with matching index",
+                expected_params[expected_index]
             )));
         }
     }
@@ -966,42 +1083,34 @@ fn validate_typed_hook_ir(descriptor: &TypedHookIr) -> TypedHookResult<()> {
             descriptor.result_type
         )));
     }
-    if descriptor.source_field == GET_QUERY_TERM_SOURCE_FIELD && !is_closed_get_query_term_expression(&descriptor.expr)
-    {
-        return Err(TypedHookError::new(
-            "getQueryTerm descriptor is not the closed asdf research expression",
-        ));
-    }
     Ok(())
 }
 
-fn is_arg_zero(expression: &TypedExpr) -> bool {
-    matches!(expression, TypedExpr::Arg { index: 0 })
+fn typed_hook_contract(source_field: &str) -> Option<(&'static str, TypedValueType, &'static [TypedValueType])> {
+    match source_field {
+        SOURCE_FIELD => Some((
+            "trigger",
+            TypedValueType::Bool,
+            &[TypedValueType::String, TypedValueType::String],
+        )),
+        GET_QUERY_TERM_SOURCE_FIELD => Some(("getQueryTerm", TypedValueType::String, &[TypedValueType::String])),
+        "postProcess" => Some((
+            "postProcess",
+            TypedValueType::SuggestionArray,
+            &[TypedValueType::String, TypedValueType::StringArray],
+        )),
+        "script" => Some(("script", TypedValueType::StringArray, &[TypedValueType::StringArray])),
+        "filterTemplateSuggestions" => Some((
+            "filterTemplateSuggestions",
+            TypedValueType::SuggestionArray,
+            &[TypedValueType::SuggestionArray],
+        )),
+        _ => None,
+    }
 }
 
 fn is_string_literal(expression: &TypedExpr, expected: &str) -> bool {
     matches!(expression, TypedExpr::String { value } if value == expected)
-}
-
-fn is_closed_get_query_term_expression(expression: &TypedExpr) -> bool {
-    let TypedExpr::If {
-        condition,
-        then_branch,
-        else_branch,
-    } = expression
-    else {
-        return false;
-    };
-    let TypedExpr::StringIncludes { value, needle } = condition.as_ref() else {
-        return false;
-    };
-    if !is_arg_zero(value) || !is_string_literal(needle, "latest") {
-        return false;
-    }
-    let TypedExpr::StringSliceAfterFirst { value, needle } = then_branch.as_ref() else {
-        return false;
-    };
-    is_arg_zero(value) && is_string_literal(needle, ":") && is_arg_zero(else_branch)
 }
 
 fn validate_expr(
@@ -1053,6 +1162,7 @@ fn validate_expr(
             Ok(TypedValueType::String)
         },
         TypedExpr::Bool { .. } => Ok(TypedValueType::Bool),
+        TypedExpr::Null => Ok(TypedValueType::Null),
         TypedExpr::Integer { value } => {
             ensure_safe_integer(*value, path)?;
             Ok(TypedValueType::Integer)
@@ -1077,7 +1187,7 @@ fn validate_expr(
             child(needle, Some(TypedValueType::String), "needle", state)?;
             Ok(TypedValueType::Bool)
         },
-        TypedExpr::StringIndexOf { value, needle } => {
+        TypedExpr::StringIndexOf { value, needle } | TypedExpr::StringLastIndexOf { value, needle } => {
             child(value, Some(TypedValueType::String), "value", state)?;
             child(needle, Some(TypedValueType::String), "needle", state)?;
             Ok(TypedValueType::Integer)
@@ -1097,10 +1207,72 @@ fn validate_expr(
             }
             Ok(TypedValueType::String)
         },
+        TypedExpr::StringSubstring { value, start, end } => {
+            child(value, Some(TypedValueType::String), "value", state)?;
+            child(start, Some(TypedValueType::Integer), "start", state)?;
+            child(end, Some(TypedValueType::Integer), "end", state)?;
+            Ok(TypedValueType::String)
+        },
         TypedExpr::StringSplit { value, separator } => {
             child(value, Some(TypedValueType::String), "value", state)?;
             child(separator, Some(TypedValueType::String), "separator", state)?;
             Ok(TypedValueType::StringArray)
+        },
+        TypedExpr::StringTrim { value }
+        | TypedExpr::StringTrimStart { value }
+        | TypedExpr::StringTrimEnd { value }
+        | TypedExpr::StringToLower { value }
+        | TypedExpr::StringToUpper { value } => {
+            child(value, Some(TypedValueType::String), "value", state)?;
+            Ok(TypedValueType::String)
+        },
+        TypedExpr::StringReplace {
+            value,
+            needle,
+            replacement,
+        }
+        | TypedExpr::StringReplaceAll {
+            value,
+            needle,
+            replacement,
+        } => {
+            child(value, Some(TypedValueType::String), "value", state)?;
+            child(needle, Some(TypedValueType::String), "needle", state)?;
+            if !matches!(needle.as_ref(), TypedExpr::String { .. }) {
+                return Err(TypedHookError::new(format!("{path}.needle must be a string literal")));
+            }
+            child(replacement, Some(TypedValueType::String), "replacement", state)?;
+            Ok(TypedValueType::String)
+        },
+        TypedExpr::StringStartsWith { value, needle } | TypedExpr::StringEndsWith { value, needle } => {
+            child(value, Some(TypedValueType::String), "value", state)?;
+            child(needle, Some(TypedValueType::String), "needle", state)?;
+            Ok(TypedValueType::Bool)
+        },
+        TypedExpr::StringPadStart { value, target, pad } | TypedExpr::StringPadEnd { value, target, pad } => {
+            child(value, Some(TypedValueType::String), "value", state)?;
+            child(target, Some(TypedValueType::Integer), "target", state)?;
+            child(pad, Some(TypedValueType::String), "pad", state)?;
+            Ok(TypedValueType::String)
+        },
+        TypedExpr::StringRepeat { value, count } => {
+            child(value, Some(TypedValueType::String), "value", state)?;
+            child(count, Some(TypedValueType::Integer), "count", state)?;
+            Ok(TypedValueType::String)
+        },
+        TypedExpr::StringConcat { parts } => {
+            if parts.is_empty() {
+                return Err(TypedHookError::new(format!("{path}.parts must be a non-empty array")));
+            }
+            for (index, part) in parts.iter().enumerate() {
+                child(part, Some(TypedValueType::String), &format!("parts[{index}]"), state)?;
+            }
+            Ok(TypedValueType::String)
+        },
+        TypedExpr::StringCharAt { value, index } | TypedExpr::StringAt { value, index } => {
+            child(value, Some(TypedValueType::String), "value", state)?;
+            child(index, Some(TypedValueType::Integer), "index", state)?;
+            Ok(TypedValueType::String)
         },
         TypedExpr::ArrayIncludes { value, needle } => {
             child(value, Some(TypedValueType::StringArray), "value", state)?;
@@ -1117,10 +1289,36 @@ fn validate_expr(
             }
             Ok(TypedValueType::Bool)
         },
-        TypedExpr::GreaterThan { left, right } => {
+        TypedExpr::Add { left, right } | TypedExpr::Sub { left, right } | TypedExpr::Mul { left, right } => {
+            child(left, Some(TypedValueType::Integer), "left", state)?;
+            child(right, Some(TypedValueType::Integer), "right", state)?;
+            Ok(TypedValueType::Integer)
+        },
+        TypedExpr::LessThan { left, right }
+        | TypedExpr::LessThanOrEqual { left, right }
+        | TypedExpr::GreaterThan { left, right }
+        | TypedExpr::GreaterThanOrEqual { left, right } => {
             child(left, Some(TypedValueType::Integer), "left", state)?;
             child(right, Some(TypedValueType::Integer), "right", state)?;
             Ok(TypedValueType::Bool)
+        },
+        TypedExpr::Not { value } => {
+            child(value, Some(TypedValueType::Bool), "value", state)?;
+            Ok(TypedValueType::Bool)
+        },
+        TypedExpr::Nullish { left, right } => {
+            let left_type = child(left, None, "left", state)?;
+            let right_type = child(right, None, "right", state)?;
+            let result_type = if left_type == TypedValueType::Null {
+                right_type
+            } else if right_type == TypedValueType::Null || left_type == right_type {
+                left_type
+            } else {
+                return Err(TypedHookError::new(format!(
+                    "{path} ?? operands must share a type or be null"
+                )));
+            };
+            Ok(result_type)
         },
         TypedExpr::And { left, right } | TypedExpr::Or { left, right } => {
             child(left, Some(TypedValueType::Bool), "left", state)?;
@@ -1168,9 +1366,9 @@ pub(crate) fn evaluate_typed_trigger(
     }
 }
 
-/// Evaluate the closed, research-only asdf getQueryTerm descriptor.  This
-/// helper is intentionally not called by the completion runtime; the
-/// production path continues to use its existing QuickJS adapter.
+/// Evaluate a getQueryTerm descriptor.  This helper is intentionally not
+/// called by the completion runtime; the production path continues to use
+/// its existing QuickJS adapter until the path switch is allowed.
 pub(crate) fn evaluate_typed_get_query_term(descriptor: &TypedHookIr, search_term: &str) -> TypedHookResult<String> {
     validate_typed_hook_ir(descriptor)?;
     if descriptor.source_field != GET_QUERY_TERM_SOURCE_FIELD {
@@ -1199,6 +1397,7 @@ fn evaluate_expr(expression: &TypedExpr, arguments: &[TypedValue]) -> TypedHookR
         },
         TypedExpr::String { value } => Ok(TypedValue::String(Utf16String::from_str(value))),
         TypedExpr::Bool { value } => Ok(TypedValue::Bool(*value)),
+        TypedExpr::Null => Ok(TypedValue::Null),
         TypedExpr::Integer { value } => {
             ensure_safe_integer(*value, "integer")?;
             Ok(TypedValue::Integer(*value))
@@ -1224,14 +1423,12 @@ fn evaluate_expr(expression: &TypedExpr, arguments: &[TypedValue]) -> TypedHookR
         TypedExpr::StringIndexOf { value, needle } => {
             let value = evaluate_string(value, arguments, "string-index-of.value")?;
             let needle = evaluate_string(needle, arguments, "string-index-of.needle")?;
-            let index = utf16_index_of(&value, &needle)
-                .map(|index| {
-                    i64::try_from(index)
-                        .map_err(|error| TypedHookError::new(format!("string index is too large: {error}")))
-                })
-                .transpose()?
-                .unwrap_or(-1);
-            Ok(TypedValue::Integer(index))
+            Ok(TypedValue::Integer(utf16_index_of_i64(&value, &needle)?))
+        },
+        TypedExpr::StringLastIndexOf { value, needle } => {
+            let value = evaluate_string(value, arguments, "string-last-index-of.value")?;
+            let needle = evaluate_string(needle, arguments, "string-last-index-of.needle")?;
+            Ok(TypedValue::Integer(utf16_last_index_of_i64(&value, &needle)?))
         },
         TypedExpr::StringSlice { value, start } => {
             let value = evaluate_string(value, arguments, "string-slice.value")?;
@@ -1251,10 +1448,101 @@ fn evaluate_expr(expression: &TypedExpr, arguments: &[TypedValue]) -> TypedHookR
                 .map_err(|error| TypedHookError::new(format!("string slice start is too large: {error}")))?;
             Ok(TypedValue::String(js_slice(&value, start)?))
         },
+        TypedExpr::StringSubstring { value, start, end } => {
+            let value = evaluate_string(value, arguments, "string-substring.value")?;
+            let start = evaluate_integer(start, arguments, "string-substring.start")?;
+            let end = evaluate_integer(end, arguments, "string-substring.end")?;
+            Ok(TypedValue::String(js_substring(&value, start, end)?))
+        },
         TypedExpr::StringSplit { value, separator } => {
             let value = evaluate_string(value, arguments, "string-split.value")?;
             let separator = evaluate_string(separator, arguments, "string-split.separator")?;
             Ok(TypedValue::StringArray(js_split(&value, &separator)))
+        },
+        TypedExpr::StringTrim { value } => {
+            let value = evaluate_string(value, arguments, "string-trim.value")?;
+            Ok(TypedValue::String(js_trim(&value, true, true)))
+        },
+        TypedExpr::StringTrimStart { value } => {
+            let value = evaluate_string(value, arguments, "string-trim-start.value")?;
+            Ok(TypedValue::String(js_trim(&value, true, false)))
+        },
+        TypedExpr::StringTrimEnd { value } => {
+            let value = evaluate_string(value, arguments, "string-trim-end.value")?;
+            Ok(TypedValue::String(js_trim(&value, false, true)))
+        },
+        TypedExpr::StringReplace {
+            value,
+            needle,
+            replacement,
+        } => {
+            let value = evaluate_string(value, arguments, "string-replace.value")?;
+            let needle = evaluate_string(needle, arguments, "string-replace.needle")?;
+            let replacement = evaluate_string(replacement, arguments, "string-replace.replacement")?;
+            Ok(TypedValue::String(js_replace(&value, &needle, &replacement, false)?))
+        },
+        TypedExpr::StringReplaceAll {
+            value,
+            needle,
+            replacement,
+        } => {
+            let value = evaluate_string(value, arguments, "string-replace-all.value")?;
+            let needle = evaluate_string(needle, arguments, "string-replace-all.needle")?;
+            let replacement = evaluate_string(replacement, arguments, "string-replace-all.replacement")?;
+            Ok(TypedValue::String(js_replace(&value, &needle, &replacement, true)?))
+        },
+        TypedExpr::StringStartsWith { value, needle } => {
+            let value = evaluate_string(value, arguments, "string-starts-with.value")?;
+            let needle = evaluate_string(needle, arguments, "string-starts-with.needle")?;
+            Ok(TypedValue::Bool(utf16_starts_with(&value, &needle)))
+        },
+        TypedExpr::StringEndsWith { value, needle } => {
+            let value = evaluate_string(value, arguments, "string-ends-with.value")?;
+            let needle = evaluate_string(needle, arguments, "string-ends-with.needle")?;
+            Ok(TypedValue::Bool(utf16_ends_with(&value, &needle)))
+        },
+        TypedExpr::StringToLower { value } => {
+            let value = evaluate_string(value, arguments, "string-to-lower.value")?;
+            Ok(TypedValue::String(js_map_case(&value, false)))
+        },
+        TypedExpr::StringToUpper { value } => {
+            let value = evaluate_string(value, arguments, "string-to-upper.value")?;
+            Ok(TypedValue::String(js_map_case(&value, true)))
+        },
+        TypedExpr::StringPadStart { value, target, pad } => {
+            let value = evaluate_string(value, arguments, "string-pad-start.value")?;
+            let target = evaluate_integer(target, arguments, "string-pad-start.target")?;
+            let pad = evaluate_string(pad, arguments, "string-pad-start.pad")?;
+            Ok(TypedValue::String(js_pad(&value, target, &pad, false)?))
+        },
+        TypedExpr::StringPadEnd { value, target, pad } => {
+            let value = evaluate_string(value, arguments, "string-pad-end.value")?;
+            let target = evaluate_integer(target, arguments, "string-pad-end.target")?;
+            let pad = evaluate_string(pad, arguments, "string-pad-end.pad")?;
+            Ok(TypedValue::String(js_pad(&value, target, &pad, true)?))
+        },
+        TypedExpr::StringRepeat { value, count } => {
+            let value = evaluate_string(value, arguments, "string-repeat.value")?;
+            let count = evaluate_integer(count, arguments, "string-repeat.count")?;
+            Ok(TypedValue::String(js_repeat(&value, count)?))
+        },
+        TypedExpr::StringConcat { parts } => {
+            let mut units = Vec::new();
+            for part in parts {
+                let part = evaluate_string(part, arguments, "string-concat.parts")?;
+                units.extend_from_slice(&part.0);
+            }
+            Ok(TypedValue::String(ensure_string_limit(units)?))
+        },
+        TypedExpr::StringCharAt { value, index } => {
+            let value = evaluate_string(value, arguments, "string-char-at.value")?;
+            let index = evaluate_integer(index, arguments, "string-char-at.index")?;
+            Ok(TypedValue::String(js_char_at(&value, index)))
+        },
+        TypedExpr::StringAt { value, index } => {
+            let value = evaluate_string(value, arguments, "string-at.value")?;
+            let index = evaluate_integer(index, arguments, "string-at.index")?;
+            Ok(TypedValue::String(js_at(&value, index)?))
         },
         TypedExpr::ArrayIncludes { value, needle } => {
             let value = evaluate_array(value, arguments, "array-includes.value")?;
@@ -1271,10 +1559,52 @@ fn evaluate_expr(expression: &TypedExpr, arguments: &[TypedValue]) -> TypedHookR
             let right = evaluate_expr(right, arguments)?;
             Ok(TypedValue::Bool(!strict_equal(&left, &right)?))
         },
+        TypedExpr::Add { left, right } => {
+            let left = evaluate_integer(left, arguments, "add.left")?;
+            let right = evaluate_integer(right, arguments, "add.right")?;
+            Ok(TypedValue::Integer(safe_arithmetic(left.checked_add(right), "add")?))
+        },
+        TypedExpr::Sub { left, right } => {
+            let left = evaluate_integer(left, arguments, "sub.left")?;
+            let right = evaluate_integer(right, arguments, "sub.right")?;
+            Ok(TypedValue::Integer(safe_arithmetic(left.checked_sub(right), "sub")?))
+        },
+        TypedExpr::Mul { left, right } => {
+            let left = evaluate_integer(left, arguments, "mul.left")?;
+            let right = evaluate_integer(right, arguments, "mul.right")?;
+            Ok(TypedValue::Integer(safe_arithmetic(left.checked_mul(right), "mul")?))
+        },
+        TypedExpr::LessThan { left, right } => {
+            let left = evaluate_integer(left, arguments, "lt.left")?;
+            let right = evaluate_integer(right, arguments, "lt.right")?;
+            Ok(TypedValue::Bool(left < right))
+        },
+        TypedExpr::LessThanOrEqual { left, right } => {
+            let left = evaluate_integer(left, arguments, "le.left")?;
+            let right = evaluate_integer(right, arguments, "le.right")?;
+            Ok(TypedValue::Bool(left <= right))
+        },
         TypedExpr::GreaterThan { left, right } => {
             let left = evaluate_integer(left, arguments, "gt.left")?;
             let right = evaluate_integer(right, arguments, "gt.right")?;
             Ok(TypedValue::Bool(left > right))
+        },
+        TypedExpr::GreaterThanOrEqual { left, right } => {
+            let left = evaluate_integer(left, arguments, "ge.left")?;
+            let right = evaluate_integer(right, arguments, "ge.right")?;
+            Ok(TypedValue::Bool(left >= right))
+        },
+        TypedExpr::Not { value } => {
+            let value = evaluate_bool(value, arguments, "not.value")?;
+            Ok(TypedValue::Bool(!value))
+        },
+        TypedExpr::Nullish { left, right } => {
+            let left = evaluate_expr(left, arguments)?;
+            if matches!(left, TypedValue::Null) {
+                evaluate_expr(right, arguments)
+            } else {
+                Ok(left)
+            }
         },
         TypedExpr::And { left, right } => {
             let left = evaluate_bool(left, arguments, "and.left")?;
@@ -1344,11 +1674,348 @@ fn strict_equal(left: &TypedValue, right: &TypedValue) -> TypedHookResult<bool> 
         (TypedValue::String(left), TypedValue::String(right)) => Ok(left == right),
         (TypedValue::Bool(left), TypedValue::Bool(right)) => Ok(left == right),
         (TypedValue::Integer(left), TypedValue::Integer(right)) => Ok(left == right),
+        (TypedValue::Null, TypedValue::Null) => Ok(true),
         (TypedValue::StringArray(_), TypedValue::StringArray(_)) => {
             Err(TypedHookError::new("string-array strict equality is not representable"))
         },
         _ => Err(TypedHookError::new("strict equality operands have different types")),
     }
+}
+
+fn safe_arithmetic(value: Option<i64>, path: &str) -> TypedHookResult<i64> {
+    let value =
+        value.ok_or_else(|| TypedHookError::new(format!("{path} overflowed the JavaScript safe integer range")))?;
+    ensure_safe_integer(value, path)?;
+    Ok(value)
+}
+
+fn utf16_index_of_i64(value: &Utf16String, needle: &Utf16String) -> TypedHookResult<i64> {
+    utf16_index_of(value, needle)
+        .map(|index| {
+            i64::try_from(index).map_err(|error| TypedHookError::new(format!("string index is too large: {error}")))
+        })
+        .transpose()
+        .map(|index| index.unwrap_or(-1))
+}
+
+fn utf16_last_index_of(value: &Utf16String, needle: &Utf16String) -> Option<usize> {
+    if needle.0.is_empty() {
+        return Some(value.len());
+    }
+    if needle.0.len() > value.0.len() {
+        return None;
+    }
+    value
+        .0
+        .windows(needle.0.len())
+        .rposition(|window| window == needle.0.as_slice())
+}
+
+fn utf16_last_index_of_i64(value: &Utf16String, needle: &Utf16String) -> TypedHookResult<i64> {
+    utf16_last_index_of(value, needle)
+        .map(|index| {
+            i64::try_from(index).map_err(|error| TypedHookError::new(format!("string index is too large: {error}")))
+        })
+        .transpose()
+        .map(|index| index.unwrap_or(-1))
+}
+
+fn utf16_starts_with(value: &Utf16String, needle: &Utf16String) -> bool {
+    value.0.starts_with(&needle.0)
+}
+
+fn utf16_ends_with(value: &Utf16String, needle: &Utf16String) -> bool {
+    value.0.ends_with(&needle.0)
+}
+
+fn is_js_trim_unit(unit: u16) -> bool {
+    matches!(
+        unit,
+        0x0009
+            | 0x000A
+            | 0x000B
+            | 0x000C
+            | 0x000D
+            | 0x0020
+            | 0x00A0
+            | 0x1680
+            | 0x2028
+            | 0x2029
+            | 0x202F
+            | 0x205F
+            | 0x3000
+            | 0xFEFF
+    ) || (0x2000..=0x200A).contains(&unit)
+}
+
+fn js_trim(value: &Utf16String, start: bool, end: bool) -> Utf16String {
+    let mut units = value.0.as_slice();
+    if start {
+        while units.first().is_some_and(|unit| is_js_trim_unit(*unit)) {
+            units = &units[1..];
+        }
+    }
+    if end {
+        while units.last().is_some_and(|unit| is_js_trim_unit(*unit)) {
+            units = &units[..units.len() - 1];
+        }
+    }
+    Utf16String::from_units(units.to_vec())
+}
+
+fn map_scalar_case(scalar: char, upper: bool) -> String {
+    if upper {
+        scalar.to_uppercase().collect()
+    } else {
+        scalar.to_lowercase().collect()
+    }
+}
+
+fn js_map_case(value: &Utf16String, upper: bool) -> Utf16String {
+    let mut out = Vec::with_capacity(value.0.len());
+    let mut index = 0;
+    while index < value.0.len() {
+        let unit = value.0[index];
+        if (0xD800..=0xDBFF).contains(&unit)
+            && let Some(next) = value.0.get(index + 1)
+            && (0xDC00..=0xDFFF).contains(next)
+        {
+            let scalar = char::decode_utf16([unit, *next])
+                .next()
+                .and_then(Result::ok)
+                .expect("paired surrogates decode");
+            out.extend(map_scalar_case(scalar, upper).encode_utf16());
+            index += 2;
+            continue;
+        }
+        if (0xD800..=0xDFFF).contains(&unit) {
+            out.push(unit);
+            index += 1;
+            continue;
+        }
+        let scalar = char::from_u32(u32::from(unit)).expect("BMP code unit is a scalar");
+        out.extend(map_scalar_case(scalar, upper).encode_utf16());
+        index += 1;
+    }
+    Utf16String::from_units(out)
+}
+
+fn js_substring(value: &Utf16String, start: i64, end: i64) -> TypedHookResult<Utf16String> {
+    let length =
+        i64::try_from(value.len()).map_err(|error| TypedHookError::new(format!("string is too long: {error}")))?;
+    let clamp = |index: i64| index.clamp(0, length);
+    let mut from = clamp(start);
+    let mut to = clamp(end);
+    if from > to {
+        std::mem::swap(&mut from, &mut to);
+    }
+    Ok(Utf16String::from_units(value.0[from as usize..to as usize].to_vec()))
+}
+
+fn js_replace(
+    value: &Utf16String,
+    needle: &Utf16String,
+    replacement: &Utf16String,
+    all: bool,
+) -> TypedHookResult<Utf16String> {
+    if needle.0.is_empty() {
+        if !all {
+            let mut out = replacement.0.clone();
+            out.extend_from_slice(&value.0);
+            return ensure_string_limit(out);
+        }
+        let mut out = replacement.0.clone();
+        for unit in &value.0 {
+            out.push(*unit);
+            out.extend_from_slice(&replacement.0);
+        }
+        return ensure_string_limit(out);
+    }
+    if !all {
+        let Some(index) = utf16_index_of(value, needle) else {
+            return Ok(value.clone());
+        };
+        let mut out = value.0[..index].to_vec();
+        out.extend_from_slice(&replacement.0);
+        out.extend_from_slice(&value.0[index + needle.0.len()..]);
+        return ensure_string_limit(out);
+    }
+    let mut out = Vec::new();
+    let mut start = 0;
+    while let Some(relative) = value.0[start..]
+        .windows(needle.0.len())
+        .position(|window| window == needle.0.as_slice())
+    {
+        let end = start + relative;
+        out.extend_from_slice(&value.0[start..end]);
+        out.extend_from_slice(&replacement.0);
+        start = end + needle.0.len();
+    }
+    out.extend_from_slice(&value.0[start..]);
+    ensure_string_limit(out)
+}
+
+fn js_pad(value: &Utf16String, target: i64, pad: &Utf16String, end: bool) -> TypedHookResult<Utf16String> {
+    let target = if target < 0 { 0 } else { target };
+    let length =
+        i64::try_from(value.len()).map_err(|error| TypedHookError::new(format!("string is too long: {error}")))?;
+    if target <= length || pad.0.is_empty() {
+        return Ok(value.clone());
+    }
+    let needed = usize::try_from(target - length)
+        .map_err(|error| TypedHookError::new(format!("pad target is too large: {error}")))?;
+    let mut fill = Vec::with_capacity(needed);
+    while fill.len() < needed {
+        fill.extend_from_slice(&pad.0);
+    }
+    fill.truncate(needed);
+    let out = if end {
+        let mut out = value.0.clone();
+        out.extend_from_slice(&fill);
+        out
+    } else {
+        fill.extend_from_slice(&value.0);
+        fill
+    };
+    ensure_string_limit(out)
+}
+
+fn js_repeat(value: &Utf16String, count: i64) -> TypedHookResult<Utf16String> {
+    if count < 0 {
+        return Err(TypedHookError::new("string-repeat count must be non-negative"));
+    }
+    let count = usize::try_from(count).map_err(|error| TypedHookError::new(format!("string-repeat count: {error}")))?;
+    let units = value
+        .len()
+        .checked_mul(count)
+        .ok_or_else(|| TypedHookError::new("string-repeat overflowed the JavaScript safe integer range"))?;
+    if units > MAX_STRING_LITERAL_UNITS {
+        return Err(TypedHookError::new("string-repeat exceeds the UTF-16 code-unit limit"));
+    }
+    let mut out = Vec::with_capacity(units);
+    for _ in 0..count {
+        out.extend_from_slice(&value.0);
+    }
+    Ok(Utf16String::from_units(out))
+}
+
+fn js_char_at(value: &Utf16String, index: i64) -> Utf16String {
+    if index < 0 {
+        return Utf16String::from_units(Vec::<u16>::new());
+    }
+    let Ok(index) = usize::try_from(index) else {
+        return Utf16String::from_units(Vec::<u16>::new());
+    };
+    match value.0.get(index) {
+        Some(unit) => Utf16String::from_units(vec![*unit]),
+        None => Utf16String::from_units(Vec::<u16>::new()),
+    }
+}
+
+fn js_at(value: &Utf16String, index: i64) -> TypedHookResult<Utf16String> {
+    let length =
+        i64::try_from(value.len()).map_err(|error| TypedHookError::new(format!("string is too long: {error}")))?;
+    let actual = if index < 0 { length + index } else { index };
+    Ok(js_char_at(value, actual))
+}
+
+fn ensure_string_limit(units: Vec<u16>) -> TypedHookResult<Utf16String> {
+    if units.len() > MAX_STRING_LITERAL_UNITS {
+        return Err(TypedHookError::new(format!(
+            "string exceeds {MAX_STRING_LITERAL_UNITS} UTF-16 code units"
+        )));
+    }
+    Ok(Utf16String::from_units(units))
+}
+
+fn json_to_typed_value(value: &JsonValue, expected: TypedValueType) -> TypedHookResult<TypedValue> {
+    match expected {
+        TypedValueType::String => {
+            let Some(text) = value.as_str() else {
+                return Err(TypedHookError::new("argument is not a string"));
+            };
+            Ok(TypedValue::String(Utf16String::from_str(text)))
+        },
+        TypedValueType::Bool => {
+            let Some(flag) = value.as_bool() else {
+                return Err(TypedHookError::new("argument is not a bool"));
+            };
+            Ok(TypedValue::Bool(flag))
+        },
+        TypedValueType::Integer => {
+            let Some(number) = value.as_i64() else {
+                return Err(TypedHookError::new("argument is not an integer"));
+            };
+            ensure_safe_integer(number, "argument")?;
+            Ok(TypedValue::Integer(number))
+        },
+        TypedValueType::StringArray => {
+            let Some(items) = value.as_array() else {
+                return Err(TypedHookError::new("argument is not a string array"));
+            };
+            let values = items
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .map(Utf16String::from_str)
+                        .ok_or_else(|| TypedHookError::new("string-array item is not a string"))
+                })
+                .collect::<TypedHookResult<Vec<_>>>()?;
+            Ok(TypedValue::StringArray(values))
+        },
+        TypedValueType::Null => {
+            if value.is_null() {
+                Ok(TypedValue::Null)
+            } else {
+                Err(TypedHookError::new("argument is not null"))
+            }
+        },
+        TypedValueType::Json
+        | TypedValueType::Suggestion
+        | TypedValueType::SuggestionArray
+        | TypedValueType::StringRecord => Err(TypedHookError::new(
+            "json/suggestion value types are compile-only until object ops land",
+        )),
+    }
+}
+
+fn typed_value_to_json(value: &TypedValue) -> TypedHookResult<JsonValue> {
+    match value {
+        TypedValue::String(value) => {
+            let text = String::from_utf16(&value.0)
+                .map_err(|error| TypedHookError::new(format!("evaluated string is not valid UTF-16: {error}")))?;
+            Ok(JsonValue::String(text))
+        },
+        TypedValue::Bool(value) => Ok(JsonValue::Bool(*value)),
+        TypedValue::Integer(value) => Ok(JsonValue::from(*value)),
+        TypedValue::StringArray(items) => {
+            let values = items
+                .iter()
+                .map(|item| {
+                    String::from_utf16(&item.0)
+                        .map(JsonValue::String)
+                        .map_err(|error| TypedHookError::new(format!("evaluated string is not valid UTF-16: {error}")))
+                })
+                .collect::<TypedHookResult<Vec<_>>>()?;
+            Ok(JsonValue::Array(values))
+        },
+        TypedValue::Null => Ok(JsonValue::Null),
+    }
+}
+
+/// Evaluate a validated descriptor against JSON arguments that match its
+/// field contract.  Used by the T2.1 cross-language golden.
+pub(crate) fn evaluate_typed_hook_json(descriptor: &TypedHookIr, args: &[JsonValue]) -> TypedHookResult<JsonValue> {
+    if args.len() != descriptor.params.len() {
+        return Err(TypedHookError::new("evaluate args must match the field contract"));
+    }
+    let arguments = descriptor
+        .params
+        .iter()
+        .zip(args)
+        .map(|(param, value)| json_to_typed_value(value, param.value_type))
+        .collect::<TypedHookResult<Vec<_>>>()?;
+    typed_value_to_json(&evaluate_expr(&descriptor.expr, &arguments)?)
 }
 
 fn utf16_index_of(value: &Utf16String, needle: &Utf16String) -> Option<usize> {
@@ -1710,6 +2377,160 @@ mod tests {
             .expect("lazy branch"),
             TypedValue::String(Utf16String::from_str("lazy"))
         );
+
+        let last_index = strict_eq(
+            TypedExpr::StringLastIndexOf {
+                value: Box::new(arg(0)),
+                needle: Box::new(string(":")),
+            },
+            integer(3),
+        );
+        assert!(evaluate(last_index, "a:b:c", ""));
+
+        let starts = TypedExpr::StringStartsWith {
+            value: Box::new(arg(0)),
+            needle: Box::new(string("ab")),
+        };
+        assert!(evaluate(starts, "abcd", ""));
+
+        let ends = TypedExpr::StringEndsWith {
+            value: Box::new(arg(0)),
+            needle: Box::new(string("cd")),
+        };
+        assert!(evaluate(ends, "abcd", ""));
+
+        let trimmed = strict_eq(
+            TypedExpr::StringTrim {
+                value: Box::new(arg(0)),
+            },
+            string("hi"),
+        );
+        assert!(evaluate(trimmed, "  hi  ", ""));
+
+        let replaced = strict_eq(
+            TypedExpr::StringReplaceAll {
+                value: Box::new(arg(0)),
+                needle: Box::new(string("-")),
+                replacement: Box::new(string("_")),
+            },
+            string("a_b_c"),
+        );
+        assert!(evaluate(replaced, "a-b-c", ""));
+
+        let lower = strict_eq(
+            TypedExpr::StringToLower {
+                value: Box::new(arg(0)),
+            },
+            string("abc"),
+        );
+        assert!(evaluate(lower, "AbC", ""));
+
+        let padded = strict_eq(
+            TypedExpr::StringPadStart {
+                value: Box::new(arg(0)),
+                target: Box::new(integer(4)),
+                pad: Box::new(string("0")),
+            },
+            string("0012"),
+        );
+        assert!(evaluate(padded, "12", ""));
+
+        let repeated = strict_eq(
+            TypedExpr::StringRepeat {
+                value: Box::new(arg(0)),
+                count: Box::new(integer(3)),
+            },
+            string("ababab"),
+        );
+        assert!(evaluate(repeated, "ab", ""));
+
+        let concat = strict_eq(
+            TypedExpr::StringConcat {
+                parts: vec![arg(0), string("!")],
+            },
+            string("hi!"),
+        );
+        assert!(evaluate(concat, "hi", ""));
+
+        let char_at = strict_eq(
+            TypedExpr::StringCharAt {
+                value: Box::new(arg(0)),
+                index: Box::new(integer(1)),
+            },
+            string("b"),
+        );
+        assert!(evaluate(char_at, "abc", ""));
+
+        let at = strict_eq(
+            TypedExpr::StringAt {
+                value: Box::new(arg(0)),
+                index: Box::new(integer(-1)),
+            },
+            string("c"),
+        );
+        assert!(evaluate(at, "abc", ""));
+
+        let substring = strict_eq(
+            TypedExpr::StringSubstring {
+                value: Box::new(arg(0)),
+                start: Box::new(integer(1)),
+                end: Box::new(integer(3)),
+            },
+            string("bc"),
+        );
+        assert!(evaluate(substring, "abcd", ""));
+
+        assert!(evaluate(
+            strict_eq(
+                TypedExpr::Sub {
+                    left: Box::new(length(arg(0))),
+                    right: Box::new(integer(1)),
+                },
+                integer(0),
+            ),
+            "x",
+            "",
+        ));
+        assert!(evaluate(
+            TypedExpr::LessThan {
+                left: Box::new(length(arg(0))),
+                right: Box::new(length(arg(1))),
+            },
+            "a",
+            "bb",
+        ));
+        assert!(evaluate(
+            TypedExpr::Not {
+                value: Box::new(TypedExpr::StringStartsWith {
+                    value: Box::new(arg(0)),
+                    needle: Box::new(string("x")),
+                }),
+            },
+            "hello",
+            "",
+        ));
+
+        let nullish = evaluate_expr(
+            &TypedExpr::Nullish {
+                left: Box::new(TypedExpr::Null),
+                right: Box::new(string("fallback")),
+            },
+            &[
+                TypedValue::String(Utf16String::from_str("")),
+                TypedValue::String(Utf16String::from_str("")),
+            ],
+        )
+        .expect("nullish");
+        assert_eq!(nullish, TypedValue::String(Utf16String::from_str("fallback")));
+
+        let overflow = evaluate_expr(
+            &TypedExpr::Add {
+                left: Box::new(integer(MAX_SAFE_INTEGER)),
+                right: Box::new(integer(1)),
+            },
+            &[],
+        );
+        assert!(overflow.is_err());
     }
 
     #[test]
@@ -1784,7 +2605,12 @@ mod tests {
                 "right": {"op": "integer", "value": 1}
             }
         });
-        assert!(parse_typed_hook_ir(&query_with_generic_add).is_err());
+        let parsed =
+            parse_typed_hook_ir(&query_with_generic_add).expect("add + string-slice is the v2 getQueryTerm shape");
+        assert_eq!(
+            evaluate_typed_get_query_term(&parsed, "nodejs:latest").expect("query term"),
+            "latest"
+        );
     }
 
     #[test]
@@ -1797,7 +2623,7 @@ mod tests {
         assert!(parse_typed_hook_ir(&descriptor).is_err());
 
         let mut expression = bool_value(true);
-        for _ in 0..13 {
+        for _ in 0..25 {
             expression = TypedExpr::If {
                 condition: Box::new(bool_value(true)),
                 then_branch: Box::new(expression),
@@ -2585,20 +3411,98 @@ mod tests {
         wrong_source["candidates"]["asdf#getQueryTerm#7"]["sourceField"] = json!("trigger");
         assert!(parse_typed_get_query_term_reference(&wrong_source).is_err());
 
-        let mut generic_add = typed_get_query_term_reference_value();
-        generic_add["candidates"]["asdf#getQueryTerm#7"]["descriptor"]["expr"]["then"] = json!({
-            "op": "string-slice",
-            "value": {"op": "arg", "index": 0},
-            "start": {
-                "op": "add",
-                "left": {"op": "string-index-of", "value": {"op": "arg", "index": 0}, "needle": {"op": "string", "value": ":"}},
-                "right": {"op": "integer", "value": 1}
-            }
+        let mut unknown_then = typed_get_query_term_reference_value();
+        unknown_then["candidates"]["asdf#getQueryTerm#7"]["descriptor"]["expr"]["then"] = json!({
+            "op": "future-slice",
+            "value": {"op": "arg", "index": 0}
         });
-        assert!(parse_typed_get_query_term_reference(&generic_add).is_err());
+        assert!(parse_typed_get_query_term_reference(&unknown_then).is_err());
 
         let mut wrong_expected = typed_get_query_term_reference_value();
         wrong_expected["expected"]["asdf#getQueryTerm#7"] = json!(["only-one"]);
         assert!(parse_typed_get_query_term_reference(&wrong_expected).is_err());
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct TypedIrV2OpsGolden {
+        version: u64,
+        kind: String,
+        cases: Vec<TypedIrV2OpsCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct TypedIrV2OpsCase {
+        id: String,
+        #[serde(rename = "sourceField")]
+        source_field: String,
+        #[allow(dead_code)]
+        body: Option<String>,
+        args: Vec<JsonValue>,
+        expected: JsonValue,
+        descriptor: JsonValue,
+    }
+
+    #[test]
+    fn typed_ir_v2_ops_golden_matches_javascript_evaluator() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/native-hooks/typed-ir-v2-ops.json");
+        let bytes = fs::read(&path).expect("typed-ir-v2-ops golden");
+        let golden: TypedIrV2OpsGolden = serde_json::from_slice(&bytes).expect("typed-ir-v2-ops schema");
+        assert_eq!(golden.version, 1);
+        assert_eq!(golden.kind, "typed-ir-v2-ops");
+        assert!(
+            golden.cases.len() >= 30,
+            "v2 op golden must cover the new string/numeric/nullish ops, got {}",
+            golden.cases.len()
+        );
+        for case in &golden.cases {
+            let descriptor = parse_typed_hook_ir(&case.descriptor)
+                .unwrap_or_else(|error| panic!("case {} failed to parse: {error}", case.id));
+            assert_eq!(descriptor.source_field, case.source_field, "{}", case.id);
+            let actual = evaluate_typed_hook_json(&descriptor, &case.args)
+                .unwrap_or_else(|error| panic!("case {} failed to evaluate: {error}", case.id));
+            assert_eq!(actual, case.expected, "{}", case.id);
+        }
+    }
+
+    #[test]
+    fn script_and_filter_contracts_parse_without_entering_production_sidecars() {
+        let script = json!({
+            "version": IR_VERSION,
+            "kind": IR_KIND,
+            "sourceField": "script",
+            "resultType": "string-array",
+            "params": [{"index": 0, "type": "string-array"}],
+            "expr": {
+                "op": "array",
+                "items": [
+                    {"op": "string", "value": "echo"},
+                    {"op": "string", "value": "-n"}
+                ]
+            }
+        });
+        let descriptor = parse_typed_hook_ir(&script).expect("script descriptor");
+        assert_eq!(
+            evaluate_typed_hook_json(&descriptor, &[json!([])]).expect("script eval"),
+            json!(["echo", "-n"])
+        );
+
+        let filter = json!({
+            "version": IR_VERSION,
+            "kind": IR_KIND,
+            "sourceField": "filterTemplateSuggestions",
+            "resultType": "suggestion-array",
+            "params": [{"index": 0, "type": "suggestion-array"}],
+            "expr": {"op": "arg", "index": 0}
+        });
+        assert!(parse_typed_hook_ir(&filter).is_ok());
+        assert!(
+            evaluate_typed_hook_json(
+                &parse_typed_hook_ir(&filter).expect("filter"),
+                &[json!([{"name": "a"}])]
+            )
+            .is_err()
+        );
     }
 }
