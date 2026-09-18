@@ -220,9 +220,7 @@ impl PlatformWindowImpl {
             XTermCacheUpdate::Retarget => {
                 self.x_term_tree_cache = Some(vec![element.clone()]);
             },
-            XTermCacheUpdate::Invalidate => {
-                self.x_term_tree_cache = None;
-            },
+            XTermCacheUpdate::Invalidate => self.invalidate_x_term_cache(),
             XTermCacheUpdate::Leave => {},
         }
     }
