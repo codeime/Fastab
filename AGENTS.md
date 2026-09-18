@@ -98,7 +98,7 @@ Three cooperating native processes communicate via Unix domain sockets (protobuf
 
 **`fig_util` must not link AppKit.** `ecterm` depends on it, and a single `NSWorkspace` call in `open_url` pulled AppKit + Metal + IOAccelerator into every tab (measured: `otool -L` listed AppKit, vmmap showed a 132 MB IOAccelerator mapping). URL opens go through `/usr/bin/open`. Do not put `objc2-app-kit` / `macos-utils` back on `fig_util` to make that call in-process.
 
-Two things measured as *not* worth doing there. Dropping `figterm`'s ten unused direct dependencies (`fig_install`, `crossterm`, `serde`, `parking_lot`, …) shrank the release `ecterm` by 2.8 KB, not the megabytes it looks like it should — the linker was already dead-stripping all of it, so that edit buys build time and an honest manifest, nothing else. And the completion engine is not where the desktop app's memory goes: `Registry` indexes `specs-ir` (a 22 KB `index.json`, ~734 names) and parses at most 48 spec trees under an LRU, so the 35 MB on disk is never resident. `JsHost.sources` does cache hook JS forever with no eviction, but the whole `hooks/` tree is 5.8 MB across 1480 files and a session touches a handful, so it sits in the low hundreds of KB — left alone deliberately.
+Two things measured as *not* worth doing there. Dropping `figterm`'s ten unused direct dependencies (`fig_install`, `crossterm`, `serde`, `parking_lot`, …) shrank the release `ecterm` by 2.8 KB, not the megabytes it looks like it should — the linker was already dead-stripping all of it, so that edit buys build time and an honest manifest, nothing else. And the completion engine is not where the desktop app's memory goes: `Registry` indexes `specs-ir` (a 22 KB `index.json`, ~734 names) and parses at most 48 spec trees under an LRU, so the ~34 MB on disk is never resident. Typed-hook and adapter catalogs load from `typed-hooks.json`; there is no hook JS cache.
 
 ### IPC
 
@@ -126,7 +126,7 @@ Two things measured as *not* worth doing there. Dropping `figterm`'s ten unused 
 
 **Replace the IME process only when its binary changed.** `scripts/install.sh` compares SHA-256 of the staged helper against the installed one. Identical → leave the process running and keep `Contents/Helpers` in place (`ditto` merges, so the rest of `Contents` is still cleared; it allocates a new inode per file, so the live process keeps its own mapped copy). Different → stop it, write the new file, and launch it. The replacement only enables its TIS source; it does not disable it first. `InputMethod::install` applies the same rule through the `input-method.launched-binary-sha256` state key, with `ensure_current_binary_running` as the single place that decides. A missing tracker is *not* a reason to kill — that would undo a same-hash keep — so pin the hash instead. Never pkill because TIS failed to recognise the source: from a CLI process with no `NSApplication` that check is almost always false. After SIGTERM, wait until the process is actually gone (SIGKILL if it is not) before launching, because `open` on a live bundle only activates the old process and recording the new hash against it would hide the stale helper forever. Do not add a "restart your terminal" prompt back, and do not add a second symlink-fixing pass: `install` already repoints and re-registers the symlink, and a parallel `migrate` task raced it on the same path under `~/Library/Input Methods`.
 
-**The desktop app is not exempt from restarting.** `install.sh` wipes and re-dittos the bundle, and `Contents/Resources/specs-ir` is read lazily at completion time (`js_host` loads `hooks/*.js` on first use), so leaving the old process up points a live app at deleted files and completions fail silently until the next launch. It holds no IMK connections worth preserving, so it is always stopped first and relaunched at the end. Its hash gates exactly one thing: the Accessibility check after relaunch, since an identical binary keeps its code-signing identity and therefore the grant the user already gave.
+**The desktop app is not exempt from restarting.** `install.sh` wipes and re-dittos the bundle, and `Contents/Resources/specs-ir` is read lazily at completion time (`typed-hooks.json` and spec JSON), so leaving the old process up points a live app at deleted files and completions fail silently until the next launch. It holds no IMK connections worth preserving, so it is always stopped first and relaunched at the end. Its hash gates exactly one thing: the Accessibility check after relaunch, since an identical binary keeps its code-signing identity and therefore the grant the user already gave.
 
 **Do not `tccutil reset Accessibility` on a binary change without asking the new process first.** The ad-hoc designated requirement is a bare `cdhash`, so every rebuild is a new identity to TCC — but on macOS 26 TCC re-pins the stored row itself: after two in-place swaps without any reset, `TCC.db` held the *new* binary's cdhash with `auth_reason = 4` (System Set) and `AXIsProcessTrusted()` was true from the first check. A blind reset there deletes a grant that carried over and sends the user to System Settings on every install. Older releases keep the stale requirement and leave the checkbox ticked while every AX call fails, which is the case the reset exists for. `install.sh` therefore launches the new app, runs `probe_accessibility` (`ec debug accessibility status`, which reports the desktop process's own `AXIsProcessTrusted()` over its socket, so it speaks for the installed binary and not the shell), and resets only on a repeated `false`, then tells the user to Grant from Easy Complete Settings; an unreachable app gets a hint, not a reset. The app's own `reconcile_accessibility_permission` records or clears the grant and never opens System Settings; a granted → revoked transition is surfaced in the tray, and the user grants again from Easy Complete Settings. The permanent fix would be a stable signing identity (`SIGNING_IDENTITY` in `build-app.sh`), which pins the requirement to a certificate instead of a cdhash.
 
@@ -166,22 +166,32 @@ The Rust half of that bridge is gone too: `fig_desktop/src/protocol/` (the `fig:
 
 ### Completion engine
 
-`ec_engine` runs on a dedicated worker thread (`EngineClient`). Bundled Fig specs are compiled at build time by `scripts/compile-spec-ir.mjs` into `bundle/specs-ir/` (JSON IR + extracted hook modules). `build-app.sh` copies that tree to `Contents/Resources/specs-ir/`. Override the directory with `EC_SPECS_DIR`.
+`ec_engine` runs on a dedicated worker thread (`EngineClient`). Bundled Fig specs are compiled at build time by `scripts/compile-spec-ir.mjs` into `bundle/specs-ir/` (JSON IR + `typed-hooks.json`). `build-app.sh` copies that tree to `Contents/Resources/specs-ir/`. Override the directory with `EC_SPECS_DIR`. The desktop app does not execute JavaScript.
 
-Most completions are pure Rust (lookup, builtins, file paths, history, ranking). QuickJS (`rquickjs`) runs only when the current argument's generator has a JS hook:
+Most completions are pure Rust (lookup, builtins, file paths, history, ranking). A generator hook is either typed IR or a named native adapter, both loaded from `typed-hooks.json`:
 
-| Hook            | Role                                              |
-| --------------- | ------------------------------------------------- |
-| `postProcess`   | Native script stdout → suggestion rows            |
-| `script`        | JS returns the command line; Rust executes it     |
-| `custom`        | Whole generator in JS; may call injected `exec`   |
-| `generateSpec`  | Walk-time: JS returns a spec merged into the node |
+| Kind | Role |
+| ---- | ---- |
+| typed IR | Closed expression language (`scripts/typed-hook-ir.mjs` / `crates/ec_engine/src/typed_hook`). Helper inlining happens at compile time. |
+| native adapter | `functionBodySha256`-keyed Rust in `native_adapters`, bound through the sidecar `adapters` map when the compiler cannot emit typed IR. |
 
-The JS runtime is thread-local and created on first hook. Empty `cwd` skips JS hooks. Results are cached (`cached_suggestions` / `cached_spec`, capped at 512 entries each). A request that turns on the `···` marker owns that latch and must clear it even if its result is stale.
+| Hook | Role |
+| ---- | ---- |
+| `postProcess` | Script stdout → suggestion rows |
+| `script` | Returns argv; Rust executes it |
+| `custom` | Whole generator; may call `executeCommand` |
+| `generateSpec` | Walk-time spec merged into the node |
+| `getQueryTerm` | Token → query used for matching |
+| `trigger` | Whether to rerun a generator |
+| `filterTemplateSuggestions` | Filter file/folder/history rows |
+| `alias` | Expand a token before the next walk |
+| `loadSpec` | Replace the current node with a spec |
 
-Every hook runs under a hard wall-clock deadline (its script budget plus a 2s margin) enforced by a QuickJS interrupt handler, and `executeCommand` calls are clamped to the hook's remaining budget — a spinning or slow hook is aborted instead of wedging the attempt thread until the 30s supervisor watchdog. Watchdog timeouts/panics log at ERROR (the default log filter) with the root command and cwd.
+Empty `cwd` skips script and custom hooks. Results are cached (`hook_cache`: suggestions / script stdout / specs, 512 entries each). A request that turns on the `···` marker owns that latch and must clear it even if its result is stale.
 
-Fig semantics the Rust side has to reproduce exactly: a generator's `splitOn` wins over its `postProcess`, and `custom` hooks get the shell's process name and environment variables on their context argument (`JsHost::enter_with_context`, fed from `CompleteRequest::environment_variables`).
+Every hook runs under a hard wall-clock deadline (its script budget plus a 2s margin). `executeCommand` calls are clamped to the remaining budget — a spinning or slow hook is aborted instead of wedging the attempt thread until the 30s supervisor watchdog. Watchdog timeouts/panics log at ERROR (the default log filter) with the root command and cwd.
+
+Fig semantics the Rust side has to reproduce exactly: a generator's `splitOn` wins over its `postProcess`, and `custom` hooks get the shell's process name and environment variables on their context argument (`hook_backend::enter_context`, fed from `CompleteRequest::environment_variables`). `context.searchTerm` is parser inner text, not the raw shell spelling.
 
 `packages/autocomplete-engine` is a TypeScript experiment and is not on the desktop path.
 
@@ -198,7 +208,7 @@ The product website under `website/src` uses Tailwind CSS v4. When editing it:
 
 ### Bundled Specs
 
-Completion specs are **bundled into the `.app` at build time**, not fetched at runtime. `scripts/sync-bundled-specs.mjs` assembles the Fig JS sources into `bundle/specs/`. `scripts/compile-spec-ir.mjs` then writes `bundle/specs-ir/` (JSON IR + `hooks/*.js`). `build-app.sh` always recompiles IR and ships **only `specs-ir`** in `Contents/Resources/`. `bundle/specs` stays out of the `.app`: it exists to feed the IR compiler and to supply the icons `ec_gpui` embeds with `include_bytes!`, both build-time concerns. Bundling it too cost 28 MB of dead weight until it was dropped. The engine reads **`specs-ir` only** — a spec missing from that tree has no completion.
+Completion specs are **bundled into the `.app` at build time**, not fetched at runtime. `scripts/sync-bundled-specs.mjs` assembles the Fig JS sources into `bundle/specs/`. `scripts/compile-spec-ir.mjs` then writes `bundle/specs-ir/` (JSON IR + `typed-hooks.json`). `build-app.sh` always recompiles IR and ships **only `specs-ir`** in `Contents/Resources/`. `bundle/specs` stays out of the `.app`: it exists to feed the IR compiler and to supply the icons `ec_gpui` embeds with `include_bytes!`, both build-time concerns. Bundling it too cost 28 MB of dead weight until it was dropped. The engine reads **`specs-ir` only** — a spec missing from that tree has no completion. Runtime hooks are typed IR or named adapters; `hooks/`, `source-modules/`, and `hook-modules.json` must not appear.
 
 **Source.** The default source is the installed npm dependency [`@chen86860/autocomplete-specs`](https://www.npmjs.com/package/@chen86860/autocomplete-specs), published from our forked spec repo [`chen86860/autocomplete-specs`](https://github.com/chen86860/autocomplete-specs). The version is pinned by root `package.json` plus `pnpm-lock.yaml`. The sync script reads the package from `node_modules`, copies `build/*.js` and `icons/*.png` into `bundle/specs`, then derives `index.json` from the bundled file tree.
 
@@ -218,7 +228,7 @@ To keep the bundle small, the sync script supports excluding whole namespaces vi
 | ------------------ | ---------------------------------------------------------------- |
 | `fig_desktop`      | Native app host: GPUI overlay + settings, tray, engine client    |
 | `ec_gpui`          | Overlay list, theme, macOS window placement                      |
-| `ec_engine`        | Headless completion: IR lookup, generators, QuickJS hooks        |
+| `ec_engine`        | Headless completion: IR lookup, generators, typed/adapter hooks  |
 | `figterm`          | PTY interceptor, shell edit buffer tracking                      |
 | `ec_cli`           | CLI binary, all `ec` subcommands                                 |
 | `fig_input_method` | macOS IMKit input method helper                                  |

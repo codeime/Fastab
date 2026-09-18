@@ -1,6 +1,8 @@
 # 纯原生补全迁移计划（桌面零运行时 JS）
 
-目标：`Easy Complete.app` 运行时不执行任何 JavaScript（删除 `rquickjs`、`js_host`、`hooks/`、`source-modules/`），同时用户可见行为（候选、插入、排序、缓存、shell 环境、超时）与现在的 QuickJS 路径 / WebView v2.2.2 等价。构建期可以用 Node；`.app` 里不能有 JS。
+**状态（T4.3）：完成。** `Easy Complete.app` 运行时不执行 JavaScript。3701 个抽取 hook = 3136 typed IR + 565 named adapters；`hookFilesOnDisk = 0`；`gate.pathSwitchAllowed = true`；`rquickjs` / `js_host` / `hooks/` / `source-modules/` 已删除。构建期仍用 Node。清单以 `crates/ec_engine/testdata/native-hooks/inventory.json` 为准。
+
+目标：`Easy Complete.app` 运行时不执行任何 JavaScript（删除 `rquickjs`、`js_host`、`hooks/`、`source-modules/`），同时用户可见行为（候选、插入、排序、缓存、shell 环境、超时）与原先的 QuickJS 路径 / WebView v2.2.2 等价。构建期可以用 Node；`.app` 里不能有 JS。
 
 三条不变量贯穿全部阶段：
 
@@ -100,14 +102,11 @@ gate 当前阻断项（`inventory.json` → `gate.blockers`）：`requires-nativ
 
 切换条件（全部满足，且由 `classify-native-hooks --check` 计算，不是人判断）：`requires-native-adapter == 0`、`typed-ir-research-candidate == 0`、基线 594/594 在 native 路径通过、`versioned-spec-behaviour-unadapted` 消失、引擎 golden 在 native 路径通过、3.2 零差异。
 
-## 4. 阶段 4：删除运行时 JS
+## 4. 阶段 4：删除运行时 JS ✅
 
-1. 删 `rquickjs` 依赖、`js_host.rs`、`snapshot.rs` 里的模块校验分支；编译器停止输出 `hooks/`、`source-modules/`、`hook-modules.json`；`audit-spec-hooks`/`spec-pair` 相应收紧（这三样出现即失败）。
-2. 发布门槛写进 CI：
-   - `cargo tree -p fig_desktop -e normal | grep -c rquickjs` 为 0；
-   - 打包后 `find "Easy Complete.app/Contents/Resources" -name '*.js'` 为空，`specs-ir` 体积回到 ≤ 35 MB（现在 54 MB，其中 `hooks/` 14 MB 已经是死重）；
-   - 全部基线、golden、`fig_desktop` 测试通过。
-3. 文档：CLAUDE.md 的 Completion engine / Bundled Specs 段落改写；CHANGELOG 记“桌面零运行时 JS”。
+1. ✅ 删 `rquickjs` 依赖、`js_host.rs`、`snapshot.rs` 里的模块校验分支；编译器停止输出 `hooks/`、`source-modules/`、`hook-modules.json`；`audit-spec-hooks`/`spec-pair` 相应收紧（这三样出现即失败）。
+2. ✅ 发布门槛写进 CI / release：`scripts/assert-no-runtime-js.sh`（`fig_desktop` 不链 `rquickjs`；Resources / `specs-ir` 无 `*.js`/`*.mjs`；payload ≤ 35 MiB）。`cargo test --workspace --locked` 已在 CI Rust job。
+3. ✅ 文档：CLAUDE.md 的 Completion engine / Bundled Specs 段落改写；CHANGELOG 记“桌面零运行时 JS”。
 
 ## 5. 工作量与顺序
 
@@ -127,4 +126,4 @@ gate 当前阻断项（`inventory.json` → `gate.blockers`）：`requires-nativ
 | CI Rust job 没有 `bundle/specs-ir`（gitignored、无 Node），`typed_hook` 的两个 provenance 测试读不到 `.spec-pair.json` 而失败 | Rust job 在 `cargo test` 前安装 pnpm/Node 并 `compile-spec-ir`，与 `build-app.sh` 一致，让 provenance 校验在 CI 上真正生效 |
 | 受限审计子进程（Node permission model）同时授权 `bundle/specs` 与 `bundle/specs-ir` 时，Node 22.23 把前者当成文本前缀，`bundle/specs` 目录本身 readdir/lstat 被拒（文件可读）。之前只靠 macOS firmlink 换一个拼写绕过，Linux CI 上 `capture-typed-trigger-reference --check` 直接失败 | `permissionGrants` 对被同名前缀兄弟遮蔽的根改为 `<root>*` 授权（仅此一种情形），并加了同前缀兄弟目录的回归测试 |
 
-未改、记入计划的项：`hooks/`（14 MB）在存在 `hook-modules.json` 时运行时从不读取但仍随 `.app` 分发（阶段 4 统一删）；`JsHost::module_manifest_entry` 每次 hook 调用都重读并 SHA-256 整个 1.3 MB 清单（切到 native 后不存在此路径）。
+阶段 4 已处理：`hooks/` / `source-modules/` / `hook-modules.json` 不再写出；`JsHost` 与 `rquickjs` 已删除。
