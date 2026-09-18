@@ -409,7 +409,8 @@ mod tests {
 
         assert!(ensure_listed(TEST_DOMAIN, key, OURS));
 
-        let ids: Vec<Option<&str>> = read_back(key).iter().map(|(id, _)| id.as_deref()).collect();
+        let entries = read_back(key);
+        let ids: Vec<Option<&str>> = entries.iter().map(|(id, _)| id.as_deref()).collect();
         assert_eq!(ids, [Some("com.apple.keylayout.ABC"), Some(OURS)]);
 
         clear(key);
