@@ -278,7 +278,7 @@ impl std::default::Default for InputMethod {
         let fig_app_path = fig_util::app_bundle_path();
         let bundle_path = fig_app_path
             .join(BUNDLE_CONTENTS_HELPERS_PATH)
-            .join("EasyCompleteInputMethod.app");
+            .join("FastabInputMethod.app");
         Self { bundle_path }
     }
 }
@@ -853,8 +853,7 @@ mod tests {
     use super::*;
 
     const TEST_INPUT_METHOD_BUNDLE_ID: &str = "com.amazon.inputmethod.codewhisperer";
-    const TEST_INPUT_METHOD_BUNDLE_URL: &str =
-        "/Applications/Easy Complete.app/Contents/Helpers/EasyCompleteInputMethod.app";
+    const TEST_INPUT_METHOD_BUNDLE_URL: &str = "/Applications/Fastab.app/Contents/Helpers/FastabInputMethod.app";
 
     fn input_method() -> TISInputSource {
         let key: CFString = unsafe { CFString::wrap_under_create_rule(kTISPropertyBundleID) };

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 变更：产品名与身份改为 Fastab（`app.fastab`、`Fastab.app`、CLI `ftab`、PTY `fastabterm`）。若尚无 Fastab 数据目录，会把 Easy Complete 的设置和历史迁过去。遥测开关已从界面隐藏，上报保持未配置。
+
 ## v3.0.0-beta.16
 
 - 性能：typed hook IR 首次使用时再解析；去掉 catalog 来源字段，snapshot 打开时复用 sidecar 字节

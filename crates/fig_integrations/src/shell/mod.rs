@@ -743,7 +743,7 @@ fn split_shebang(contents: &str) -> (&str, &str) {
 /// Otty's block is guarded on `$OTTY_SHELL_INTEGRATION`, so it is a no-op in
 /// every other terminal. It is *not* Otty Autocomplete (a separate Fig-compatible
 /// UI); coexistence here only means "don't treat their rc trailer as a broken
-/// Easy Complete install."
+/// Fastab install."
 ///
 /// Matched against both:
 /// - raw rc files (with `# >>> otty shell integration >>>` markers), and
@@ -969,7 +969,7 @@ mod test {
     fn test_strip_trailing_otty_marker_block() {
         let body = indoc::indoc! {r#"
             export PATH="$HOME/.local/bin:$PATH"
-            [[ -f "${HOME}/Library/Application Support/easy-complete/shell/bashrc.post.bash" ]] && builtin source "${HOME}/Library/Application Support/easy-complete/shell/bashrc.post.bash"
+            [[ -f "${HOME}/Library/Application Support/fastab/shell/bashrc.post.bash" ]] && builtin source "${HOME}/Library/Application Support/fastab/shell/bashrc.post.bash"
         "#};
         let otty = indoc::indoc! {r#"
 
@@ -995,14 +995,14 @@ mod test {
     fn test_strip_trailing_otty_comment_stripped_form() {
         // Mimics DotfileShellIntegration::is_installed after comment/blank-line filtering.
         let filtered = indoc::indoc! {r#"
-            [[ -f "${HOME}/Library/Application Support/easy-complete/shell/bashrc.post.bash" ]] && builtin source "${HOME}/Library/Application Support/easy-complete/shell/bashrc.post.bash"
+            [[ -f "${HOME}/Library/Application Support/fastab/shell/bashrc.post.bash" ]] && builtin source "${HOME}/Library/Application Support/fastab/shell/bashrc.post.bash"
             if [ -n "$OTTY_SHELL_INTEGRATION" ] && [ -r "$OTTY_SHELL_INTEGRATION/otty-integration.bash" ]; then
               . "$OTTY_SHELL_INTEGRATION/otty-integration.bash"
             fi
         "#};
         let stripped = strip_trailing_foreign_integrations(filtered);
         assert!(
-            stripped.ends_with("bashrc.post.bash\" ]] && builtin source \"${HOME}/Library/Application Support/easy-complete/shell/bashrc.post.bash\""),
+            stripped.ends_with("bashrc.post.bash\" ]] && builtin source \"${HOME}/Library/Application Support/fastab/shell/bashrc.post.bash\""),
             "post source should remain: {stripped}"
         );
         assert!(

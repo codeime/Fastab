@@ -122,6 +122,15 @@ pub fn old_fig_data_dir() -> Result<PathBuf> {
         .join("codewhisperer"))
 }
 
+/// The Easy Complete data directory left behind by the previous product name.
+///
+/// Upgrades rename this to [`fig_data_dir`] when the Fastab directory is absent.
+pub fn previous_product_data_dir() -> Result<PathBuf> {
+    Ok(dirs::data_local_dir()
+        .ok_or(DirectoryError::NoHomeDirectory)?
+        .join("easy-complete"))
+}
+
 /// The q data directory
 ///
 /// - Linux: `$XDG_DATA_HOME/{data_dir}` or `$HOME/.local/share/{data_dir}`
@@ -216,8 +225,8 @@ pub fn runtime_dir() -> Result<PathBuf> {
 
 /// The q sockets directory of the local q installation
 ///
-/// - Linux: $XDG_RUNTIME_DIR/ecrun
-/// - MacOS: $TMPDIR/ecrun
+/// - Linux: $XDG_RUNTIME_DIR/fastabrun
+/// - MacOS: $TMPDIR/fastabrun
 /// - Windows: %TEMP%\{data_dir}\sockets
 pub fn sockets_dir() -> Result<PathBuf> {
     cfg_if::cfg_if! {
@@ -234,8 +243,8 @@ pub fn sockets_dir() -> Result<PathBuf> {
 /// In WSL, this will correctly return the host machine socket path.
 /// In other remote environments, it returns the same as `sockets_dir`
 ///
-/// - Linux: $XDG_RUNTIME_DIR/ecrun
-/// - MacOS: $TMPDIR/ecrun
+/// - Linux: $XDG_RUNTIME_DIR/fastabrun
+/// - MacOS: $TMPDIR/fastabrun
 /// - Windows: %TEMP%\sockets
 pub fn host_sockets_dir() -> Result<PathBuf> {
     // TODO: make this work again
@@ -311,8 +320,8 @@ pub fn chat_profiles_dir<Ctx: FsProvider + EnvProvider>(ctx: &Ctx) -> Result<Pat
 
 /// The desktop app socket path
 ///
-/// - MacOS: `$TMPDIR/ecrun/desktop.sock`
-/// - Linux: `$XDG_RUNTIME_DIR/ecrun/desktop.sock`
+/// - MacOS: `$TMPDIR/fastabrun/desktop.sock`
+/// - Linux: `$XDG_RUNTIME_DIR/fastabrun/desktop.sock`
 /// - Windows: `%TEMP%\sockets\desktop.sock`
 pub fn desktop_socket_path() -> Result<PathBuf> {
     Ok(host_sockets_dir()?.join("desktop.sock"))
@@ -321,8 +330,8 @@ pub fn desktop_socket_path() -> Result<PathBuf> {
 /// The path to remote socket
 // - Linux/MacOS on ssh: At the value of `Q_PARENT`
 // - Linux/MacOS not on ssh:
-/// - MacOS: `$TMPDIR/ecrun/remote.sock`
-/// - Linux: `$XDG_RUNTIME_DIR/ecrun/remote.sock`
+/// - MacOS: `$TMPDIR/fastabrun/remote.sock`
+/// - Linux: `$XDG_RUNTIME_DIR/fastabrun/remote.sock`
 /// - Windows: `%TEMP%\sockets\remote.sock`
 pub fn remote_socket_path() -> Result<PathBuf> {
     // Normal implementation for non-test code
@@ -340,8 +349,8 @@ pub fn remote_socket_path() -> Result<PathBuf> {
 
 /// The path to local remote socket
 ///
-/// - MacOS: `$TMPDIR/ecrun/remote.sock`
-/// - Linux: `$XDG_RUNTIME_DIR/ecrun/remote.sock`
+/// - MacOS: `$TMPDIR/fastabrun/remote.sock`
+/// - Linux: `$XDG_RUNTIME_DIR/fastabrun/remote.sock`
 /// - Windows: `%TEMP%\sockets\remote.sock`
 pub fn local_remote_socket_path() -> Result<PathBuf> {
     Ok(host_sockets_dir()?.join("remote.sock"))
@@ -350,8 +359,8 @@ pub fn local_remote_socket_path() -> Result<PathBuf> {
 /// Get path to a figterm socket
 ///
 /// - Linux/Macos: `/var/tmp/fig/%USERNAME%/figterm/$SESSION_ID.sock`
-/// - MacOS: `$TMPDIR/ecrun/t/$SESSION_ID.sock`
-/// - Linux: `$XDG_RUNTIME_DIR/ecrun/t/$SESSION_ID.sock`
+/// - MacOS: `$TMPDIR/fastabrun/t/$SESSION_ID.sock`
+/// - Linux: `$XDG_RUNTIME_DIR/fastabrun/t/$SESSION_ID.sock`
 /// - Windows: `%TEMP%\sockets\t\$SESSION_ID.sock`
 pub fn figterm_socket_path(session_id: impl Display) -> Result<PathBuf> {
     Ok(sockets_dir()?.join("t").join(format!("{session_id}.sock")))
@@ -553,7 +562,7 @@ mod tests {
         #[cfg(unix)]
         assert_eq!(
             host_sockets_dir().unwrap().file_name().unwrap().to_str().unwrap(),
-            format!("ecrun")
+            format!("fastabrun")
         );
 
         #[cfg(windows)]
@@ -655,72 +664,72 @@ mod tests {
 
     #[test]
     fn snapshot_fig_data_dir() {
-        linux!(fig_data_dir(), @"$HOME/.local/share/easy-complete");
-        macos!(fig_data_dir(), @"$HOME/Library/Application Support/easy-complete");
+        linux!(fig_data_dir(), @"$HOME/.local/share/fastab");
+        macos!(fig_data_dir(), @"$HOME/Library/Application Support/fastab");
         windows!(fig_data_dir(), @r"C:\Users\$USER\AppData\Local\AmazonQ");
     }
 
     #[test]
     fn snapshot_sockets_dir() {
-        linux!(sockets_dir(), @"$XDG_RUNTIME_DIR/ecrun");
-        macos!(sockets_dir(), @"$TMPDIR/ecrun");
+        linux!(sockets_dir(), @"$XDG_RUNTIME_DIR/fastabrun");
+        macos!(sockets_dir(), @"$TMPDIR/fastabrun");
         windows!(sockets_dir(), @r"C:\Users\$USER\AppData\Local\Temp\AmazonQ\sockets");
     }
 
     #[test]
     fn snapshot_themes_dir() {
         linux!(themes_dir(&Context::new()), @"/usr/share/fig/themes");
-        macos!(themes_dir(&Context::new()), @"/Applications/Easy Complete.app/Contents/Resources/themes");
+        macos!(themes_dir(&Context::new()), @"/Applications/Fastab.app/Contents/Resources/themes");
         windows!(themes_dir(&Context::new()), @r"C:\Users\$USER\AppData\Local\AmazonQ\resources\themes");
     }
 
     #[test]
     fn snapshot_backups_dir() {
-        linux!(backups_dir(), @"$HOME/.easy-complete.dotfiles.bak");
-        macos!(backups_dir(), @"$HOME/.easy-complete.dotfiles.bak");
-        windows!(backups_dir(), @r"C:\Users\$USER\.easy-complete.dotfiles.bak");
+        linux!(backups_dir(), @"$HOME/.fastab.dotfiles.bak");
+        macos!(backups_dir(), @"$HOME/.fastab.dotfiles.bak");
+        windows!(backups_dir(), @r"C:\Users\$USER\.fastab.dotfiles.bak");
     }
 
     #[test]
     fn snapshot_fig_socket_path() {
-        linux!(desktop_socket_path(), @"$XDG_RUNTIME_DIR/ecrun/desktop.sock");
-        macos!(desktop_socket_path(), @"$TMPDIR/ecrun/desktop.sock");
+        linux!(desktop_socket_path(), @"$XDG_RUNTIME_DIR/fastabrun/desktop.sock");
+        macos!(desktop_socket_path(), @"$TMPDIR/fastabrun/desktop.sock");
         windows!(desktop_socket_path(), @r"C:\Users\$USER\AppData\Local\Temp\AmazonQ\sockets\desktop.sock");
     }
 
     #[test]
     fn snapshot_remote_socket_path() {
-        linux!(remote_socket_path(), @"$XDG_RUNTIME_DIR/ecrun/remote.sock");
-        macos!(remote_socket_path(), @"$TMPDIR/ecrun/remote.sock");
+        linux!(remote_socket_path(), @"$XDG_RUNTIME_DIR/fastabrun/remote.sock");
+        macos!(remote_socket_path(), @"$TMPDIR/fastabrun/remote.sock");
         windows!(remote_socket_path(), @r"C:\Users\$USER\AppData\Local\Temp\AmazonQ\sockets\remote.sock");
     }
 
     #[test]
     fn snapshot_local_remote_socket_path() {
-        linux!(local_remote_socket_path(), @"$XDG_RUNTIME_DIR/ecrun/remote.sock");
-        macos!(local_remote_socket_path(), @"$TMPDIR/ecrun/remote.sock");
+        linux!(local_remote_socket_path(), @"$XDG_RUNTIME_DIR/fastabrun/remote.sock");
+        macos!(local_remote_socket_path(), @"$TMPDIR/fastabrun/remote.sock");
         windows!(local_remote_socket_path(), @r"C:\Users\$USER\AppData\Local\Temp\AmazonQ\sockets\remote.sock");
     }
 
     #[test]
     fn snapshot_figterm_socket_path() {
-        linux!(figterm_socket_path("$SESSION_ID"), @"$XDG_RUNTIME_DIR/ecrun/t/$SESSION_ID.sock");
-        macos!(figterm_socket_path("$SESSION_ID"), @"$TMPDIR/ecrun/t/$SESSION_ID.sock");
+        linux!(figterm_socket_path("$SESSION_ID"), @"$XDG_RUNTIME_DIR/fastabrun/t/$SESSION_ID.sock");
+        macos!(figterm_socket_path("$SESSION_ID"), @"$TMPDIR/fastabrun/t/$SESSION_ID.sock");
         windows!(figterm_socket_path("$SESSION_ID"), @r"C:\Users\$USER\AppData\Local\Temp\AmazonQ\sockets\t\$SESSION_ID.sock");
     }
 
     #[test]
     fn snapshot_settings_path() {
-        linux!(settings_path(), @"$HOME/.local/share/easy-complete/settings.json");
-        macos!(settings_path(), @"$HOME/Library/Application Support/easy-complete/settings.json");
+        linux!(settings_path(), @"$HOME/.local/share/fastab/settings.json");
+        macos!(settings_path(), @"$HOME/Library/Application Support/fastab/settings.json");
         windows!(settings_path(), @r"C:\Users\$USER\AppData\Local\AmazonQ\settings.json");
     }
 
     #[test]
     fn snapshot_update_lock_path() {
         let ctx = Context::new();
-        linux!(update_lock_path(&ctx), @"$HOME/.local/share/easy-complete/update.lock");
-        macos!(update_lock_path(&ctx), @"$HOME/Library/Application Support/easy-complete/update.lock");
+        linux!(update_lock_path(&ctx), @"$HOME/.local/share/fastab/update.lock");
+        macos!(update_lock_path(&ctx), @"$HOME/Library/Application Support/fastab/update.lock");
         windows!(update_lock_path(&ctx), @r"C:\Users\$USER\AppData\Local\AmazonQ\update.lock");
     }
 

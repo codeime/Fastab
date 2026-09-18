@@ -1,8 +1,8 @@
 # 纯原生补全迁移计划（桌面零运行时 JS）
 
-**状态（T4.3）：完成。** `Easy Complete.app` 运行时不执行 JavaScript。3701 个抽取 hook = 3136 typed IR + 565 named adapters；`hookFilesOnDisk = 0`；`gate.pathSwitchAllowed = true`；`rquickjs` / `js_host` / `hooks/` / `source-modules/` 已删除。构建期仍用 Node。清单以 `crates/ec_engine/testdata/native-hooks/inventory.json` 为准。
+**状态（T4.3）：完成。** `Fastab.app` 运行时不执行 JavaScript。3701 个抽取 hook = 3136 typed IR + 565 named adapters；`hookFilesOnDisk = 0`；`gate.pathSwitchAllowed = true`；`rquickjs` / `js_host` / `hooks/` / `source-modules/` 已删除。构建期仍用 Node。清单以 `crates/ec_engine/testdata/native-hooks/inventory.json` 为准。
 
-目标：`Easy Complete.app` 运行时不执行任何 JavaScript（删除 `rquickjs`、`js_host`、`hooks/`、`source-modules/`），同时用户可见行为（候选、插入、排序、缓存、shell 环境、超时）与原先的 QuickJS 路径 / WebView v2.2.2 等价。构建期可以用 Node；`.app` 里不能有 JS。
+目标：`Fastab.app` 运行时不执行任何 JavaScript（删除 `rquickjs`、`js_host`、`hooks/`、`source-modules/`），同时用户可见行为（候选、插入、排序、缓存、shell 环境、超时）与原先的 QuickJS 路径 / WebView v2.2.2 等价。构建期可以用 Node；`.app` 里不能有 JS。
 
 三条不变量贯穿全部阶段：
 
