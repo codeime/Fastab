@@ -206,25 +206,31 @@ fn make_targets(exec: &AdapterExec<'_>) -> AdapterResult {
         ".ONESHELL",
         ".POSIX",
     ]);
+    // The spec's `/gm` regex: `^` and `$` are per line, or the second pass
+    // would only ever see the first recipe of the Makefile.
     let pattern =
-        Regex::new(r"((?:^#.*\n)*)(?:^\.[A-Z_]+:.*\n)*(^\S*?):.*?(?:\s#+[ \t]*(.+))?$").expect("make recipe regex");
+        Regex::new(r"(?m)((?:^#.*\n)*)(?:^\.[A-Z_]+:.*\n)*(^\S*?):.*?(?:\s#+[ \t]*(.+))?$").expect("make recipe regex");
+    let variable = Regex::new(r"\$\(.+?\)").expect("make variable regex");
+    let comment_marks = Regex::new(r"(?m)^#+\s*").expect("make comment regex");
     for caps in pattern.captures_iter(&second.stdout) {
         let caps = match caps {
             Ok(caps) => caps,
             Err(_) => continue,
         };
         let name = caps.get(2).map(|part| part.as_str()).unwrap_or("");
-        if special.contains(name) || Regex::new(r"\$\(.+?\)").expect("var").is_match(name).unwrap_or(false) {
+        if special.contains(name) || variable.is_match(name).unwrap_or(false) {
             continue;
         }
+        // JS: `o ? o.trim() : r ? r.replace(/^#+\s*/gm, "").trim() : "Make target"`.
+        // An unmatched optional group is `undefined` (falsy); a matched but
+        // empty header is `""`, also falsy.
         let comment = caps.get(3).map(|part| part.as_str().trim().to_owned());
-        let header = caps.get(1).map(|part| part.as_str().trim().to_owned());
+        let header = caps.get(1).map(|part| part.as_str().to_owned());
         let description = comment
-            .filter(|text| !text.is_empty())
             .or_else(|| {
                 header
                     .filter(|text| !text.is_empty())
-                    .map(|text| text.replace("#", "").trim().to_owned())
+                    .map(|text| comment_marks.replace_all(&text, "").trim().to_owned())
             })
             .unwrap_or_else(|| "Make target".into());
         let trimmed = name.trim().to_owned();
