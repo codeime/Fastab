@@ -2577,6 +2577,54 @@ async function auditSpecsHooksUnlocked({
         }
         continue;
       }
+      if (hasDerivedFamily) {
+        // Diff snapshots re-collect every surviving function after each
+        // applySpecDiff. Matching those path+sha rows 1:1 against unique
+        // hook ids false-fails when a reused body moves. Drive the
+        // pre-manifest pass from IR hook ids and resolve by body hash.
+        for (const ref of candidates) {
+          const hook = hookBodiesById.get(ref.id);
+          const functionBodySha256 = hook?.body ? sha256(hook.body) : null;
+          const sourceFunction = functionBodySha256
+            ? findSourceFunction(
+                record,
+                sourceField,
+                null,
+                functionBodySha256,
+              )
+            : undefined;
+          if (!sourceFunction) {
+            errors.sourceHookMismatches.push({
+              source,
+              ir,
+              field: sourceField,
+              irField,
+              id: ref.id,
+              sha256: functionBodySha256,
+              reason:
+                "derived IR hook has no merged source function with the same body",
+            });
+            hookInstances[sourceField].push({
+              path: null,
+              sha256: functionBodySha256,
+              functionBodySha256,
+              sourceField,
+              id: ref.id,
+              file: hookFileName(ref.id),
+            });
+            continue;
+          }
+          hookInstances[sourceField].push({
+            path: sourceFunction.path,
+            sha256: sourceFunction.sha256,
+            functionBodySha256: sourceFunction.sha256,
+            sourceField,
+            id: ref.id,
+            file: hookFileName(ref.id),
+          });
+        }
+        continue;
+      }
       for (const functionRecord of sourceInstances) {
         const candidateIndex = candidates.findIndex((candidate, index) => {
           if (used.has(index)) return false;
