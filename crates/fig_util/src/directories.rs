@@ -140,7 +140,9 @@ pub fn previous_product_data_dir() -> Result<PathBuf> {
 ///   name before the desktop app launches), move only top-level entries that
 ///   `new` does not already have. Settings and history then survive an install
 ///   that created the new directory first. Existing entries in `new` win, so a
-///   live Fastab profile is never overwritten.
+///   live Fastab profile is never overwritten — except a dest `settings.json`
+///   that is empty or `{}`, which is the placeholder `load_from_file` writes
+///   before migrate runs, not a real profile.
 /// - A symlink at `old` is left alone — that is the leftover of a previous
 ///   rename, not a second source of settings.
 pub fn migrate_product_data_dir(old: &Path, new: &Path) -> std::io::Result<()> {
@@ -165,11 +167,34 @@ pub fn migrate_product_data_dir(old: &Path, new: &Path) -> std::io::Result<()> {
         let entry = entry?;
         let dest = new.join(entry.file_name());
         if dest.exists() {
-            continue;
+            if dest.file_name().is_some_and(|name| name == "settings.json")
+                && is_placeholder_settings(&dest)
+                && entry.path().is_file()
+            {
+                std::fs::remove_file(&dest)?;
+            } else {
+                continue;
+            }
         }
         std::fs::rename(entry.path(), dest)?;
     }
     Ok(())
+}
+
+/// `load_from_file` creates `{}` when dest settings are missing. That file
+/// must not hide a real Easy Complete `settings.json` sitting in `old`.
+fn is_placeholder_settings(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(serde_json::Value::Object(map)) => map.is_empty(),
+        Ok(_) => false,
+        Err(_) => bytes.iter().all(u8::is_ascii_whitespace),
+    }
 }
 
 /// Move leftover Easy Complete and CodeWhisperer data dirs onto [`fig_data_dir`].
@@ -658,6 +683,25 @@ mod linux_tests {
         );
         assert!(!old.join("settings.json").exists());
         assert!(old.join("history").exists() == false || !old.join("history").join("log").exists());
+        let _ = std::fs::remove_dir_all(new.parent().unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migrate_replaces_placeholder_dest_settings() {
+        let (old, new) = scratch_pair();
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(old.join("settings.json"), "{\"theme\":\"dark\"}").unwrap();
+        std::fs::write(new.join("settings.json"), "{}\n").unwrap();
+
+        migrate_product_data_dir(&old, &new).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(new.join("settings.json")).unwrap(),
+            "{\"theme\":\"dark\"}"
+        );
+        assert!(!old.join("settings.json").exists());
         let _ = std::fs::remove_dir_all(new.parent().unwrap());
     }
 

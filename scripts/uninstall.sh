@@ -25,8 +25,10 @@ IME_SYMLINK="${INPUT_METHODS_DIR}/FastabInputMethod.app"
 PREV_IME_SYMLINK="${INPUT_METHODS_DIR}/EasyCompleteInputMethod.app"
 APP_SUPPORT="${HOME}/Library/Application Support/${APP_NAME}"
 PREV_APP_SUPPORT="${HOME}/Library/Application Support/${PREV_APP_NAME}"
-LOGS_DIR="${HOME}/.local/share/${APP_NAME}"
-PREV_LOGS_DIR="${HOME}/.local/share/${PREV_APP_NAME}"
+CACHE_DIR="${HOME}/Library/Caches/${APP_NAME}"
+PREV_CACHE_DIR="${HOME}/Library/Caches/${PREV_APP_NAME}"
+TMP_ROOT="${TMPDIR:-/tmp}"
+TMP_ROOT="${TMP_ROOT%/}"
 
 GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; NC='\033[0m'
 info()  { echo -e "${GREEN}==>${NC} $*"; }
@@ -46,6 +48,8 @@ if [[ "${1:-}" != "--yes" ]]; then
   echo "  • ${LOCAL_BIN}/ftab, fastabterm, ec, ecterm"
   echo "  • ${APP_SUPPORT}/"
   echo "  • ${PREV_APP_SUPPORT}/"
+  echo "  • ${CACHE_DIR}/"
+  echo "  • ${TMP_ROOT}/ftablog and ${TMP_ROOT}/eclog"
   echo "  • Shell integration lines in ~/.zshrc / ~/.bashrc / ~/.config/fish/config.fish"
   echo ""
   read -r -p "Continue? [y/N] " confirm
@@ -173,6 +177,7 @@ strip_shell_integration_fallback "${HOME}/.zshrc"
 strip_shell_integration_fallback "${HOME}/.zprofile"
 strip_shell_integration_fallback "${HOME}/.bashrc"
 strip_shell_integration_fallback "${HOME}/.bash_profile"
+strip_shell_integration_fallback "${HOME}/.config/fish/config.fish"
 
 # Fish shell — remove the dedicated fish integration conf files directly
 rm -f "${HOME}/.config/fish/conf.d/00_fig_pre.fish"
@@ -182,14 +187,12 @@ rm -f "${HOME}/.config/fish/conf.d/99_fig_post.fish"
 info "Removing application data..."
 rm -rf "$APP_SUPPORT"
 rm -rf "$PREV_APP_SUPPORT"
-rm -rf "$LOGS_DIR"
-rm -rf "$PREV_LOGS_DIR"
+rm -rf "$CACHE_DIR"
+rm -rf "$PREV_CACHE_DIR"
 
-# IPC sockets / temp dirs
-rm -rf "${TMPDIR:-/tmp/}fastabrun"  2>/dev/null || true
-rm -rf "${TMPDIR:-/tmp/}ecrun"      2>/dev/null || true
-rm -rf "/tmp/fastabrun"             2>/dev/null || true
-rm -rf "/tmp/ecrun"                 2>/dev/null || true
+# IPC sockets / logs live under the process temp dir, not ~/.local/share.
+rm -rf "${TMP_ROOT}/fastabrun" "${TMP_ROOT}/ecrun" "${TMP_ROOT}/ftablog" "${TMP_ROOT}/eclog" 2>/dev/null || true
+rm -rf /tmp/fastabrun /tmp/ecrun /tmp/ftablog /tmp/eclog 2>/dev/null || true
 
 # Preferences
 defaults delete "$BUNDLE_ID"          2>/dev/null || true

@@ -1713,12 +1713,12 @@ impl DoctorCheck for LeftoverProductBinCheck {
             .iter()
             .map(|name| local_bin.join(name))
             .filter(|path| path.exists() && !path.is_symlink());
-        // Desktop install keeps `ec` as a symlink to `ftab`. A leftover PTY
-        // binary is never a supported shim — it should be gone.
+        // Desktop install keeps `ec` as a symlink to `ftab`. A leftover
+        // `ecterm` → `fastabterm` symlink is the same kind of shim.
         let leftover_pty = OLD_PTY_BINARY_NAMES
             .iter()
             .map(|name| local_bin.join(name))
-            .filter(|path| path.exists());
+            .filter(|path| path.exists() && !path.is_symlink());
         let leftover: Vec<_> = leftover_cli.chain(leftover_pty).collect();
         if leftover.is_empty() {
             Ok(())

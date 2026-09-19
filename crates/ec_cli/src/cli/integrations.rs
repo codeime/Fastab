@@ -131,8 +131,7 @@ async fn install(integration: Integration, silent: bool) -> Result<()> {
     // Merge Easy Complete / CodeWhisperer data before this write creates
     // `fastab/shell/` or `data.sqlite3`. Otherwise migrate skips the old
     // sqlite and IME enabled / settings stay behind.
-    fig_util::directories::migrate_previous_product_data_dirs();
-    fig_settings::state::import_missing_state_from_previous_product();
+    fig_settings::migrate_previous_product_user_data();
 
     let mut installed = false;
     let mut errored = false;

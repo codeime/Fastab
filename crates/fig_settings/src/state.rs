@@ -116,9 +116,12 @@ pub fn all() -> Result<Map<String, Value>> {
     State::new().all()
 }
 
-/// Copy state keys from leftover Easy Complete / CodeWhisperer sqlite files
-/// that the live Fastab database does not already have. File-level migrate
-/// skips `data.sqlite3` when Fastab already created one (IME launch hash).
+/// Copy state keys and history rows from leftover Easy Complete /
+/// CodeWhisperer sqlite files that the live Fastab database does not
+/// already have. File-level migrate skips `data.sqlite3` when Fastab
+/// already created one (IME launch hash). Identity keys are not copied,
+/// and leftover sqlite is opened via a temp copy so it is not migrated
+/// in place.
 pub fn import_missing_state_from_previous_product() {
     let Ok(dest_dir) = fig_util::directories::fig_data_dir() else {
         return;
@@ -138,11 +141,11 @@ pub fn import_missing_state_from_previous_product() {
         if !old_db.is_file() || old_db == dest_db {
             continue;
         }
-        if let Err(err) = crate::sqlite::Db::import_missing_state_from_path(&old_db) {
+        if let Err(err) = crate::sqlite::import_missing_from_leftover_path(&old_db) {
             tracing::warn!(
                 %err,
                 path = %old_db.display(),
-                "Failed to import previous product state"
+                "Failed to import previous product sqlite"
             );
         }
     }

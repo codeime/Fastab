@@ -20,15 +20,13 @@ const PREVIOUS_VERSION_KEY: &str = "desktop.versionAtPreviousLaunch";
 #[cfg(target_os = "macos")]
 const MIGRATED_KEY: &str = "desktop.migratedFromFig";
 
-#[cfg(target_os = "macos")]
 pub fn migrate_data_dir() {
     // Easy Complete users keep their settings/history under the new Fastab dir,
     // including when install.sh already created `fastab/shell/`. The older
     // Fig/CodeWhisperer path is still accepted if that is all they have.
-    // Integrations install also calls this pair so IME/sqlite writes land in
-    // the migrated database instead of creating an empty Fastab one first.
-    fig_util::directories::migrate_previous_product_data_dirs();
-    fig_settings::state::import_missing_state_from_previous_product();
+    // Integrations install also calls this so IME/sqlite writes land in the
+    // migrated database instead of creating an empty Fastab one first.
+    fig_settings::migrate_previous_product_user_data();
 }
 
 /// Tracks whether macOS has ever actually granted us Accessibility, so a grant that silently stops
