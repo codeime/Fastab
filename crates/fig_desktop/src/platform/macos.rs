@@ -639,9 +639,12 @@ impl PlatformStateImpl {
         // .unwrap_or(false);
 
         if !is_xterm && supports_ime {
-            tracing::debug!("Sending notif com.amazon.codewhisperer.edit_buffer_updated");
+            tracing::debug!("Sending notif {}", fig_util::macos::EDIT_BUFFER_UPDATED_NOTIFICATION);
             NotificationCenter::distributed_center().post_notification(
-                ns_string!("com.amazon.codewhisperer.edit_buffer_updated"),
+                // Literal must stay equal to `fig_util::macos::EDIT_BUFFER_UPDATED_NOTIFICATION`.
+                // `ns_string!` needs a compile-time literal; a sibling IME listening on
+                // `com.amazon.codewhisperer.edit_buffer_updated` must not hear this.
+                ns_string!("app.fastab.edit_buffer_updated"),
                 &NSDictionary::new(),
             );
         } else {
@@ -772,5 +775,23 @@ mod tests {
         assert!(hide_overlay_on_element_change("com.googlecode.iterm2"));
         assert!(hide_overlay_on_element_change("com.apple.Terminal"));
         assert!(hide_overlay_on_element_change("com.microsoft.VSCode"));
+    }
+
+    #[test]
+    fn caret_request_notification_is_fastab_only() {
+        let sibling = ["com.amazon.", "codewhisperer", ".edit_buffer_updated"].concat();
+        assert_eq!(
+            fig_util::macos::EDIT_BUFFER_UPDATED_NOTIFICATION,
+            "app.fastab.edit_buffer_updated"
+        );
+        let production = include_str!("macos.rs").split("#[cfg(test)]").next().unwrap();
+        assert!(
+            production.contains("ns_string!(\"app.fastab.edit_buffer_updated\")"),
+            "desktop must post the Fastab IME notification"
+        );
+        assert!(
+            !production.contains(&sibling),
+            "desktop must not post the sibling Amazon Q notification"
+        );
     }
 }

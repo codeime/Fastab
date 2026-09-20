@@ -17,6 +17,10 @@ use crate::{paths, terminals};
 
 const INPUT_CONTROLLER_CLASS_NAME: &str = env!("InputMethodServerControllerClass");
 
+/// Must stay equal to `fig_util::macos::EDIT_BUFFER_UPDATED_NOTIFICATION`.
+/// Distinct from Easy Complete / Amazon Q so dual-install does not poke us.
+const EDIT_BUFFER_UPDATED_NOTIFICATION: &str = "app.fastab.edit_buffer_updated";
+
 /// A remote IMK proxy may return nil here. Never assume otherwise: a panic on
 /// this process's main thread kills the IME and strands every attached terminal.
 fn bundle_identifier(client: &AnyObject) -> Option<String> {
@@ -252,7 +256,7 @@ declare_class!(
                 center.addObserver_selector_name_object(
                     &this,
                     sel!(handleCursorPositionRequest:),
-                    Some(ns_string!("com.amazon.codewhisperer.edit_buffer_updated")),
+                    Some(ns_string!("app.fastab.edit_buffer_updated")),
                     None,
                 );
             }
@@ -379,6 +383,25 @@ mod tests {
         tx.send(last.clone()).unwrap();
         let seed = wire::caret_position_frame(0.0, 0.0, 1.0, 16.0, Origin::BottomLeft);
         assert_eq!(drain_latest(&rx, seed), last);
+    }
+
+    #[test]
+    fn caret_request_notification_is_fastab_only() {
+        let sibling = ["com.amazon.", "codewhisperer", ".edit_buffer_updated"].concat();
+        assert_eq!(
+            EDIT_BUFFER_UPDATED_NOTIFICATION,
+            fig_util::macos::EDIT_BUFFER_UPDATED_NOTIFICATION
+        );
+        assert_ne!(EDIT_BUFFER_UPDATED_NOTIFICATION, sibling.as_str());
+        let production = include_str!("imk.rs").split("#[cfg(test)]").next().unwrap();
+        assert!(
+            production.contains("ns_string!(\"app.fastab.edit_buffer_updated\")"),
+            "IMK observer must listen on the Fastab notification"
+        );
+        assert!(
+            !production.contains(&sibling),
+            "IMK observer must not listen on the sibling Amazon Q notification"
+        );
     }
 
     #[test]

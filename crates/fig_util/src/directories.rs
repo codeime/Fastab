@@ -112,9 +112,9 @@ pub fn config_dir() -> Result<PathBuf> {
     dirs::config_dir().ok_or(DirectoryError::NoHomeDirectory)
 }
 
-/// The old codewhisperer data directory
+/// Amazon Q / CodeWhisperer's data directory. Fastab is a sibling product and
+/// never reads, writes, migrates, or deletes this tree.
 ///
-/// This should be removed at some point in the future, once all our users have migrated
 /// - MacOS: `$HOME/Library/Application Support/codewhisperer`
 pub fn old_fig_data_dir() -> Result<PathBuf> {
     Ok(dirs::data_local_dir()

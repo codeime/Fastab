@@ -10,6 +10,7 @@ use fig_proto::figterm::figterm_response_message::Response as FigtermResponse;
 use fig_proto::figterm::intercept_request::{InterceptCommand, SetFigjsIntercepts, SetFigjsVisible};
 use fig_proto::figterm::{self, FigtermRequestMessage, FigtermResponseMessage, TelemetryRequest};
 use fig_proto::remote::{Clientbound, Hostbound, clientbound, hostbound};
+use fig_util::PTY_BINARY_NAME;
 use fig_util::env_var::PROCESS_LAUNCHED_BY_Q;
 use flume::Sender;
 use tokio::process::Command;
@@ -299,7 +300,7 @@ pub async fn process_figterm_message(
                 Err(err) => error!(%err, "Failed to process figterm message"),
             }
         },
-        None => warn!("Qterm message with no request"),
+        None => warn!("{PTY_BINARY_NAME} message with no request"),
     }
     Ok(())
 }

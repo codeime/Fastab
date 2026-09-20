@@ -459,22 +459,6 @@ impl DotfileShellIntegration {
         self.dotfile_directory.join(self.dotfile_name)
     }
 
-    fn legacy_script_integration(&self, when: When) -> Result<ShellScriptShellIntegration> {
-        let integration_file_name = format!(
-            "{}.{}.{}",
-            Regex::new(r"^\.").unwrap().replace_all(self.dotfile_name, ""),
-            when,
-            self.shell
-        );
-        Ok(ShellScriptShellIntegration {
-            shell: self.shell,
-            when,
-            path: directories::old_fig_data_dir()?
-                .join("shell")
-                .join(integration_file_name),
-        })
-    }
-
     fn script_integration(&self, when: When) -> Result<ShellScriptShellIntegration> {
         let integration_file_name = format!(
             "{}.{}.{}",
@@ -501,15 +485,10 @@ impl DotfileShellIntegration {
         }
     }
 
-    fn legacy_description(when: When) -> String {
-        match when {
-            When::Pre => "# CodeWhisperer pre block. Keep at the top of this file.",
-            When::Post => "# CodeWhisperer post block. Keep at the bottom of this file.",
-        }
-        .into()
-    }
-
-    fn legacy_regexes(&self, when: When) -> Result<RegexSet> {
+    /// Fastab-owned leftover styles only. Fig `~/.fig` sources and Amazon Q /
+    /// CodeWhisperer blocks stay in the rc — those products can sit beside us.
+    fn leftover_regexes(&self, when: When) -> Result<RegexSet> {
+        let comment = regex::escape(&self.description(when));
         let shell = self.shell;
 
         let eval_line = match shell {
@@ -525,34 +504,40 @@ impl DotfileShellIntegration {
             When::Post => eval_line,
         };
 
-        let old_file_regex = match when {
-            When::Pre => r"\[ -s ~/\.fig/shell/pre\.sh \] && source ~/\.fig/shell/pre\.sh\n?",
-            When::Post => r"\[ -s ~/\.fig/fig\.sh \] && source ~/\.fig/fig\.sh\n?",
-        };
-        let old_eval_regex = format!(
-            r#"(?m)(?:{}\n)?^{}\n{{0,2}}"#,
-            regex::escape(&DotfileShellIntegration::legacy_description(when)),
-            regex::escape(&old_eval_source),
-        );
+        let old_eval_regex = format!(r#"(?m)(?:{comment}\n)?^{}\n{{0,2}}"#, regex::escape(&old_eval_source),);
         let old_source_regex_1 = format!(
-            r#"(?m)(?:{}\n)?^{}\n{{0,2}}"#,
-            regex::escape(&DotfileShellIntegration::legacy_description(when)),
+            r#"(?m)(?:{comment}\n)?^{}\n{{0,2}}"#,
             regex::escape(&self.legacy_source_text_1(when)?),
         );
         let old_source_regex_2 = format!(
-            r#"(?m)(?:{}\n)?^{}\n{{0,2}}"#,
-            regex::escape(&DotfileShellIntegration::legacy_description(when)),
+            r#"(?m)(?:{comment}\n)?^{}\n{{0,2}}"#,
             regex::escape(&self.legacy_source_text_2(when)?),
         );
 
-        let old_brand_regex = self.old_brand_regex(when)?;
         Ok(RegexSet::new([
-            old_file_regex.to_string(),
             old_eval_regex,
             old_source_regex_1,
             old_source_regex_2,
-            old_brand_regex,
+            self.leftover_eval_line_regex(when),
         ])?)
+    }
+
+    /// Standalone `ftab init` eval lines copied into a zshrc/bashrc (manual
+    /// install or a stub pasted out of `fastab/shell`). Does not match `ec` /
+    /// `q` / `fig` init.
+    fn leftover_eval_line_regex(&self, when: When) -> String {
+        let comment = regex::escape(&self.description(when));
+        let bin = regex::escape(CLI_BINARY_NAME);
+        let shell = regex::escape(&self.shell.to_string());
+        let when_s = regex::escape(&when.to_string());
+        match self.shell {
+            Shell::Fish => format!(
+                r#"(?m)(?:{comment}\n)?^(?:test -x ~/\.local/bin/{bin}; and )?eval \((?:~/\.local/bin/)?{bin} init {shell} {when_s}[^\n)]*\| string split0\)\n{{0,2}}"#
+            ),
+            _ => format!(
+                r#"(?m)(?:{comment}\n)?^(?:\[ -x ~/\.local/bin/{bin} \] && |command -v {bin} >/dev/null 2>&1 && )?eval "\$\((?:~/\.local/bin/)?{bin} init {shell} {when_s}[^\n"]*\)"\n{{0,2}}"#
+            ),
+        }
     }
 
     fn legacy_source_text_1(&self, when: When) -> Result<String> {
@@ -570,20 +555,6 @@ impl DotfileShellIntegration {
         match self.shell {
             Shell::Fish => Ok(format!("if test -f {path}; . {path}; end")),
             _ => Ok(format!("[[ -f {path} ]] && . {path}")),
-        }
-    }
-
-    fn legacy_source_text_3(&self, when: When) -> Result<String> {
-        let home = directories::home_dir()?;
-        let integration_path = self.legacy_script_integration(when)?.path;
-        let path = regex::escape(&format!(
-            "\"${{HOME}}/{}\"",
-            integration_path.strip_prefix(home)?.display()
-        ));
-
-        match self.shell {
-            Shell::Fish => Ok(format!(r"test\s*\-f\s*{path};\s*and\s+builtin\s+source\s+{path}")),
-            _ => Ok(format!(r"\[\[\s*\-f\s*{path}\s*\]\]\s*&&\s*builtin\s+source\s*{path}")),
         }
     }
 
@@ -621,7 +592,7 @@ impl DotfileShellIntegration {
         let source_regex = self.source_regex(when, false)?;
         let mut regexes = vec![source_regex];
         regexes.extend(
-            self.legacy_regexes(when)?
+            self.leftover_regexes(when)?
                 .patterns()
                 .iter()
                 .map(|r| Regex::new(r).unwrap()),
@@ -633,7 +604,7 @@ impl DotfileShellIntegration {
 
     fn matches_text(&self, text: &str, when: When) -> Result<()> {
         let dotfile = self.dotfile_path();
-        if self.legacy_regexes(when)?.is_match(text) {
+        if self.leftover_regexes(when)?.is_match(text) {
             let message = format!("{} has legacy {} integration.", dotfile.display(), when);
             return Err(Error::LegacyInstallation(message.into()));
         }
@@ -677,14 +648,6 @@ impl DotfileShellIntegration {
             return Err(Error::ImproperInstallation(message.into()));
         }
         Ok(())
-    }
-
-    fn old_brand_regex(&self, when: When) -> Result<String> {
-        Ok(format!(
-            r#"(?m)(?:\s*{}\s*\n)?^\s*{}\s*\n{{0,2}}"#,
-            regex::escape(&DotfileShellIntegration::legacy_description(when)),
-            self.legacy_source_text_3(when)?,
-        ))
     }
 
     async fn install_inner(&self) -> Result<()> {
@@ -767,10 +730,6 @@ impl Integration for DotfileShellIntegration {
         let dotfile = self.dotfile_path();
         if dotfile.exists() {
             let mut contents = std::fs::read_to_string(&dotfile)?;
-
-            contents = Regex::new(r"(?mi)^#.*Please make sure this block is at the .* of this file.*$\n?")?
-                .replace_all(&contents, "")
-                .into();
 
             if self.pre {
                 contents = self.remove_from_text(&contents, When::Pre)?;
@@ -1060,71 +1019,6 @@ mod test {
         check_script(Shell::Bash, When::Post);
     }
 
-    #[test]
-    fn test_legacy_codewhisperer_regex() {
-        let re = regex::Regex::new(
-            &DotfileShellIntegration {
-                pre: true,
-                post: true,
-                shell: Shell::Zsh,
-                dotfile_directory: "".into(),
-                dotfile_name: ".zshrc",
-            }
-            .old_brand_regex(When::Pre)
-            .unwrap(),
-        )
-        .unwrap();
-
-        println!("re: {re}");
-
-        let data_dir = old_fig_data_dir().unwrap();
-        let dir = data_dir.strip_prefix(home_dir().unwrap()).unwrap().display();
-
-        // base case
-        let doc = &indoc::formatdoc! {r#"
-            # CodeWhisperer pre block. Keep at the top of this file.
-            [[ -f "${{HOME}}/{dir}/shell/zshrc.pre.zsh" ]] && builtin source "${{HOME}}/{dir}/shell/zshrc.pre.zsh"
-        "#};
-        let replaced = re.replace_all(doc, "");
-        assert_eq!(replaced, "");
-
-        // different comment case
-        let doc = indoc::formatdoc! {r#"
-            # different comment
-            [[ -f "${{HOME}}/{dir}/shell/zshrc.pre.zsh" ]] && builtin source "${{HOME}}/{dir}/shell/zshrc.pre.zsh"
-        "#};
-        let replaced = re.replace_all(&doc, "");
-        assert_eq!(replaced, "# different comment\n");
-
-        // spaces in command
-        let doc = indoc::formatdoc! {r#"
-            [[  -f  "${{HOME}}/{dir}/shell/zshrc.pre.zsh"  ]]  &&    builtin  source  "${{HOME}}/{dir}/shell/zshrc.pre.zsh" 
-        "#};
-        let replaced = re.replace_all(&doc, "");
-        assert_eq!(replaced, "");
-
-        // non match which looks similar
-        let doc = indoc::formatdoc! {r#"
-            [[ -f "${{HOME}}/{dir}/shell/zshrc.pre.zsh" ]] && source "${{HOME}}/{dir}/shell/zshrc.pre.zsh"
-            
-            # CodeWhisperer pre block. Keep at the top of this file.
-            [[ -f ${{HOME}}/shell/zshrc.pre.zsh" ]] && builtin source "${{HOME}}/shell/zshrc.pre.zsh"
-        "#};
-        let replaced = re.replace_all(&doc, "");
-        assert_eq!(replaced, doc);
-
-        // multiple lines
-        let doc = indoc::formatdoc! {r#"
-            # CodeWhisperer pre block. Keep at the top of this file.
-            [[ -f "${{HOME}}/{dir}/shell/zshrc.pre.zsh" ]] && builtin source "${{HOME}}/{dir}/shell/zshrc.pre.zsh"
-            [[ -f "${{HOME}}/{dir}/shell/zshrc.pre.zsh" ]] && builtin source "${{HOME}}/{dir}/shell/zshrc.pre.zsh"
-
-            [[ -f "${{HOME}}/{dir}/shell/zshrc.pre.zsh" ]] && builtin source "${{HOME}}/{dir}/shell/zshrc.pre.zsh"
-        "#};
-        let replaced = re.replace_all(&doc, "");
-        assert_eq!(replaced, "");
-    }
-
     fn zshrc_integration() -> DotfileShellIntegration {
         DotfileShellIntegration {
             pre: true,
@@ -1165,9 +1059,71 @@ mod test {
             "sibling Easy Complete source must stay: {stripped}"
         );
         assert!(
-            !integration.legacy_regexes(When::Pre).unwrap().is_match(&doc),
+            !integration.leftover_regexes(When::Pre).unwrap().is_match(&doc),
             "Easy Complete blocks must not look like a Fastab leftover"
         );
+    }
+
+    #[test]
+    fn test_codewhisperer_blocks_are_left_alone() {
+        let integration = zshrc_integration();
+        let data_dir = old_fig_data_dir().unwrap();
+        let dir = data_dir.strip_prefix(home_dir().unwrap()).unwrap().display();
+        let source = format!(
+            r#"[[ -f "${{HOME}}/{dir}/shell/zshrc.pre.zsh" ]] && builtin source "${{HOME}}/{dir}/shell/zshrc.pre.zsh""#
+        );
+        let doc = format!("# CodeWhisperer pre block. Keep at the top of this file.\n{source}\nexport KEEP=/usr/bin\n");
+
+        let stripped = integration.remove_from_text(&doc, When::Pre).unwrap();
+        assert!(
+            stripped.contains("CodeWhisperer"),
+            "Amazon Q comment must stay: {stripped}"
+        );
+        assert!(
+            stripped.contains(&format!("{dir}/shell")),
+            "Amazon Q source must stay: {stripped}"
+        );
+        assert!(
+            !integration.leftover_regexes(When::Pre).unwrap().is_match(&doc),
+            "Amazon Q blocks must not look like a Fastab leftover"
+        );
+    }
+
+    #[test]
+    fn test_fig_dotfile_source_is_left_alone() {
+        let integration = zshrc_integration();
+        let doc = "[ -s ~/.fig/shell/pre.sh ] && source ~/.fig/shell/pre.sh\nexport KEEP=/usr/bin\n";
+        let stripped = integration.remove_from_text(doc, When::Pre).unwrap();
+        assert!(
+            stripped.contains("~/.fig/shell/pre.sh"),
+            "Fig ~/.fig source must stay: {stripped}"
+        );
+        assert!(
+            !integration.leftover_regexes(When::Pre).unwrap().is_match(doc),
+            "Fig ~/.fig source must not look like a Fastab leftover"
+        );
+    }
+
+    #[test]
+    fn test_q_and_fig_init_eval_are_left_alone() {
+        let integration = zshrc_integration();
+        let lines = [
+            r#"eval "$(q init zsh pre)""#,
+            r#"eval "$(fig init zsh pre)""#,
+            r#"[ -x ~/.local/bin/q ] && eval "$(~/.local/bin/q init zsh pre --rcfile zshrc)""#,
+            r#"[ -x ~/.local/bin/fig ] && eval "$(~/.local/bin/fig init zsh pre --rcfile zshrc)""#,
+        ];
+        for line in lines {
+            let stripped = integration.remove_from_text(line, When::Pre).unwrap();
+            assert!(
+                stripped.contains("init"),
+                "sibling init eval must stay: {line} -> {stripped}"
+            );
+            assert!(
+                !integration.leftover_regexes(When::Pre).unwrap().is_match(line),
+                "sibling init eval must not look like a Fastab leftover: {line}"
+            );
+        }
     }
 
     #[test]
@@ -1190,21 +1146,27 @@ eval "$(ec init zsh pre --rcfile zshrc)""#,
                 "sibling ec init must stay: {line} -> {stripped}"
             );
             assert!(
-                !integration.legacy_regexes(When::Pre).unwrap().is_match(&doc),
+                !integration.leftover_regexes(When::Pre).unwrap().is_match(&doc),
                 "sibling ec init must not look like a Fastab leftover: {line}"
             );
         }
     }
 
     #[test]
-    fn test_previous_cli_eval_leaves_ftab() {
+    fn test_leftover_ftab_eval_is_removed() {
         let integration = zshrc_integration();
-        let line = r#"[ -x ~/.local/bin/ftab ] && eval "$(~/.local/bin/ftab init zsh pre --rcfile zshrc)""#;
-        let stripped = integration.remove_from_text(line, When::Pre).unwrap();
-        assert!(
-            stripped.contains("ftab init"),
-            "current CLI eval must not be treated as leftover: {stripped}"
-        );
+        let lines = [
+            r#"[ -x ~/.local/bin/ftab ] && eval "$(~/.local/bin/ftab init zsh pre --rcfile zshrc)""#,
+            r#"eval "$(ftab init zsh pre)""#,
+            "export PATH=\"${PATH}:${HOME}/.local/bin\"\neval \"$(ftab init zsh pre)\"\n",
+        ];
+        for line in lines {
+            let stripped = integration.remove_from_text(line, When::Pre).unwrap();
+            assert!(
+                !stripped.contains("ftab init"),
+                "leftover Fastab eval must be removed: {line} -> {stripped}"
+            );
+        }
     }
 
     #[test]
@@ -1450,6 +1412,87 @@ eval "$(ec init zsh pre --rcfile zshrc)""#,
         assert!(contents.contains("export KEEP=1"), "user lines must stay: {contents}");
     }
 
+    #[tokio::test]
+    async fn test_install_inner_keeps_codewhisperer_pre() {
+        let dir = tempfile::tempdir().unwrap();
+        let integration = DotfileShellIntegration {
+            shell: Shell::Zsh,
+            pre: true,
+            post: false,
+            dotfile_directory: dir.path().to_path_buf(),
+            dotfile_name: ".zshrc",
+        };
+        let q_dir = old_fig_data_dir().unwrap();
+        let home = home_dir().unwrap();
+        let q_rel = q_dir.strip_prefix(&home).unwrap().display();
+        std::fs::write(
+            dir.path().join(".zshrc"),
+            format!(
+                "# CodeWhisperer pre block. Keep at the top of this file.\n[[ -f \"${{HOME}}/{q_rel}/shell/zshrc.pre.zsh\" ]] && builtin source \"${{HOME}}/{q_rel}/shell/zshrc.pre.zsh\"\nexport KEEP=1\n"
+            ),
+        )
+        .unwrap();
+        integration.install_inner().await.unwrap();
+        let contents = std::fs::read_to_string(dir.path().join(".zshrc")).unwrap();
+        assert!(
+            contents.contains("CodeWhisperer"),
+            "Amazon Q comment must stay: {contents}"
+        );
+        assert!(
+            contents.contains(&format!("{q_rel}/shell")),
+            "Amazon Q source must stay: {contents}"
+        );
+        let q_pos = contents.find("CodeWhisperer").expect("Amazon Q pre must stay");
+        let ft_pos = contents.find("fastab/shell").expect("Fastab pre must be added");
+        assert!(q_pos < ft_pos, "Amazon Q pre must stay above Fastab: {contents}");
+        assert!(contents.contains("export KEEP=1"), "user lines must stay: {contents}");
+    }
+
+    #[tokio::test]
+    async fn test_uninstall_leaves_fig_please_make_sure_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let integration = DotfileShellIntegration {
+            shell: Shell::Zsh,
+            pre: true,
+            post: false,
+            dotfile_directory: dir.path().to_path_buf(),
+            dotfile_name: ".zshrc",
+        };
+        std::fs::write(
+            dir.path().join(".zshrc"),
+            "# Fig pre block. Please make sure this block is at the top of this file.\n[ -s ~/.fig/shell/pre.sh ] && source ~/.fig/shell/pre.sh\nexport KEEP=1\n",
+        )
+        .unwrap();
+        integration.uninstall().await.unwrap();
+        let contents = std::fs::read_to_string(dir.path().join(".zshrc")).unwrap();
+        assert!(
+            contents.contains("Please make sure this block"),
+            "Fig comment must stay: {contents}"
+        );
+        assert!(
+            contents.contains("~/.fig/shell/pre.sh"),
+            "Fig source must stay: {contents}"
+        );
+        assert!(contents.contains("export KEEP=1"), "user lines must stay: {contents}");
+    }
+
+    #[test]
+    fn test_nu_scripts_use_fastab_pty() {
+        let pre = include_str!("scripts/pre.nu");
+        assert!(
+            pre.contains("{{PTY_BINARY_NAME}}"),
+            "nu pre must launch Fastab's PTY: {pre}"
+        );
+        assert!(!pre.contains(".fig/bin"), "nu pre must not exec Fig's PTY: {pre}");
+        assert!(!pre.contains("figterm"), "nu pre must not name figterm: {pre}");
+        let post = include_str!("scripts/post.nu");
+        assert!(
+            post.contains("which {{CLI_BINARY_NAME}}"),
+            "nu post must look up Fastab's CLI: {post}"
+        );
+        assert!(!post.contains("which fig "), "nu post must not look up fig: {post}");
+    }
+
     #[test]
     fn test_fish_pre_q_parent_matches_bash() {
         let fish = include_str!("scripts/pre.fish");
@@ -1478,8 +1521,8 @@ eval "$(ec init zsh pre --rcfile zshrc)""#,
         let doc = format!("# Fastab pre block. Keep at the top of this file.\n{source}\n");
 
         assert!(
-            !integration.legacy_regexes(When::Pre).unwrap().is_match(&doc),
-            "current Fastab blocks must not look like a legacy install"
+            !integration.leftover_regexes(When::Pre).unwrap().is_match(&doc),
+            "current Fastab blocks must not look like a leftover install"
         );
         integration
             .matches_text(&doc, When::Pre)

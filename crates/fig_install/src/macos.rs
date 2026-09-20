@@ -335,20 +335,6 @@ pub(crate) async fn uninstall_desktop(ctx: &fig_os_shim::Context) -> Result<(), 
             .ok();
     }
 
-    // Remove the previous codewhisperer data dir only if it is a symlink.
-    if let Ok(old_fig_data_dir) = directories::old_fig_data_dir() {
-        if old_fig_data_dir.exists() {
-            if let Ok(metadata) = fs::symlink_metadata(&old_fig_data_dir).await {
-                if metadata.is_symlink() {
-                    fs::remove_file(&old_fig_data_dir)
-                        .await
-                        .map_err(|err| error!("Failed to remove the old fig data dir {old_fig_data_dir:?}: {err}"))
-                        .ok();
-                }
-            }
-        }
-    }
-
     Ok(())
 }
 

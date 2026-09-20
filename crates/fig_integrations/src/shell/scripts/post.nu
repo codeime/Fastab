@@ -142,7 +142,7 @@ def-env fig_pre_prompt_hook [] {
     #   fig_pre_execution_hook
     # }
   
-    if (which fig | length) >= 1 {
+    if (which {{CLI_BINARY_NAME}} | length) >= 1 {
       let result = ({{CLI_BINARY_NAME}} _ pre-cmd | complete)
       if $result.stdout == "EXEC_NEW_SHELL" {
         let-env Q_DOTFILES_SOURCED = $nothing

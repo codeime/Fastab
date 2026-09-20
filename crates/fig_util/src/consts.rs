@@ -79,6 +79,11 @@ pub mod macos {
     pub const BUNDLE_CONTENTS_RESOURCE_PATH: &str = "Contents/Resources";
     pub const BUNDLE_CONTENTS_HELPERS_PATH: &str = "Contents/Helpers";
     pub const BUNDLE_CONTENTS_INFO_PLIST_PATH: &str = "Contents/Info.plist";
+
+    /// Distributed notification Fastab desktop posts when it wants the IME caret.
+    /// Distinct from Easy Complete / Amazon Q (`com.amazon.codewhisperer.edit_buffer_updated`)
+    /// so dual-install does not poke the sibling helper.
+    pub const EDIT_BUFFER_UPDATED_NOTIFICATION: &str = "app.fastab.edit_buffer_updated";
 }
 
 /// Linux-specific constants. `directories.rs` and the leftover desktop Linux
@@ -159,6 +164,16 @@ mod tests {
         assert!(!is_product_url_scheme("ec"));
         assert!(!is_product_url_scheme("http"));
         assert!(!is_product_url_scheme("fig"));
+    }
+
+    #[test]
+    fn edit_buffer_notification_is_fastab_only() {
+        let sibling = ["com.amazon.", "codewhisperer", ".edit_buffer_updated"].concat();
+        assert_eq!(
+            macos::EDIT_BUFFER_UPDATED_NOTIFICATION,
+            "app.fastab.edit_buffer_updated"
+        );
+        assert_ne!(macos::EDIT_BUFFER_UPDATED_NOTIFICATION, sibling.as_str());
     }
 
     #[test]

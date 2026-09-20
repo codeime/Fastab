@@ -125,24 +125,19 @@ strip_shell_integration_fallback "${HOME}/.bash_profile"
 strip_shell_integration_fallback "${HOME}/.config/fish/config.fish"
 
 # Fish dedicated conf files are still named 00_fig_pre.fish / 99_fig_post.fish.
-# Easy Complete / Amazon Q use the same names. Strip Fastab hook lines only.
+# Easy Complete / Amazon Q / Fig use the same names. Always strip Fastab hook
+# lines only — never delete the file while any other content remains.
 maybe_remove_fastab_fish_conf() {
   local path="$1"
   [[ -f "$path" ]] || return 0
-  if grep -Eqi 'easy-complete|easy complete|ec init|q init|fig init|codewhisperer|\.fig/shell' "$path"; then
-    local tmp
-    tmp="$(mktemp)"
-    grep -Ev 'ftab init|/\.local/bin/ftab|command -v ftab >/dev/null|command -qv ftab |fastab/shell/|^[[:space:]]*# Fastab ' \
-      "$path" > "$tmp" || true
-    if ! grep -Eq '[^[:space:]]' "$tmp"; then
-      rm -f "$path" "$tmp"
-    else
-      mv "$tmp" "$path"
-    fi
-    return 0
-  fi
-  if grep -Eq 'ftab init|fastab/shell/|^[[:space:]]*# Fastab ' "$path"; then
-    rm -f "$path"
+  local tmp
+  tmp="$(mktemp)"
+  grep -Ev 'ftab init|/\.local/bin/ftab|command -v ftab >/dev/null|command -qv ftab |fastab/shell/|^[[:space:]]*# Fastab ' \
+    "$path" > "$tmp" || true
+  if ! grep -Eq '[^[:space:]]' "$tmp"; then
+    rm -f "$path" "$tmp"
+  else
+    mv "$tmp" "$path"
   fi
 }
 maybe_remove_fastab_fish_conf "${HOME}/.config/fish/conf.d/00_fig_pre.fish"

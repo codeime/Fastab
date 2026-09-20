@@ -320,7 +320,7 @@ pub fn start_application(
             *reopen_proxy.borrow_mut() = Some(host.read(cx).proxy.clone());
             run(host.clone(), event_rx, cx);
             host.update(cx, |host, _cx| {
-                info!("Fig has started");
+                info!("{} has started", fig_util::PRODUCT_NAME);
                 #[cfg(target_os = "macos")]
                 {
                     crate::platform::set_activation_policy(*crate::platform::ACTIVATION_POLICY.lock().unwrap());

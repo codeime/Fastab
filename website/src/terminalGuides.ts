@@ -61,7 +61,7 @@ export const terminalGuides: TerminalGuide[] = [
       {
         heading: "Why both shell integrations can stay installed",
         body: [
-          "Otty appends its block to the absolute end of `~/.bashrc` and rewrites it whenever the app launches. Fastab used to require its own block to be last, so each app kept moving the other and the dashboard flip-flopped between working and \"needs setup\".",
+          "Otty appends its block to the absolute end of `~/.bashrc` and rewrites it whenever the app launches. Fastab used to require its own block to be last, so each app kept moving the other and Settings flip-flopped between working and \"needs setup\".",
           "Fastab now accepts its block sitting near the end rather than demanding the last line, and leaves Otty's trailer in place. Otty's block is inert unless `$OTTY_SHELL_INTEGRATION` is set, so it costs nothing in other terminals.",
         ],
       },

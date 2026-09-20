@@ -10,6 +10,7 @@
 - fix: leftover Fig CLI hints (`fig settings` / `fig update` / `fig launch` / `fig issue`) and doctor “Qterm” copy now use `ftab` / `fastabterm`. `ftab launch` says Settings, not dashboard. WebView-era `/help` and `/autocomplete` deep links open About and Behavior.
 - fix: doctor and uninstall no longer scan or delete Fig’s `withfig.fig-*` VS Code / Cursor extensions. Fastab does not ship one.
 - fix: launching or uninstalling Fastab no longer deletes shared Fig iTerm / Hyper / Kitty integrations or Amazon Q LaunchAgents. Fish `fig init` is treated as a sibling hook. Leftover “Fig” / “qterm” user strings now say Fastab.
+- fix: installing or uninstalling Fastab no longer strips Amazon Q / CodeWhisperer or `~/.fig` hooks from `.zshrc` / `.bashrc`, and no longer deletes a shared fish `00_fig_pre.fish` that still has other lines. `ftab init nu` launches `fastabterm` instead of `~/.fig/bin/figterm`. The IME caret ping is Fastab-only so Easy Complete / Amazon Q helpers are not woken.
 
 ## v3.0.0-beta.16
 
