@@ -40,12 +40,14 @@ pub async fn uninstall(components: InstallComponents, ctx: Arc<Context>) -> Resu
         Ok(())
     };
 
-    let shell_integration_result = {
+    let shell_integration_result = if components.contains(InstallComponents::SHELL_INTEGRATIONS) {
         for shell in [Shell::Bash, Shell::Zsh, Shell::Fish] {
             for integration in shell.get_shell_integrations(ctx.env())? {
                 integration.uninstall().await?;
             }
         }
+        Ok(())
+    } else {
         Ok(())
     };
 

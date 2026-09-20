@@ -35,8 +35,8 @@ use fig_util::macos::BUNDLE_CONTENTS_INFO_PLIST_PATH;
 use fig_util::system_info::SupportLevel;
 use fig_util::terminal::in_special_terminal;
 use fig_util::{
-    APP_BUNDLE_ID, APP_BUNDLE_NAME, CLI_BINARY_NAME, CLI_CRATE_NAME, PRODUCT_NAME, PTY_BINARY_NAME, Shell, Terminal,
-    directories, system_paths,
+    APP_BUNDLE_ID, APP_BUNDLE_NAME, CLI_BINARY_NAME, CLI_CRATE_NAME, PRODUCT_NAME, PTY_BINARY_NAME, RUNTIME_DIR_NAME,
+    Shell, Terminal, directories, system_paths,
 };
 use futures::FutureExt;
 use futures::future::BoxFuture;
@@ -699,8 +699,9 @@ impl DoctorCheck for PtySocketCheck {
             return Err(DoctorError::Error {
                 reason: "Tried to find the socket file, but it wasn't there.".into(),
                 info: vec![
-                    format!("{PRODUCT_NAME} uses the /tmp directory for sockets.").into(),
-                    "Did you delete files in /tmp? The OS will clear it automatically.".into(),
+                    format!("{PRODUCT_NAME} keeps sockets under the process temp directory ({RUNTIME_DIR_NAME}).")
+                        .into(),
+                    "Did you delete files there? The OS will clear temp directories automatically.".into(),
                     format!(
                         "Try making a new tab or window in your terminal, then run {} again.",
                         format!("{CLI_BINARY_NAME} doctor").magenta()

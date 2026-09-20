@@ -3,7 +3,7 @@ use std::os::unix::prelude::{OsStrExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 
-use fig_util::consts::{APP_BUNDLE_ID, CLI_BINARY_NAME, system_paths};
+use fig_util::consts::{APP_BUNDLE_ID, APP_PROCESS_NAME, CLI_BINARY_NAME, system_paths};
 use fig_util::macos::BUNDLE_CONTENTS_MACOS_PATH;
 use fig_util::{APP_BUNDLE_NAME, directories};
 use regex::Regex;
@@ -277,9 +277,11 @@ async fn remove_in_dir_with_prefix_unless(dir: &Path, prefix: &str, unless: impl
 
 #[allow(unused_variables)]
 pub(crate) async fn uninstall_desktop(ctx: &fig_os_shim::Context) -> Result<(), Error> {
-    // TODO:
-    // 1. Set title of running ttys "Restart this terminal to finish uninstalling Q..."
-    // 2. Delete webview cache
+    // SMAppService.mainAppService belongs to Fastab.app. Unregister while the
+    // bundle is still on disk — `scripts/uninstall.sh` already does this via
+    // `fastab --unregister-login-item`. `ftab uninstall` and the tray used to
+    // skip it, so login would relaunch a deleted app.
+    unregister_fastab_login_item().await;
 
     // Remove Fastab's own leftover LaunchAgent only. Amazon Q / Easy Complete
     // / Fig agents stay on disk for dual-install.
@@ -295,6 +297,24 @@ pub(crate) async fn uninstall_desktop(ctx: &fig_os_shim::Context) -> Result<(), 
         .output()
         .await
         .map_err(|err| warn!("Failed to delete defaults: {err}"))
+        .ok();
+    tokio::process::Command::new("defaults")
+        .args(["delete", &format!("{APP_BUNDLE_ID}.inputmethod")])
+        .output()
+        .await
+        .ok();
+
+    if let Ok(dir) = directories::sockets_dir() {
+        fs::remove_dir_all(&dir).await.ok();
+    }
+    if let Ok(dir) = directories::logs_dir() {
+        fs::remove_dir_all(&dir).await.ok();
+    }
+
+    tokio::process::Command::new("tccutil")
+        .args(["reset", "Accessibility", APP_BUNDLE_ID])
+        .output()
+        .await
         .ok();
 
     uninstall_terminal_integrations().await;
@@ -338,6 +358,31 @@ pub(crate) async fn uninstall_desktop(ctx: &fig_os_shim::Context) -> Result<(), 
     Ok(())
 }
 
+async fn unregister_fastab_login_item() {
+    if let Some(desktop) = login_item_unregister_binary(&fig_util::app_bundle_path()) {
+        match tokio::process::Command::new(&desktop)
+            .arg("--unregister-login-item")
+            .output()
+            .await
+        {
+            Ok(out) if out.status.success() => {},
+            Ok(out) => warn!(
+                status = ?out.status,
+                "desktop --unregister-login-item failed"
+            ),
+            Err(err) => warn!(%err, "failed to spawn desktop --unregister-login-item"),
+        }
+    }
+    if let Err(err) = fig_integrations::login_item::set_enabled(false) {
+        warn!(%err, "failed to unregister Fastab login item in-process");
+    }
+}
+
+fn login_item_unregister_binary(app_path: &Path) -> Option<PathBuf> {
+    let desktop = app_path.join(BUNDLE_CONTENTS_MACOS_PATH).join(APP_PROCESS_NAME);
+    desktop.is_file().then_some(desktop)
+}
+
 #[allow(clippy::unused_async)]
 pub async fn uninstall_terminal_integrations() {
     // Fastab does not install iTerm / Hyper / Kitty / VS Code plugins, and
@@ -370,4 +415,23 @@ pub fn install(src: impl AsRef<CStr>, dst: impl AsRef<CStr>, same_bundle_name: b
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn login_item_unregister_uses_the_fastab_desktop_binary() {
+        assert_eq!(APP_PROCESS_NAME, "fastab");
+        assert_eq!(APP_BUNDLE_ID, "app.fastab");
+        let tmp = tempfile::tempdir().unwrap();
+        let app = tmp.path().join("Fastab.app");
+        let macos = app.join(BUNDLE_CONTENTS_MACOS_PATH);
+        std::fs::create_dir_all(&macos).unwrap();
+        assert_eq!(login_item_unregister_binary(&app), None);
+        let desktop = macos.join(APP_PROCESS_NAME);
+        std::fs::write(&desktop, b"").unwrap();
+        assert_eq!(login_item_unregister_binary(&app), Some(desktop));
+    }
 }
