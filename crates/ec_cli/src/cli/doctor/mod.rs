@@ -686,7 +686,7 @@ struct PtySocketCheck;
 #[async_trait]
 impl DoctorCheck for PtySocketCheck {
     fn name(&self) -> Cow<'static, str> {
-        "Qterm Socket Check".into()
+        format!("{PTY_BINARY_NAME} Socket Check").into()
     }
 
     async fn check(&self, _: &()) -> Result<(), DoctorError> {
@@ -701,11 +701,12 @@ impl DoctorCheck for PtySocketCheck {
             Ok(session) => session,
             Err(_) => {
                 return Err(doctor_error!(
-                    "Qterm is not running, please restart your terminal. QTERM_SESSION_ID is unset."
+                    "{PTY_BINARY_NAME} is not running. Restart this terminal. The session id is unset."
                 ));
             },
         };
-        let socket_path = fig_util::directories::figterm_socket_path(term_session).context("No qterm path")?;
+        let socket_path = fig_util::directories::figterm_socket_path(term_session)
+            .context(format!("No {PTY_BINARY_NAME} socket path"))?;
 
         check_socket_perms(&socket_path).await?;
 

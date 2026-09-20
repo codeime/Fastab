@@ -254,7 +254,7 @@ async fn launch_dashboard(help_fallback: bool) -> Result<ExitCode> {
             Cli::command().print_help()?;
             return Ok(ExitCode::SUCCESS);
         } else {
-            bail!("Launching the dashboard is not supported in minimal mode");
+            bail!("Opening Settings is not supported in minimal mode");
         }
     }
 
@@ -265,11 +265,11 @@ async fn launch_dashboard(help_fallback: bool) -> Result<ExitCode> {
         verbose: true,
     })?;
 
-    println!("Opening {PRODUCT_NAME} dashboard");
+    println!("Opening {PRODUCT_NAME} Settings");
 
     open_ui_element(UiElement::MissionControl, Some("/".into()))
         .await
-        .context("Failed to open dashboard")?;
+        .context("Failed to open Settings")?;
 
     Ok(ExitCode::SUCCESS)
 }

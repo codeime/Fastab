@@ -1499,7 +1499,7 @@ fn about_page(zh: bool, chrome: Chrome, entity: Entity<SettingsWindow>, copied_d
                                 .bg(rgb(chrome.sidebar))
                                 .font_family("Menlo")
                                 .cursor_pointer()
-                                .child("ftab doctor")
+                                .child(format!("{} doctor", fig_util::CLI_BINARY_NAME))
                                 .on_mouse_down(MouseButton::Left, move |_e, _w, cx| {
                                     copy_doctor(&entity_cmd, cx);
                                 }),
@@ -1592,7 +1592,10 @@ fn about_page(zh: bool, chrome: Chrome, entity: Entity<SettingsWindow>, copied_d
 }
 
 fn copy_doctor(entity: &Entity<SettingsWindow>, cx: &mut App) {
-    cx.write_to_clipboard(ClipboardItem::new_string("ftab doctor".into()));
+    cx.write_to_clipboard(ClipboardItem::new_string(format!(
+        "{} doctor",
+        fig_util::CLI_BINARY_NAME
+    )));
     entity.update(cx, |this, cx| {
         this.copied_doctor = true;
         cx.notify();
@@ -2289,14 +2292,21 @@ pub fn close_settings(handle: &SettingsHandle, cx: &mut App) {
         .ok();
 }
 
-pub fn set_settings_section(handle: &SettingsHandle, path: &str, cx: &mut App) {
-    let section = if path.contains("behavior") {
+fn settings_section_from_path(path: &str) -> Section {
+    let path = path.to_ascii_lowercase();
+    // Tray / CLI still send the WebView-era paths. Map them onto the
+    // native pages that actually hold that content.
+    if path.contains("behavior") || path.contains("autocomplete") {
         Section::Behavior
-    } else if path.contains("about") {
+    } else if path.contains("about") || path.contains("help") || path.contains("troubleshoot") {
         Section::About
     } else {
         Section::Appearance
-    };
+    }
+}
+
+pub fn set_settings_section(handle: &SettingsHandle, path: &str, cx: &mut App) {
+    let section = settings_section_from_path(path);
     handle
         .update(cx, |view, _window, cx| {
             view.section = section;
@@ -2339,6 +2349,18 @@ mod tests {
             generation,
             completes_repair: false,
         }
+    }
+
+    #[test]
+    fn webview_deep_links_open_the_matching_native_page() {
+        assert_eq!(settings_section_from_path("/"), Section::Appearance);
+        assert_eq!(settings_section_from_path("/appearance"), Section::Appearance);
+        assert_eq!(settings_section_from_path("/preferences"), Section::Appearance);
+        assert_eq!(settings_section_from_path("/behavior"), Section::Behavior);
+        assert_eq!(settings_section_from_path("/autocomplete"), Section::Behavior);
+        assert_eq!(settings_section_from_path("/about"), Section::About);
+        assert_eq!(settings_section_from_path("/help"), Section::About);
+        assert_eq!(settings_section_from_path("/troubleshooting"), Section::About);
     }
 
     #[test]

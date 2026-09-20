@@ -7,6 +7,7 @@
 - fix: doctor drops Auth / WebView host checks. Accessibility copy is Fastab-only. IME uninstall writes HIToolbox in-process. Website download structured data pins the versioned DMG.
 - fix: dual-install no longer fights Easy Complete for first/last rc position, no longer truncates shared fish `00_fig_pre.fish` on desktop migrate, and does not steal the current Non Keyboard IM. Doctor treats an `ecterm` session as a sibling wrap instead of an outdated Fastab PTY. `pre.fish` copies `Q_SET_PARENT` the same way as `pre.sh`. Uninstall no longer whole-domain-imports HIToolbox.
 - fix: the updater product name is Fastab only and no longer treats an Easy Complete update feed as its own.
+- fix: leftover Fig CLI hints (`fig settings` / `fig update` / `fig launch` / `fig issue`) and doctor “Qterm” copy now use `ftab` / `fastabterm`. `ftab launch` says Settings, not dashboard. WebView-era `/help` and `/autocomplete` deep links open About and Behavior.
 
 ## v3.0.0-beta.16
 
