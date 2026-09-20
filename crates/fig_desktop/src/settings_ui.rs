@@ -44,7 +44,7 @@ const SETTINGS_TITLE_Y_OFFSET: f32 = 3.0;
 const WIN_W: f32 = 820.0;
 const WIN_H: f32 = 640.0;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Section {
     Appearance,
     Behavior,
