@@ -6,6 +6,7 @@
 - 变更：不再抢 `ec://`、改写 `ec`/`ecterm`、复制 Easy Complete 设置或 sqlite、或清掉 Easy Complete 输入法。`Q_TERM` 已设置时 `ftab init` 不再包装，避免套进 `ecterm`。同一终端里两套补全桌面同时跑不受支持。
 - 修复：doctor 去掉 Auth / WebView host 检查。辅助功能文案只讲 Fastab。输入法卸载在进程内写 HIToolbox。网站下载结构化数据改用带版本的 DMG。
 - 修复：并排安装不再和 Easy Complete 抢 rc 的最先/最后位置；桌面 migrate 不再清空共用的 fish `00_fig_pre.fish`；不再抢走当前的 Non Keyboard 输入法。doctor 把 `ecterm` 会话当成兄弟包装，而不是过期的 Fastab PTY。`pre.fish` 对 `Q_SET_PARENT` 的处理和 `pre.sh` 一致。卸载不再整域 import HIToolbox。
+- 修复：更新器用的产品名只认 Fastab，不再把 Easy Complete 的更新源当成自己的。
 
 ## v3.0.0-beta.16
 

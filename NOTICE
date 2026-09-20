@@ -1,7 +1,7 @@
 Fastab
 Copyright (c) 2026 Fastab contributors
 
-This product is a rename of Easy Complete
+This product is a separate fork of Easy Complete
 (https://github.com/chen86860/easy-complete), which is based on Amazon Q
 Developer CLI (https://github.com/aws/amazon-q-developer-cli),
 Copyright (c) 2024 Amazon.com, Inc. or its affiliates,

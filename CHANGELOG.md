@@ -6,6 +6,7 @@
 - change: Fastab does not steal `ec://`, retarget `ec`/`ecterm`, copy Easy Complete settings or sqlite, or drop the Easy Complete IME palette. `ftab init` stands down when `Q_TERM` is already set so it will not nest inside `ecterm`. Both completion desktops in the same terminal is not supported.
 - fix: doctor drops Auth / WebView host checks. Accessibility copy is Fastab-only. IME uninstall writes HIToolbox in-process. Website download structured data pins the versioned DMG.
 - fix: dual-install no longer fights Easy Complete for first/last rc position, no longer truncates shared fish `00_fig_pre.fish` on desktop migrate, and does not steal the current Non Keyboard IM. Doctor treats an `ecterm` session as a sibling wrap instead of an outdated Fastab PTY. `pre.fish` copies `Q_SET_PARENT` the same way as `pre.sh`. Uninstall no longer whole-domain-imports HIToolbox.
+- fix: the updater product name is Fastab only and no longer treats an Easy Complete update feed as its own.
 
 ## v3.0.0-beta.16
 
