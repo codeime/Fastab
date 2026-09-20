@@ -19,7 +19,6 @@ use tracing::{debug, warn};
 use crate::{Error, Result};
 
 const LEGACY_LABEL: &str = "app.fastab";
-const UPSTREAM_LEGACY_LABEL: &str = "com.amazon.codewhisperer.launcher";
 
 // Force-load the framework so the dynamic `SMAppService` class lookup works.
 // ServiceManagement itself exists on macOS 12; only SMAppService is 13+.
@@ -233,7 +232,7 @@ mod tests {
     #[test]
     fn legacy_label_is_fastab_only() {
         assert_eq!(LEGACY_LABEL, APP_BUNDLE_ID);
-        assert_ne!(LEGACY_LABEL, UPSTREAM_LEGACY_LABEL);
+        assert_ne!(LEGACY_LABEL, "com.amazon.codewhisperer.launcher");
         assert_ne!(LEGACY_LABEL, "dev.emmmm.easy-complete");
     }
 
