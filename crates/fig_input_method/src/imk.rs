@@ -256,7 +256,7 @@ declare_class!(
                 center.addObserver_selector_name_object(
                     &this,
                     sel!(handleCursorPositionRequest:),
-                    Some(ns_string!("app.fastab.edit_buffer_updated")),
+                    Some(ns_string!(EDIT_BUFFER_UPDATED_NOTIFICATION)),
                     None,
                 );
             }
@@ -395,7 +395,7 @@ mod tests {
         assert_ne!(EDIT_BUFFER_UPDATED_NOTIFICATION, sibling.as_str());
         let production = include_str!("imk.rs").split("#[cfg(test)]").next().unwrap();
         assert!(
-            production.contains("ns_string!(\"app.fastab.edit_buffer_updated\")"),
+            production.contains("ns_string!(EDIT_BUFFER_UPDATED_NOTIFICATION)"),
             "IMK observer must listen on the Fastab notification"
         );
         assert!(
