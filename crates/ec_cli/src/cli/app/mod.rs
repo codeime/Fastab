@@ -121,12 +121,7 @@ impl AppSubcommand {
                 {
                     println!(
                         "
-   ███████╗██╗ ██████╗
-   ██╔════╝██║██╔════╝
-   █████╗  ██║██║  ███╗
-   ██╔══╝  ██║██║   ██║
-   ██║     ██║╚██████╔╝
-   ╚═╝     ╚═╝ ╚═════╝  ....is now installed!
+   {PRODUCT_NAME} is now installed!
 
    Start typing to use {}
 

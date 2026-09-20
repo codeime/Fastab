@@ -129,7 +129,7 @@ strip_shell_integration_fallback "${HOME}/.config/fish/config.fish"
 maybe_remove_fastab_fish_conf() {
   local path="$1"
   [[ -f "$path" ]] || return 0
-  if grep -Eqi 'easy-complete|easy complete|ec init|q init|codewhisperer|\.fig/shell' "$path"; then
+  if grep -Eqi 'easy-complete|easy complete|ec init|q init|fig init|codewhisperer|\.fig/shell' "$path"; then
     local tmp
     tmp="$(mktemp)"
     grep -Ev 'ftab init|/\.local/bin/ftab|command -v ftab >/dev/null|command -qv ftab |fastab/shell/|^[[:space:]]*# Fastab ' \

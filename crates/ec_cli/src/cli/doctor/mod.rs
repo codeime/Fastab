@@ -586,6 +586,12 @@ impl DoctorCheck for FigIntegrationsCheck {
             });
         }
 
+        if sibling_pty_owns_this_session() {
+            return Err(doctor_warning!(
+                "This terminal is wrapped by Easy Complete, not {PTY_BINARY_NAME}. Dual-install keeps one desktop wrapping a session — quit Easy Complete and open a new tab to test Fastab."
+            ));
+        }
+
         if std::env::var_os(PROCESS_LAUNCHED_BY_Q).is_some() {
             return Err(DoctorError::Error {
                 reason: format!("{PRODUCT_NAME} can not run in a process it launched").into(),
@@ -602,27 +608,6 @@ impl DoctorCheck for FigIntegrationsCheck {
                 fix: None,
                 error: None,
             });
-        }
-
-        // Check that ~/.local/bin/qterm exists
-        // TODO(grant): Check figterm exe exists
-        // let figterm_path = fig_directories::fig_dir()
-        //    .context("Could not find ~/.fig")?
-        //    .join("bin")
-        //    .join("figterm");
-
-        // if !figterm_path.exists() {
-        //    return Err(DoctorError::Error {
-        //        reason: "figterm does not exist".into(),
-        //        info: vec![],
-        //        fix: None,
-        //    });
-        //}
-
-        if sibling_pty_owns_this_session() {
-            return Err(doctor_warning!(
-                "This terminal is wrapped by Easy Complete, not {PTY_BINARY_NAME}. Dual-install keeps one desktop wrapping a session — quit Easy Complete and open a new tab to test Fastab."
-            ));
         }
 
         let our_pty_live = this_session_has_fastab_pty_socket();

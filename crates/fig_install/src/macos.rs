@@ -9,7 +9,7 @@ use fig_util::{APP_BUNDLE_NAME, directories};
 use regex::Regex;
 use security_framework::authorization::{Authorization, AuthorizationItemSetBuilder, Flags as AuthorizationFlags};
 use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, warn};
 
@@ -281,24 +281,17 @@ pub(crate) async fn uninstall_desktop(ctx: &fig_os_shim::Context) -> Result<(), 
     // 1. Set title of running ttys "Restart this terminal to finish uninstalling Q..."
     // 2. Delete webview cache
 
-    // Remove launch agents
+    // Remove Fastab's own leftover LaunchAgent only. Amazon Q / Easy Complete
+    // / Fig agents stay on disk for dual-install.
     if let Ok(home) = directories::home_dir() {
         let launch_agents = home.join("Library").join("LaunchAgents");
-        remove_in_dir_with_prefix_unless(&launch_agents, "com.amazon.codewhisperer.", |p| p.contains("daemon")).await;
+        remove_in_dir_with_prefix_unless(&launch_agents, "app.fastab", |_| false).await;
     } else {
         warn!("Could not find home directory");
     }
 
-    // Delete Fig defaults on macOS
     tokio::process::Command::new("defaults")
         .args(["delete", APP_BUNDLE_ID])
-        .output()
-        .await
-        .map_err(|err| warn!("Failed to delete defaults: {err}"))
-        .ok();
-
-    tokio::process::Command::new("defaults")
-        .args(["delete", "com.amazon.codewhisperer.shared"])
         .output()
         .await
         .map_err(|err| warn!("Failed to delete defaults: {err}"))
@@ -359,95 +352,10 @@ pub(crate) async fn uninstall_desktop(ctx: &fig_os_shim::Context) -> Result<(), 
     Ok(())
 }
 
+#[allow(clippy::unused_async)]
 pub async fn uninstall_terminal_integrations() {
-    // Delete integrations
-    if let Ok(home) = directories::home_dir() {
-        // Delete iTerm integration
-        for path in &[
-            "Library/Application Support/iTerm2/Scripts/AutoLaunch/fig-iterm-integration.py",
-            ".config/iterm2/AppSupport/Scripts/AutoLaunch/fig-iterm-integration.py",
-            "Library/Application Support/iTerm2/Scripts/AutoLaunch/fig-iterm-integration.scpt",
-        ] {
-            fs::remove_file(home.join(path))
-                .await
-                .map_err(|err| warn!("Could not remove iTerm integration {path}: {err}"))
-                .ok();
-        }
-
-        // Fastab does not ship a VS Code / Cursor extension. Do not scan or
-        // delete `withfig.fig-*` folders — those belong to Fig.
-
-        // Remove Hyper integration
-        let hyper_path = home.join(".hyper.js");
-        if hyper_path.exists() {
-            // Read the config file
-            match fs::File::open(&hyper_path).await {
-                Ok(mut file) => {
-                    let mut contents = String::new();
-                    match file.read_to_string(&mut contents).await {
-                        Ok(_) => {
-                            contents = contents.replace("\"fig-hyper-integration\",", "");
-                            contents = contents.replace("\"fig-hyper-integration\"", "");
-
-                            // Write the config file
-                            match fs::File::create(&hyper_path).await {
-                                Ok(mut file) => {
-                                    file.write_all(contents.as_bytes())
-                                        .await
-                                        .map_err(|err| warn!("Could not write to Hyper config: {err}"))
-                                        .ok();
-                                },
-                                Err(err) => {
-                                    warn!("Could not create Hyper config: {err}");
-                                },
-                            }
-                        },
-                        Err(err) => {
-                            warn!("Could not read Hyper config: {err}");
-                        },
-                    }
-                },
-                Err(err) => {
-                    warn!("Could not open Hyper config: {err}");
-                },
-            }
-        }
-
-        // Remove Kitty integration
-        let kitty_path = home.join(".config").join("kitty").join("kitty.conf");
-        if kitty_path.exists() {
-            // Read the config file
-            match fs::File::open(&kitty_path).await {
-                Ok(mut file) => {
-                    let mut contents = String::new();
-                    match file.read_to_string(&mut contents).await {
-                        Ok(_) => {
-                            contents = contents.replace("watcher ${HOME}/.fig/tools/kitty-integration.py", "");
-                            // Write the config file
-                            match fs::File::create(&kitty_path).await {
-                                Ok(mut file) => {
-                                    file.write_all(contents.as_bytes())
-                                        .await
-                                        .map_err(|err| warn!("Could not write to Kitty config: {err}"))
-                                        .ok();
-                                },
-                                Err(err) => {
-                                    warn!("Could not create Kitty config: {err}");
-                                },
-                            }
-                        },
-                        Err(err) => {
-                            warn!("Could not read Kitty config: {err}");
-                        },
-                    }
-                },
-                Err(err) => {
-                    warn!("Could not open Kitty config: {err}");
-                },
-            }
-        }
-        // TODO: Add Jetbrains integration
-    }
+    // Fastab does not install iTerm / Hyper / Kitty / VS Code plugins, and
+    // those shared Fig filenames belong to Easy Complete / Fig / Amazon Q.
 }
 
 pub fn install(src: impl AsRef<CStr>, dst: impl AsRef<CStr>, same_bundle_name: bool) -> Result<(), Error> {

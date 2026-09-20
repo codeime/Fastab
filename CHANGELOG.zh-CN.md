@@ -9,6 +9,7 @@
 - 修复：更新器用的产品名只认 Fastab，不再把 Easy Complete 的更新源当成自己的。
 - 修复：残留的 Fig CLI 提示（`fig settings` / `fig update` / `fig launch` / `fig issue`）和 doctor 里的 “Qterm” 文案改为 `ftab` / `fastabterm`。`ftab launch` 说的是设置窗口，不再说 dashboard。WebView 时期的 `/help`、`/autocomplete` 深链分别打开关于和行为页。
 - 修复：doctor 和卸载不再扫描或删除 Fig 的 `withfig.fig-*` VS Code / Cursor 扩展。Fastab 不带这种扩展。
+- 修复：启动或卸载 Fastab 不再删除共用的 Fig iTerm / Hyper / Kitty 集成，也不再清 Amazon Q 的 LaunchAgent。Fish 的 `fig init` 当成兄弟 hook。残留的 “Fig” / “qterm” 用户文案改为 Fastab。
 
 ## v3.0.0-beta.16
 

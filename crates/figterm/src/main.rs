@@ -522,7 +522,7 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
         Err(err) => {
             if !fig_settings::state::get_bool_or("pty.suppress_log_error", false) {
                 // let id = capture_anyhow(&err);
-                eprintln!("Fig failed to init logger: {err:?}");
+                eprintln!("{PRODUCT_NAME} failed to init logger: {err:?}");
             }
             None
         },
@@ -958,8 +958,8 @@ fn main() {
     logger::stdio_debug_log(format!("{Q_LOG_LEVEL}={}", fig_log::get_log_level()));
 
     if !state::get_bool_or("qterm.enabled", true) {
-        println!("[NOTE] qterm is disabled. Autocomplete will not work.");
-        logger::stdio_debug_log("qterm is disabled. `qterm.enabled` == false");
+        println!("[NOTE] {PTY_BINARY_NAME} is disabled. Autocomplete will not work.");
+        logger::stdio_debug_log(format!("{PTY_BINARY_NAME} is disabled. `qterm.enabled` == false"));
         return;
     }
 

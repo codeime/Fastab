@@ -257,6 +257,7 @@ fn is_sibling_hook_line(line: &str) -> bool {
         return lower.contains("easy complete")
             || lower.contains("easy-complete")
             || lower.contains("amazon q")
+            || (lower.contains("fig") && (lower.contains("pre block") || lower.contains("post block")))
             || (lower.contains("codewhisperer") && (lower.contains("pre block") || lower.contains("post block")));
     }
     t.contains("ec init")
@@ -268,6 +269,10 @@ fn is_sibling_hook_line(line: &str) -> bool {
         || t.contains("/.local/bin/q")
         || t.contains("command -v q >/dev/null")
         || t.contains("command -qv q")
+        || t.contains("fig init")
+        || t.contains("/.local/bin/fig")
+        || t.contains("command -v fig >/dev/null")
+        || t.contains("command -qv fig")
         || t.contains(".fig/shell")
         || t.contains("codewhisperer/shell")
 }
@@ -1271,6 +1276,55 @@ eval "$(ec init zsh pre --rcfile zshrc)""#,
         assert!(
             contents.contains("ftab init"),
             "Fastab fish hook must be added: {contents}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fish_script_install_preserves_fig_init() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("00_fig_pre.fish");
+        std::fs::write(&path, "eval (fig init fish pre | string split0)\n").unwrap();
+        let integration = ShellScriptShellIntegration {
+            shell: Shell::Fish,
+            when: When::Pre,
+            path,
+        };
+        integration.install().await.unwrap();
+        let contents = std::fs::read_to_string(integration.path()).unwrap();
+        assert!(contents.contains("fig init"), "Fig fish hook must stay: {contents}");
+        assert!(
+            contents.contains("ftab init"),
+            "Fastab fish hook must be added: {contents}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fish_uninstall_keeps_fig_init() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("00_fig_pre.fish");
+        std::fs::write(
+            &path,
+            "# Fig pre block\neval (fig init fish pre | string split0)\ntest -x ~/.local/bin/ftab; and eval (~/.local/bin/ftab init fish pre --rcfile 00_fig_pre | string split0)\n",
+        )
+        .unwrap();
+        let integration = ShellScriptShellIntegration {
+            shell: Shell::Fish,
+            when: When::Pre,
+            path,
+        };
+        integration.uninstall().await.unwrap();
+        let contents = std::fs::read_to_string(integration.path()).unwrap();
+        assert!(
+            contents.contains("fig init"),
+            "uninstall must leave Fig fish hook: {contents}"
+        );
+        assert!(
+            contents.contains("Fig pre block"),
+            "uninstall must leave Fig comment: {contents}"
+        );
+        assert!(
+            !contents.contains("ftab init"),
+            "uninstall must drop Fastab hook line: {contents}"
         );
     }
 

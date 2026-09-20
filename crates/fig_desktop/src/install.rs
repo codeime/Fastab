@@ -176,7 +176,6 @@ pub async fn initialize_fig_dir(env: &fig_os_shim::Env) -> anyhow::Result<()> {
     use fig_integrations::shell::ShellExt;
     use fig_util::Shell;
     use fig_util::consts::{CLI_BINARY_NAME, PTY_BINARY_NAME};
-    use fig_util::directories::home_dir;
 
     let local_bin = fig_util::directories::home_local_bin()?;
     if let Err(err) = fs::create_dir_all(&local_bin) {
@@ -242,20 +241,6 @@ pub async fn initialize_fig_dir(env: &fig_os_shim::Env) -> anyhow::Result<()> {
             }
         },
         None => error!("Failed to find {CLI_BINARY_NAME} in bundle"),
-    }
-
-    if let Ok(home) = home_dir() {
-        let iterm_integration_path = home
-            .join("Library")
-            .join("Application Support")
-            .join("iTerm2")
-            .join("Scripts")
-            .join("AutoLaunch")
-            .join("fig-iterm-integration.scpt");
-
-        if iterm_integration_path.exists() {
-            std::fs::remove_file(&iterm_integration_path).ok();
-        }
     }
 
     // Init the shell directory

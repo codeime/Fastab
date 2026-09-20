@@ -5,7 +5,7 @@ use fig_integrations::Integration;
 use fig_integrations::shell::ShellExt;
 use fig_integrations::ssh::SshIntegration;
 use fig_os_shim::{Context, Env};
-use fig_util::{CLI_BINARY_NAME, PTY_BINARY_NAME, Shell, directories};
+use fig_util::{CLI_BINARY_NAME, PRODUCT_NAME, PTY_BINARY_NAME, Shell, directories};
 
 use crate::Error;
 
@@ -112,7 +112,7 @@ pub async fn uninstall(components: InstallComponents, ctx: Arc<Context>) -> Resu
             .output()
             .await;
         if let Err(err) = quit_res {
-            tracing::warn!("Failed to quit running Fig app: {err}");
+            tracing::warn!("Failed to quit running {PRODUCT_NAME} app: {err}");
         }
     }
 
