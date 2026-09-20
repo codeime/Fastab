@@ -12,6 +12,7 @@
 - 修复：启动或卸载 Fastab 不再删除共用的 Fig iTerm / Hyper / Kitty 集成，也不再清 Amazon Q 的 LaunchAgent。Fish 的 `fig init` 当成兄弟 hook。残留的 “Fig” / “qterm” 用户文案改为 Fastab。
 - 修复：安装或卸载 Fastab 不再从 `.zshrc` / `.bashrc` 剥掉 Amazon Q / CodeWhisperer 或 `~/.fig` 的 hook，也不会在共用的 fish `00_fig_pre.fish` 里还有别的行时整文件删掉。`ftab init nu` 启动 `fastabterm`，不再走 `~/.fig/bin/figterm`。输入法光标通知只发给 Fastab，不再叫醒 Easy Complete / Amazon Q 的 helper。
 - 修复：历史排序和 PTY 的 shell 识别现在认 `zsh (fastabterm)`（以及兄弟产品的 `ecterm` / `figterm` 标题），不再只剥 `(figterm)`。桌面日志改为 `fastab.log`。网站演示标题栏改为 `ftab`。
+- 修复：`scripts/uninstall.sh` 现在会卸 `dotfiles` 和 `ssh`（以前的 `shell` 子命令是空操作），删掉 `zsh (fastabterm)` 副本，并剥掉 Fastab 写进 `~/.ssh/config` 的 Include，避免残留路径让 `ssh` 报错。`ftab integrations … shell` 作为 `dotfiles` 的别名。发布文档里的包名改为 `Fastab-arm64.dmg`。
 
 ## v3.0.0-beta.16
 

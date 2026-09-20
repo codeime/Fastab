@@ -32,11 +32,12 @@ if [[ "${1:-}" != "--yes" ]]; then
   echo "  • /Applications/${APP_DISPLAY}.app"
   echo "  • ${IME_SYMLINK}"
   echo "  • ${PLIST_PATH}"
-  echo "  • ${LOCAL_BIN}/ftab, fastabterm"
+  echo "  • ${LOCAL_BIN}/ftab, fastabterm, and <shell> (fastabterm) copies"
   echo "  • ${APP_SUPPORT}/"
   echo "  • ${CACHE_DIR}/"
   echo "  • ${TMP_ROOT}/ftablog"
   echo "  • Fastab shell integration lines in ~/.zshrc / ~/.bashrc / ~/.config/fish/config.fish"
+  echo "  • Fastab SSH Include in ~/.ssh/config"
   echo ""
   echo "  Easy Complete is not touched."
   echo ""
@@ -57,7 +58,12 @@ fi
 
 info "Uninstalling shell integration..."
 if command -v ftab &>/dev/null; then
-  ftab integrations uninstall shell 2>/dev/null || true
+  ftab integrations uninstall dotfiles 2>/dev/null || true
+fi
+
+info "Uninstalling SSH integration..."
+if command -v ftab &>/dev/null; then
+  ftab integrations uninstall ssh 2>/dev/null || true
 fi
 
 # ── 2. Kill running processes ─────────────────────────────────────────────────
@@ -100,9 +106,13 @@ rm -rf "$APP_BUNDLE"
 info "Removing CLI symlinks..."
 rm -f "${LOCAL_BIN}/ftab"
 rm -f "${LOCAL_BIN}/fastabterm"
+# Desktop launch copies `zsh (fastabterm)` (and bash / fish / nu) for `exec -a`.
+for shell in bash zsh fish nu; do
+  rm -f "${LOCAL_BIN}/${shell} (fastabterm)"
+done
 
 # ── 7. Fallback shell integration cleanup (in case the CLI was already removed)
-# ftab integrations uninstall shell was already called in step 1.
+# ftab integrations uninstall dotfiles / ssh were already called in step 1.
 # This fallback removes only Fastab lines.
 info "Verifying shell integration removal..."
 
@@ -142,6 +152,31 @@ maybe_remove_fastab_fish_conf() {
 }
 maybe_remove_fastab_fish_conf "${HOME}/.config/fish/conf.d/00_fig_pre.fish"
 maybe_remove_fastab_fish_conf "${HOME}/.config/fish/conf.d/99_fig_post.fish"
+
+# Fastab's ~/.ssh/config block Includes Application Support/fastab/ssh. If that
+# file is gone and the Include stays, OpenSSH errors on every ssh. Strip only
+# the Fastab comment + Match all + fastab/ssh Include — sibling products keep
+# their own blocks.
+strip_fastab_ssh_config() {
+  local ssh_config="${HOME}/.ssh/config"
+  [[ -f "$ssh_config" ]] || return 0
+  local tmp
+  tmp="$(mktemp)"
+  awk '
+    function flush() {
+      if (held != "") print held
+      held = ""
+      pending = 0
+    }
+    /^# Fastab SSH Integration/ { flush(); held = $0; pending = 1; next }
+    pending == 1 && $0 ~ /^Match all[[:space:]]*$/ { held = held "\n" $0; pending = 2; next }
+    pending == 2 && $0 ~ /Include/ && $0 ~ /fastab\/ssh/ { held = ""; pending = 0; next }
+    { flush(); print }
+    END { flush() }
+  ' "$ssh_config" > "$tmp"
+  mv "$tmp" "$ssh_config"
+}
+strip_fastab_ssh_config
 
 # ── 8. Remove application data ────────────────────────────────────────────────
 info "Removing application data..."

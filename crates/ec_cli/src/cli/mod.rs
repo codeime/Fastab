@@ -438,4 +438,23 @@ mod test {
         assert!(help.contains(&format!("v{}", env!("CARGO_PKG_VERSION"))));
         assert!(help.contains("https://github.com/codeime/easy-complete"));
     }
+
+    #[test]
+    fn integrations_shell_is_an_alias_for_dotfiles() {
+        use integrations::{Integration, IntegrationsSubcommands};
+        assert_parse!(
+            ["integrations", "uninstall", "dotfiles"],
+            CliRootCommands::Integrations(IntegrationsSubcommands::Uninstall {
+                integration: Integration::Dotfiles { shell: None },
+                silent: false,
+            })
+        );
+        assert_parse!(
+            ["integrations", "uninstall", "shell"],
+            CliRootCommands::Integrations(IntegrationsSubcommands::Uninstall {
+                integration: Integration::Dotfiles { shell: None },
+                silent: false,
+            })
+        );
+    }
 }
