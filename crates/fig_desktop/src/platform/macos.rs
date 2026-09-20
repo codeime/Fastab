@@ -642,8 +642,8 @@ impl PlatformStateImpl {
             tracing::debug!("Sending notif {}", fig_util::macos::EDIT_BUFFER_UPDATED_NOTIFICATION);
             NotificationCenter::distributed_center().post_notification(
                 // Literal must stay equal to `fig_util::macos::EDIT_BUFFER_UPDATED_NOTIFICATION`.
-                // `ns_string!` needs a compile-time literal; a sibling IME listening on
-                // `com.amazon.codewhisperer.edit_buffer_updated` must not hear this.
+                // `ns_string!` needs a compile-time literal. Do not post the Amazon Q /
+                // Easy Complete caret name — a sibling IME must not hear this.
                 ns_string!("app.fastab.edit_buffer_updated"),
                 &NSDictionary::new(),
             );
