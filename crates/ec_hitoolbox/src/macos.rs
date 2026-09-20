@@ -48,6 +48,25 @@ pub fn remove_palette_entries(bundle_ids: &[&str]) -> bool {
     enabled && selected
 }
 
+/// Another Non Keyboard IM is already on the selected list.
+///
+/// `TISSelectInputSource` would steal the current palette from Easy Complete
+/// (or Sogou, Amazon Q, …). Enable is enough for new IME terminals; select
+/// is not.
+pub fn has_other_selected_non_keyboard(ours: &str) -> bool {
+    list_has_other_non_keyboard(DOMAIN, SELECTED_KEY, ours)
+}
+
+fn list_has_other_non_keyboard(domain: &str, key: &str, ours: &str) -> bool {
+    let Some(list) = copy_list(domain, key) else {
+        return false;
+    };
+    list.iter().any(|item| {
+        let (id, kind) = entry_strings(*item);
+        kind.as_deref() == Some(NON_KEYBOARD_KIND) && id.as_deref().is_some_and(|id| id != ours)
+    })
+}
+
 /// What an existing palette entry means for the source being installed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Entry {
@@ -546,6 +565,35 @@ mod tests {
             value_at(key, 2, "Input Mode").as_deref(),
             Some("com.apple.inputmethod.SCIM.ITABC")
         );
+
+        clear(key);
+    }
+
+    #[test]
+    fn other_selected_non_keyboard_is_detected() {
+        let key = "PaletteTestOtherSelected";
+        let Some(_serial) = scratch(key) else { return };
+        seed(
+            key,
+            &[
+                ("com.apple.keylayout.ABC", "Keyboard Layout"),
+                (PREVIOUS_PRODUCT, NON_KEYBOARD_KIND),
+            ],
+        );
+
+        assert!(list_has_other_non_keyboard(TEST_DOMAIN, key, OURS));
+        assert!(!list_has_other_non_keyboard(TEST_DOMAIN, key, PREVIOUS_PRODUCT));
+
+        clear(key);
+    }
+
+    #[test]
+    fn keyboard_only_selected_list_is_not_another_ime() {
+        let key = "PaletteTestKeyboardOnly";
+        let Some(_serial) = scratch(key) else { return };
+        seed(key, &[("com.apple.keylayout.ABC", "Keyboard Layout")]);
+
+        assert!(!list_has_other_non_keyboard(TEST_DOMAIN, key, OURS));
 
         clear(key);
     }

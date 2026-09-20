@@ -29,6 +29,10 @@ pub const PRODUCT_NAME: &str = "Fastab";
 
 pub const RUNTIME_DIR_NAME: &str = "fastabrun";
 
+/// Easy Complete's runtime dir. Dual-install keeps Fastab sockets in
+/// [`RUNTIME_DIR_NAME`] and leaves `ecterm` under this name.
+pub const PREVIOUS_PRODUCT_RUNTIME_DIR_NAME: &str = "ecrun";
+
 /// Data directory name used in paths like ~/.local/share/{DATA_DIR_NAME}
 #[cfg(unix)]
 pub const DATA_DIR_NAME: &str = "fastab";

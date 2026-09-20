@@ -619,16 +619,32 @@ impl DoctorCheck for FigIntegrationsCheck {
         //    });
         //}
 
+        if sibling_pty_owns_this_session() {
+            return Err(doctor_warning!(
+                "This terminal is wrapped by Easy Complete, not {PTY_BINARY_NAME}. Dual-install keeps one desktop wrapping a session — quit Easy Complete and open a new tab to test Fastab."
+            ));
+        }
+
+        let our_pty_live = this_session_has_fastab_pty_socket();
+
         match fig_os_shim::Env::new().q_term().as_deref() {
-            Ok(env!("CARGO_PKG_VERSION")) => Ok(()),
-            Ok(ver) if env!("CARGO_PKG_VERSION").ends_with("-dev") || ver.ends_with("-dev") => Err(doctor_warning!(
-                "{PTY_BINARY_NAME} is running with a different version than {PRODUCT_NAME} CLI, it looks like you are running a development version of {PRODUCT_NAME} however"
-            )),
-            Ok(ver) => Err(DoctorError::Error {
+            Ok(ver) if our_pty_live && ver == env!("CARGO_PKG_VERSION") => Ok(()),
+            Ok(ver) if our_pty_live && (env!("CARGO_PKG_VERSION").ends_with("-dev") || ver.ends_with("-dev")) => {
+                Err(doctor_warning!(
+                    "{PTY_BINARY_NAME} is running with a different version than {PRODUCT_NAME} CLI, it looks like you are running a development version of {PRODUCT_NAME} however"
+                ))
+            },
+            Ok(ver) if our_pty_live => Err(DoctorError::Error {
                 reason: format!(
                     "This terminal is running an outdated integration (v{ver}), please restart your terminal"
                 )
                 .into(),
+                info: vec![],
+                fix: None,
+                error: None,
+            }),
+            Ok(_) => Err(DoctorError::Error {
+                reason: format!("{PTY_BINARY_NAME} is not wrapping this terminal, please try opening a new tab").into(),
                 info: vec![],
                 fix: None,
                 error: None,
@@ -646,6 +662,25 @@ impl DoctorCheck for FigIntegrationsCheck {
     }
 }
 
+fn this_session_id() -> Option<String> {
+    std::env::var(QTERM_SESSION_ID).ok()
+}
+
+fn this_session_has_fastab_pty_socket() -> bool {
+    this_session_id()
+        .and_then(|session| directories::figterm_socket_path(session).ok())
+        .is_some_and(|path| path.exists())
+}
+
+fn sibling_pty_owns_this_session() -> bool {
+    if this_session_has_fastab_pty_socket() {
+        return false;
+    }
+    this_session_id()
+        .and_then(|session| directories::previous_product_figterm_socket_path(session).ok())
+        .is_some_and(|path| path.exists())
+}
+
 struct PtySocketCheck;
 
 #[async_trait]
@@ -655,6 +690,12 @@ impl DoctorCheck for PtySocketCheck {
     }
 
     async fn check(&self, _: &()) -> Result<(), DoctorError> {
+        if sibling_pty_owns_this_session() {
+            return Err(doctor_warning!(
+                "This terminal is wrapped by Easy Complete, not {PTY_BINARY_NAME}. Dual-install keeps one desktop wrapping a session."
+            ));
+        }
+
         // Check that the socket exists
         let term_session = match std::env::var(QTERM_SESSION_ID) {
             Ok(session) => session,

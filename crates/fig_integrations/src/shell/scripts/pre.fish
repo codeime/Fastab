@@ -9,9 +9,13 @@ if not test -z "$Q_NEW_SESSION"
     set --erase Q_NEW_SESSION
 end
 
-# Load parent from env variables
-if test -n "$Q_PARENT"; and test -z "$Q_SET_PARENT"
-    set --export Q_PARENT $Q_SET_PARENT
+# Load parent from env variables (same logic as pre.sh)
+if test -z "$Q_SET_PARENT_CHECK"
+    if test -z "$Q_PARENT"; and test -n "$Q_SET_PARENT"
+        set --export Q_PARENT $Q_SET_PARENT
+        set --erase Q_SET_PARENT
+    end
+    set --export Q_SET_PARENT_CHECK 1
 end
 
 if test -z "$SHOULD_QTERM_LAUNCH"

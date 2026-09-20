@@ -86,29 +86,11 @@ if [[ -L "$IME_SYMLINK" || -d "$IME_SYMLINK" ]]; then
 fi
 
 # `ftab integrations uninstall input-method` already dropped our palette
-# entries in-process. This fallback is only for when the CLI was already gone.
-# It still filters by bundle ID rather than deleting the whole array.
-info "Removing Input Method from HIToolbox..."
-python3 - "$IME_BUNDLE_ID" <<'PY' 2>/dev/null || true
-import subprocess, plistlib, sys
-bundle_ids = set(sys.argv[1:])
-domain = "com.apple.HIToolbox"
-proc = subprocess.run(["defaults", "export", domain, "-"], capture_output=True)
-if proc.returncode != 0:
-    sys.exit(0)
-data = plistlib.loads(proc.stdout)
-changed = False
-for key in ("AppleEnabledInputSources", "AppleSelectedInputSources"):
-    sources = data.get(key)
-    if not isinstance(sources, list):
-        continue
-    kept = [s for s in sources if s.get("Bundle ID") not in bundle_ids]
-    if len(kept) != len(sources):
-        data[key] = kept
-        changed = True
-if changed:
-    subprocess.run(["defaults", "import", domain, "-"], input=plistlib.dumps(data))
-PY
+# entries in-process. Do not fall back to `defaults export`/`import` of the
+# whole HIToolbox domain: that race is what dropped Easy Complete's palette
+# when install ran two writers. A leftover Fastab row after the CLI is gone
+# is inert.
+info "Input Method palette entries were removed in-process (no HIToolbox domain rewrite)."
 
 # ── 5. Remove app bundle ───────────────────────────────────────────────────────
 info "Removing /Applications/${APP_DISPLAY}.app..."
@@ -143,11 +125,23 @@ strip_shell_integration_fallback "${HOME}/.bash_profile"
 strip_shell_integration_fallback "${HOME}/.config/fish/config.fish"
 
 # Fish dedicated conf files are still named 00_fig_pre.fish / 99_fig_post.fish.
-# Easy Complete uses the same names, so only drop a file when it is Fastab-only.
+# Easy Complete / Amazon Q use the same names. Strip Fastab hook lines only.
 maybe_remove_fastab_fish_conf() {
   local path="$1"
   [[ -f "$path" ]] || return 0
-  if grep -Eq 'ftab|fastab' "$path" && ! grep -Eq 'easy-complete|ec init' "$path"; then
+  if grep -Eqi 'easy-complete|easy complete|ec init|q init|codewhisperer|\.fig/shell' "$path"; then
+    local tmp
+    tmp="$(mktemp)"
+    grep -Ev 'ftab init|/\.local/bin/ftab|command -v ftab >/dev/null|command -qv ftab |fastab/shell/|^[[:space:]]*# Fastab ' \
+      "$path" > "$tmp" || true
+    if ! grep -Eq '[^[:space:]]' "$tmp"; then
+      rm -f "$path" "$tmp"
+    else
+      mv "$tmp" "$path"
+    fi
+    return 0
+  fi
+  if grep -Eq 'ftab init|fastab/shell/|^[[:space:]]*# Fastab ' "$path"; then
     rm -f "$path"
   fi
 }

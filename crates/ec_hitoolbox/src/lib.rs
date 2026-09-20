@@ -18,7 +18,7 @@
 mod macos;
 
 #[cfg(target_os = "macos")]
-pub use macos::{ensure_palette_enabled, is_palette_enabled, remove_palette_entries};
+pub use macos::{ensure_palette_enabled, has_other_selected_non_keyboard, is_palette_enabled, remove_palette_entries};
 
 /// HIToolbox is macOS-only; the rest of the workspace still compiles elsewhere.
 #[cfg(not(target_os = "macos"))]
@@ -33,5 +33,10 @@ pub fn ensure_palette_enabled(_bundle_id: &str) -> bool {
 
 #[cfg(not(target_os = "macos"))]
 pub fn remove_palette_entries(_bundle_ids: &[&str]) -> bool {
+    false
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn has_other_selected_non_keyboard(_ours: &str) -> bool {
     false
 }

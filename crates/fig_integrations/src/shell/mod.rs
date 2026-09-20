@@ -221,11 +221,72 @@ fn get_prefix(s: &str) -> &str {
 }
 
 fn looks_like_sibling_shell_file(text: &str) -> bool {
-    text.contains("easy-complete") || text.contains("ec init")
+    text.lines().any(is_sibling_hook_line)
 }
 
 fn looks_like_fastab_shell_file(text: &str) -> bool {
-    text.contains("ftab") || text.contains("fastab")
+    text.lines().any(is_fastab_shell_line)
+}
+
+fn is_fastab_shell_line(line: &str) -> bool {
+    let t = line.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if t.starts_with('#') {
+        let lower = t.to_ascii_lowercase();
+        return lower.starts_with("# fastab ") || lower.starts_with("# fastab\t");
+    }
+    t.contains("ftab init")
+        || t.contains("/.local/bin/ftab")
+        || t.contains("command -v ftab >/dev/null")
+        || t.contains("command -qv ftab")
+        || t.contains("fastab/shell/")
+}
+
+fn is_sibling_hook_line(line: &str) -> bool {
+    if is_fastab_shell_line(line) {
+        return false;
+    }
+    let t = line.trim();
+    if t.is_empty() {
+        return false;
+    }
+    let lower = t.to_ascii_lowercase();
+    if t.starts_with('#') {
+        return lower.contains("easy complete")
+            || lower.contains("easy-complete")
+            || lower.contains("amazon q")
+            || (lower.contains("codewhisperer") && (lower.contains("pre block") || lower.contains("post block")));
+    }
+    t.contains("ec init")
+        || t.contains("/.local/bin/ec")
+        || t.contains("command -v ec >/dev/null")
+        || t.contains("command -qv ec")
+        || t.contains("easy-complete/shell")
+        || t.contains("q init")
+        || t.contains("/.local/bin/q")
+        || t.contains("command -v q >/dev/null")
+        || t.contains("command -qv q")
+        || t.contains(".fig/shell")
+        || t.contains("codewhisperer/shell")
+}
+
+fn is_local_bin_path_line(line: &str) -> bool {
+    if is_fastab_shell_line(line) {
+        return false;
+    }
+    let t = line.trim();
+    let has_local_bin = t.contains(".local/bin");
+    if !has_local_bin {
+        return false;
+    }
+    t.contains("PATH") || t.contains("fish_user_paths") || t.contains("contains $HOME/.local/bin")
+}
+
+fn is_sibling_preamble_line(line: &str) -> bool {
+    let t = line.trim();
+    t.is_empty() || is_sibling_hook_line(line) || is_local_bin_path_line(line)
 }
 
 impl ShellScriptShellIntegration {
@@ -336,7 +397,7 @@ impl Integration for ShellScriptShellIntegration {
                 }
                 let kept: String = existing
                     .lines()
-                    .filter(|line| !line.contains("ftab") && !line.contains("fastab"))
+                    .filter(|line| !is_fastab_shell_line(line))
                     .collect::<Vec<_>>()
                     .join("\n");
                 let kept = kept.trim_end();
@@ -357,7 +418,9 @@ impl Integration for ShellScriptShellIntegration {
     }
 
     async fn migrate(&self) -> Result<()> {
-        self.get_file_integration().install().await
+        // FileIntegration::install truncates. Shared fish names
+        // (`00_fig_pre.fish`) must append beside Easy Complete / Amazon Q.
+        self.install().await
     }
 }
 
@@ -585,9 +648,15 @@ impl DotfileShellIntegration {
         //   not break our hooks — but a strict "must be last" check makes Settings
         //   forever report "needs setup" and repair loops against Otty's installer.
         //   When checking post position, strip known inert foreign trailers first.
+        // Dual-install: Easy Complete (and Amazon Q) use the same first/last
+        // rule. Treat their blocks as inert for position so repair does not
+        // ping-pong with the sibling installer.
         let text_for_position = match when {
-            When::Pre => text.to_owned(),
-            When::Post => strip_trailing_foreign_integrations(text),
+            When::Pre => strip_leading_sibling_pre_blocks(text),
+            When::Post => {
+                let without_foreign = strip_trailing_foreign_integrations(text);
+                strip_trailing_sibling_post_blocks(&without_foreign)
+            },
         };
         if !self.source_regex(when, true)?.is_match(&text_for_position) {
             let position = match when {
@@ -628,13 +697,19 @@ impl DotfileShellIntegration {
         if self.pre {
             self.script_integration(When::Pre)?.install().await?;
             let (shebang, post_shebang) = split_shebang(&contents);
-            contents = format!(
-                "{}{}\n{}\n{}",
-                shebang,
-                self.description(When::Pre),
-                self.source_text(When::Pre)?,
-                post_shebang,
-            );
+            let (sibling_lead, rest) = split_leading_sibling_pre_blocks(post_shebang);
+            let mut assembled = String::new();
+            assembled.push_str(shebang);
+            assembled.push_str(&sibling_lead);
+            if !sibling_lead.is_empty() && !sibling_lead.ends_with('\n') {
+                assembled.push('\n');
+            }
+            assembled.push_str(&self.description(When::Pre));
+            assembled.push('\n');
+            assembled.push_str(&self.source_text(When::Pre)?);
+            assembled.push('\n');
+            assembled.push_str(&rest);
+            contents = assembled;
         }
 
         if self.post {
@@ -824,6 +899,45 @@ fn foreign_integration_regexes() -> Vec<Regex> {
         .iter()
         .map(|p| Regex::new(p).expect("foreign integration regex"))
         .collect()
+}
+
+/// Peel leading Easy Complete / Amazon Q pre blocks (and their PATH lines)
+/// so Fastab's "must be first" check does not fight the sibling installer.
+fn split_leading_sibling_pre_blocks(text: &str) -> (String, String) {
+    let mut consumed = 0usize;
+    let mut peeled_any = false;
+    for line in text.split_inclusive('\n') {
+        let content = line.trim_end_matches(['\n', '\r']);
+        if is_sibling_preamble_line(content) {
+            consumed += line.len();
+            peeled_any = true;
+        } else {
+            break;
+        }
+    }
+    if !peeled_any {
+        return (String::new(), text.to_owned());
+    }
+    (text[..consumed].to_owned(), text[consumed..].to_owned())
+}
+
+fn strip_leading_sibling_pre_blocks(text: &str) -> String {
+    split_leading_sibling_pre_blocks(text).1
+}
+
+/// Peel trailing sibling post blocks so Fastab's "must be last" check accepts
+/// either order versus Easy Complete / Amazon Q.
+fn strip_trailing_sibling_post_blocks(text: &str) -> String {
+    let mut end = text.len();
+    for line in text.split_inclusive('\n').rev() {
+        let content = line.trim_end_matches(['\n', '\r']);
+        if is_sibling_preamble_line(content) {
+            end -= line.len();
+        } else {
+            break;
+        }
+    }
+    text[..end].trim_end().to_owned()
 }
 
 /// Drop known third-party trailers from the end of `text` (repeat until stable).
@@ -1138,6 +1252,164 @@ eval "$(ec init zsh pre --rcfile zshrc)""#,
         assert!(
             !contents.contains("ftab"),
             "uninstall must drop Fastab fish hook: {contents}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fish_script_install_preserves_q_init() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("00_fig_pre.fish");
+        std::fs::write(&path, "eval (q init fish pre | string split0)\n").unwrap();
+        let integration = ShellScriptShellIntegration {
+            shell: Shell::Fish,
+            when: When::Pre,
+            path,
+        };
+        integration.install().await.unwrap();
+        let contents = std::fs::read_to_string(integration.path()).unwrap();
+        assert!(contents.contains("q init"), "Amazon Q fish hook must stay: {contents}");
+        assert!(
+            contents.contains("ftab init"),
+            "Fastab fish hook must be added: {contents}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fish_uninstall_keeps_comment_that_mentions_fastab() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("00_fig_pre.fish");
+        std::fs::write(
+            &path,
+            "# Easy Complete can sit beside Fastab\neval (ec init fish pre | string split0)\ntest -x ~/.local/bin/ftab; and eval (~/.local/bin/ftab init fish pre --rcfile 00_fig_pre | string split0)\n",
+        )
+        .unwrap();
+        let integration = ShellScriptShellIntegration {
+            shell: Shell::Fish,
+            when: When::Pre,
+            path,
+        };
+        integration.uninstall().await.unwrap();
+        let contents = std::fs::read_to_string(integration.path()).unwrap();
+        assert!(
+            contents.contains("ec init"),
+            "uninstall must leave sibling fish hook: {contents}"
+        );
+        assert!(
+            contents.contains("beside Fastab"),
+            "a sibling comment that mentions Fastab must stay: {contents}"
+        );
+        assert!(
+            !contents.contains("ftab init"),
+            "uninstall must drop Fastab hook line: {contents}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fish_migrate_does_not_truncate_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("00_fig_pre.fish");
+        std::fs::write(
+            &path,
+            "# Easy Complete pre block\neval (ec init fish pre | string split0)\n",
+        )
+        .unwrap();
+        let integration = ShellScriptShellIntegration {
+            shell: Shell::Fish,
+            when: When::Pre,
+            path,
+        };
+        integration.migrate().await.unwrap();
+        let contents = std::fs::read_to_string(integration.path()).unwrap();
+        assert!(
+            contents.contains("ec init"),
+            "desktop migrate must not wipe sibling fish: {contents}"
+        );
+        assert!(
+            contents.contains("ftab init"),
+            "desktop migrate must still add Fastab: {contents}"
+        );
+    }
+
+    #[test]
+    fn test_pre_matches_when_easy_complete_is_first() {
+        let integration = zshrc_integration();
+        let home = directories::home_dir().unwrap();
+        let data = directories::fig_data_dir().unwrap();
+        let rel = data.strip_prefix(&home).unwrap().display();
+        let sibling = previous_product_data_dir().unwrap();
+        let sibling_rel = sibling.strip_prefix(&home).unwrap().display();
+        let doc = format!(
+            "[[ -f \"${{HOME}}/{sibling_rel}/shell/zshrc.pre.zsh\" ]] && builtin source \"${{HOME}}/{sibling_rel}/shell/zshrc.pre.zsh\"\n[[ -f \"${{HOME}}/{rel}/shell/zshrc.pre.zsh\" ]] && builtin source \"${{HOME}}/{rel}/shell/zshrc.pre.zsh\"\n"
+        );
+        integration
+            .matches_text(&doc, When::Pre)
+            .expect("Easy Complete first must not fail Fastab pre position");
+    }
+
+    #[test]
+    fn test_post_matches_when_easy_complete_is_last() {
+        let home = directories::home_dir().unwrap();
+        let data = directories::fig_data_dir().unwrap();
+        let rel = data.strip_prefix(&home).unwrap().display();
+        let sibling = previous_product_data_dir().unwrap();
+        let sibling_rel = sibling.strip_prefix(&home).unwrap().display();
+        let doc = format!(
+            "[[ -f \"${{HOME}}/{rel}/shell/zshrc.post.zsh\" ]] && builtin source \"${{HOME}}/{rel}/shell/zshrc.post.zsh\"\n[[ -f \"${{HOME}}/{sibling_rel}/shell/zshrc.post.zsh\" ]] && builtin source \"${{HOME}}/{sibling_rel}/shell/zshrc.post.zsh\"\n"
+        );
+        let integration = DotfileShellIntegration {
+            shell: Shell::Zsh,
+            pre: false,
+            post: true,
+            dotfile_directory: home,
+            dotfile_name: ".zshrc",
+        };
+        integration
+            .matches_text(&doc, When::Post)
+            .expect("Easy Complete last must not fail Fastab post position");
+    }
+
+    #[tokio::test]
+    async fn test_install_inner_keeps_easy_complete_pre_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let integration = DotfileShellIntegration {
+            shell: Shell::Zsh,
+            pre: true,
+            post: false,
+            dotfile_directory: dir.path().to_path_buf(),
+            dotfile_name: ".zshrc",
+        };
+        let sibling = previous_product_data_dir().unwrap();
+        let home = home_dir().unwrap();
+        let sibling_rel = sibling.strip_prefix(&home).unwrap().display();
+        std::fs::write(
+            dir.path().join(".zshrc"),
+            format!(
+                "# Easy Complete pre block. Keep at the top of this file.\n[[ -f \"${{HOME}}/{sibling_rel}/shell/zshrc.pre.zsh\" ]] && builtin source \"${{HOME}}/{sibling_rel}/shell/zshrc.pre.zsh\"\nexport KEEP=1\n"
+            ),
+        )
+        .unwrap();
+        integration.install_inner().await.unwrap();
+        let contents = std::fs::read_to_string(dir.path().join(".zshrc")).unwrap();
+        let ec_pos = contents.find("easy-complete").expect("Easy Complete pre must stay");
+        let ft_pos = contents.find("fastab/shell").expect("Fastab pre must be added");
+        assert!(ec_pos < ft_pos, "Easy Complete pre must stay above Fastab: {contents}");
+        assert!(contents.contains("export KEEP=1"), "user lines must stay: {contents}");
+    }
+
+    #[test]
+    fn test_fish_pre_q_parent_matches_bash() {
+        let fish = include_str!("scripts/pre.fish");
+        assert!(
+            fish.contains("Q_SET_PARENT_CHECK"),
+            "fish pre must use the same parent-guard as bash"
+        );
+        assert!(
+            fish.contains("test -z \"$Q_PARENT\""),
+            "fish pre must copy Q_SET_PARENT only when Q_PARENT is empty: {fish}"
+        );
+        assert!(
+            fish.contains("test -n \"$Q_SET_PARENT\""),
+            "fish pre must require Q_SET_PARENT: {fish}"
         );
     }
 

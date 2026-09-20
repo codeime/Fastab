@@ -365,6 +365,27 @@ pub fn figterm_socket_path(session_id: impl Display) -> Result<PathBuf> {
     Ok(sockets_dir()?.join("t").join(format!("{session_id}.sock")))
 }
 
+/// Easy Complete's figterm socket for the same session id.
+///
+/// Dual-install: `Q_TERM` / `QTERM_SESSION_ID` are shared names. Doctor must
+/// not treat an `ecterm` socket under `ecrun` as a live Fastab PTY.
+pub fn previous_product_figterm_socket_path(session_id: impl Display) -> Result<PathBuf> {
+    cfg_if::cfg_if! {
+        if #[cfg(unix)] {
+            Ok(runtime_dir()?
+                .join(crate::PREVIOUS_PRODUCT_RUNTIME_DIR_NAME)
+                .join("t")
+                .join(format!("{session_id}.sock")))
+        } else if #[cfg(windows)] {
+            Ok(runtime_dir()
+                ?.join("easy-complete")
+                .join("sockets")
+                .join("t")
+                .join(format!("{session_id}.sock")))
+        }
+    }
+}
+
 /// The path to the resources directory
 ///
 /// - MacOS: "/Applications/{app_name}.app/Contents/Resources"
@@ -536,6 +557,11 @@ mod linux_tests {
         assert!(remote_socket_path().is_ok());
         assert!(local_remote_socket_path().is_ok());
         assert!(figterm_socket_path("test").is_ok());
+        assert!(previous_product_figterm_socket_path("test").is_ok());
+        assert_ne!(
+            figterm_socket_path("test").unwrap(),
+            previous_product_figterm_socket_path("test").unwrap()
+        );
         assert!(resources_path().is_ok());
         assert!(manifest_path().is_ok());
         assert!(backups_dir().is_ok());
@@ -727,6 +753,16 @@ mod tests {
         linux!(figterm_socket_path("$SESSION_ID"), @"$XDG_RUNTIME_DIR/fastabrun/t/$SESSION_ID.sock");
         macos!(figterm_socket_path("$SESSION_ID"), @"$TMPDIR/fastabrun/t/$SESSION_ID.sock");
         windows!(figterm_socket_path("$SESSION_ID"), @r"C:\Users\$USER\AppData\Local\Temp\AmazonQ\sockets\t\$SESSION_ID.sock");
+    }
+
+    #[test]
+    fn snapshot_previous_product_figterm_socket_path() {
+        linux!(previous_product_figterm_socket_path("$SESSION_ID"), @"$XDG_RUNTIME_DIR/ecrun/t/$SESSION_ID.sock");
+        macos!(previous_product_figterm_socket_path("$SESSION_ID"), @"$TMPDIR/ecrun/t/$SESSION_ID.sock");
+        windows!(
+            previous_product_figterm_socket_path("$SESSION_ID"),
+            @r"C:\Users\$USER\AppData\Local\Temp\easy-complete\sockets\t\$SESSION_ID.sock"
+        );
     }
 
     #[test]

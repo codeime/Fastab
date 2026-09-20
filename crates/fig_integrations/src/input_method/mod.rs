@@ -677,19 +677,25 @@ impl Integration for InputMethod {
                     }
                 }
 
-                // select() never triggers a dialog; retry a few times for TIS to settle.
-                for attempt in 0..5 {
-                    let result = run_on_main(|| self.input_source()?.select());
-                    match result {
-                        Ok(()) => {
-                            info!("Input method selected on attempt {}", attempt + 1);
-                            break;
-                        },
-                        Err(e) => {
-                            debug!("select() attempt {}: {e}", attempt + 1);
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                        },
+                // select() never triggers a dialog, but it does steal the
+                // current Non Keyboard IM. Dual-install: leave Easy Complete
+                // (or Sogou, Amazon Q, …) selected when it already is.
+                if self.should_select_input_method() {
+                    for attempt in 0..5 {
+                        let result = run_on_main(|| self.input_source()?.select());
+                        match result {
+                            Ok(()) => {
+                                info!("Input method selected on attempt {}", attempt + 1);
+                                break;
+                            },
+                            Err(e) => {
+                                debug!("select() attempt {}: {e}", attempt + 1);
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                            },
+                        }
                     }
+                } else {
+                    info!("Leaving the current Non Keyboard IM selected; Fastab stays enabled");
                 }
             } else {
                 info!("TIS did not recognise the input source yet; IME will register on next launch");
@@ -770,6 +776,16 @@ impl InputMethod {
             return Err(InputMethodError::NotEnabled);
         }
 
+        if source.is_selected().unwrap_or_default() {
+            return Ok(());
+        }
+
+        // Enabled is what new IME terminals match. Do not steal a sibling
+        // palette just to make `is_installed` report selected.
+        if !input_method.should_select_input_method() {
+            return Ok(());
+        }
+
         source.select()?;
 
         if !source.is_selected().unwrap_or_default() {
@@ -777,6 +793,14 @@ impl InputMethod {
         }
 
         Ok(())
+    }
+
+    fn should_select_input_method(&self) -> bool {
+        let ours = match self.bundle_id() {
+            Ok(id) => id,
+            Err(_) => return true,
+        };
+        !ec_hitoolbox::has_other_selected_non_keyboard(&ours)
     }
 
     fn input_method_is_enabled_key(&self) -> String {
