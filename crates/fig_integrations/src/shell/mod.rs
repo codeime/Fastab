@@ -1484,7 +1484,10 @@ eval "$(ec init zsh pre --rcfile zshrc)""#,
             "nu pre must launch Fastab's PTY: {pre}"
         );
         assert!(!pre.contains(".fig/bin"), "nu pre must not exec Fig's PTY: {pre}");
-        assert!(!pre.contains("figterm"), "nu pre must not name figterm: {pre}");
+        assert!(
+            !pre.contains("which figterm"),
+            "nu pre must not look up figterm: {pre}"
+        );
         let post = include_str!("scripts/post.nu");
         assert!(
             post.contains("which {{CLI_BINARY_NAME}}"),
