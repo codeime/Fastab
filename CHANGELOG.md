@@ -2,10 +2,9 @@
 
 ## Unreleased
 
-- change: product name and identity are now Fastab (`app.fastab`, `Fastab.app`, CLI `ftab`, PTY `fastabterm`). Easy Complete settings and history migrate into the Fastab data directory, including when `shell/` already exists under the new name. Install/repair treats Easy Complete rc blocks as legacy and rewrites them. The old IME palette entry is dropped on install. Telemetry UI is hidden and reporting stays unconfigured. Issue template, SECURITY, NOTICE, and hidden `ftab telemetry status` now use Fastab / default-off.
-- fix: upgrade from Easy Complete now migrates data before integrations write sqlite, copies the IME enabled key, strips leftover `ec init --rcfile` / `command -v ec` eval lines, and does not emit a dead `ftab login`. Doctor drops Auth / WebView host checks, warns about leftover `ec`/`ecterm` binaries, and notes that Accessibility must be re-granted for `app.fastab`.
-- fix: upgrade no longer treats a renamed Easy Complete Accessibility grant or IME hash as Fastab's, replaces dest `{}` settings with the old file, imports history when dest sqlite already exists, and opens leftover sqlite via a copy. Uninstall removes `$TMPDIR/ftablog` / `eclog` and leftover fish `config.fish` eval lines. Doctor ignores an `ecterm` → `fastabterm` symlink.
-- fix: leftover Easy Complete sqlite is imported the first time any process opens the Fastab database (`ftab init` / figterm included). `ec://` deep links still open Fastab. Install unloads the old LaunchAgent. IME uninstall writes HIToolbox in-process. Doctor warns if `/Applications/Easy Complete.app` is still present. Website download structured data pins the versioned DMG.
+- change: product name and identity are now Fastab (`app.fastab`, `Fastab.app`, CLI `ftab`, PTY `fastabterm`). Fastab is a separate product from Easy Complete and can sit beside it: install, uninstall, repair, IME, HIToolbox, and data dirs no longer consume, rewrite, or remove Easy Complete. Telemetry UI is hidden and reporting stays unconfigured. Issue template, SECURITY, NOTICE, and hidden `ftab telemetry status` now use Fastab / default-off.
+- change: Fastab does not steal `ec://`, retarget `ec`/`ecterm`, copy Easy Complete settings or sqlite, or drop the Easy Complete IME palette. `ftab init` stands down when `Q_TERM` is already set so it will not nest inside `ecterm`. Both completion desktops in the same terminal is not supported.
+- fix: doctor drops Auth / WebView host checks. Accessibility copy is Fastab-only. IME uninstall writes HIToolbox in-process. Website download structured data pins the versioned DMG.
 
 ## v3.0.0-beta.16
 

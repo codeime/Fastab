@@ -85,7 +85,6 @@ pub struct InputMethod {
 /// SHA-256 of the IME executable we last launched. Compared with the on-disk
 /// binary to decide whether an already-running process must be replaced.
 const LAUNCHED_BINARY_HASH_KEY: &str = "input-method.launched-binary-sha256";
-const PREVIOUS_IME_ENABLED_KEYS: &[&str] = &["input-method=dev.emmmm.easy-complete.inputmethod.enabled"];
 
 fn sha256_hex(path: &Path) -> Option<String> {
     use std::fmt::Write;
@@ -719,7 +718,7 @@ impl Integration for InputMethod {
         // export/import` is what raced the IME during install and can drop
         // every keyboard layout on a failed python3.
         let ours = self.bundle_id().unwrap_or_else(|_| "app.fastab.inputmethod".into());
-        let _ = ec_hitoolbox::remove_palette_entries(&[&ours, "dev.emmmm.easy-complete.inputmethod"]);
+        let _ = ec_hitoolbox::remove_palette_entries(&[&ours]);
 
         let binding = binding.ok_or_else(|| InputMethodError::InvalidBundle {
             inner: "Could not get bundle id".into(),
@@ -787,20 +786,7 @@ impl InputMethod {
 
     pub fn is_enabled(&self) -> Option<bool> {
         let key = self.input_method_is_enabled_key();
-        match state::get_bool(&key).ok().flatten() {
-            Some(value) => Some(value),
-            None => {
-                // Easy Complete stored this per old bundle id. Copy once so
-                // Ghostty/Otty users who already enabled the IME keep it.
-                for previous_key in PREVIOUS_IME_ENABLED_KEYS {
-                    if state::get_bool(*previous_key).ok().flatten() == Some(true) {
-                        self.set_is_enabled(true);
-                        return Some(true);
-                    }
-                }
-                None
-            },
-        }
+        state::get_bool(&key).ok().flatten()
     }
 
     fn set_is_enabled(&self, enabled: bool) {

@@ -29,18 +29,14 @@ use fig_ipc::{BufferedUnixStream, SendMessage, SendRecvMessage};
 use fig_os_shim::{Context, Env, Os};
 use fig_proto::local::DiagnosticsResponse;
 use fig_settings::JsonStore;
-#[cfg(target_os = "macos")]
-use fig_util::OLD_PRODUCT_NAME;
-#[cfg(unix)]
-use fig_util::OLD_PTY_BINARY_NAMES;
 use fig_util::directories::{remote_socket_path, settings_path};
 use fig_util::env_var::{PROCESS_LAUNCHED_BY_Q, Q_PARENT, QTERM_SESSION_ID};
 use fig_util::macos::BUNDLE_CONTENTS_INFO_PLIST_PATH;
 use fig_util::system_info::SupportLevel;
 use fig_util::terminal::in_special_terminal;
 use fig_util::{
-    APP_BUNDLE_ID, APP_BUNDLE_NAME, CLI_BINARY_NAME, CLI_CRATE_NAME, OLD_CLI_BINARY_NAMES, PRODUCT_NAME,
-    PTY_BINARY_NAME, Shell, Terminal, directories, system_paths,
+    APP_BUNDLE_ID, APP_BUNDLE_NAME, CLI_BINARY_NAME, CLI_CRATE_NAME, PRODUCT_NAME, PTY_BINARY_NAME, Shell, Terminal,
+    directories, system_paths,
 };
 use futures::FutureExt;
 use futures::future::BoxFuture;
@@ -1116,16 +1112,6 @@ impl DoctorCheck<DiagnosticsResponse> for CliPathCheck {
     async fn check(&self, _: &DiagnosticsResponse) -> Result<(), DoctorError> {
         let path = std::env::current_exe().context("Could not get executable path.")?;
 
-        for old_bin in OLD_CLI_BINARY_NAMES {
-            if path.ends_with(old_bin) {
-                return Err(doctor_warning!(
-                    "The {} CLI has been replaced with {}",
-                    old_bin.magenta(),
-                    CLI_BINARY_NAME.magenta()
-                ));
-            }
-        }
-
         let local_bin_path = directories::home_dir()
             .unwrap()
             .join(".local")
@@ -1169,7 +1155,7 @@ impl DoctorCheck<DiagnosticsResponse> for AccessibilityCheck {
             Err(DoctorError::Error {
                 reason: "Accessibility is disabled".into(),
                 info: vec![format!(
-                    "{PRODUCT_NAME} is {APP_BUNDLE_ID}. Upgrading from Easy Complete is a new TCC identity — grant Accessibility again from Settings even if Easy Complete was already allowed."
+                    "{PRODUCT_NAME} is {APP_BUNDLE_ID}. Grant Accessibility from Settings — this is Fastab's own TCC identity."
                 )
                 .into()],
                 fix: command_fix(
@@ -1697,73 +1683,6 @@ impl DoctorCheck for WindowsConsoleCheck {
     }
 }
 
-#[cfg(unix)]
-struct LeftoverProductBinCheck;
-
-#[cfg(unix)]
-#[async_trait]
-impl DoctorCheck for LeftoverProductBinCheck {
-    fn name(&self) -> Cow<'static, str> {
-        "No leftover Easy Complete binaries".into()
-    }
-
-    async fn check(&self, _: &()) -> Result<(), DoctorError> {
-        let Ok(local_bin) = directories::home_local_bin() else {
-            return Ok(());
-        };
-        let leftover_cli = OLD_CLI_BINARY_NAMES
-            .iter()
-            .map(|name| local_bin.join(name))
-            .filter(|path| path.exists() && !path.is_symlink());
-        // A leftover `ec` → `ftab` or `ecterm` → `fastabterm` symlink is a
-        // supported shim. Only a real leftover binary is a problem.
-        let leftover_pty = OLD_PTY_BINARY_NAMES
-            .iter()
-            .map(|name| local_bin.join(name))
-            .filter(|path| path.exists() && !path.is_symlink());
-        let leftover: Vec<_> = leftover_cli.chain(leftover_pty).collect();
-        if leftover.is_empty() {
-            Ok(())
-        } else {
-            let names = leftover
-                .iter()
-                .filter_map(|path| path.file_name())
-                .map(|name| name.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(", ");
-            Err(doctor_warning!(
-                "Leftover Easy Complete binaries still in ~/.local/bin: {}. Use {} instead.",
-                names,
-                CLI_BINARY_NAME.magenta()
-            ))
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-struct LeftoverProductAppCheck;
-
-#[cfg(target_os = "macos")]
-#[async_trait]
-impl DoctorCheck for LeftoverProductAppCheck {
-    fn name(&self) -> Cow<'static, str> {
-        "No leftover Easy Complete app".into()
-    }
-
-    async fn check(&self, _: &()) -> Result<(), DoctorError> {
-        let leftover = PathBuf::from(system_paths::APPLICATIONS_DIR).join(format!("{OLD_PRODUCT_NAME}.app"));
-        if leftover.exists() {
-            Err(doctor_warning!(
-                "{} is still installed. Completions come from {} — quit and remove the old app.",
-                leftover.display(),
-                APP_BUNDLE_NAME.magenta()
-            ))
-        } else {
-            Ok(())
-        }
-    }
-}
-
 #[cfg(target_os = "macos")]
 struct ToolboxInstalledCheck;
 
@@ -1988,10 +1907,6 @@ pub async fn doctor_cli(all: bool, strict: bool) -> Result<ExitCode> {
             format!("Let's make sure {PRODUCT_NAME} is set up correctly..."),
             vec![
                 &FigBinCheck,
-                #[cfg(unix)]
-                &LeftoverProductBinCheck,
-                #[cfg(target_os = "macos")]
-                &LeftoverProductAppCheck,
                 #[cfg(unix)]
                 &LocalBinPathCheck,
                 #[cfg(target_os = "windows")]

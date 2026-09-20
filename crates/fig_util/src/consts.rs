@@ -20,11 +20,9 @@ pub const PTY_BINARY_NAME: &str = "fastabterm";
 pub const CLI_CRATE_NAME: &str = "ec_cli";
 
 pub const URL_SCHEMA: &str = "fastab";
-/// Easy Complete registered `ec://`. Bookmarks and scripts still send it.
-pub const OLD_URL_SCHEMAS: &[&str] = &["ec"];
 
 pub fn is_product_url_scheme(scheme: &str) -> bool {
-    scheme == URL_SCHEMA || OLD_URL_SCHEMAS.contains(&scheme)
+    scheme == URL_SCHEMA
 }
 
 pub const PRODUCT_NAME: &str = "Fastab";
@@ -39,10 +37,6 @@ pub const DATA_DIR_NAME: &str = "fastab";
 
 /// Backup directory name
 pub const BACKUP_DIR_NAME: &str = ".fastab.dotfiles.bak";
-
-pub const OLD_PRODUCT_NAME: &str = "Easy Complete";
-pub const OLD_CLI_BINARY_NAMES: &[&str] = &["ec", "q"];
-pub const OLD_PTY_BINARY_NAMES: &[&str] = &["ecterm", "qterm"];
 
 pub const GITHUB_REPO_NAME: &str = "codeime/easy-complete";
 
@@ -156,9 +150,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn product_url_scheme_accepts_the_previous_ec_scheme() {
+    fn product_url_scheme_is_fastab_only() {
         assert!(is_product_url_scheme("fastab"));
-        assert!(is_product_url_scheme("ec"));
+        assert!(!is_product_url_scheme("ec"));
         assert!(!is_product_url_scheme("http"));
         assert!(!is_product_url_scheme("fig"));
     }

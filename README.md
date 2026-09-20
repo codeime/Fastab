@@ -136,9 +136,11 @@ Settings and click **Grant Accessibility**. That opens:
 and floats a card you can drag **Fastab** from into the list. The app never
 opens that pane on its own.
 
-Upgrading from Easy Complete is a **new TCC identity** (`app.fastab`, not
-`dev.emmmm.easy-complete`). Grant Fastab even if Easy Complete was already
-allowed — the old checkbox does not cover this binary.
+Fastab is a **separate product** from Easy Complete. Both can be installed
+at the same time (`app.fastab` vs `dev.emmmm.easy-complete`). Grant
+Accessibility to Fastab itself — Easy Complete's checkbox does not cover
+this binary. Do not run both completion desktops in the same terminal
+session (that would nest PTYs).
 
 If completions never appear, this is almost always the cause. Run the same flow
 again from Settings, or with:
@@ -279,7 +281,8 @@ Process memory: `./scripts/memory-usage.sh` (`--watch 5`, `--peak`, `--csv mem.c
 
 ## 📜 License
 
-Licensed under the MIT License. Fastab is a rename of Easy Complete, based on
-the Amazon Q Developer CLI and Fig; those copyright notices stay in
+Licensed under the MIT License. Fastab is a separate product forked from
+Easy Complete, based on the Amazon Q Developer CLI and Fig; those copyright
+notices stay in
 [LICENSE](./LICENSE). Third-party terms are collected in
 [THIRD_PARTY_NOTICES.txt](./THIRD_PARTY_NOTICES.txt).

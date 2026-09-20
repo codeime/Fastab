@@ -2,10 +2,9 @@
 
 ## Unreleased
 
-- 变更：产品名与身份改为 Fastab（`app.fastab`、`Fastab.app`、CLI `ftab`、PTY `fastabterm`）。会把 Easy Complete 的设置和历史迁到 Fastab 数据目录，即使新目录里已经有 `shell/`。安装/修复会把 Easy Complete 的 rc 块当作旧集成并重写。安装时会清掉旧输入法条目。遥测开关已从界面隐藏，上报保持未配置。Issue 模板、SECURITY、NOTICE 以及隐藏的 `ftab telemetry status` 现已使用 Fastab / 默认关闭。
-- 修复：从 Easy Complete 升级会先迁移数据再写 sqlite，复制输入法已启用键，清掉残留的 `ec init --rcfile` / `command -v ec` eval，并且不再输出已失效的 `ftab login`。doctor 去掉 Auth / WebView host 检查，会警告残留的 `ec`/`ecterm`，并说明 `app.fastab` 需要重新授予辅助功能。
-- 修复：升级不再把 Easy Complete 的辅助功能授权或输入法 hash 当成 Fastab 的；会用旧 `settings.json` 替换目标里的 `{}`；目标 sqlite 已存在时仍导入历史；残留 sqlite 只读副本。卸载会删除 `$TMPDIR/ftablog` / `eclog` 以及 fish `config.fish` 里的残留 eval。doctor 忽略 `ecterm` → `fastabterm` 符号链接。
-- 修复：任意进程第一次打开 Fastab sqlite 就会导入 Easy Complete 残留库（包括 `ftab init` / figterm）。`ec://` 深链仍打开 Fastab。安装会卸掉旧 LaunchAgent。输入法卸载在进程内写 HIToolbox。doctor 会警告还在的 `/Applications/Easy Complete.app`。网站下载结构化数据改用带版本的 DMG。
+- 变更：产品名与身份改为 Fastab（`app.fastab`、`Fastab.app`、CLI `ftab`、PTY `fastabterm`）。Fastab 与 Easy Complete 是两个产品，可以并排安装：安装、卸载、修复、输入法、HIToolbox 和数据目录都不再读取、改写或删除 Easy Complete。遥测开关已从界面隐藏，上报保持未配置。Issue 模板、SECURITY、NOTICE 以及隐藏的 `ftab telemetry status` 现已使用 Fastab / 默认关闭。
+- 变更：不再抢 `ec://`、改写 `ec`/`ecterm`、复制 Easy Complete 设置或 sqlite、或清掉 Easy Complete 输入法。`Q_TERM` 已设置时 `ftab init` 不再包装，避免套进 `ecterm`。同一终端里两套补全桌面同时跑不受支持。
+- 修复：doctor 去掉 Auth / WebView host 检查。辅助功能文案只讲 Fastab。输入法卸载在进程内写 HIToolbox。网站下载结构化数据改用带版本的 DMG。
 
 ## v3.0.0-beta.16
 

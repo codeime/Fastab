@@ -28,6 +28,28 @@ process_running() {
   pgrep -x "$1" >/dev/null 2>&1
 }
 
+process_running_match() {
+  pgrep -f "$1" >/dev/null 2>&1
+}
+
+# Kill only Fastab's IME. The helper executable is still named
+# `fig_input_method`; Easy Complete's helper uses the same basename.
+FASTAB_IME_MATCH="FastabInputMethod.app/Contents/MacOS/fig_input_method"
+
+stop_fastab_ime() {
+  process_running_match "${FASTAB_IME_MATCH}" || return 0
+  pkill -f "${FASTAB_IME_MATCH}" 2>/dev/null || true
+  local waited=0
+  while [ "${waited}" -lt 20 ]; do
+    process_running_match "${FASTAB_IME_MATCH}" || return 0
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  warn "Fastab IME did not exit; forcing it."
+  pkill -9 -f "${FASTAB_IME_MATCH}" 2>/dev/null || true
+  sleep 0.2
+}
+
 # SIGTERM and wait for the process to actually be gone, so the bundle is only
 # replaced (and `open` only called) once nothing is holding the old one.
 stop_process() {
@@ -113,25 +135,14 @@ fi
 # breaks completions until the next restart. It has no clients to preserve and
 # is relaunched at the end of this script.
 stop_process "${APP_NAME}"
-# Previous product name, left behind when the bundle ID and process name changed.
-stop_process "easy-complete"
-
-# Old LaunchAgents keep launching Easy Complete.app after the bundle is gone.
-# The desktop also strips these on login-item reconcile; do it here so a
-# source install that never opens settings does not leave a dead job.
-uid="$(id -u)"
-for label in "dev.emmmm.easy-complete" "com.amazon.codewhisperer.launcher"; do
-  launchctl bootout "gui/${uid}/${label}" 2>/dev/null || true
-  rm -f "${HOME}/Library/LaunchAgents/${label}.plist"
-done
 
 # The IME is the one process worth keeping alive: open Otty / Ghostty / Kitty
 # windows hold IMK connections to it and macOS never re-attaches them to a
 # replacement. Same bytes → leave it running.
 keep_ime=0
 if [ "${ime_changed}" -eq 1 ]; then
-  stop_process fig_input_method
-elif process_running fig_input_method; then
+  stop_fastab_ime
+elif process_running_match "${FASTAB_IME_MATCH}"; then
   keep_ime=1
 fi
 
@@ -149,18 +160,11 @@ else
 fi
 ditto "${STAGING_BUNDLE}" "${APP_BUNDLE}"
 
-if [ -d "/Applications/Easy Complete.app" ]; then
-  info "Removing the previous Easy Complete.app bundle..."
-  rm -rf "/Applications/Easy Complete.app"
-fi
-rm -rf "${HOME}/Library/Input Methods/EasyCompleteInputMethod.app"
-
 # ── 4. Symlink CLI binaries to ~/.local/bin ───────────────────────────────────
 info "Linking binaries to ${LOCAL_BIN}..."
 mkdir -p "${LOCAL_BIN}"
 ln -sf "/Applications/${APP_DISPLAY}.app/Contents/MacOS/ftab"     "${LOCAL_BIN}/ftab"
 ln -sf "/Applications/${APP_DISPLAY}.app/Contents/MacOS/fastabterm" "${LOCAL_BIN}/fastabterm"
-rm -f "${LOCAL_BIN}/ec" "${LOCAL_BIN}/ecterm"
 
 # ── 6. Shell integration ───────────────────────────────────────────────────────
 info "Installing shell integration..."

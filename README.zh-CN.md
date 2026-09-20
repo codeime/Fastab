@@ -129,9 +129,9 @@ Fastab 需要把补全浮层定位到你当前聚焦的终端窗口，这依赖 
 并把一张可拖拽的卡片停在列表旁边，把 **Fastab** 拖进去即可。启动、安装和菜单栏
 都不会自动打开系统设置。
 
-从 Easy Complete 升级是**新的 TCC 身份**（`app.fastab`，不是
-`dev.emmmm.easy-complete`）。即使以前已经勾过 Easy Complete，也要再给 Fastab
-授一次权——旧勾选不覆盖这个二进制。
+Fastab 和 Easy Complete 是**两个产品**，可以同时安装（`app.fastab` 与
+`dev.emmmm.easy-complete`）。请单独给 Fastab 授辅助功能——Easy Complete
+的勾选不覆盖这个二进制。不要在同一个终端会话里同时跑两套补全（会套 PTY）。
 
 **如果补全始终不出现，几乎都是这个权限没授予。** 在设置里再点一次按钮，或运行：
 
@@ -265,7 +265,7 @@ pnpm test                                   # 运行 Vitest
 
 ## 📜 许可证
 
-采用 MIT 许可证。Fastab 由 Easy Complete 更名而来，基于 Amazon Q Developer CLI
-与 Fig；这些版权声明保留在 [LICENSE](./LICENSE)。
+采用 MIT 许可证。Fastab 是独立产品，fork 自 Easy Complete，基于 Amazon Q
+Developer CLI 与 Fig；这些版权声明保留在 [LICENSE](./LICENSE)。
 第三方版权与许可证条款集中收录于
 [THIRD_PARTY_NOTICES.txt](./THIRD_PARTY_NOTICES.txt)。

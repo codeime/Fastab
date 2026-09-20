@@ -19,7 +19,6 @@ use tracing::{debug, warn};
 use crate::{Error, Result};
 
 const LEGACY_LABEL: &str = "app.fastab";
-const PREVIOUS_PRODUCT_LABEL: &str = "dev.emmmm.easy-complete";
 const UPSTREAM_LEGACY_LABEL: &str = "com.amazon.codewhisperer.launcher";
 
 // Force-load the framework so the dynamic `SMAppService` class lookup works.
@@ -48,15 +47,14 @@ impl ServiceStatus {
 
 /// Reconcile the persisted launch preference with the platform integration.
 ///
-/// This is intentionally safe to call on every app launch. It also removes the
-/// two historical LaunchAgents so an upgrade cannot leave duplicate jobs behind.
+/// This is intentionally safe to call on every app launch. It also removes
+/// Fastab's own leftover LaunchAgent after moving to SMAppService. Sibling
+/// products (Easy Complete, Amazon Q) keep their login items.
 pub fn reconcile(enabled: bool) -> Result<()> {
     if sm_app_service().is_some() {
         remove_legacy_launch_agents()?;
         set_sm_app_service_enabled(enabled)
     } else {
-        remove_legacy_launch_agent(PREVIOUS_PRODUCT_LABEL)?;
-        remove_legacy_launch_agent(UPSTREAM_LEGACY_LABEL)?;
         set_legacy_launch_agent_enabled(enabled)
     }
 }
@@ -186,9 +184,7 @@ fn current_app_executable() -> Result<PathBuf> {
 }
 
 fn remove_legacy_launch_agents() -> Result<()> {
-    remove_legacy_launch_agent(LEGACY_LABEL)?;
-    remove_legacy_launch_agent(PREVIOUS_PRODUCT_LABEL)?;
-    remove_legacy_launch_agent(UPSTREAM_LEGACY_LABEL)
+    remove_legacy_launch_agent(LEGACY_LABEL)
 }
 
 fn remove_legacy_launch_agent(label: &str) -> Result<()> {
@@ -235,10 +231,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_labels_cover_both_previous_install_paths() {
+    fn legacy_label_is_fastab_only() {
         assert_eq!(LEGACY_LABEL, APP_BUNDLE_ID);
-        assert_ne!(PREVIOUS_PRODUCT_LABEL, LEGACY_LABEL);
         assert_ne!(LEGACY_LABEL, UPSTREAM_LEGACY_LABEL);
+        assert_ne!(LEGACY_LABEL, "dev.emmmm.easy-complete");
     }
 
     #[test]

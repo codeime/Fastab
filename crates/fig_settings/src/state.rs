@@ -116,18 +116,6 @@ pub fn all() -> Result<Map<String, Value>> {
     State::new().all()
 }
 
-/// Copy state keys and history rows from leftover Easy Complete /
-/// CodeWhisperer sqlite files that the live Fastab database does not
-/// already have. File-level migrate skips `data.sqlite3` when Fastab
-/// already created one (IME launch hash). Identity keys are not copied,
-/// and leftover sqlite is opened via a temp copy so it is not migrated
-/// in place.
-pub fn import_missing_state_from_previous_product() {
-    if let Err(err) = crate::sqlite::database() {
-        tracing::warn!(%err, "Failed to open Fastab sqlite during product import");
-    }
-}
-
 pub fn set_value(key: impl AsRef<str>, value: impl Into<Value>) -> Result<()> {
     State::new().set_value(key, value)
 }

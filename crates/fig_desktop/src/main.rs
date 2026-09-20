@@ -138,8 +138,6 @@ async fn async_main() -> Result<Launch, ExitCode> {
         option_env!("POSTHOG_API_KEY").unwrap_or(""),
     );
 
-    install::migrate_data_dir();
-
     if let Err(err) = fig_settings::settings::init_global() {
         error!(%err, "failed to init global settings");
     }

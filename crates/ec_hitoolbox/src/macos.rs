@@ -17,11 +17,6 @@ const SELECTED_KEY: &str = "AppleSelectedInputSources";
 const BUNDLE_ID_KEY: &str = "Bundle ID";
 const KIND_KEY: &str = "InputSourceKind";
 const NON_KEYBOARD_KIND: &str = "Non Keyboard Input Method";
-/// Bundle IDs left by the Easy Complete product name. A vendor rename does not
-/// share a prefix with `app.fastab.inputmethod`, so prefix cleanup cannot see
-/// them; they still point at a helper that no longer exists.
-const PREVIOUS_IME_BUNDLE_IDS: &[&str] = &["dev.emmmm.easy-complete.inputmethod"];
-
 /// Whether `AppleEnabledInputSources` names this source.
 ///
 /// `AppleSelectedInputSources` is not a substitute. A palette can be selected
@@ -35,8 +30,8 @@ pub fn is_palette_enabled(bundle_id: &str) -> bool {
 /// Put `bundle_id` in both palette lists, and return whether both now name it.
 ///
 /// Other input sources are preserved in order. The only entry ever dropped is a
-/// previous bundle ID of this same palette, which a vendor rename leaves behind
-/// as a source pointing at a bundle that no longer exists.
+/// previous Fastab bundle ID under the same vendor prefix. Sibling products
+/// such as Easy Complete keep their own palette entries.
 pub fn ensure_palette_enabled(bundle_id: &str) -> bool {
     // Both keys, even when one is already right: they are read independently and
     // the enabled/selected split is exactly how the caret went missing.
@@ -67,9 +62,6 @@ enum Entry {
 fn classify(bundle_id: Option<&str>, kind: Option<&str>, ours: &str, vendor_prefix: &str) -> Entry {
     if bundle_id == Some(ours) {
         return Entry::Ours;
-    }
-    if bundle_id.is_some_and(|id| PREVIOUS_IME_BUNDLE_IDS.contains(&id)) {
-        return Entry::Superseded;
     }
     // An empty prefix would match every palette on the machine, so a bundle ID
     // with too few components disables the rename cleanup rather than widening it.
@@ -285,13 +277,12 @@ mod tests {
     }
 
     #[test]
-    fn previous_product_ime_is_superseded() {
+    fn sibling_easy_complete_ime_is_left_alone() {
         assert_eq!(
             classify(Some(PREVIOUS_PRODUCT), Some(NON_KEYBOARD_KIND), OURS, VENDOR),
-            Entry::Superseded
+            Entry::Other
         );
-        // The dead helper is this product even if the kind field is missing.
-        assert_eq!(classify(Some(PREVIOUS_PRODUCT), None, OURS, VENDOR), Entry::Superseded);
+        assert_eq!(classify(Some(PREVIOUS_PRODUCT), None, OURS, VENDOR), Entry::Other);
     }
 
     #[test]
@@ -424,11 +415,10 @@ mod tests {
         clear(key);
     }
 
-    /// Easy Complete used a different vendor. Prefix cleanup cannot see that
-    /// entry; the explicit previous-id list has to drop it or new windows keep
-    /// binding to a helper that is gone.
+    /// Easy Complete is a sibling product with a different vendor. Installing
+    /// Fastab must not drop its palette entry.
     #[test]
-    fn previous_product_ime_is_dropped_on_rewrite() {
+    fn sibling_easy_complete_ime_is_kept_on_rewrite() {
         let key = "PaletteTestPreviousProduct";
         let Some(_serial) = scratch(key) else { return };
         seed(
@@ -443,7 +433,10 @@ mod tests {
 
         let entries = read_back(key);
         let ids: Vec<Option<&str>> = entries.iter().map(|(id, _)| id.as_deref()).collect();
-        assert_eq!(ids, [Some("com.apple.keylayout.ABC"), Some(OURS)]);
+        assert_eq!(
+            ids,
+            [Some("com.apple.keylayout.ABC"), Some(PREVIOUS_PRODUCT), Some(OURS)]
+        );
 
         clear(key);
     }

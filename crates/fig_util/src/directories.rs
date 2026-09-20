@@ -1,6 +1,6 @@
 use std::convert::TryInto;
 use std::fmt::Display;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use camino::Utf8PathBuf;
 use fig_os_shim::{Context, EnvProvider, FsProvider, Os, PlatformProvider, Shim};
@@ -122,104 +122,12 @@ pub fn old_fig_data_dir() -> Result<PathBuf> {
         .join("codewhisperer"))
 }
 
-/// The Easy Complete data directory left behind by the previous product name.
-///
-/// Upgrades call [`migrate_product_data_dir`] so settings and history land in
-/// [`fig_data_dir`] even when that directory already has a `shell/` tree.
+/// Easy Complete's data directory. Fastab is a sibling product and never
+/// reads, writes, or migrates this tree.
 pub fn previous_product_data_dir() -> Result<PathBuf> {
     Ok(dirs::data_local_dir()
         .ok_or(DirectoryError::NoHomeDirectory)?
         .join("easy-complete"))
-}
-
-/// Move a previous product data directory onto the current one.
-///
-/// - If `new` is absent, rename `old` → `new` and leave a symlink at `old` so
-///   existing shell rc paths keep working.
-/// - If `new` already exists (shell integration creates `shell/` under the new
-///   name before the desktop app launches), move only top-level entries that
-///   `new` does not already have. Settings and history then survive an install
-///   that created the new directory first. Existing entries in `new` win, so a
-///   live Fastab profile is never overwritten — except a dest `settings.json`
-///   that is empty or `{}`, which is the placeholder `load_from_file` writes
-///   before migrate runs, not a real profile.
-/// - A symlink at `old` is left alone — that is the leftover of a previous
-///   rename, not a second source of settings.
-pub fn migrate_product_data_dir(old: &Path, new: &Path) -> std::io::Result<()> {
-    if old.is_symlink() || !old.is_dir() || old == new {
-        return Ok(());
-    }
-    if !new.exists() {
-        if let Some(parent) = new.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::rename(old, new)?;
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(new, old)?;
-        }
-        return Ok(());
-    }
-    if !new.is_dir() {
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(old)? {
-        let entry = entry?;
-        let dest = new.join(entry.file_name());
-        if dest.exists() {
-            if dest.file_name().is_some_and(|name| name == "settings.json")
-                && is_placeholder_settings(&dest)
-                && entry.path().is_file()
-            {
-                std::fs::remove_file(&dest)?;
-            } else {
-                continue;
-            }
-        }
-        std::fs::rename(entry.path(), dest)?;
-    }
-    Ok(())
-}
-
-/// `load_from_file` creates `{}` when dest settings are missing. That file
-/// must not hide a real Easy Complete `settings.json` sitting in `old`.
-fn is_placeholder_settings(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    let Ok(bytes) = std::fs::read(path) else {
-        return false;
-    };
-    match serde_json::from_slice::<serde_json::Value>(&bytes) {
-        Ok(serde_json::Value::Object(map)) => map.is_empty(),
-        Ok(_) => false,
-        Err(_) => bytes.iter().all(u8::is_ascii_whitespace),
-    }
-}
-
-/// Move leftover Easy Complete and CodeWhisperer data dirs onto [`fig_data_dir`].
-///
-/// `ftab integrations install` can create `fastab/shell/` (and the IME can
-/// create `data.sqlite3`) before the desktop app launches. Call this from both
-/// the desktop launch path and integrations install so the old tree is merged
-/// first and a later empty-ish Fastab sqlite does not hide the old database.
-pub fn migrate_previous_product_data_dirs() {
-    let Ok(new) = fig_data_dir() else {
-        return;
-    };
-    for old in [previous_product_data_dir(), old_fig_data_dir()] {
-        let Ok(old) = old else {
-            continue;
-        };
-        if let Err(err) = migrate_product_data_dir(&old, &new) {
-            tracing::error!(
-                %err,
-                old = %old.display(),
-                new = %new.display(),
-                "Failed to migrate previous product data dir"
-            );
-        }
-    }
 }
 
 /// The q data directory
@@ -633,107 +541,9 @@ mod linux_tests {
         assert!(backups_dir().is_ok());
         assert!(logs_dir().is_ok());
         assert!(previous_product_data_dir().is_ok());
+        assert_ne!(fig_data_dir().unwrap(), previous_product_data_dir().unwrap());
         assert!(settings_path().is_ok());
         assert!(update_lock_path(&ctx).is_ok());
-    }
-
-    #[cfg(unix)]
-    fn scratch_pair() -> (std::path::PathBuf, std::path::PathBuf) {
-        let root = std::env::temp_dir().join(format!("fastab-migrate-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
-        (root.join("old"), root.join("new"))
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn migrate_renames_when_new_is_absent() {
-        let (old, new) = scratch_pair();
-        std::fs::create_dir_all(&old).unwrap();
-        std::fs::write(old.join("settings.json"), "{}").unwrap();
-
-        migrate_product_data_dir(&old, &new).unwrap();
-
-        assert!(new.is_dir());
-        assert_eq!(std::fs::read_to_string(new.join("settings.json")).unwrap(), "{}");
-        assert!(old.is_symlink());
-        assert_eq!(std::fs::read_link(&old).unwrap(), new);
-        let _ = std::fs::remove_dir_all(new.parent().unwrap());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn migrate_merges_missing_entries_when_new_exists() {
-        let (old, new) = scratch_pair();
-        std::fs::create_dir_all(old.join("history")).unwrap();
-        std::fs::write(old.join("settings.json"), "{\"theme\":\"dark\"}").unwrap();
-        std::fs::write(old.join("history").join("log"), "ls").unwrap();
-        std::fs::create_dir_all(new.join("shell")).unwrap();
-        std::fs::write(new.join("shell").join("zshrc.pre.zsh"), "ftab").unwrap();
-
-        migrate_product_data_dir(&old, &new).unwrap();
-
-        assert_eq!(
-            std::fs::read_to_string(new.join("settings.json")).unwrap(),
-            "{\"theme\":\"dark\"}"
-        );
-        assert_eq!(std::fs::read_to_string(new.join("history").join("log")).unwrap(), "ls");
-        assert_eq!(
-            std::fs::read_to_string(new.join("shell").join("zshrc.pre.zsh")).unwrap(),
-            "ftab"
-        );
-        assert!(!old.join("settings.json").exists());
-        assert!(old.join("history").exists() == false || !old.join("history").join("log").exists());
-        let _ = std::fs::remove_dir_all(new.parent().unwrap());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn migrate_replaces_placeholder_dest_settings() {
-        let (old, new) = scratch_pair();
-        std::fs::create_dir_all(&old).unwrap();
-        std::fs::create_dir_all(&new).unwrap();
-        std::fs::write(old.join("settings.json"), "{\"theme\":\"dark\"}").unwrap();
-        std::fs::write(new.join("settings.json"), "{}\n").unwrap();
-
-        migrate_product_data_dir(&old, &new).unwrap();
-
-        assert_eq!(
-            std::fs::read_to_string(new.join("settings.json")).unwrap(),
-            "{\"theme\":\"dark\"}"
-        );
-        assert!(!old.join("settings.json").exists());
-        let _ = std::fs::remove_dir_all(new.parent().unwrap());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn migrate_does_not_overwrite_existing_new_entries() {
-        let (old, new) = scratch_pair();
-        std::fs::create_dir_all(&old).unwrap();
-        std::fs::create_dir_all(&new).unwrap();
-        std::fs::write(old.join("settings.json"), "old").unwrap();
-        std::fs::write(new.join("settings.json"), "new").unwrap();
-
-        migrate_product_data_dir(&old, &new).unwrap();
-
-        assert_eq!(std::fs::read_to_string(new.join("settings.json")).unwrap(), "new");
-        assert_eq!(std::fs::read_to_string(old.join("settings.json")).unwrap(), "old");
-        let _ = std::fs::remove_dir_all(new.parent().unwrap());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn migrate_skips_a_symlink_old() {
-        let (old, new) = scratch_pair();
-        std::fs::create_dir_all(&new).unwrap();
-        std::fs::write(new.join("settings.json"), "live").unwrap();
-        std::os::unix::fs::symlink(&new, &old).unwrap();
-
-        migrate_product_data_dir(&old, &new).unwrap();
-
-        assert!(old.is_symlink());
-        assert_eq!(std::fs::read_to_string(new.join("settings.json")).unwrap(), "live");
-        let _ = std::fs::remove_dir_all(new.parent().unwrap());
     }
 }
 

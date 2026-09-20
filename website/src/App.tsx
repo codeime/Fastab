@@ -39,7 +39,7 @@ const PAGE: Record<
     stepDownload: "Download the DMG and drag Fastab.app into /Applications.",
     stepQuarantine: "Clear Gatekeeper quarantine (required while unsigned):",
     stepLaunch:
-      "Open Fastab from Applications, then Grant Accessibility in Settings. Easy Complete users must grant again — Fastab is a new app identity.",
+      "Open Fastab from Applications, then Grant Accessibility in Settings. Fastab can sit beside Easy Complete — grant Fastab itself; do not run both completion apps in the same terminal.",
     stepAccess: "Accessibility pane:",
     stepReload: "Reload your shell:",
     stepDoctor: "Check the install:",
@@ -54,7 +54,7 @@ const PAGE: Record<
     installLead: "macOS 12+ · Apple Silicon。未签名构建需要先清一次隔离属性。",
     stepDownload: "下载 DMG，把 Fastab.app 拖进 /Applications。",
     stepQuarantine: "清除 Gatekeeper 隔离（未签名时必须做一次）：",
-    stepLaunch: "从应用程序打开 Fastab，在设置里授予辅助功能。从 Easy Complete 升级需要重新授权：Fastab 是新的应用身份。",
+    stepLaunch: "从应用程序打开 Fastab，在设置里授予辅助功能。可以和 Easy Complete 并排安装；请单独给 Fastab 授权，不要在同一终端里同时跑两套补全。",
     stepAccess: "辅助功能位置：",
     stepReload: "重载 Shell：",
     stepDoctor: "检查安装：",

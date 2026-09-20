@@ -2,31 +2,21 @@
 set -euo pipefail
 
 # ── Fastab macOS uninstaller ───────────────────────────────────────────────
-# Also removes leftover Easy Complete names from the previous product identity.
+# Fastab-only. Easy Complete is a sibling product and is left installed.
 
 APP_NAME="fastab"
 APP_DISPLAY="Fastab"
 BUNDLE_ID="app.fastab"
 IME_BUNDLE_ID="app.fastab.inputmethod"
-PREV_APP_NAME="easy-complete"
-PREV_APP_DISPLAY="Easy Complete"
-PREV_BUNDLE_ID="dev.emmmm.easy-complete"
-PREV_IME_BUNDLE_ID="dev.emmmm.easy-complete.inputmethod"
 
 APP_BUNDLE="/Applications/${APP_DISPLAY}.app"
-PREV_APP_BUNDLE="/Applications/${PREV_APP_DISPLAY}.app"
 LOCAL_BIN="${HOME}/.local/bin"
 LAUNCH_AGENTS="${HOME}/Library/LaunchAgents"
 PLIST_PATH="${LAUNCH_AGENTS}/${BUNDLE_ID}.plist"
-PREV_PLIST_PATH="${LAUNCH_AGENTS}/${PREV_BUNDLE_ID}.plist"
-UPSTREAM_PLIST_PATH="${LAUNCH_AGENTS}/com.amazon.codewhisperer.launcher.plist"
 INPUT_METHODS_DIR="${HOME}/Library/Input Methods"
 IME_SYMLINK="${INPUT_METHODS_DIR}/FastabInputMethod.app"
-PREV_IME_SYMLINK="${INPUT_METHODS_DIR}/EasyCompleteInputMethod.app"
 APP_SUPPORT="${HOME}/Library/Application Support/${APP_NAME}"
-PREV_APP_SUPPORT="${HOME}/Library/Application Support/${PREV_APP_NAME}"
 CACHE_DIR="${HOME}/Library/Caches/${APP_NAME}"
-PREV_CACHE_DIR="${HOME}/Library/Caches/${PREV_APP_NAME}"
 TMP_ROOT="${TMPDIR:-/tmp}"
 TMP_ROOT="${TMP_ROOT%/}"
 
@@ -40,17 +30,15 @@ if [[ "${1:-}" != "--yes" ]]; then
   echo ""
   warn "This will completely remove ${APP_DISPLAY} and all its data."
   echo "  • /Applications/${APP_DISPLAY}.app"
-  echo "  • /Applications/${PREV_APP_DISPLAY}.app (if present)"
   echo "  • ${IME_SYMLINK}"
-  echo "  • ${PREV_IME_SYMLINK}"
   echo "  • ${PLIST_PATH}"
-  echo "  • ${PREV_PLIST_PATH}"
-  echo "  • ${LOCAL_BIN}/ftab, fastabterm, ec, ecterm"
+  echo "  • ${LOCAL_BIN}/ftab, fastabterm"
   echo "  • ${APP_SUPPORT}/"
-  echo "  • ${PREV_APP_SUPPORT}/"
   echo "  • ${CACHE_DIR}/"
-  echo "  • ${TMP_ROOT}/ftablog and ${TMP_ROOT}/eclog"
-  echo "  • Shell integration lines in ~/.zshrc / ~/.bashrc / ~/.config/fish/config.fish"
+  echo "  • ${TMP_ROOT}/ftablog"
+  echo "  • Fastab shell integration lines in ~/.zshrc / ~/.bashrc / ~/.config/fish/config.fish"
+  echo ""
+  echo "  Easy Complete is not touched."
   echo ""
   read -r -p "Continue? [y/N] " confirm
   [[ "${confirm}" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
@@ -59,67 +47,49 @@ fi
 # ── 0. Telemetry (best-effort; reporting is off in this product) ─────────────
 if command -v ftab &>/dev/null; then
   ftab telemetry track app_uninstalled 2>/dev/null || true
-elif command -v ec &>/dev/null; then
-  ec telemetry track app_uninstalled 2>/dev/null || true
 fi
 
 # ── 1. Uninstall integrations via CLI (must run before binary is removed) ─────
 info "Uninstalling input method integration..."
 if command -v ftab &>/dev/null; then
   ftab integrations uninstall input-method 2>/dev/null || true
-elif command -v ec &>/dev/null; then
-  ec integrations uninstall input-method 2>/dev/null || true
 fi
 
 info "Uninstalling shell integration..."
 if command -v ftab &>/dev/null; then
   ftab integrations uninstall shell 2>/dev/null || true
-elif command -v ec &>/dev/null; then
-  ec integrations uninstall shell 2>/dev/null || true
 fi
 
 # ── 2. Kill running processes ─────────────────────────────────────────────────
 info "Stopping processes..."
-for bundle in "$APP_BUNDLE" "$PREV_APP_BUNDLE"; do
-  for exe in "${APP_NAME}" "${PREV_APP_NAME}"; do
-    if [[ -x "${bundle}/Contents/MacOS/${exe}" ]]; then
-      "${bundle}/Contents/MacOS/${exe}" --unregister-login-item 2>/dev/null || true
-    fi
-  done
-done
+if [[ -x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}" ]]; then
+  "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}" --unregister-login-item 2>/dev/null || true
+fi
 pkill -x "${APP_NAME}"       2>/dev/null || true
-pkill -x "${PREV_APP_NAME}"  2>/dev/null || true
-pkill -f "fig_input_method"  2>/dev/null || true
+pkill -f "FastabInputMethod.app/Contents/MacOS/fig_input_method" 2>/dev/null || true
 pkill -f "fastabterm"        2>/dev/null || true
-pkill -f "ecterm"            2>/dev/null || true
 sleep 0.5
 
-# ── 3. Remove login item and legacy LaunchAgents ─────────────────────────────
+# ── 3. Remove login item and Fastab LaunchAgent ──────────────────────────────
 info "Removing login startup entries..."
 uid="$(id -u)"
-for label in "${BUNDLE_ID}" "${PREV_BUNDLE_ID}" "com.amazon.codewhisperer.launcher"; do
-  launchctl bootout "gui/${uid}/${label}" 2>/dev/null || true
-done
-for launch_agent in "$PLIST_PATH" "$PREV_PLIST_PATH" "$UPSTREAM_PLIST_PATH"; do
-  if [[ -f "$launch_agent" ]]; then
-    launchctl unload "$launch_agent" 2>/dev/null || true
-    rm -f "$launch_agent"
-  fi
-done
+launchctl bootout "gui/${uid}/${BUNDLE_ID}" 2>/dev/null || true
+if [[ -f "$PLIST_PATH" ]]; then
+  launchctl unload "$PLIST_PATH" 2>/dev/null || true
+  rm -f "$PLIST_PATH"
+fi
 
 # ── 4. Remove IME symlink ──────────────────────────────────────────────────────
 info "Removing Input Method..."
-for ime in "$IME_SYMLINK" "$PREV_IME_SYMLINK"; do
-  if [[ -L "$ime" || -d "$ime" ]]; then
-    rm -rf "$ime"
-  fi
-done
+if [[ -L "$IME_SYMLINK" || -d "$IME_SYMLINK" ]]; then
+  rm -rf "$IME_SYMLINK"
+fi
 
 # `ftab integrations uninstall input-method` already dropped our palette
 # entries in-process. This fallback is only for when the CLI was already gone.
 # It still filters by bundle ID rather than deleting the whole array.
 info "Removing Input Method from HIToolbox..."
-python3 - "$IME_BUNDLE_ID" "$PREV_IME_BUNDLE_ID" <<'PY' 2>/dev/null || true
+python3 - "$IME_BUNDLE_ID" <<'PY' 2>/dev/null || true
 import subprocess, plistlib, sys
 bundle_ids = set(sys.argv[1:])
 domain = "com.apple.HIToolbox"
@@ -143,18 +113,15 @@ PY
 # ── 5. Remove app bundle ───────────────────────────────────────────────────────
 info "Removing /Applications/${APP_DISPLAY}.app..."
 rm -rf "$APP_BUNDLE"
-rm -rf "$PREV_APP_BUNDLE"
 
 # ── 6. Remove CLI symlinks ─────────────────────────────────────────────────────
 info "Removing CLI symlinks..."
 rm -f "${LOCAL_BIN}/ftab"
 rm -f "${LOCAL_BIN}/fastabterm"
-rm -f "${LOCAL_BIN}/ec"
-rm -f "${LOCAL_BIN}/ecterm"
 
 # ── 7. Fallback shell integration cleanup (in case the CLI was already removed)
-# ftab/ec integrations uninstall shell was already called in step 1.
-# This fallback removes any remaining lines using targeted patterns only.
+# ftab integrations uninstall shell was already called in step 1.
+# This fallback removes only Fastab lines.
 info "Verifying shell integration removal..."
 
 strip_shell_integration_fallback() {
@@ -163,11 +130,8 @@ strip_shell_integration_fallback() {
 
   local tmp
   tmp="$(mktemp)"
-  # Only remove lines that are specifically part of the Fastab / Easy Complete
-  # integration block: the block comment headers and the source lines
-  # referencing our shell data directory.
   grep -Ev \
-    'Fastab (pre|post) block|Easy Complete (pre|post) block|(fastab|easy-complete)/shell/(zshrc|zprofile|bashrc|bash_profile)\.(pre|post)\.(zsh|bash)|eval "\$\((~/.local/bin/)?(ftab|ec|q) init |eval \((~/.local/bin/)?(ftab|ec|q) init |\[ -x ~/.local/bin/(ftab|ec|q) \] && eval |command -v (ftab|ec|q) >/dev/null 2>&1 && eval ' \
+    'Fastab (pre|post) block|fastab/shell/(zshrc|zprofile|bashrc|bash_profile)\.(pre|post)\.(zsh|bash)|eval "\$\((~/.local/bin/)?ftab init |eval \((~/.local/bin/)?ftab init |\[ -x ~/.local/bin/ftab \] && eval |command -v ftab >/dev/null 2>&1 && eval ' \
     "$rc_file" > "$tmp" || true
   mv "$tmp" "$rc_file"
 }
@@ -178,35 +142,37 @@ strip_shell_integration_fallback "${HOME}/.bashrc"
 strip_shell_integration_fallback "${HOME}/.bash_profile"
 strip_shell_integration_fallback "${HOME}/.config/fish/config.fish"
 
-# Fish shell — remove the dedicated fish integration conf files directly
-rm -f "${HOME}/.config/fish/conf.d/00_fig_pre.fish"
-rm -f "${HOME}/.config/fish/conf.d/99_fig_post.fish"
+# Fish dedicated conf files are still named 00_fig_pre.fish / 99_fig_post.fish.
+# Easy Complete uses the same names, so only drop a file when it is Fastab-only.
+maybe_remove_fastab_fish_conf() {
+  local path="$1"
+  [[ -f "$path" ]] || return 0
+  if grep -Eq 'ftab|fastab' "$path" && ! grep -Eq 'easy-complete|ec init' "$path"; then
+    rm -f "$path"
+  fi
+}
+maybe_remove_fastab_fish_conf "${HOME}/.config/fish/conf.d/00_fig_pre.fish"
+maybe_remove_fastab_fish_conf "${HOME}/.config/fish/conf.d/99_fig_post.fish"
 
 # ── 8. Remove application data ────────────────────────────────────────────────
 info "Removing application data..."
 rm -rf "$APP_SUPPORT"
-rm -rf "$PREV_APP_SUPPORT"
 rm -rf "$CACHE_DIR"
-rm -rf "$PREV_CACHE_DIR"
 
 # IPC sockets / logs live under the process temp dir, not ~/.local/share.
-rm -rf "${TMP_ROOT}/fastabrun" "${TMP_ROOT}/ecrun" "${TMP_ROOT}/ftablog" "${TMP_ROOT}/eclog" 2>/dev/null || true
-rm -rf /tmp/fastabrun /tmp/ecrun /tmp/ftablog /tmp/eclog 2>/dev/null || true
+rm -rf "${TMP_ROOT}/fastabrun" "${TMP_ROOT}/ftablog" 2>/dev/null || true
+rm -rf /tmp/fastabrun /tmp/ftablog 2>/dev/null || true
 
 # Preferences
 defaults delete "$BUNDLE_ID"          2>/dev/null || true
 defaults delete "$IME_BUNDLE_ID"      2>/dev/null || true
-defaults delete "$PREV_BUNDLE_ID"     2>/dev/null || true
-defaults delete "$PREV_IME_BUNDLE_ID" 2>/dev/null || true
 
 # Accessibility grant — drop the now-dead TCC entry so it doesn't linger in
 # System Settings pointing at a removed binary.
 tccutil reset Accessibility "$BUNDLE_ID" 2>/dev/null || true
-tccutil reset Accessibility "$PREV_BUNDLE_ID" 2>/dev/null || true
 
 # Keychain entries (best-effort)
 security delete-generic-password -s "$BUNDLE_ID" 2>/dev/null || true
-security delete-generic-password -s "$PREV_BUNDLE_ID" 2>/dev/null || true
 
 # ── Done ───────────────────────────────────────────────────────────────────────
 echo ""

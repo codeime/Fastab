@@ -416,7 +416,7 @@ pub async fn get_file_type(ctx: &Context, variant: &Variant) -> Result<FileType,
 mod tests {
     use std::str::FromStr;
 
-    use fig_util::{OLD_CLI_BINARY_NAMES, OLD_PRODUCT_NAME, PRODUCT_NAME};
+    use fig_util::PRODUCT_NAME;
 
     use super::*;
 
@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn index_serde_test() {
-        let old_cli_name = OLD_CLI_BINARY_NAMES[0];
+        let old_cli_name = "ec";
         let json_str = serde_json::json!({
             "supported": [
                 {
@@ -504,7 +504,7 @@ mod tests {
                             "kind": "dmg",
                             "architecture": "universal",
                             "variant": "full",
-                            "download": format!("0.15.3/{OLD_PRODUCT_NAME}.dmg"),
+                            "download": "0.15.3/Easy Complete.dmg",
                             "sha256": "87a311e493bb2b0e68a1b4b5d267c79628d23c1e39b0a62d1a80b0c2352f80a2",
                             "size": 88174538,
                             "cliPath": format!("Contents/MacOS/{old_cli_name}")

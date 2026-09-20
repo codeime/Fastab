@@ -6,9 +6,7 @@ use async_trait::async_trait;
 use cfg_if::cfg_if;
 use clap::ValueEnum;
 use fig_os_shim::Env;
-use fig_util::{
-    CLI_BINARY_NAME, OLD_CLI_BINARY_NAMES, OLD_PRODUCT_NAME, PRODUCT_NAME, PTY_BINARY_NAME, Shell, directories,
-};
+use fig_util::{CLI_BINARY_NAME, PRODUCT_NAME, PTY_BINARY_NAME, Shell, directories};
 use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
 
@@ -222,6 +220,14 @@ fn get_prefix(s: &str) -> &str {
     }
 }
 
+fn looks_like_sibling_shell_file(text: &str) -> bool {
+    text.contains("easy-complete") || text.contains("ec init")
+}
+
+fn looks_like_fastab_shell_file(text: &str) -> bool {
+    text.contains("ftab") || text.contains("fastab")
+}
+
 impl ShellScriptShellIntegration {
     fn get_file_integration(&self) -> FileIntegration {
         FileIntegration {
@@ -281,14 +287,68 @@ impl ShellScriptShellIntegration {
 #[async_trait]
 impl Integration for ShellScriptShellIntegration {
     async fn is_installed(&self) -> Result<()> {
-        self.get_file_integration().is_installed().await
+        let file = self.get_file_integration();
+        match file.is_installed().await {
+            Ok(()) => Ok(()),
+            Err(Error::ImproperInstallation(_)) => {
+                let Ok(existing) = tokio::fs::read_to_string(&self.path).await else {
+                    return file.is_installed().await;
+                };
+                if existing.contains(&self.get_contents()) {
+                    return Ok(());
+                }
+                file.is_installed().await
+            },
+            Err(err) => Err(err),
+        }
     }
 
     async fn install(&self) -> Result<()> {
+        if self.is_installed().await.is_ok() {
+            return Ok(());
+        }
+        if let Ok(existing) = tokio::fs::read_to_string(&self.path).await {
+            if looks_like_sibling_shell_file(&existing) {
+                let ours = self.get_contents();
+                if existing.contains(&ours) {
+                    return Ok(());
+                }
+                let mut combined = existing;
+                if !combined.ends_with('\n') {
+                    combined.push('\n');
+                }
+                combined.push_str(&ours);
+                if !combined.ends_with('\n') {
+                    combined.push('\n');
+                }
+                tokio::fs::write(&self.path, combined).await.with_path(&self.path)?;
+                return Ok(());
+            }
+        }
         self.get_file_integration().install().await
     }
 
     async fn uninstall(&self) -> Result<()> {
+        if let Ok(existing) = tokio::fs::read_to_string(&self.path).await {
+            if looks_like_sibling_shell_file(&existing) {
+                if !looks_like_fastab_shell_file(&existing) {
+                    return Ok(());
+                }
+                let kept: String = existing
+                    .lines()
+                    .filter(|line| !line.contains("ftab") && !line.contains("fastab"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let kept = kept.trim_end();
+                if kept.is_empty() {
+                    return self.get_file_integration().uninstall().await;
+                }
+                let mut kept = kept.to_string();
+                kept.push('\n');
+                tokio::fs::write(&self.path, kept).await.with_path(&self.path)?;
+                return Ok(());
+            }
+        }
         self.get_file_integration().uninstall().await
     }
 
@@ -418,22 +478,13 @@ impl DotfileShellIntegration {
         );
 
         let old_brand_regex = self.old_brand_regex(when)?;
-        let previous_product_brand_regex = self.previous_product_brand_regex(when)?;
-        let previous_product_comment_regex = Self::previous_product_comment_regex(when);
-        let mut patterns = vec![
+        Ok(RegexSet::new([
             old_file_regex.to_string(),
             old_eval_regex,
             old_source_regex_1,
             old_source_regex_2,
             old_brand_regex,
-            previous_product_brand_regex,
-            previous_product_comment_regex,
-        ];
-        for old_cli in OLD_CLI_BINARY_NAMES {
-            patterns.push(self.previous_cli_eval_regex(when, old_cli));
-        }
-
-        Ok(RegexSet::new(patterns)?)
+        ])?)
     }
 
     fn legacy_source_text_1(&self, when: When) -> Result<String> {
@@ -560,93 +611,6 @@ impl DotfileShellIntegration {
             regex::escape(&DotfileShellIntegration::legacy_description(when)),
             self.legacy_source_text_3(when)?,
         ))
-    }
-
-    fn previous_product_descriptions(when: When) -> Vec<String> {
-        match when {
-            When::Pre => vec![format!("# {OLD_PRODUCT_NAME} pre block. Keep at the top of this file.")],
-            When::Post => vec![
-                format!("# {OLD_PRODUCT_NAME} post block. Keep near the bottom of this file."),
-                format!("# {OLD_PRODUCT_NAME} post block. Keep at the bottom of this file."),
-            ],
-        }
-    }
-
-    fn previous_product_comment_regex(when: When) -> String {
-        format!(
-            r#"(?m)^\s*# {}\s+{} block\.[^\n]*\n?"#,
-            regex::escape(OLD_PRODUCT_NAME),
-            when
-        )
-    }
-
-    fn previous_product_script_integration(&self, when: When) -> Result<ShellScriptShellIntegration> {
-        let integration_file_name = format!(
-            "{}.{}.{}",
-            Regex::new(r"^\.").unwrap().replace_all(self.dotfile_name, ""),
-            when,
-            self.shell
-        );
-        Ok(ShellScriptShellIntegration {
-            shell: self.shell,
-            when,
-            path: directories::previous_product_data_dir()?
-                .join("shell")
-                .join(integration_file_name),
-        })
-    }
-
-    fn previous_product_source_text_3(&self, when: When) -> Result<String> {
-        let home = directories::home_dir()?;
-        let integration_path = self.previous_product_script_integration(when)?.path;
-        let path = regex::escape(&format!(
-            "\"${{HOME}}/{}\"",
-            integration_path.strip_prefix(home)?.display()
-        ));
-
-        match self.shell {
-            Shell::Fish => Ok(format!(r"test\s*\-f\s*{path};\s*and\s+builtin\s+source\s+{path}")),
-            _ => Ok(format!(r"\[\[\s*\-f\s*{path}\s*\]\]\s*&&\s*builtin\s+source\s*{path}")),
-        }
-    }
-
-    fn previous_product_brand_regex(&self, when: When) -> Result<String> {
-        let comments = Self::previous_product_descriptions(when)
-            .into_iter()
-            .map(|comment| regex::escape(&comment))
-            .collect::<Vec<_>>()
-            .join("|");
-        Ok(format!(
-            r#"(?m)(?:\s*(?:{comments})\s*\n)?^\s*{}\s*\n{{0,2}}"#,
-            self.previous_product_source_text_3(when)?,
-        ))
-    }
-
-    fn previous_cli_eval_regex(&self, when: When, old_cli: &str) -> String {
-        let cli = regex::escape(old_cli);
-        let shell = regex::escape(&self.shell.to_string());
-        let when_s = regex::escape(&when.to_string());
-        let comments = Self::previous_product_descriptions(when)
-            .into_iter()
-            .map(|comment| regex::escape(&comment))
-            .collect::<Vec<_>>()
-            .join("|");
-        let eval_line = match self.shell {
-            Shell::Fish => format!(
-                r"(?:command -qv {cli}; and |command -v {cli} >/dev/null 2>&1; and |test -x ~/\.local/bin/{cli}; and )?eval \((?:~/\.local/bin/)?{cli} init {shell} {when_s}(?: --rcfile \S+)? \| string split0\)"
-            ),
-            _ => format!(
-                r#"(?:\[ -n "\$BASH_VERSION" \] && )?(?:command -v {cli} >/dev/null 2>&1 && |\[ -x ~/\.local/bin/{cli} \] && )?eval "\$\((?:~/\.local/bin/)?{cli} init {shell} {when_s}(?: --rcfile \S+)?\)""#
-            ),
-        };
-        let path_prefix = match when {
-            When::Pre => match self.shell {
-                Shell::Fish => r"(?:set -Ua fish_user_paths \$HOME/\.local/bin\n)?".to_string(),
-                _ => r#"(?:export PATH="\$\{PATH\}:\$\{HOME\}/\.local/bin"\n)?"#.to_string(),
-            },
-            When::Post => String::new(),
-        };
-        format!(r#"(?m)(?:(?:{comments})\n)?^{path_prefix}{eval_line}\n{{0,2}}"#)
     }
 
     async fn install_inner(&self) -> Result<()> {
@@ -1063,7 +1027,7 @@ mod test {
     }
 
     #[test]
-    fn test_previous_product_regex_strips_easy_complete_blocks() {
+    fn test_easy_complete_blocks_are_left_alone() {
         let integration = zshrc_integration();
         let data_dir = previous_product_data_dir().unwrap();
         let dir = data_dir.strip_prefix(home_dir().unwrap()).unwrap().display();
@@ -1074,28 +1038,21 @@ mod test {
 
         let stripped = integration.remove_from_text(&doc, When::Pre).unwrap();
         assert!(
-            !stripped.contains("Easy Complete"),
-            "Easy Complete comment must be removed: {stripped}"
+            stripped.contains("Easy Complete"),
+            "sibling Easy Complete comment must stay: {stripped}"
         );
         assert!(
-            !stripped.contains("easy-complete/shell"),
-            "Easy Complete source must be removed: {stripped}"
+            stripped.contains("easy-complete/shell"),
+            "sibling Easy Complete source must stay: {stripped}"
         );
         assert!(
-            stripped.contains("export PATH=/usr/bin"),
-            "foreign lines must stay: {stripped}"
-        );
-        assert!(
-            matches!(
-                integration.matches_text(&doc, When::Pre),
-                Err(Error::LegacyInstallation(_))
-            ),
-            "Easy Complete blocks must look like a legacy install so migrate() rewrites them"
+            !integration.legacy_regexes(When::Pre).unwrap().is_match(&doc),
+            "Easy Complete blocks must not look like a Fastab leftover"
         );
     }
 
     #[test]
-    fn test_previous_cli_eval_strips_rcfile_and_guards() {
+    fn test_ec_init_eval_is_left_alone() {
         let integration = zshrc_integration();
         let lines = [
             r#"eval "$(ec init zsh pre)""#,
@@ -1110,19 +1067,12 @@ eval "$(ec init zsh pre --rcfile zshrc)""#,
                 format!("# Easy Complete pre block. Keep at the top of this file.\n{line}\nexport KEEP=/usr/bin\n");
             let stripped = integration.remove_from_text(&doc, When::Pre).unwrap();
             assert!(
-                !stripped.contains("ec init"),
-                "legacy eval must be removed: {line} -> {stripped}"
+                stripped.contains("ec init"),
+                "sibling ec init must stay: {line} -> {stripped}"
             );
             assert!(
-                stripped.contains("export KEEP=/usr/bin"),
-                "foreign lines must stay: {stripped}"
-            );
-            assert!(
-                matches!(
-                    integration.matches_text(&doc, When::Pre),
-                    Err(Error::LegacyInstallation(_))
-                ),
-                "legacy eval must look like a leftover install: {line}"
+                !integration.legacy_regexes(When::Pre).unwrap().is_match(&doc),
+                "sibling ec init must not look like a Fastab leftover: {line}"
             );
         }
     }
@@ -1139,7 +1089,7 @@ eval "$(ec init zsh pre --rcfile zshrc)""#,
     }
 
     #[test]
-    fn test_previous_cli_eval_strips_fish() {
+    fn test_ec_init_fish_is_left_alone() {
         let integration = fish_integration();
         let lines = [
             r#"eval (ec init fish pre | string split0)"#,
@@ -1151,14 +1101,44 @@ eval "$(ec init zsh pre --rcfile zshrc)""#,
                 format!("# Easy Complete pre block. Keep at the top of this file.\n{line}\nset -gx KEEP /usr/bin\n");
             let stripped = integration.remove_from_text(&doc, When::Pre).unwrap();
             assert!(
-                !stripped.contains("ec init"),
-                "legacy fish eval must be removed: {line} -> {stripped}"
-            );
-            assert!(
-                stripped.contains("set -gx KEEP /usr/bin"),
-                "foreign lines must stay: {stripped}"
+                stripped.contains("ec init"),
+                "sibling fish ec init must stay: {line} -> {stripped}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_fish_script_install_preserves_easy_complete() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("00_fig_pre.fish");
+        std::fs::write(
+            &path,
+            "# Easy Complete pre block\neval (ec init fish pre | string split0)\n",
+        )
+        .unwrap();
+        let integration = ShellScriptShellIntegration {
+            shell: Shell::Fish,
+            when: When::Pre,
+            path,
+        };
+        integration.install().await.unwrap();
+        let contents = std::fs::read_to_string(integration.path()).unwrap();
+        assert!(contents.contains("ec init"), "sibling fish hook must stay: {contents}");
+        assert!(
+            contents.contains("ftab init"),
+            "Fastab fish hook must be added: {contents}"
+        );
+
+        integration.uninstall().await.unwrap();
+        let contents = std::fs::read_to_string(integration.path()).unwrap();
+        assert!(
+            contents.contains("ec init"),
+            "uninstall must leave sibling fish hook: {contents}"
+        );
+        assert!(
+            !contents.contains("ftab"),
+            "uninstall must drop Fastab fish hook: {contents}"
+        );
     }
 
     #[test]

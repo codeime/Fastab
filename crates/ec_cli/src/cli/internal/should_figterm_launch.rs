@@ -202,7 +202,7 @@ fn should_launch(ctx: &Context, quiet: bool) -> u8 {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn should_figterm_launch_exit_status(ctx: &Context, quiet: bool) -> u8 {
-    use fig_util::env_var::{PROCESS_LAUNCHED_BY_Q, Q_PARENT};
+    use fig_util::env_var::{PROCESS_LAUNCHED_BY_Q, Q_PARENT, Q_TERM};
 
     let env = ctx.env();
 
@@ -212,6 +212,15 @@ pub fn should_figterm_launch_exit_status(ctx: &Context, quiet: bool) -> u8 {
     if env.get_os(PROCESS_LAUNCHED_BY_Q).is_some() {
         if !quiet {
             writeln!(stdout(), "❌ {PROCESS_LAUNCHED_BY_Q}").ok();
+        }
+        return 1;
+    }
+
+    // Already inside ecterm or fastabterm. Nested PTYs are not supported,
+    // including when Easy Complete is wrapping the same terminal.
+    if env.get_os(Q_TERM).is_some() {
+        if !quiet {
+            writeln!(stdout(), "❌ {Q_TERM}").ok();
         }
         return 1;
     }
@@ -446,6 +455,10 @@ mod tests {
             ))
             .env(&[(Q_FORCE_FIGTERM_LAUNCH, "1"), (PROCESS_LAUNCHED_BY_Q, "1")])
             .expect(1),
+            test(format!("{Q_TERM} already set")).env(&[(Q_TERM, "1")]).expect(1),
+            test(format!("{Q_FORCE_FIGTERM_LAUNCH} does not override {Q_TERM}"))
+                .env(&[(Q_FORCE_FIGTERM_LAUNCH, "1"), (Q_TERM, "1")])
+                .expect(1),
             test(Q_TERM_DISABLED).env(&[(Q_TERM_DISABLED, "1")]).expect(1),
             test(PROCESS_LAUNCHED_BY_Q)
                 .env(&[(PROCESS_LAUNCHED_BY_Q, "1")])

@@ -20,15 +20,6 @@ const PREVIOUS_VERSION_KEY: &str = "desktop.versionAtPreviousLaunch";
 #[cfg(target_os = "macos")]
 const MIGRATED_KEY: &str = "desktop.migratedFromFig";
 
-pub fn migrate_data_dir() {
-    // Easy Complete users keep their settings/history under the new Fastab dir,
-    // including when install.sh already created `fastab/shell/`. The older
-    // Fig/CodeWhisperer path is still accepted if that is all they have.
-    // Integrations install also calls this so IME/sqlite writes land in the
-    // migrated database instead of creating an empty Fastab one first.
-    fig_settings::migrate_previous_product_user_data();
-}
-
 /// Tracks whether macOS has ever actually granted us Accessibility, so a grant that silently stops
 /// working can be told apart from one that was never given.
 #[cfg(target_os = "macos")]
@@ -183,10 +174,9 @@ pub async fn initialize_fig_dir(env: &fig_os_shim::Env) -> anyhow::Result<()> {
     use std::fs;
 
     use fig_integrations::shell::ShellExt;
+    use fig_util::Shell;
     use fig_util::consts::{CLI_BINARY_NAME, PTY_BINARY_NAME};
     use fig_util::directories::home_dir;
-    use fig_util::{OLD_CLI_BINARY_NAMES, OLD_PTY_BINARY_NAMES, Shell};
-    use tracing::warn;
 
     let local_bin = fig_util::directories::home_local_bin()?;
     if let Err(err) = fs::create_dir_all(&local_bin) {
@@ -199,15 +189,6 @@ pub async fn initialize_fig_dir(env: &fig_os_shim::Env) -> anyhow::Result<()> {
             let link = local_bin.join(PTY_BINARY_NAME);
             if let Err(err) = symlink(&pty_path, link).await {
                 error!(%err, "Failed to symlink for {PTY_BINARY_NAME}: {pty_path:?}");
-            }
-
-            for old_pty_binary_name in OLD_PTY_BINARY_NAMES {
-                let old_pty_binary_path = local_bin.join(old_pty_binary_name);
-                if old_pty_binary_path.exists() {
-                    if let Err(err) = tokio::fs::remove_file(&old_pty_binary_path).await {
-                        warn!(%err, "Failed to remove {old_pty_binary_name}: {old_pty_binary_path:?}");
-                    }
-                }
             }
 
             for shell in Shell::all() {
@@ -247,16 +228,6 @@ pub async fn initialize_fig_dir(env: &fig_os_shim::Env) -> anyhow::Result<()> {
                         error!(%err, "Failed to copy {PTY_BINARY_NAME} to {}", pty_shell_cpy.display());
                     }
                 });
-
-                for old_pty_binary_name in OLD_PTY_BINARY_NAMES {
-                    // Remove legacy pty shell copies
-                    let old_pty_binary_path = local_bin.join(format!("{shell} ({old_pty_binary_name})"));
-                    if old_pty_binary_path.exists() {
-                        if let Err(err) = tokio::fs::remove_file(&old_pty_binary_path).await {
-                            warn!(%err, "Failed to remove legacy pty: {old_pty_binary_path:?}");
-                        }
-                    }
-                }
             }
         },
         None => error!("Failed to find {PTY_BINARY_NAME} in bundle"),
@@ -268,15 +239,6 @@ pub async fn initialize_fig_dir(env: &fig_os_shim::Env) -> anyhow::Result<()> {
             let dest = local_bin.join(CLI_BINARY_NAME);
             if let Err(err) = symlink(&ec_cli_path, dest).await {
                 error!(%err, "Failed to symlink {CLI_BINARY_NAME}");
-            }
-
-            for old_cli_binary_name in OLD_CLI_BINARY_NAMES {
-                let old_cli_binary_path = local_bin.join(old_cli_binary_name);
-                if old_cli_binary_path.is_symlink() {
-                    if let Err(err) = symlink(&ec_cli_path, &old_cli_binary_path).await {
-                        warn!(%err, "Failed to symlink legacy CLI: {old_cli_binary_path:?}");
-                    }
-                }
             }
         },
         None => error!("Failed to find {CLI_BINARY_NAME} in bundle"),
