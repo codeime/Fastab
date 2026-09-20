@@ -49,7 +49,7 @@ use tokio::io::AsyncBufReadExt;
 use super::app::restart_fig;
 use super::diagnostics::verify_integration;
 use crate::util::desktop::{LaunchArgs, desktop_app_running, launch_fig_desktop};
-use crate::util::{app_path_from_bundle_id, glob, glob_dir, is_executable_in_path};
+use crate::util::{app_path_from_bundle_id, is_executable_in_path};
 
 #[derive(Debug, Args, PartialEq, Eq)]
 pub struct DoctorArgs {
@@ -1507,66 +1507,6 @@ impl DoctorCheck for SystemVersionCheck {
     }
 }
 
-struct VSCodeIntegrationCheck;
-
-#[async_trait]
-impl DoctorCheck<Option<Terminal>> for VSCodeIntegrationCheck {
-    fn name(&self) -> Cow<'static, str> {
-        "VSCode integration is enabled".into()
-    }
-
-    async fn get_type(&self, current_terminal: &Option<Terminal>, _platform: Platform) -> DoctorCheckType {
-        if !is_installed(Terminal::VSCode.to_bundle_id().as_deref())
-            && !is_installed(Terminal::VSCodeInsiders.to_bundle_id().as_deref())
-        {
-            return DoctorCheckType::NoCheck;
-        }
-
-        if matches!(
-            current_terminal,
-            Some(Terminal::VSCode | Terminal::VSCodeInsiders | Terminal::Cursor | Terminal::CursorNightly)
-        ) {
-            DoctorCheckType::NormalCheck
-        } else {
-            DoctorCheckType::SoftCheck
-        }
-    }
-
-    async fn check(&self, _: &Option<Terminal>) -> Result<(), DoctorError> {
-        let integration = verify_integration("com.microsoft.VSCode")
-            .await
-            .context("Could not verify VSCode integration")?;
-
-        if integration != "installed!" {
-            let mut missing = true;
-
-            for dir in [".vscode", ".vscode-insiders", ".cursor", ".cursor-nightly"] {
-                // Check if withfig.fig exists
-                let extensions = directories::home_dir()
-                    .context("Could not get home dir")?
-                    .join(dir)
-                    .join("extensions");
-
-                let glob_set = glob([extensions.join("withfig.fig-").to_string_lossy()]).unwrap();
-
-                let extensions = extensions.as_path();
-                if let Ok(fig_extensions) = glob_dir(&glob_set, extensions) {
-                    if fig_extensions.is_empty() {
-                        missing = false;
-                    }
-                }
-            }
-
-            if missing {
-                return Err(doctor_error!("VSCode integration is missing!"));
-            }
-
-            return Err(doctor_error!("Unknown error with VSCode integration!"));
-        }
-        Ok(())
-    }
-}
-
 #[cfg(target_os = "macos")]
 struct ImeStatusCheck;
 
@@ -2074,8 +2014,6 @@ pub async fn doctor_cli(all: bool, strict: bool) -> Result<ExitCode> {
                 // TODO: re-enable on macos once IME/terminal integrations are sorted
                 // #[cfg(not(target_os = "macos"))]
                 // &HyperIntegrationCheck,
-                // #[cfg(not(target_os = "macos"))]
-                // &VSCodeIntegrationCheck,
                 #[cfg(target_os = "macos")]
                 &ImeStatusCheck,
             ],
