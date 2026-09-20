@@ -123,31 +123,8 @@ pub fn all() -> Result<Map<String, Value>> {
 /// and leftover sqlite is opened via a temp copy so it is not migrated
 /// in place.
 pub fn import_missing_state_from_previous_product() {
-    let Ok(dest_dir) = fig_util::directories::fig_data_dir() else {
-        return;
-    };
-    let dest_db = dest_dir.join("data.sqlite3");
-    for old_dir in [
-        fig_util::directories::previous_product_data_dir(),
-        fig_util::directories::old_fig_data_dir(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if old_dir.is_symlink() {
-            continue;
-        }
-        let old_db = old_dir.join("data.sqlite3");
-        if !old_db.is_file() || old_db == dest_db {
-            continue;
-        }
-        if let Err(err) = crate::sqlite::import_missing_from_leftover_path(&old_db) {
-            tracing::warn!(
-                %err,
-                path = %old_db.display(),
-                "Failed to import previous product sqlite"
-            );
-        }
+    if let Err(err) = crate::sqlite::database() {
+        tracing::warn!(%err, "Failed to open Fastab sqlite during product import");
     }
 }
 

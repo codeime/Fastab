@@ -20,6 +20,12 @@ pub const PTY_BINARY_NAME: &str = "fastabterm";
 pub const CLI_CRATE_NAME: &str = "ec_cli";
 
 pub const URL_SCHEMA: &str = "fastab";
+/// Easy Complete registered `ec://`. Bookmarks and scripts still send it.
+pub const OLD_URL_SCHEMAS: &[&str] = &["ec"];
+
+pub fn is_product_url_scheme(scheme: &str) -> bool {
+    scheme == URL_SCHEMA || OLD_URL_SCHEMAS.contains(&scheme)
+}
 
 pub const PRODUCT_NAME: &str = "Fastab";
 
@@ -148,6 +154,14 @@ mod tests {
     use time::format_description::well_known::Rfc3339;
 
     use super::*;
+
+    #[test]
+    fn product_url_scheme_accepts_the_previous_ec_scheme() {
+        assert!(is_product_url_scheme("fastab"));
+        assert!(is_product_url_scheme("ec"));
+        assert!(!is_product_url_scheme("http"));
+        assert!(!is_product_url_scheme("fig"));
+    }
 
     #[test]
     fn test_build_envs() {

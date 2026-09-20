@@ -32,6 +32,11 @@ pub static DATABASE: LazyLock<Result<Db, DbOpenError>> = LazyLock::new(|| {
     let db = Db::new().map_err(|e| DbOpenError(e.to_string()))?;
     db.migrate().map_err(|e| DbOpenError(e.to_string()))?;
     forget_previous_product_identity_once(&db).map_err(|e| DbOpenError(e.to_string()))?;
+    // Import here so figterm / `ftab init` cannot pin an empty Fastab sqlite
+    // before desktop or integrations install run the helper.
+    if let Err(err) = import_missing_from_previous_product_into(&db) {
+        tracing::warn!(%err, "Failed to import previous product sqlite");
+    }
     Ok(db)
 });
 
@@ -379,6 +384,34 @@ fn is_previous_product_identity_key(key: &str) -> bool {
 /// mutate the Easy Complete database (and so WAL init does not drop
 /// `-wal`/`-shm` next to it).
 pub(crate) fn import_missing_from_leftover_path(path: &Path) -> Result<(usize, usize)> {
+    import_missing_from_leftover_path_into(path, database()?)
+}
+
+pub(crate) fn import_missing_from_previous_product_into(into: &Db) -> Result<()> {
+    let Ok(dest_dir) = fig_data_dir() else {
+        return Ok(());
+    };
+    let dest_db = dest_dir.join("data.sqlite3");
+    for old_dir in [
+        fig_util::directories::previous_product_data_dir(),
+        fig_util::directories::old_fig_data_dir(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if old_dir.is_symlink() {
+            continue;
+        }
+        let old_db = old_dir.join("data.sqlite3");
+        if !old_db.is_file() || old_db == dest_db {
+            continue;
+        }
+        import_missing_from_leftover_path_into(&old_db, into)?;
+    }
+    Ok(())
+}
+
+fn import_missing_from_leftover_path_into(path: &Path, into: &Db) -> Result<(usize, usize)> {
     if !path.is_file() {
         return Ok((0, 0));
     }
@@ -389,7 +422,6 @@ pub(crate) fn import_missing_from_leftover_path(path: &Path) -> Result<(usize, u
         copy_sqlite_bundle(path, &copy)?;
         let from = Db::open(&copy)?;
         from.migrate()?;
-        let into = database()?;
         let state = Db::import_missing_state_values(&from, into)?;
         let history = Db::import_history_if_dest_empty(&from, into)?;
         Ok((state, history))

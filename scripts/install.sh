@@ -116,6 +116,15 @@ stop_process "${APP_NAME}"
 # Previous product name, left behind when the bundle ID and process name changed.
 stop_process "easy-complete"
 
+# Old LaunchAgents keep launching Easy Complete.app after the bundle is gone.
+# The desktop also strips these on login-item reconcile; do it here so a
+# source install that never opens settings does not leave a dead job.
+uid="$(id -u)"
+for label in "dev.emmmm.easy-complete" "com.amazon.codewhisperer.launcher"; do
+  launchctl bootout "gui/${uid}/${label}" 2>/dev/null || true
+  rm -f "${HOME}/Library/LaunchAgents/${label}.plist"
+done
+
 # The IME is the one process worth keeping alive: open Otty / Ghostty / Kitty
 # windows hold IMK connections to it and macOS never re-attaches them to a
 # replacement. Same bytes → leave it running.

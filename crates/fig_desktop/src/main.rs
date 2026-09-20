@@ -31,7 +31,7 @@ use fig_os_shim::Context;
 #[cfg(target_os = "linux")]
 use fig_util::consts::APP_PROCESS_NAME;
 use fig_util::consts::PRODUCT_NAME;
-use fig_util::{URL_SCHEMA, directories};
+use fig_util::{directories, is_product_url_scheme};
 #[cfg(target_os = "linux")]
 use sysinfo::get_current_pid;
 #[cfg(target_os = "linux")]
@@ -292,7 +292,7 @@ fn parse_url_page(url: Option<&str>) -> Result<Option<String>, ExitCode> {
         },
     };
 
-    if url.scheme() != URL_SCHEMA {
+    if !is_product_url_scheme(url.scheme()) {
         error!(scheme = %url.scheme(), %url, "Invalid scheme");
         return Err(ExitCode::FAILURE);
     }

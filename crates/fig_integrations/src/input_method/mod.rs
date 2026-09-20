@@ -715,6 +715,12 @@ impl Integration for InputMethod {
             Ok::<_, InputMethodError>(input_source.bundle_id())
         })?;
 
+        // Key-scoped write, same crate as install. Whole-domain `defaults
+        // export/import` is what raced the IME during install and can drop
+        // every keyboard layout on a failed python3.
+        let ours = self.bundle_id().unwrap_or_else(|_| "app.fastab.inputmethod".into());
+        let _ = ec_hitoolbox::remove_palette_entries(&[&ours, "dev.emmmm.easy-complete.inputmethod"]);
+
         let binding = binding.ok_or_else(|| InputMethodError::InvalidBundle {
             inner: "Could not get bundle id".into(),
         })?;
@@ -1007,6 +1013,7 @@ mod tests {
         assert!(!prod.contains("python3"));
         assert!(!prod.contains("plistlib"));
         assert!(prod.contains("ec_hitoolbox::ensure_palette_enabled"));
+        assert!(prod.contains("ec_hitoolbox::remove_palette_entries"));
         // Reading the enabled list rather than the selected one is what stops a
         // selected-and-disabled leftover from passing for installed.
         assert!(prod.contains("ec_hitoolbox::is_palette_enabled"));

@@ -45,6 +45,14 @@ pub fn ensure_palette_enabled(bundle_id: &str) -> bool {
     enabled && selected
 }
 
+/// Drop these bundle IDs from both palette lists. Other sources stay in order.
+/// Used by uninstall so we do not rewrite the whole HIToolbox domain.
+pub fn remove_palette_entries(bundle_ids: &[&str]) -> bool {
+    let enabled = remove_listed(DOMAIN, ENABLED_KEY, bundle_ids);
+    let selected = remove_listed(DOMAIN, SELECTED_KEY, bundle_ids);
+    enabled && selected
+}
+
 /// What an existing palette entry means for the source being installed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Entry {
@@ -174,6 +182,30 @@ fn ensure_listed(domain: &str, key: &str, bundle_id: &str) -> bool {
 
     others.push(palette_entry(bundle_id).as_CFType());
     write_list(domain, key, &CFArray::from_CFTypes(&others))
+}
+
+fn remove_listed(domain: &str, key: &str, bundle_ids: &[&str]) -> bool {
+    let Some(list) = copy_list(domain, key) else {
+        return true;
+    };
+    let mut kept: Vec<CFType> = Vec::new();
+    let mut dropped = 0usize;
+    for item in list.iter() {
+        let item: *const c_void = *item;
+        if entry_strings(item)
+            .0
+            .as_deref()
+            .is_some_and(|id| bundle_ids.contains(&id))
+        {
+            dropped += 1;
+            continue;
+        }
+        kept.push(unsafe { CFType::wrap_under_get_rule(item) });
+    }
+    if dropped == 0 {
+        return true;
+    }
+    write_list(domain, key, &CFArray::from_CFTypes(&kept))
 }
 
 fn write_list(domain: &str, key: &str, list: &CFArray<CFType>) -> bool {
@@ -412,6 +444,28 @@ mod tests {
         let entries = read_back(key);
         let ids: Vec<Option<&str>> = entries.iter().map(|(id, _)| id.as_deref()).collect();
         assert_eq!(ids, [Some("com.apple.keylayout.ABC"), Some(OURS)]);
+
+        clear(key);
+    }
+
+    #[test]
+    fn remove_palette_entries_drops_only_named_sources() {
+        let key = "PaletteTestRemove";
+        let Some(_serial) = scratch(key) else { return };
+        seed(
+            key,
+            &[
+                ("com.apple.keylayout.ABC", "Keyboard Layout"),
+                (OURS, NON_KEYBOARD_KIND),
+                (PREVIOUS_PRODUCT, NON_KEYBOARD_KIND),
+            ],
+        );
+
+        assert!(remove_listed(TEST_DOMAIN, key, &[OURS, PREVIOUS_PRODUCT]));
+
+        let entries = read_back(key);
+        let ids: Vec<Option<&str>> = entries.iter().map(|(id, _)| id.as_deref()).collect();
+        assert_eq!(ids, [Some("com.apple.keylayout.ABC")]);
 
         clear(key);
     }

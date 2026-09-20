@@ -29,6 +29,8 @@ use fig_ipc::{BufferedUnixStream, SendMessage, SendRecvMessage};
 use fig_os_shim::{Context, Env, Os};
 use fig_proto::local::DiagnosticsResponse;
 use fig_settings::JsonStore;
+#[cfg(target_os = "macos")]
+use fig_util::OLD_PRODUCT_NAME;
 #[cfg(unix)]
 use fig_util::OLD_PTY_BINARY_NAMES;
 use fig_util::directories::{remote_socket_path, settings_path};
@@ -1713,8 +1715,8 @@ impl DoctorCheck for LeftoverProductBinCheck {
             .iter()
             .map(|name| local_bin.join(name))
             .filter(|path| path.exists() && !path.is_symlink());
-        // Desktop install keeps `ec` as a symlink to `ftab`. A leftover
-        // `ecterm` → `fastabterm` symlink is the same kind of shim.
+        // A leftover `ec` → `ftab` or `ecterm` → `fastabterm` symlink is a
+        // supported shim. Only a real leftover binary is a problem.
         let leftover_pty = OLD_PTY_BINARY_NAMES
             .iter()
             .map(|name| local_bin.join(name))
@@ -1734,6 +1736,30 @@ impl DoctorCheck for LeftoverProductBinCheck {
                 names,
                 CLI_BINARY_NAME.magenta()
             ))
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct LeftoverProductAppCheck;
+
+#[cfg(target_os = "macos")]
+#[async_trait]
+impl DoctorCheck for LeftoverProductAppCheck {
+    fn name(&self) -> Cow<'static, str> {
+        "No leftover Easy Complete app".into()
+    }
+
+    async fn check(&self, _: &()) -> Result<(), DoctorError> {
+        let leftover = PathBuf::from(system_paths::APPLICATIONS_DIR).join(format!("{OLD_PRODUCT_NAME}.app"));
+        if leftover.exists() {
+            Err(doctor_warning!(
+                "{} is still installed. Completions come from {} — quit and remove the old app.",
+                leftover.display(),
+                APP_BUNDLE_NAME.magenta()
+            ))
+        } else {
+            Ok(())
         }
     }
 }
@@ -1964,6 +1990,8 @@ pub async fn doctor_cli(all: bool, strict: bool) -> Result<ExitCode> {
                 &FigBinCheck,
                 #[cfg(unix)]
                 &LeftoverProductBinCheck,
+                #[cfg(target_os = "macos")]
+                &LeftoverProductAppCheck,
                 #[cfg(unix)]
                 &LocalBinPathCheck,
                 #[cfg(target_os = "windows")]

@@ -29,10 +29,11 @@ pub type Map = serde_json::Map<String, Value>;
 /// IME launch hash.
 pub fn migrate_previous_product_user_data() {
     fig_util::directories::migrate_previous_product_data_dirs();
+    // Opening the dest database also imports leftover sqlite. Do not call
+    // `import_missing_from_leftover_path` here — that would re-enter `database()`.
     if let Err(err) = sqlite::database() {
         tracing::warn!(%err, "Failed to open Fastab sqlite during product migrate");
     }
-    state::import_missing_state_from_previous_product();
 }
 
 static SETTINGS_FILE_LOCK: RwLock<()> = RwLock::new(());

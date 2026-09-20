@@ -377,6 +377,7 @@ cat > "${STAGING_BUNDLE}/Contents/Info.plist" <<PLIST
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>fastab</string>
+                <string>ec</string>
             </array>
         </dict>
     </array>

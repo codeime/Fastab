@@ -115,10 +115,9 @@ for ime in "$IME_SYMLINK" "$PREV_IME_SYMLINK"; do
   fi
 done
 
-# Remove ONLY our IME entries from HIToolbox prefs so they no longer appear in
-# System Settings. We surgically strip our bundle IDs from both the enabled and
-# the selected input-source lists — NOT `defaults delete` on the whole array,
-# which would wipe every keyboard layout and input method the user has.
+# `ftab integrations uninstall input-method` already dropped our palette
+# entries in-process. This fallback is only for when the CLI was already gone.
+# It still filters by bundle ID rather than deleting the whole array.
 info "Removing Input Method from HIToolbox..."
 python3 - "$IME_BUNDLE_ID" "$PREV_IME_BUNDLE_ID" <<'PY' 2>/dev/null || true
 import subprocess, plistlib, sys

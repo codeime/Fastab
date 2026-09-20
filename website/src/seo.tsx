@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { APP_VERSION } from "./download.ts";
+import { APP_VERSION, DOWNLOAD_URL } from "./download.ts";
 import { OG_LOCALE, type Locale } from "./i18n/types.ts";
 
 /** hreflang values. `zh-Hans` targets Simplified Chinese regardless of region. */
@@ -163,8 +163,7 @@ export function homeSchema(locale: Locale = "en") {
         softwareVersion: APP_VERSION,
         releaseNotes:
           "https://github.com/codeime/easy-complete/blob/main/CHANGELOG.md",
-        downloadUrl:
-          "https://github.com/codeime/easy-complete/releases/latest/download/Fastab-arm64.dmg",
+        downloadUrl: DOWNLOAD_URL,
         codeRepository: "https://github.com/codeime/easy-complete",
         softwareRequirements: "macOS 12 or later; Apple Silicon (ARM64)",
         license: "https://opensource.org/license/mit",
