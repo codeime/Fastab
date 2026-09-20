@@ -293,6 +293,16 @@ async fn _should_install_remote_ssh_integration(
     None
 }
 
+/// Process titles from the pre hook are `zsh (fastabterm)`. Sibling PTYs use
+/// `(ecterm)` / `(figterm)` / `(qterm)`. Shell matching must see the inner name.
+fn without_pty_wrapper_suffix(name: &str) -> &str {
+    name.strip_suffix(" (fastabterm)")
+        .or_else(|| name.strip_suffix(" (figterm)"))
+        .or_else(|| name.strip_suffix(" (ecterm)"))
+        .or_else(|| name.strip_suffix(" (qterm)"))
+        .unwrap_or(name)
+}
+
 fn can_send_edit_buffer<T>(term: &Term<T>) -> bool
 where
     T: EventListener,
@@ -302,11 +312,8 @@ where
         .chain(USER_ENABLED_SHELLS.iter().map(|s| s.as_str()))
         .any(|s| {
             let shell_raw = term.shell_state().get_context().shell.as_deref();
-            // we actually want to work with a nested figterm :)
-            let shell = match shell_raw.and_then(|s| s.strip_suffix(" (figterm)")) {
-                Some(s) => Some(s),
-                None => shell_raw,
-            };
+            // Nested PTY titles are `zsh (fastabterm)` (and sibling `ecterm` / `figterm`).
+            let shell = shell_raw.map(without_pty_wrapper_suffix);
 
             shell == Some(s)
         });
@@ -985,6 +992,16 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pty_wrapper_suffix_is_stripped_for_shell_matching() {
+        assert_eq!(PTY_BINARY_NAME, "fastabterm");
+        assert_eq!(without_pty_wrapper_suffix("zsh"), "zsh");
+        assert_eq!(without_pty_wrapper_suffix(&format!("zsh ({PTY_BINARY_NAME})")), "zsh");
+        assert_eq!(without_pty_wrapper_suffix("bash (ecterm)"), "bash");
+        assert_eq!(without_pty_wrapper_suffix("fish (figterm)"), "fish");
+        assert_eq!(without_pty_wrapper_suffix("zsh (qterm)"), "zsh");
+    }
 
     #[test]
     fn hostname_does_not_need_sysinfo() {

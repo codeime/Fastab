@@ -114,7 +114,7 @@ async fn async_main() -> Result<Launch, ExitCode> {
         log_file_path: Some(
             directories::logs_dir()
                 .expect("home dir must be set")
-                .join("fig_desktop.log"),
+                .join("fastab.log"),
         ),
         delete_old_log_file: false,
     })

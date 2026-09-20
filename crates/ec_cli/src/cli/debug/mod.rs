@@ -20,7 +20,7 @@ use fig_os_shim::Env;
 use fig_util::consts::APP_BUNDLE_ID;
 use fig_util::env_var::Q_DEBUG_SHELL;
 use fig_util::macos::BUNDLE_CONTENTS_MACOS_PATH;
-use fig_util::{APP_BUNDLE_NAME, CLI_BINARY_NAME, PRODUCT_NAME, PTY_BINARY_NAME, Shell, directories};
+use fig_util::{APP_BUNDLE_NAME, APP_PROCESS_NAME, CLI_BINARY_NAME, PRODUCT_NAME, PTY_BINARY_NAME, Shell, directories};
 use owo_colors::OwoColorize;
 use tempfile::{NamedTempFile, TempDir};
 use tracing::error;
@@ -259,11 +259,11 @@ impl DebugSubcommand {
 
                 fig_settings::state::set_value("developer.logging", true)?;
 
-                if files.is_empty() || files.iter().any(|f| f == "fig_desktop") {
+                if files.is_empty() || files.iter().any(|f| f == APP_PROCESS_NAME) {
                     if let Err(err) =
                         fig_ipc::local::set_log_level(level.as_ref().clone().unwrap_or_else(|| "DEBUG".into())).await
                     {
-                        println!("Could not set log level for fig_desktop: {err}");
+                        println!("Could not set log level for {PRODUCT_NAME}: {err}");
                     }
                 }
 
@@ -275,7 +275,7 @@ impl DebugSubcommand {
                     };
 
                     if let Err(err) = fig_ipc::local::set_log_level("INFO".into()).await {
-                        println!("Could not restore log level for fig_desktop: {err}");
+                        println!("Could not restore log level for {PRODUCT_NAME}: {err}");
                     }
 
                     std::process::exit(code);
@@ -437,7 +437,7 @@ impl DebugSubcommand {
                     .nth(1)
                     .context("Could not get desktop app pid")?
                     .trim();
-                let outfile = Path::new("/tmp").join("fig-sample");
+                let outfile = Path::new("/tmp").join("fastab-sample");
 
                 println!(
                     "Sampling desktop app ({}). Writing output to {}",

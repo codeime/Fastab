@@ -63,7 +63,12 @@ pub(crate) fn normalize_history_shell(value: Option<&str>) -> HistoryShell {
     let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
         return HistoryShell::Unknown;
     };
-    let value = value.strip_suffix(" (figterm)").unwrap_or(value);
+    let value = value
+        .strip_suffix(" (fastabterm)")
+        .or_else(|| value.strip_suffix(" (figterm)"))
+        .or_else(|| value.strip_suffix(" (ecterm)"))
+        .or_else(|| value.strip_suffix(" (qterm)"))
+        .unwrap_or(value);
     let value = value.rsplit('/').next().unwrap_or(value);
     match value {
         "zsh" => HistoryShell::Zsh,
@@ -1247,6 +1252,8 @@ mod tests {
     fn history_shell_normalization_accepts_paths_and_figterm_suffixes() {
         assert_eq!(normalize_history_shell(Some("/bin/zsh")), HistoryShell::Zsh);
         assert_eq!(normalize_history_shell(Some("bash (figterm)")), HistoryShell::Bash);
+        assert_eq!(normalize_history_shell(Some("zsh (fastabterm)")), HistoryShell::Zsh);
+        assert_eq!(normalize_history_shell(Some("bash (ecterm)")), HistoryShell::Bash);
         assert_eq!(normalize_history_shell(Some("/usr/local/bin/fish")), HistoryShell::Fish);
         assert_eq!(normalize_history_shell(Some("nu")), HistoryShell::Unknown);
         assert_eq!(normalize_history_shell(None), HistoryShell::Unknown);

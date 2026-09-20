@@ -263,7 +263,7 @@ export function Terminal({ showKeys = true, demoSpeed = 1 }: TerminalProps) {
           <span className="h-2.75 w-2.75 flex-none rounded-full bg-[#febc2e]" />
           <span className="h-2.75 w-2.75 flex-none rounded-full bg-[#28c840]" />
           <span className="flex-1 text-center text-xs tracking-[.02em] text-[#5d6773]">
-            ec — zsh — 80×24
+            ftab — zsh — 80×24
           </span>
           <span className="inline-flex items-center gap-1.25 text-[11px] text-(--accent)">
             <span className="h-1.5 w-1.5 rounded-full bg-(--accent) shadow-[0_0_8px_var(--accent)]" />
