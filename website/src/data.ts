@@ -222,6 +222,11 @@ export const faqs: Faq[] = [
     answer:
       "Download the ARM64 DMG from GitHub Releases, then follow the Install section on the homepage.",
   },
+  {
+    question: "Do I need to uninstall Easy Complete first?",
+    answer:
+      "Only if you want Easy Complete gone. Fastab will not uninstall it. Both can sit on disk, but they must not wrap the same terminal. See docs/uninstall-easy-complete.md on GitHub.",
+  },
 ];
 
 export interface DocLink {

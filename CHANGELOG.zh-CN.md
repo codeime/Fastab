@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 文档：装 Fastab 之前如何把 Easy Complete 卸干净
+
 ## v0.0.1
 
 Fastab 的第一次发布。版本号从这里重新开始；此前的 Easy Complete tag 已全部退役。

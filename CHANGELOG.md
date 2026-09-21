@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- docs: how to uninstall Easy Complete before installing Fastab
+
 ## v0.0.1
 
 First Fastab release. Versioning starts here; earlier Easy Complete tags are retired.

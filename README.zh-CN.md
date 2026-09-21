@@ -49,6 +49,7 @@ spec hook（`postProcess`、`script`、`custom`、`generateSpec`）同样在构�
 
 - [Native](#native)
 - [安装](#-安装)
+- [从 Easy Complete 迁过来](#从-easy-complete-迁过来)
 - [使用](#-使用)
 - [卸载](#-卸载)
 - [工作原理](#-工作原理)
@@ -139,6 +140,13 @@ Fastab 和 Easy Complete 是**两个产品**，可以同时安装（`app.fastab`
 ftab debug prompt-accessibility
 ```
 
+### 从 Easy Complete 迁过来
+
+Fastab **不会**卸 Easy Complete。要干净切换，先按
+[卸载 Easy Complete](./docs/uninstall-easy-complete.zh-CN.md) 做完，再装
+Fastab，并**新开一个终端**。旧的 `ecterm` 标签里还带着 `Q_TERM`，`ftab init`
+会让路。
+
 ---
 
 ## 🚀 使用
@@ -179,7 +187,10 @@ WezTerm、Zed、Alacritty、Otty**）还需要依赖随附的输入法来追踪�
 ```
 
 该脚本会移除应用包、CLI 软链、LaunchAgent、输入法、shell 集成以及全部应用数据。它只会
-精确移除 Fastab 自己的输入源，**不会动**你其它的键盘布局和输入法。
+精确移除 Fastab 自己的输入源，**不会动**你其它的键盘布局和输入法。Easy Complete、
+Fig、Amazon Q 会留着。
+
+要卸 Easy Complete，见 [卸载 Easy Complete](./docs/uninstall-easy-complete.zh-CN.md)。
 
 ---
 

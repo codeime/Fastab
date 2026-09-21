@@ -52,6 +52,7 @@ a named Rust adapter at build time too.
 
 - [Native](#native)
 - [Install](#-install)
+- [Coming from Easy Complete](#coming-from-easy-complete)
 - [Usage](#-usage)
 - [Uninstall](#-uninstall)
 - [How it works](#-how-it-works)
@@ -149,6 +150,13 @@ again from Settings, or with:
 ftab debug prompt-accessibility
 ```
 
+### Coming from Easy Complete
+
+Fastab will not uninstall Easy Complete. To switch cleanly, follow
+[Uninstall Easy Complete](./docs/uninstall-easy-complete.md) first, then
+install Fastab and open a **new** terminal. An old `ecterm` tab still has
+`Q_TERM` set, so `ftab init` stands down.
+
 ---
 
 ## 🚀 Usage
@@ -194,7 +202,9 @@ Settings → Behavior, or with `ftab integrations install input-method`.
 This removes the app bundle, CLI symlinks, LaunchAgent, input method, shell
 integration, and all application data. It surgically removes only Fastab's own
 input source from the system preferences (your other keyboard layouts and input
-methods are left untouched).
+methods are left untouched). Easy Complete, Fig, and Amazon Q stay installed.
+
+To remove Easy Complete, see [Uninstall Easy Complete](./docs/uninstall-easy-complete.md).
 
 ---
 
