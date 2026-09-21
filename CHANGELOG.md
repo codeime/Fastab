@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- change: app icon uses a Claude terracotta radial gradient (center to edge) instead of a flat dark tile
+- change: app icon uses a Claude terracotta-to-peach gradient instead of a flat dark tile
 
 ## v0.0.1
 
