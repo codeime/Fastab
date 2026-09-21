@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- change: app icon uses a Claude terracotta-to-peach gradient instead of a flat dark tile
+
 ## v0.0.1
 
 First Fastab release. Versioning starts here; earlier Easy Complete tags are retired.

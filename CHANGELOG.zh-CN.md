@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 变更：应用图标改为 Claude 陶土到桃色的渐变，不再是一块纯色深底
+
 ## v0.0.1
 
 Fastab 的第一次发布。版本号从这里重新开始；此前的 Easy Complete tag 已全部退役。
