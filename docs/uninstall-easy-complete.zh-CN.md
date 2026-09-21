@@ -33,7 +33,7 @@ ec uninstall
 ```bash
 pkill -x easy-complete 2>/dev/null || true
 pkill -f "EasyCompleteInputMethod.app" 2>/dev/null || true
-pkill -f ecterm 2>/dev/null || true
+pkill -x ecterm 2>/dev/null || true
 
 uid="$(id -u)"
 launchctl bootout "gui/${uid}/dev.emmmm.easy-complete" 2>/dev/null || true
@@ -48,7 +48,9 @@ rm -rf ~/Library/Application\ Support/easy-complete
 rm -rf ~/Library/Caches/easy-complete
 rm -rf ~/.local/share/easy-complete
 rm -rf ~/.easy-complete.dotfiles.bak
-rm -rf "${TMPDIR:-/tmp}ecrun" "${TMPDIR:-/tmp}eclog" /tmp/ecrun /tmp/eclog
+tmp_root="${TMPDIR:-/tmp}"
+tmp_root="${tmp_root%/}"
+rm -rf "${tmp_root}/ecrun" "${tmp_root}/eclog" /tmp/ecrun /tmp/eclog
 
 defaults delete dev.emmmm.easy-complete 2>/dev/null || true
 defaults delete dev.emmmm.easy-complete.inputmethod 2>/dev/null || true
@@ -99,20 +101,34 @@ fi
 再到**系统设置**里看一眼：
 
 - 通用 → 登录项：去掉 **Easy Complete**
+- 键盘 → 输入法：如果还列着 **Easy Complete**，删掉。Fastab 不会帮你清
+  `dev.emmmm.easy-complete.inputmethod`。只有第 1 步里 `ec` 还能跑
+  `integrations uninstall input-method` 时才会清掉输入法列表里的那一行。
 - 隐私与安全 → 设备控制和数据访问（macOS 26 及更早叫辅助功能）——Fastab
   要自己再授一次（`app.fastab`）。Easy Complete 的勾选不算。
 
 ## 3. 确认干净
 
-下面这些应该不存在 / 没有输出：
+下面这些应该没有输出：
 
 ```bash
-ls "/Applications/Easy Complete.app"
-ls ~/.local/bin/ec ~/.local/bin/ecterm
-ls ~/Library/Application\ Support/easy-complete
-ls ~/Library/Input\ Methods/EasyCompleteInputMethod.app
-pgrep -lx easy-complete; pgrep -f ecterm
-grep -nE 'ec init|easy-complete' ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile 2>/dev/null
+for p in \
+  "/Applications/Easy Complete.app" \
+  ~/.local/bin/ec ~/.local/bin/ecterm \
+  ~/Library/Application\ Support/easy-complete \
+  ~/Library/Input\ Methods/EasyCompleteInputMethod.app \
+  ~/Library/LaunchAgents/dev.emmmm.easy-complete.plist
+do
+  [[ -e "$p" ]] && echo "still here: $p"
+done
+pgrep -x easy-complete && echo "still running: easy-complete"
+pgrep -x ecterm && echo "still running: ecterm"
+grep -nE 'ec init|easy-complete' \
+  ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile \
+  ~/.config/fish/config.fish \
+  ~/.config/fish/conf.d/00_fig_pre.fish \
+  ~/.config/fish/conf.d/99_fig_post.fish \
+  ~/.ssh/config 2>/dev/null || true
 ```
 
 ## 4. 再装 Fastab

@@ -35,7 +35,7 @@ paths are Easy Complete only.
 ```bash
 pkill -x easy-complete 2>/dev/null || true
 pkill -f "EasyCompleteInputMethod.app" 2>/dev/null || true
-pkill -f ecterm 2>/dev/null || true
+pkill -x ecterm 2>/dev/null || true
 
 uid="$(id -u)"
 launchctl bootout "gui/${uid}/dev.emmmm.easy-complete" 2>/dev/null || true
@@ -50,7 +50,9 @@ rm -rf ~/Library/Application\ Support/easy-complete
 rm -rf ~/Library/Caches/easy-complete
 rm -rf ~/.local/share/easy-complete
 rm -rf ~/.easy-complete.dotfiles.bak
-rm -rf "${TMPDIR:-/tmp}ecrun" "${TMPDIR:-/tmp}eclog" /tmp/ecrun /tmp/eclog
+tmp_root="${TMPDIR:-/tmp}"
+tmp_root="${tmp_root%/}"
+rm -rf "${tmp_root}/ecrun" "${tmp_root}/eclog" /tmp/ecrun /tmp/eclog
 
 defaults delete dev.emmmm.easy-complete 2>/dev/null || true
 defaults delete dev.emmmm.easy-complete.inputmethod 2>/dev/null || true
@@ -101,21 +103,35 @@ fi
 In **System Settings**:
 
 - General → Login Items — remove **Easy Complete**
+- Keyboard → Input Sources — remove **Easy Complete** if it is still listed.
+  Fastab will not drop `dev.emmmm.easy-complete.inputmethod`. Step 1 clears
+  that row only while `ec` can still run `integrations uninstall input-method`.
 - Privacy & Security → Device Control and Data Access (Accessibility on
   macOS 26 and earlier) — Fastab needs its own grant (`app.fastab`).
   Easy Complete's checkbox does not cover Fastab.
 
 ## 3. Confirm
 
-These should print nothing / not exist:
+These should print nothing:
 
 ```bash
-ls "/Applications/Easy Complete.app"
-ls ~/.local/bin/ec ~/.local/bin/ecterm
-ls ~/Library/Application\ Support/easy-complete
-ls ~/Library/Input\ Methods/EasyCompleteInputMethod.app
-pgrep -lx easy-complete; pgrep -f ecterm
-grep -nE 'ec init|easy-complete' ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile 2>/dev/null
+for p in \
+  "/Applications/Easy Complete.app" \
+  ~/.local/bin/ec ~/.local/bin/ecterm \
+  ~/Library/Application\ Support/easy-complete \
+  ~/Library/Input\ Methods/EasyCompleteInputMethod.app \
+  ~/Library/LaunchAgents/dev.emmmm.easy-complete.plist
+do
+  [[ -e "$p" ]] && echo "still here: $p"
+done
+pgrep -x easy-complete && echo "still running: easy-complete"
+pgrep -x ecterm && echo "still running: ecterm"
+grep -nE 'ec init|easy-complete' \
+  ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile \
+  ~/.config/fish/config.fish \
+  ~/.config/fish/conf.d/00_fig_pre.fish \
+  ~/.config/fish/conf.d/99_fig_post.fish \
+  ~/.ssh/config 2>/dev/null || true
 ```
 
 ## 4. Then install Fastab
