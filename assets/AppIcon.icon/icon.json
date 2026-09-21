@@ -1,0 +1,52 @@
+{
+  "fill": {
+    "automatic-gradient": "srgb:0.85098,0.46667,0.34118,1.00000"
+  },
+  "groups": [
+    {
+      "name": "Background",
+      "layers": [
+        {
+          "glass": false,
+          "hidden": false,
+          "image-name": "background.svg",
+          "name": "Wash"
+        }
+      ],
+      "lighting": "individual",
+      "shadow": {
+        "kind": "none",
+        "opacity": 0
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    },
+    {
+      "name": "Mark",
+      "layers": [
+        {
+          "glass": true,
+          "hidden": false,
+          "image-name": "mark.svg",
+          "name": "Prompt and list"
+        }
+      ],
+      "lighting": "individual",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "specular": true,
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": ["macOS"]
+  }
+}

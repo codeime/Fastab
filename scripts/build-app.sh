@@ -328,6 +328,66 @@ while IFS= read -r -d '' binary; do
   fi
 done < <(find "$STAGING_BUNDLE" -type f -print0)
 
+# macOS 26 reads the layered icon from Assets.car. The shadow lives on the
+# Mark group in assets/AppIcon.icon/icon.json — do not bake it into the
+# raster. Older macOS keeps using icon.icns via CFBundleIconFile.
+ICON_COMPOSER="${REPO_DIR}/assets/AppIcon.icon"
+APPICON_CAR=""
+CFBUNDLE_ICON_NAME_ENTRIES=""
+if [ -d "$ICON_COMPOSER" ]; then
+  python3 - "$ICON_COMPOSER" <<'PY'
+import json, sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+doc = json.loads((root / "icon.json").read_text())
+mark = next((group for group in doc.get("groups", []) if group.get("name") == "Mark"), None)
+if mark is None:
+    sys.exit("AppIcon.icon is missing the Mark group that carries the macOS 26 shadow")
+shadow = mark.get("shadow") or {}
+if shadow.get("kind") not in ("neutral", "layer-color"):
+    sys.exit("AppIcon.icon Mark group must set shadow.kind to neutral or layer-color")
+if not isinstance(shadow.get("opacity"), (int, float)):
+    sys.exit("AppIcon.icon Mark group is missing shadow.opacity")
+for group in doc.get("groups", []):
+    for layer in group.get("layers", []):
+        name = layer.get("image-name")
+        if name and not (root / "Assets" / name).is_file():
+            sys.exit(f"AppIcon.icon is missing Assets/{name}")
+PY
+  ACTOOL="$(xcrun --find actool 2>/dev/null || true)"
+  if [ -n "$ACTOOL" ]; then
+    ICON_CAR_DIR="${BUILD_WORK_ROOT}/appicon-car"
+    mkdir -p "$ICON_CAR_DIR"
+    if "$ACTOOL" "$ICON_COMPOSER" \
+      --compile "$ICON_CAR_DIR" \
+      --output-format human-readable-text \
+      --notices --warnings \
+      --output-partial-info-plist "$ICON_CAR_DIR/assetcatalog_generated_info.plist" \
+      --app-icon AppIcon \
+      --include-all-app-icons \
+      --enable-on-demand-resources NO \
+      --development-region en \
+      --target-device mac \
+      --minimum-deployment-target 26.0 \
+      --platform macosx
+    then
+      if [ -f "$ICON_CAR_DIR/Assets.car" ]; then
+        APPICON_CAR="$ICON_CAR_DIR/Assets.car"
+        # Only advertise the layered name when the catalog is actually in
+        # the bundle. A dangling CFBundleIconName on Tahoe hides icon.icns.
+        CFBUNDLE_ICON_NAME_ENTRIES="    <key>CFBundleIconName</key>
+    <string>AppIcon</string>"
+        info "Compiled AppIcon.icon → Assets.car (macOS 26 group shadow)"
+      fi
+    else
+      echo "warning: actool failed to compile AppIcon.icon; shipping icon.icns only" >&2
+    fi
+  else
+    echo "warning: actool not found (need Xcode 26+); shipping icon.icns only" >&2
+  fi
+fi
+
 cat > "${STAGING_BUNDLE}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -369,6 +429,7 @@ cat > "${STAGING_BUNDLE}/Contents/Info.plist" <<PLIST
     <true/>
     <key>CFBundleIconFile</key>
     <string>icon</string>
+${CFBUNDLE_ICON_NAME_ENTRIES}
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
@@ -387,6 +448,9 @@ PLIST
 
 # Copy app icon to Resources
 cp "${REPO_DIR}/crates/fig_desktop/icons/icon.icns" "${RESOURCES_DIR}/icon.icns"
+if [ -n "$APPICON_CAR" ]; then
+  cp "$APPICON_CAR" "${RESOURCES_DIR}/Assets.car"
+fi
 
 # ── 3. Ad-hoc code sign ───────────────────────────────────────────────────────
 # Release builds replace this with Developer ID signing in CI.

@@ -4,6 +4,9 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 MAIN_SVG="${REPO_DIR}/assets/logo.svg"
 MENU_BAR_SVG="${REPO_DIR}/assets/menu-bar.svg"
+# Layered macOS 26 icon lives in assets/AppIcon.icon. The Dock shadow is
+# groups[name=Mark].shadow in icon.json; build-app.sh compiles it to
+# Assets.car. Do not bake that shadow into these rasters.
 SVG_RENDERER_SOURCE="${REPO_DIR}/scripts/render-svg.m"
 DESKTOP_ICONS="${REPO_DIR}/crates/fig_desktop/icons"
 APP_ICONSET="${DESKTOP_ICONS}/AppIcon.iconset"

@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="prompt" x1="190" y1="260" x2="420" y2="500" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF9F3"/>
+      <stop offset="1" stop-color="#F0C4A8"/>
+    </linearGradient>
+    <linearGradient id="input-line" x1="402" y1="402" x2="600" y2="402" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF8F1"/>
+      <stop offset="1" stop-color="#F3C9A8"/>
+    </linearGradient>
+    <linearGradient id="selected-row" x1="396" y1="449" x2="811" y2="540" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF8F1"/>
+      <stop offset="0.55" stop-color="#F7DECA"/>
+      <stop offset="1" stop-color="#E8B892"/>
+    </linearGradient>
+    <linearGradient id="selected-dot" x1="424" y1="474" x2="466" y2="516" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF9F3"/>
+      <stop offset="1" stop-color="#E8A07A"/>
+    </linearGradient>
+    <linearGradient id="idle-row-1" x1="396" y1="543" x2="811" y2="638" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8A4030" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#6A2E22" stop-opacity="0.38"/>
+    </linearGradient>
+    <linearGradient id="idle-row-2" x1="396" y1="642" x2="811" y2="737" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7A3828" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#5C261C" stop-opacity="0.32"/>
+    </linearGradient>
+    <linearGradient id="idle-dot" x1="424" y1="570" x2="466" y2="612" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F4D4BC" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#D97757" stop-opacity="0.55"/>
+    </linearGradient>
+    <linearGradient id="idle-bar" x1="490" y1="576" x2="732" y2="602" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F6D3B5" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#E08A62" stop-opacity="0.32"/>
+    </linearGradient>
+  </defs>
+
+  <path d="M244 286L342 379L244 472" stroke="url(#prompt)" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M410 402H592" stroke="url(#input-line)" stroke-width="32" stroke-linecap="round"/>
+
+  <rect x="396" y="449" width="415" height="91" rx="23" fill="url(#selected-row)"/>
+  <circle cx="445" cy="495" r="21" fill="url(#selected-dot)"/>
+
+  <rect x="396" y="543" width="415" height="95" rx="22" fill="url(#idle-row-1)"/>
+  <circle cx="445" cy="591" r="21" fill="url(#idle-dot)"/>
+  <rect x="490" y="576" width="242" height="26" rx="13" fill="url(#idle-bar)"/>
+
+  <rect x="396" y="642" width="415" height="95" rx="22" fill="url(#idle-row-2)"/>
+  <circle cx="445" cy="689" r="21" fill="url(#idle-dot)"/>
+  <rect x="490" y="675" width="242" height="26" rx="13" fill="url(#idle-bar)"/>
+</svg>

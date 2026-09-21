@@ -3,6 +3,7 @@
 ## Unreleased
 
 - 变更：应用图标改为 Claude 陶土到桃色的渐变，不再是一块纯色深底
+- 变更：应用图标加入 Icon Composer 的 Mark 组，macOS 26 会在提示符和列表标记下方施加系统阴影
 
 ## v0.0.1
 
