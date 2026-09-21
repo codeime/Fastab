@@ -77,7 +77,7 @@ done
 render_png "$MAIN_SVG" 512 "${DESKTOP_ICONS}/icon.png" "$(awk 'BEGIN { printf "%.6f", 512 * 100 / 1024 }')"
 render_png "$MAIN_SVG" 512 "${REPO_DIR}/assets/logo.png"
 render_png "$MAIN_SVG" 180 "${REPO_DIR}/website/src/assets/logo.png"
-render_png "${REPO_DIR}/assets/volume-icon.svg" 256 "${DESKTOP_ICONS}/VolumeIcon.png" "$(awk 'BEGIN { printf "%.6f", 256 * 100 / 1024 }')"
+render_png "$MAIN_SVG" 256 "${DESKTOP_ICONS}/VolumeIcon.png" "$(awk 'BEGIN { printf "%.6f", 256 * 100 / 1024 }')"
 
 iconutil -c icns "$APP_ICONSET" -o "${DESKTOP_ICONS}/icon.icns"
 copy_if_changed "${DESKTOP_ICONS}/icon.icns" "$IME_ICON"
