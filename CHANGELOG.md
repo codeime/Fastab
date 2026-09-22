@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.0.2
+
 - change: app icon uses a Claude terracotta-to-peach gradient instead of a flat dark tile
 - change: app icon ships an Icon Composer Mark group so macOS 26 can apply its system shadow under the prompt-and-list mark
 - change: the DMG volume uses the same app icon as the Dock tile
