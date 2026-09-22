@@ -177,7 +177,7 @@ impl Render for SettingsWindow {
             });
 
         if self.gate.still_checking() {
-            return root.child(permission_checking_page(zh, chrome));
+            return root.child(permission_checking_page(zh, chrome, entity));
         }
         if shows_permission_gate(&self.gate) {
             return root.child(permission_gate_page(
@@ -792,13 +792,66 @@ fn theme_selector(
     root
 }
 
+fn language_options(zh: bool) -> &'static [(&'static str, &'static str)] {
+    if zh {
+        &[("跟随系统", "system"), ("English", "en"), ("简体中文", "zh-CN")]
+    } else {
+        &[("Follow System", "system"), ("English", "en"), ("简体中文", "zh-CN")]
+    }
+}
+
+fn language_select(
+    id_prefix: &'static str,
+    zh: bool,
+    chrome: Chrome,
+    entity: Entity<SettingsWindow>,
+) -> impl IntoElement {
+    let lang = fig_settings::settings::get_string_or("dashboard.language", "system".into());
+    select_chips(
+        id_prefix,
+        language_options(zh),
+        lang.as_str(),
+        chrome,
+        move |value, cx| {
+            entity.update(cx, |this, cx| this.set_string("dashboard.language", value, cx));
+        },
+    )
+}
+
+/// The permission pages render before the sidebar, so this is the only language
+/// control a first-run window can reach.
+fn permission_language_bar(
+    id_prefix: &'static str,
+    zh: bool,
+    chrome: Chrome,
+    entity: Entity<SettingsWindow>,
+) -> impl IntoElement {
+    div()
+        .w_full()
+        .h(px(SETTINGS_TITLEBAR_H))
+        .flex_none()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_end()
+        .gap(px(12.))
+        .pl(px(SETTINGS_TITLE_LEFT))
+        .pr(px(16.))
+        .child(
+            div()
+                .text_size(px(13.))
+                .text_color(rgb(chrome.muted))
+                .child(if zh { "显示语言" } else { "Display Language" }.to_string()),
+        )
+        .child(language_select(id_prefix, zh, chrome, entity))
+}
+
 fn appearance_page(
     zh: bool,
     chrome: Chrome,
     entity: Entity<SettingsWindow>,
     controls: ThemeControls,
 ) -> impl IntoElement {
-    let lang = fig_settings::settings::get_string_or("dashboard.language", "system".into());
     let interface_theme = fig_settings::settings::get_string_or("dashboard.theme", "system".into());
     let theme = fig_settings::settings::get_string_or("autocomplete.theme", "github-dark".into());
     let font = fig_settings::settings::get_string_or("autocomplete.fontFamily", String::new());
@@ -806,12 +859,6 @@ fn appearance_page(
     let width = fig_settings::settings::get_int_or("autocomplete.width", 300);
     let height = fig_settings::settings::get_int_or("autocomplete.height", 140);
     let overflow = fig_settings::settings::get_string_or("autocomplete.overflow", "scroll".into());
-
-    let lang_options: &[(&str, &str)] = if zh {
-        &[("跟随系统", "system"), ("English", "en"), ("简体中文", "zh-CN")]
-    } else {
-        &[("Follow System", "system"), ("English", "en"), ("简体中文", "zh-CN")]
-    };
 
     let mut font_options: Vec<(&str, String)> = FONTS.iter().map(|name| (*name, (*name).to_string())).collect();
     if !font.is_empty() && !FONTS.contains(&font.as_str()) {
@@ -849,7 +896,6 @@ fn appearance_page(
         );
     }
 
-    let lang_entity = entity.clone();
     let size_entity = entity.clone();
     let width_entity = entity.clone();
     let height_entity = entity.clone();
@@ -869,9 +915,7 @@ fn appearance_page(
                     None,
                     chrome,
                     false,
-                    select_chips("ec-lang", lang_options, lang.as_str(), chrome, move |value, cx| {
-                        lang_entity.update(cx, |this, cx| this.set_string("dashboard.language", value, cx));
-                    }),
+                    language_select("ec-lang", zh, chrome, entity.clone()),
                 ))
                 .child(row(
                     if zh { "界面主题" } else { "Interface Theme" },
@@ -1685,20 +1729,27 @@ fn perm_status_label(id: PermId, state: PermReady, zh: bool) -> &'static str {
     }
 }
 
-fn permission_checking_page(zh: bool, chrome: Chrome) -> impl IntoElement {
+fn permission_checking_page(zh: bool, chrome: Chrome, entity: Entity<SettingsWindow>) -> impl IntoElement {
     div()
         .id("ec-permission-checking")
         .flex()
         .flex_1()
         .flex_col()
-        .items_center()
-        .justify_center()
-        .px(px(40.))
-        .child(div().text_size(px(15.)).text_color(rgb(chrome.muted)).child(if zh {
-            "正在检查权限…"
-        } else {
-            "Checking permissions…"
-        }))
+        .child(permission_language_bar("ec-perm-check-lang", zh, chrome, entity))
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .px(px(40.))
+                .child(div().text_size(px(15.)).text_color(rgb(chrome.muted)).child(if zh {
+                    "正在检查权限…"
+                } else {
+                    "Checking permissions…"
+                })),
+        )
 }
 
 fn permission_gate_page(
@@ -1860,102 +1911,114 @@ fn permission_gate_page(
         .flex()
         .flex_1()
         .flex_col()
-        .items_center()
-        .justify_center()
-        .px(px(40.))
+        .child(permission_language_bar(
+            "ec-perm-lang",
+            zh,
+            chrome,
+            entity.clone(),
+        ))
         .child(
             div()
-                .w(px(640.))
+                .flex_1()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .px(px(40.))
                 .child(
                     div()
-                        .mb(px(16.))
+                        .w(px(640.))
                         .child(
                             div()
-                                .text_size(px(22.))
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child(if zh { "完成设置" } else { "Finish Setup" }.to_string()),
+                                .mb(px(16.))
+                                .child(
+                                    div()
+                                        .text_size(px(22.))
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .child(if zh { "完成设置" } else { "Finish Setup" }.to_string()),
+                                )
+                                .child(
+                                    div()
+                                        .mt(px(6.))
+                                        .text_size(px(13.))
+                                        .text_color(rgb(chrome.muted))
+                                        .child(if zh {
+                                            "使用设置前需要辅助功能和 Shell 集成。输入法为非必选，仅部分终端需要。"
+                                        } else {
+                                            "Accessibility and Shell integration are required before settings can be used. The input method is optional."
+                                        }),
+                                ),
                         )
+                        .child(list)
+                        .when_some(gate.error.clone(), |this, err| {
+                            this.child(
+                                div()
+                                    .mt(px(8.))
+                                    .text_size(px(12.))
+                                    .text_color(rgb(0xff453a))
+                                    .child(err),
+                            )
+                        })
                         .child(
                             div()
-                                .mt(px(6.))
-                                .text_size(px(13.))
-                                .text_color(rgb(chrome.muted))
-                                .child(if zh {
-                                    "使用设置前需要辅助功能和 Shell 集成。输入法为非必选，仅部分终端需要。"
-                                } else {
-                                    "Accessibility and Shell integration are required before settings can be used. The input method is optional."
-                                }),
-                        ),
-                )
-                .child(list)
-                .when_some(gate.error.clone(), |this, err| {
-                    this.child(
-                        div()
-                            .mt(px(8.))
-                            .text_size(px(12.))
-                            .text_color(rgb(0xff453a))
-                            .child(err),
-                    )
-                })
-                .child(
-                    div()
-                        .mt(px(16.))
-                        .flex()
-                        .flex_row()
-                        .justify_end()
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .id("ec-perm-refresh")
-                                .px(px(12.))
-                                .py(px(6.))
-                                .rounded(px(9.))
-                                .bg(rgb(chrome.separator))
-                                .cursor_pointer()
-                                .child(if zh {
-                                    "重新检查".to_string()
-                                } else {
-                                    "Check Again".to_string()
-                                })
-                                .when(!busy, |this| {
-                                    this.on_mouse_down(MouseButton::Left, move |_e, _w, cx| {
-                                        entity_refresh.update(cx, |this, cx| {
-                                            if this.repairing.is_some() {
-                                                return;
-                                            }
-                                            this.gate = PermissionSnapshot::checking();
-                                            cx.notify();
-                                            permissions::spawn_check(&this.proxy);
-                                        });
-                                    })
-                                }),
-                        )
-                        .child(
-                            div()
-                                .id("ec-perm-fix-all")
-                                .px(px(12.))
-                                .py(px(6.))
-                                .rounded(px(9.))
-                                .bg(rgb(if busy { chrome.separator } else { chrome.accent }))
-                                .text_color(rgb(if busy { chrome.muted } else { chrome.accent_text }))
-                                .cursor_pointer()
-                                .child(if repairing.is_some() {
-                                    if zh { "处理中…" } else { "Working..." }.to_string()
-                                } else if zh {
-                                    "全部修复".to_string()
-                                } else {
-                                    "Fix All".to_string()
-                                })
-                                .when(!busy, |this| {
-                                    this.on_mouse_down(MouseButton::Left, move |_e, _w, cx| {
-                                        entity_all.update(cx, |this, cx| {
-                                            this.repairing = Some(PermId::Accessibility);
-                                            this.permission_merge.active_repair_generation =
-                                                Some(permissions::spawn_repair_all(&this.proxy));
-                                            cx.notify();
-                                        });
-                                    })
-                                }),
+                                .mt(px(16.))
+                                .flex()
+                                .flex_row()
+                                .justify_end()
+                                .gap(px(8.))
+                                .child(
+                                    div()
+                                        .id("ec-perm-refresh")
+                                        .px(px(12.))
+                                        .py(px(6.))
+                                        .rounded(px(9.))
+                                        .bg(rgb(chrome.separator))
+                                        .cursor_pointer()
+                                        .child(if zh {
+                                            "重新检查".to_string()
+                                        } else {
+                                            "Check Again".to_string()
+                                        })
+                                        .when(!busy, |this| {
+                                            this.on_mouse_down(MouseButton::Left, move |_e, _w, cx| {
+                                                entity_refresh.update(cx, |this, cx| {
+                                                    if this.repairing.is_some() {
+                                                        return;
+                                                    }
+                                                    this.gate = PermissionSnapshot::checking();
+                                                    cx.notify();
+                                                    permissions::spawn_check(&this.proxy);
+                                                });
+                                            })
+                                        }),
+                                )
+                                .child(
+                                    div()
+                                        .id("ec-perm-fix-all")
+                                        .px(px(12.))
+                                        .py(px(6.))
+                                        .rounded(px(9.))
+                                        .bg(rgb(if busy { chrome.separator } else { chrome.accent }))
+                                        .text_color(rgb(if busy { chrome.muted } else { chrome.accent_text }))
+                                        .cursor_pointer()
+                                        .child(if repairing.is_some() {
+                                            if zh { "处理中…" } else { "Working..." }.to_string()
+                                        } else if zh {
+                                            "全部修复".to_string()
+                                        } else {
+                                            "Fix All".to_string()
+                                        })
+                                        .when(!busy, |this| {
+                                            this.on_mouse_down(MouseButton::Left, move |_e, _w, cx| {
+                                                entity_all.update(cx, |this, cx| {
+                                                    this.repairing = Some(PermId::Accessibility);
+                                                    this.permission_merge.active_repair_generation =
+                                                        Some(permissions::spawn_repair_all(&this.proxy));
+                                                    cx.notify();
+                                                });
+                                            })
+                                        }),
+                                ),
                         ),
                 ),
         )
@@ -2597,6 +2660,59 @@ mod tests {
             .and_then(|rest| rest.split(']').next())
             .expect("rows");
         assert!(rows.contains("PermId::InputMethod"));
+    }
+
+    #[test]
+    fn permission_pages_can_change_display_language() {
+        let production = include_str!("settings_ui.rs")
+            .rsplit_once("mod tests {")
+            .map(|(src, _)| src)
+            .expect("production source");
+
+        let options = production
+            .split("fn language_options")
+            .nth(1)
+            .and_then(|rest| rest.split("fn language_select").next())
+            .expect("language options");
+        assert!(options.contains("\"system\""));
+        assert!(options.contains("\"en\""));
+        assert!(options.contains("\"zh-CN\""));
+        assert!(options.contains("跟随系统"));
+        assert!(options.contains("Follow System"));
+
+        let select = production
+            .split("fn language_select")
+            .nth(1)
+            .and_then(|rest| rest.split("fn permission_language_bar").next())
+            .expect("language select");
+        assert!(select.contains("dashboard.language"));
+        assert!(select.contains("set_string"));
+
+        let checking = production
+            .split("fn permission_checking_page")
+            .nth(1)
+            .and_then(|rest| rest.split("fn permission_gate_page").next())
+            .expect("checking page");
+        assert!(checking.contains("permission_language_bar"));
+        assert!(checking.contains("ec-perm-check-lang"));
+
+        let gate = production
+            .split("fn permission_gate_page")
+            .nth(1)
+            .and_then(|rest| rest.split("fn pill").next())
+            .expect("gate page");
+        assert!(gate.contains("permission_language_bar"));
+        assert!(gate.contains("ec-perm-lang"));
+
+        let appearance = production
+            .split("fn appearance_page")
+            .nth(1)
+            .and_then(|rest| rest.split("fn behavior_page").next())
+            .expect("appearance page");
+        assert!(
+            appearance.contains("language_select(\"ec-lang\""),
+            "appearance must keep the same language control"
+        );
     }
 
     #[test]
