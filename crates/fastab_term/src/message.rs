@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 use alacritty_terminal::Term;
 use alacritty_terminal::term::ShellState;
 use anyhow::Result;
-use fastab_proto::fig::{EnvironmentVariable, RunProcessResponse};
+use fastab_proto::fig::EnvironmentVariable;
 use fastab_proto::figterm::figterm_request_message::Request as FigtermRequest;
 use fastab_proto::figterm::figterm_response_message::Response as FigtermResponse;
 use fastab_proto::figterm::intercept_request::{InterceptCommand, SetFigjsIntercepts, SetFigjsVisible};
@@ -453,18 +453,14 @@ pub(crate) async fn process_remote_message(
                             if !response_tx.is_current_ready() {
                                 return None;
                             }
-                            Some(cmd.output().await)
+                            Some(fastab_term::process_output::run(&mut cmd).await)
                         });
 
                         let response = match command_timeout.await {
                             Ok(None) => return,
                             Ok(Some(Ok(output))) => {
                                 debug!("command successfully ran");
-                                make_response(Response::RunProcess(RunProcessResponse {
-                                    stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                                    exit_code: output.status.code().unwrap_or(0),
-                                }))
+                                make_response(Response::RunProcess(output))
                             },
                             Ok(Some(Err(err))) => {
                                 warn!(%err, executable = request.executable, "failed running executable");

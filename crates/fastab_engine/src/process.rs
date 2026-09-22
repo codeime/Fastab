@@ -168,14 +168,43 @@ fn wait_child_output(mut child: Child, timeout: Duration) -> Result<CommandOutpu
         kill_process_group(pid);
         // Also stop the leader if it moved out of the original process group.
         let _ = child.kill();
-        loop {
-            match child.wait() {
-                Err(err) if err.kind() == ErrorKind::Interrupted => continue,
-                _ => break,
-            }
-        }
+        // SIGKILL need not take effect immediately (for example during an
+        // uninterruptible kernel wait). Never turn a bounded command failure
+        // into an unbounded wait for reaping, including repeated EINTR.
+        let cleanup_started = Instant::now();
+        poll_exit_until(
+            Duration::from_secs(1),
+            || child.try_wait().map(|status| status.is_some()),
+            || cleanup_started.elapsed(),
+            std::thread::sleep,
+        );
     }
     result
+}
+
+#[cfg(unix)]
+fn poll_exit_until(
+    timeout: Duration,
+    mut try_wait: impl FnMut() -> std::io::Result<bool>,
+    mut elapsed: impl FnMut() -> Duration,
+    mut pause: impl FnMut(Duration),
+) {
+    loop {
+        if elapsed() >= timeout {
+            return;
+        }
+        match try_wait() {
+            Ok(true) => return,
+            Ok(false) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {},
+            Err(_wait_error) => return,
+        }
+        let remaining = timeout.saturating_sub(elapsed());
+        if remaining.is_zero() {
+            return;
+        }
+        pause(remaining.min(Duration::from_millis(20)));
+    }
 }
 
 #[cfg(unix)]
@@ -621,6 +650,111 @@ pub(crate) mod mock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    fn full_shell(script: &str, timeout: Duration) -> Result<CommandOutput, CommandError> {
+        execute_full("/bin/sh", &["-c".into(), script.into()], "/", &[], timeout)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn full_output_drains_beyond_stdout_limit_until_command_finishes() {
+        let output = full_shell(
+            "printf stdout-prefix; head -c 1048576 /dev/zero; printf done >&2",
+            Duration::from_secs(5),
+        )
+        .expect("large stdout should be drained rather than killing the command");
+        assert_eq!(output.status, 0);
+        assert_eq!(output.stdout.len(), MAX_STDOUT);
+        assert!(output.stdout.starts_with("stdout-prefix"));
+        assert!(output.stdout.as_bytes()["stdout-prefix".len()..].iter().all(|byte| *byte == 0));
+        assert_eq!(output.stderr, "done");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn full_output_drains_concurrent_large_pipes_and_preserves_nonzero_status() {
+        let output = full_shell(
+            "(printf stdout-prefix; head -c 1048576 /dev/zero) & \
+             (printf stderr-prefix; head -c 1048576 /dev/zero) >&2 & wait; exit 7",
+            Duration::from_secs(5),
+        )
+        .expect("both full pipes must be drained without deadlocking");
+        assert_eq!(output.status, 7);
+        for (actual, prefix) in [(&output.stdout, "stdout-prefix"), (&output.stderr, "stderr-prefix")] {
+            assert_eq!(actual.len(), MAX_STDOUT);
+            assert!(actual.starts_with(prefix));
+            assert!(actual.as_bytes()[prefix.len()..].iter().all(|byte| *byte == 0));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn full_timeout_kills_and_returns_with_bounded_cleanup() {
+        let started = std::time::Instant::now();
+        assert_eq!(
+            full_shell("exec sleep 30", Duration::from_millis(50)),
+            Err(CommandError::TimedOut)
+        );
+        assert!(started.elapsed() < Duration::from_secs(3), "cleanup took {:?}", started.elapsed());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn full_failed_pipe_setup_preserves_failure_after_cleanup() {
+        use std::os::unix::process::CommandExt;
+
+        let child = Command::new("/bin/sh")
+            .args(["-c", "exec sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("spawn real child without capture pipes");
+        let started = std::time::Instant::now();
+        assert_eq!(wait_child_output(child, Duration::from_secs(5)), Err(CommandError::Failed));
+        assert!(started.elapsed() < Duration::from_secs(3), "cleanup took {:?}", started.elapsed());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn full_signal_exit_remains_success_with_negative_status() {
+        let output = full_shell("printf signalled; kill -KILL $$", Duration::from_secs(5))
+            .expect("a signal exit is still a completed command");
+        assert_eq!(output.status, -1);
+        assert_eq!(output.stdout, "signalled");
+        assert!(output.stderr.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_deadline_bounds_pending_children_and_repeated_eintr() {
+        use std::cell::Cell;
+
+        // A real SIGKILL normally exits promptly, so emulate the two cases
+        // that otherwise make cleanup unbounded without relying on OS timing
+        // or installing process-wide signal handlers in parallel tests.
+        for interrupted in [false, true] {
+            let elapsed = Cell::new(Duration::ZERO);
+            let polls = Cell::new(0);
+            poll_exit_until(
+                Duration::from_secs(1),
+                || {
+                    polls.set(polls.get() + 1);
+                    if interrupted {
+                        Err(std::io::Error::from_raw_os_error(libc::EINTR))
+                    } else {
+                        Ok(false)
+                    }
+                },
+                || elapsed.get(),
+                |delay| elapsed.set(elapsed.get() + delay),
+            );
+            assert_eq!(elapsed.get(), Duration::from_secs(1));
+            assert_eq!(polls.get(), 50);
+        }
+    }
 
     #[test]
     fn times_out_and_returns_empty() {
