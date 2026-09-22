@@ -2079,6 +2079,14 @@ pub(crate) fn complete_with_settings(
         &raw_search_term,
         Some(registry),
     );
+    let public_ai_context = if context.active_arg.is_none()
+        && context.persistent_options.iter().all(|option| option.meta.js_get_query_term.is_none())
+    {
+        crate::public_ai::context(registry, request, &root, context.spec.as_ref(), &tokens)
+    } else {
+        None
+    };
+    let mut public_ai_budget = if public_ai_context.is_some() { crate::public_ai::MAX_CANDIDATES } else { 0 };
     let fuzzy = effective_fuzzy(
         request.fuzzy,
         Some(context.spec.as_ref()),
@@ -2139,6 +2147,8 @@ pub(crate) fn complete_with_settings(
             &search_term,
             fuzzy,
             prefer_verbose,
+            |spec| public_ai_context.is_some() && !spec.meta.ai_resolved_reference,
+            &mut public_ai_budget,
         )
     } else {
         Vec::new()
@@ -2197,6 +2207,8 @@ pub(crate) fn complete_with_settings(
         if open_option_chain.is_some() { "" } else { &search_term },
         fuzzy,
         prefer_verbose,
+        |_| false,
+        &mut public_ai_budget,
     );
     if open_option_chain.is_some() {
         for suggestion in &mut additional {
@@ -2236,6 +2248,8 @@ pub(crate) fn complete_with_settings(
             fuzzy,
             prefer_verbose,
             &context.parser_directives,
+            public_ai_context.is_some(),
+            &mut public_ai_budget,
         ));
     }
 
@@ -2266,7 +2280,8 @@ pub(crate) fn complete_with_settings(
     );
 
     let (pending_generators, debounce_ms) = crate::generate::take_pending_generators();
-    CompleteResult {
+    let mut result = CompleteResult {
+        public_ai_context,
         suggestions,
         fuzzy,
         search_term,
@@ -2274,7 +2289,9 @@ pub(crate) fn complete_with_settings(
         current_arg,
         pending_generators,
         debounce_ms,
-    }
+    };
+    crate::public_ai::finalize(&mut result);
+    result
 }
 
 fn root_spec_for_command(
@@ -2462,6 +2479,8 @@ fn collect_named<T>(
     search_term: &str,
     fuzzy: bool,
     prefer_verbose: bool,
+    public_source: impl Fn(&T) -> bool,
+    public_ai_budget: &mut usize,
 ) -> Vec<Suggestion> {
     let mut out = Vec::new();
     for item in items {
@@ -2513,6 +2532,9 @@ fn collect_named<T>(
             .with_query_term(item_query_term)
             .with_alias_names(item_names.to_vec());
         suggestion.requires_arg = requires_arg(item);
+        if public_source(item) && suggestion.name.starts_with(query) {
+            crate::public_ai::mark_candidate(&mut suggestion, metadata, public_ai_budget);
+        }
         out.push(suggestion);
     }
     out
@@ -2583,6 +2605,8 @@ fn collect_option_suggestions(
     fuzzy: bool,
     prefer_verbose: bool,
     directives: &ParserDirectives,
+    public_source: bool,
+    public_ai_budget: &mut usize,
 ) -> Vec<Suggestion> {
     let mut options = Vec::new();
     for option in current
@@ -2620,6 +2644,8 @@ fn collect_option_suggestions(
         search_term,
         fuzzy,
         prefer_verbose,
+        |option| public_source && option.load_spec.is_none(),
+        public_ai_budget,
     )
 }
 
@@ -2777,6 +2803,7 @@ fn add_exact_auto_execute(
     let original = suggestions[index].clone();
     let is_folder = original.kind == "folder";
     let auto = Suggestion {
+        public_ai_candidate: None,
         name: if is_folder {
             original.name.strip_suffix('/').unwrap_or(&original.name).to_string()
         } else {
@@ -2821,6 +2848,7 @@ fn add_space_auto_execute(
         0,
         Suggestion {
             name: "↪".into(),
+            public_ai_candidate: None,
             description: "Immediately execute".into(),
             kind: "auto-execute".into(),
             args_hint: String::new(),
@@ -2890,6 +2918,7 @@ fn add_current_token_auto_execute(
             0,
             Suggestion {
                 name: if query == "." { query.to_string() } else { "↪".into() },
+                public_ai_candidate: None,
                 description: "Enter the current directory".into(),
                 kind: "auto-execute".into(),
                 args_hint: String::new(),
@@ -2919,6 +2948,7 @@ fn add_current_token_auto_execute(
         0,
         Suggestion {
             name: query.to_string(),
+            public_ai_candidate: None,
             description: "Enter the current argument".into(),
             kind: "auto-execute".into(),
             args_hint: String::new(),
@@ -3196,6 +3226,7 @@ mod tests {
                 current_shell: None,
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: None,
             },
         );
@@ -3222,6 +3253,7 @@ mod tests {
                 current_shell: None,
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: None,
             },
         );
@@ -3247,6 +3279,7 @@ mod tests {
                 current_shell: None,
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: None,
             },
         );
@@ -3271,6 +3304,7 @@ mod tests {
                 current_shell: None,
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: None,
             },
         );
@@ -3295,6 +3329,7 @@ mod tests {
                 current_shell: None,
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: None,
             },
         );
@@ -3319,6 +3354,7 @@ mod tests {
                 current_shell: None,
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: None,
             },
         );
@@ -3343,6 +3379,7 @@ mod tests {
                 current_shell: None,
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: None,
             },
         );
@@ -3368,6 +3405,7 @@ mod tests {
                 current_shell: None,
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: None,
             },
         );
@@ -3392,6 +3430,7 @@ mod tests {
                 current_shell: None,
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: None,
             },
         );
@@ -3415,6 +3454,7 @@ mod tests {
                 current_shell: Some("/bin/zsh".into()),
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: Some("alias g=git\n".into()),
             },
         );
@@ -3441,6 +3481,7 @@ mod tests {
                 current_shell: Some("/bin/zsh".into()),
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: Some("alias g=git\n".into()),
             },
         );
@@ -3482,6 +3523,7 @@ mod tests {
                 current_shell: Some("/bin/zsh".into()),
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: Some("alias g=git\n".into()),
             },
         );
@@ -3525,6 +3567,7 @@ mod tests {
                 current_shell: None,
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: None,
             },
         );
@@ -3556,6 +3599,7 @@ mod tests {
                 current_shell: None,
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: None,
             },
         );
@@ -3589,6 +3633,7 @@ mod tests {
                 current_shell: None,
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: None,
             },
         );
@@ -3616,6 +3661,7 @@ mod tests {
                 current_shell: None,
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: None,
             },
         );
@@ -4657,6 +4703,7 @@ mod tests {
                 current_shell: None,
                 current_process: None,
                 environment_variables: Default::default(),
+                include_public_ai: false,
                 alias: None,
             },
         );

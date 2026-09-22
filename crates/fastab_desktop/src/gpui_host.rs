@@ -44,6 +44,13 @@ pub struct DesktopHost {
 impl DesktopHost {
     pub fn dispatch(&mut self, event: Event, cx: &mut App) {
         match event {
+            Event::JevSettingsChanged => self.overlay.reload_jev(cx),
+            Event::JevCredentialsLoaded { epoch, credentials } => {
+                self.overlay.jev_credentials_loaded(epoch, credentials, cx);
+            },
+            Event::JevDebounced(token) => self.overlay.start_jev_request(token, cx),
+            Event::JevComplete { token, result } => self.overlay.apply_jev(token, result, cx),
+            Event::JevContextChanged => self.overlay.reconcile_jev_context(cx),
             Event::WindowEvent {
                 window_id,
                 window_event,

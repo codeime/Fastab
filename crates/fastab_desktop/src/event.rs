@@ -25,6 +25,17 @@ pub enum Event {
     SetTrayVisible(bool),
 
     ReloadCredentials,
+    JevSettingsChanged,
+    JevCredentialsLoaded {
+        epoch: u64,
+        credentials: crate::overlay::ai::LoadedCredentials,
+    },
+    JevDebounced(crate::overlay::ai::RequestToken),
+    JevComplete {
+        token: crate::overlay::ai::RequestToken,
+        result: Result<crate::jev::types::Recommendation, crate::jev::client::ClientError>,
+    },
+    JevContextChanged,
     ReloadAccessibility,
     ReloadTray {
         is_logged_in: bool,

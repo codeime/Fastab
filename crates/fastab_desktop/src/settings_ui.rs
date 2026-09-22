@@ -51,6 +51,8 @@ enum Section {
     About,
 }
 
+mod ai;
+mod input;
 mod theme;
 #[cfg(test)]
 use theme::ThemeAppearance;
@@ -117,6 +119,7 @@ pub struct SettingsWindow {
     permission_merge: PermissionMergeState,
     copied_doctor: bool,
     theme_controls: ThemeControls,
+    ai: Entity<ai::AiSettings>,
 }
 
 pub type SettingsHandle = WindowHandle<SettingsWindow>;
@@ -214,7 +217,7 @@ impl Render for SettingsWindow {
                                 appearance_page(zh, chrome, entity.clone(), theme_controls).into_any_element()
                             },
                             Section::Behavior => {
-                                behavior_page(zh, chrome, entity, self.gate.input_method, self.repairing)
+                                behavior_page(zh, chrome, entity, self.gate.input_method, self.repairing, self.ai.clone())
                                     .into_any_element()
                             },
                             Section::About => about_page(zh, chrome, entity, self.copied_doctor).into_any_element(),
@@ -299,6 +302,9 @@ fn sidebar(section: Section, zh: bool, chrome: Chrome, entity: Entity<SettingsWi
                 .child(label.to_string())
                 .on_mouse_down(MouseButton::Left, move |_e, _w, cx| {
                     entity.update(cx, |this, cx| {
+                        if this.section != id {
+                            this.ai.update(cx, |ai, cx| ai.clear_draft(cx));
+                        }
                         this.section = id;
                         this.theme_controls.menu = None;
                         cx.notify();
@@ -1079,6 +1085,7 @@ fn behavior_page(
     entity: Entity<SettingsWindow>,
     ime: PermReady,
     repairing: Option<PermId>,
+    ai: Entity<ai::AiSettings>,
 ) -> impl IntoElement {
     let launch = fastab_settings::settings::get_bool_or("app.launchOnStartup", false);
     let silent = fastab_settings::settings::get_bool_or("app.silentLaunch", false);
@@ -1343,6 +1350,7 @@ fn behavior_page(
                     |this, value, cx| this.set_bool("beta.history.allShells", value, cx),
                 )),
         ))
+        .child(ai)
 }
 
 fn optional_input_method_card(
@@ -2075,7 +2083,7 @@ fn notices_path() -> Option<PathBuf> {
         .map(|dir| dir.join("Licenses/THIRD_PARTY_NOTICES.txt"))
 }
 
-fn locale_is_zh() -> bool {
+pub(crate) fn locale_is_zh() -> bool {
     let pref = fastab_settings::settings::get_string_or("dashboard.language", "system".into());
     match pref.as_str() {
         "zh-CN" | "zh" => true,
@@ -2139,7 +2147,21 @@ pub fn open_settings_window(cx: &mut App, proxy: EventLoopProxy) -> anyhow::Resu
         },
         move |window, cx| {
             window.set_window_title(SETTINGS_WINDOW_TITLE);
-            window.on_window_should_close(cx, move |_window, _cx| {
+            let entity = cx.new(|cx| SettingsWindow {
+                section: Section::Appearance,
+                proxy: proxy.clone(),
+                gate: PermissionSnapshot::checking(),
+                repairing: None,
+                permission_merge: PermissionMergeState::default(),
+                copied_doctor: false,
+                theme_controls: ThemeControls::new(cx),
+                ai: cx.new(|cx| ai::AiSettings::new(proxy.clone(), cx)),
+            });
+            let weak = entity.downgrade();
+            window.on_window_should_close(cx, move |_window, cx| {
+                let _ = weak.update(cx, |this, cx| {
+                    this.ai.update(cx, |ai, cx| ai.clear_draft(cx));
+                });
                 close_proxy
                     .send_event(Event::WindowEvent {
                         window_id: DASHBOARD_ID,
@@ -2148,15 +2170,7 @@ pub fn open_settings_window(cx: &mut App, proxy: EventLoopProxy) -> anyhow::Resu
                     .ok();
                 true
             });
-            cx.new(|cx| SettingsWindow {
-                section: Section::Appearance,
-                proxy: proxy.clone(),
-                gate: PermissionSnapshot::checking(),
-                repairing: None,
-                permission_merge: PermissionMergeState::default(),
-                copied_doctor: false,
-                theme_controls: ThemeControls::new(cx),
-            })
+            entity
         },
     )?;
     handle
@@ -2358,7 +2372,8 @@ pub fn focus_settings(handle: &SettingsHandle, cx: &mut App) -> bool {
 
 pub fn close_settings(handle: &SettingsHandle, cx: &mut App) {
     handle
-        .update(cx, |_view, window, _cx| {
+        .update(cx, |view, window, cx| {
+            view.ai.update(cx, |ai, cx| ai.clear_draft(cx));
             window.remove_window();
         })
         .ok();
@@ -2381,6 +2396,9 @@ pub fn set_settings_section(handle: &SettingsHandle, path: &str, cx: &mut App) {
     let section = settings_section_from_path(path);
     handle
         .update(cx, |view, _window, cx| {
+            if view.section != section {
+                view.ai.update(cx, |ai, cx| ai.clear_draft(cx));
+            }
             view.section = section;
             view.theme_controls.menu = None;
             cx.notify();

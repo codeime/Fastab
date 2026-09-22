@@ -58,6 +58,10 @@ impl FilterStrategy {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SuggestionMeta {
+    /// Loader-only taint retained after eager static loadSpec replacement.
+    /// Skipped by serde so input JSON cannot grant or erase provenance.
+    #[serde(skip)]
+    pub ai_resolved_reference: bool,
     /// Explicit Fig suggestion type.  The surrounding collection supplies a
     /// default (`arg`, `subcommand`, or `option`), but static rows may override
     /// it with values such as `file`, `folder`, or `special`.
@@ -793,6 +797,10 @@ fn opt_string_heap(value: &Option<String>) -> usize {
 
 #[derive(Debug, Default, Clone)]
 pub struct Registry {
+    /// Cached release-pin decision, evaluated only for an AI opt-in request.
+    public_ai_baseline: Option<bool>,
+    /// Programmatic insertion has no verified source even in a pinned tree.
+    public_ai_inserted: bool,
     specs: HashMap<String, Arc<Spec>>,
     /// The captured generation against which both the index and lazy spec
     /// files are checked. Cloning a registry clones this handle, not an
@@ -868,7 +876,28 @@ impl Registry {
     }
 
     pub fn insert(&mut self, spec: Spec) {
+        self.public_ai_inserted = true;
         self.insert_loaded(spec, None);
+    }
+
+    pub(crate) fn is_public_ai_root(&mut self, name: &str, root: &Arc<Spec>) -> bool {
+        if self.public_ai_inserted
+            || std::env::var_os("EC_SPECS_DIR").is_some()
+            || self.versioned.contains_key(name)
+            || self.pinned.iter().any(|spec| Arc::ptr_eq(spec, root))
+            || !self.specs.get(name).is_some_and(|spec| Arc::ptr_eq(spec, root))
+        {
+            return false;
+        }
+        let Some(snapshot) = self.snapshot.as_ref() else {
+            return false;
+        };
+        if snapshot.is_stale() || snapshot.generation_changed() {
+            return false;
+        }
+        *self.public_ai_baseline.get_or_insert_with(|| {
+            crate::spec_pair::matches_public_ai_baseline(snapshot)
+        })
     }
 
     fn insert_loaded(&mut self, mut spec: Spec, path: Option<&Path>) {
@@ -1469,6 +1498,7 @@ fn resolve_spec_references(spec: &mut Spec, root: &Path, files: &HashMap<Arc<str
                 }
             }
         }
+        spec.meta.ai_resolved_reference = true;
     }
 
     for child in &mut spec.subcommands {
@@ -1581,6 +1611,7 @@ fn resolve_snapshot_spec_references(
                 replace_spec_with_loaded(spec, loaded);
             }
         }
+        spec.meta.ai_resolved_reference = true;
     }
 
     for child in &mut spec.subcommands {

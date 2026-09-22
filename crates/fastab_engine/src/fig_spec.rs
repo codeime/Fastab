@@ -460,6 +460,7 @@ fn seed_from_fig_json(value: &JsonValue) -> Option<SuggestionSeed> {
 
 fn meta_from_fig(object: &serde_json::Map<String, JsonValue>) -> SuggestionMeta {
     SuggestionMeta {
+        ai_resolved_reference: false,
         suggestion_type: object.get("type").and_then(JsonValue::as_str).map(ToOwned::to_owned),
         original_type: object
             .get("originalType")

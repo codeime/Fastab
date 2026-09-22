@@ -1,11 +1,14 @@
 //! Shared GPUI overlay window and suggestion list used by the spike binary
 //! and by `fastab_desktop`.
 
+mod ai;
 mod icons;
 mod list;
 mod macos;
 mod overlay;
 mod theme;
+
+pub use ai::AiPreview;
 
 pub use list::{
     ClickInsert, DEFAULT_FONT_SIZE, DEFAULT_MAX_LIST_HEIGHT, DEFAULT_ROW_HEIGHT, DEFAULT_WIDTH, DESCRIPTION_HEIGHT,

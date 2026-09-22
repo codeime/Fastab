@@ -26,6 +26,27 @@ const PAIR_FORMAT: u64 = 1;
 const PAIR_KIND: &str = "easy-complete-spec-pair";
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
+/// Maintainer-reviewed public artifact, not a trust assertion from a writable
+/// manifest. Source: @chen86860/autocomplete-specs 3.1.0, published in
+/// https://github.com/codeime/Fastab/tree/bd2887ca38ce646e5db4db55003897a356511db4/bundle/specs
+/// The public source manifest was independently compared with this release;
+/// the IR pin is the existing reviewed compiler output, not a claim that this
+/// change rebuilt/reproduced it. Updating any pin requires explicit review.
+/// Registry has already verified the complete IR snapshot before calling us.
+pub(crate) fn matches_public_ai_baseline(snapshot: &DirectorySnapshot) -> bool {
+    let relative = Path::new(PAIR_MARKER_NAME);
+    let Ok(Some(bytes)) = snapshot.read_optional_file(relative) else {
+        return false;
+    };
+    let Ok(marker) = read_marker_bytes(&bytes, &snapshot.display_path().join(relative)) else {
+        return false;
+    };
+    marker.source.tree_sha256 == "69d4bdd9fa05ee698c4e72ea677dabb6db0623fccc89e844509cf55ca69501a7"
+        && marker.source.manifest_sha256.0.as_deref()
+            == Some("efea68eddad4549ad1fd96a06ced085556efda70ff042ff63dcceca5c364d65f")
+        && marker.ir.tree_sha256 == "fec0a6a2ed769a1c47d8f2c63d8e60f08d5003b01822676fef0137bdc3df4ebb"
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct PairMarker {

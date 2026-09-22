@@ -910,7 +910,7 @@ impl Render for SuggestionList {
         };
         let radius = card_radius(font_size);
         let last_row = count.saturating_sub(1);
-        let has_footer = footer.is_some();
+        let has_footer = footer.is_some() || overlay.ai_preview.is_some();
 
         let mut column = div()
             .id("ec-list-column")
@@ -951,6 +951,7 @@ impl Render for SuggestionList {
                                         Some(suggestion_row(
                                             item,
                                             ix == overlay.selected,
+                                            ix == 0 && overlay.has_ai_promotion(),
                                             search_term,
                                             &typed_path,
                                             &overlay.search_term,
@@ -980,6 +981,9 @@ impl Render for SuggestionList {
         }
         if let Some(footer) = footer {
             column = column.child(footer);
+        }
+        if let Some(preview) = &overlay.ai_preview {
+            column = column.child(crate::ai::preview(preview, theme, row_height));
         }
         let list_column = div().when(shaking, |this| this.ml(px(3.))).child(column);
 
@@ -1042,6 +1046,7 @@ impl Render for SuggestionList {
 fn suggestion_row(
     item: &SuggestionItem,
     is_selected: bool,
+    is_ai_promoted: bool,
     search_term: &str,
     typed: &str,
     insertion_search_term: &str,
@@ -1141,12 +1146,11 @@ fn suggestion_row(
         .pl(px(row_pad_left(font_size)))
         .h(px(row_height))
         .when_some(bg, |this, bg| this.bg(bg))
-        .child(row_icon(
-            &item.kind,
-            icon,
-            item.icon_identifier.as_deref(),
-            icon_size,
-        ))
+        .child(if is_ai_promoted {
+            crate::icons::ai_icon_image_element(icon_size, theme.accent).into_any_element()
+        } else {
+            row_icon(&item.kind, icon, item.icon_identifier.as_deref(), icon_size).into_any_element()
+        })
         .child(
             div()
                 .ml(px(5.))
@@ -1160,6 +1164,7 @@ fn suggestion_row(
         // the user presses and drags out of it before releasing.
         .on_click(move |_event, _window, cx| {
             state.update(cx, |overlay, cx| {
+                overlay.invalidate_ai_request();
                 overlay.selected = ix;
                 overlay.has_changed_index = true;
                 cx.notify();

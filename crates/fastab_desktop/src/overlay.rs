@@ -1,5 +1,7 @@
 //! GPUI overlay controller: suggestion list, caret placement, key actions, engine.
 
+pub(crate) mod ai;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -104,6 +106,7 @@ pub struct OverlayController {
     /// heuristic from mistaking an accepted completion for a paste.
     self_insertion: Arc<Mutex<Option<String>>>,
     proxy: EventLoopProxy,
+    jev: ai::JevRuntime,
 }
 
 impl OverlayController {
@@ -149,7 +152,7 @@ impl OverlayController {
             }));
         });
         let handle = Arc::new(Mutex::new(None));
-        Ok(Self {
+        let mut controller = Self {
             state,
             handle,
             engine,
@@ -166,7 +169,10 @@ impl OverlayController {
             last_input: Arc::new(Mutex::new(None)),
             self_insertion: Arc::new(Mutex::new(None)),
             proxy,
-        })
+            jev: ai::JevRuntime::default(),
+        };
+        controller.reload_jev(cx);
+        Ok(controller)
     }
 
     fn ensure_window(&mut self, cx: &mut App) -> Option<OverlayHandle> {
@@ -269,6 +275,7 @@ impl OverlayController {
             apply_settings(overlay);
             cx.notify();
         });
+        self.reload_jev_if_changed(cx);
     }
 
     /// `ftab hook clear-autocomplete-cache`. The WebView answered its
@@ -288,6 +295,7 @@ impl OverlayController {
     }
 
     pub fn hide(&mut self, cx: &mut App) {
+        self.cancel_jev(cx);
         self.bump_generation();
         self.take_loading_owner();
         self.state.update(cx, |overlay, cx| {
@@ -299,6 +307,7 @@ impl OverlayController {
     }
 
     pub fn hide_until_shown(&mut self, cx: &mut App) {
+        self.cancel_jev(cx);
         // Hiding is a cancellation boundary too. Otherwise an in-flight
         // completion can repopulate hidden state and later be shown as stale.
         self.bump_generation();
@@ -322,6 +331,7 @@ impl OverlayController {
     }
 
     pub fn dismiss(&mut self, cx: &mut App) {
+        self.cancel_jev(cx);
         self.bump_generation();
         self.take_loading_owner();
         self.state.update(cx, |overlay, cx| {
@@ -582,6 +592,9 @@ impl OverlayController {
             let duplicate = should_skip_duplicate_input(last_input.as_ref(), &next_input, force);
             (duplicate, last_input.replace(next_input))
         };
+        if !duplicate_input || !self.jev_context_is_current() {
+            self.cancel_jev(cx);
+        }
         let previous_buffer = previous_input
             .filter(|input| input.session_id == session_id)
             .map(|input| input.buffer);
@@ -691,7 +704,9 @@ impl OverlayController {
             current_process,
             environment_variables,
             alias,
+            include_public_ai: self.jev.is_ready(),
         };
+        self.capture_jev_request_context(&request, session_id);
         let engine = self.engine.clone();
         let proxy = self.proxy.clone();
         let executor = cx.background_executor().clone();
@@ -807,6 +822,7 @@ impl OverlayController {
                 .pending_generators
                 .then_some(complete.debounce_ms.unwrap_or(200).max(0) as u64)
         });
+        let ai_candidates = result.as_ref().ok().and_then(|complete| self.prepare_jev(complete));
         let positioned = apply_complete_result(
             self.state.clone(),
             &self.handle,
@@ -819,6 +835,7 @@ impl OverlayController {
             cx,
         );
         self.update_layout_retry(positioned, cx);
+        self.schedule_jev(ai_candidates, cx);
         if let Some(delay_ms) = pending {
             let generation = self.generation.load(Ordering::Relaxed);
             let proxy = self.proxy.clone();
@@ -885,6 +902,7 @@ impl OverlayController {
             debug!(%action_session_id, current_session = ?self.current_session(), action, "ignoring stale overlay action");
             return;
         }
+        self.reconcile_jev_context(cx);
         let (visible, loading, has_items) = {
             let overlay = self.state.read(cx);
             (overlay.visible, overlay.loading, !overlay.items.is_empty())
@@ -892,6 +910,12 @@ impl OverlayController {
         if !action_is_allowed(action, visible, loading, has_items) {
             debug!(action, loading, "ignoring overlay action without an actionable list");
             return;
+        }
+        if matches!(action, "navigateUp" | "navigateDown" | "insertSelected" | "insertSelectedAndExecute"
+            | "insertCommonPrefix" | "insertCommonPrefixOrInsertSelected" | "insertCommonPrefixOrNavigateDown"
+            | "execute" | "toggleHistoryMode" | "toggleFuzzySearch") || action.starts_with("selectSuggestion")
+        {
+            self.cancel_jev_request(cx);
         }
         match action {
             "navigateUp" => self.move_selection(-1, true, figterm_state, cx),
@@ -1024,6 +1048,7 @@ impl OverlayController {
         figterm_state: &FigtermState,
         cx: &mut App,
     ) {
+        self.reconcile_jev_context(cx);
         let click_is_current = {
             let overlay = self.state.read(cx);
             click_matches_current(&click, overlay)
@@ -1154,6 +1179,7 @@ impl OverlayController {
     }
 
     fn insert_item(&mut self, item: ClickInsert, execute: bool, figterm_state: &FigtermState, cx: &mut App) {
+        self.cancel_jev(cx);
         let input_before_accept = self.current_input_snapshot();
         let acceptance = accepted_suggestion_key(&item, input_before_accept.as_ref());
         let add_space = self.state.read(cx).insert_space_automatically;
@@ -1425,7 +1451,7 @@ fn overlay_window_size_from(overlay: &OverlayState) -> LogicalSize<f64> {
         overlay.loading,
         overlay.current_arg_rows(),
     );
-    LogicalSize::new(f64::from(width), f64::from(height))
+    LogicalSize::new(f64::from(width), f64::from(height + overlay.ai_height()))
 }
 
 pub fn resolve_overlay_theme() -> OverlayTheme {

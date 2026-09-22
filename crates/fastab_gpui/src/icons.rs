@@ -72,12 +72,15 @@ const BUNDLED_ICONS: &[(&str, &[u8])] = &[
 // ascender/descender metrics and visibly sits too high/low in a 15px tile.
 const HISTORY: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>"##;
 
+const AI: &str = include_str!("icons/ai.svg");
+
 fn named_bytes(name: &str) -> Option<&'static [u8]> {
     match name {
         "folder" => Some(FOLDER),
         "file" => Some(FILE),
         "symlink" => Some(SYMLINK),
         "history" => Some(HISTORY),
+        "ai" | "ai-black" => Some(AI.as_bytes()),
         _ => BUNDLED_ICONS
             .iter()
             .find_map(|(icon_name, bytes)| (*icon_name == name).then_some(*bytes)),
@@ -111,12 +114,19 @@ fn cached_image(name: &str) -> Option<Arc<Image>> {
         return Some(image.clone());
     }
     let bytes = named_bytes(key)?;
-    let format = if key == "history" {
+    let format = if matches!(key, "history" | "ai" | "ai-black") {
         ImageFormat::Svg
     } else {
         ImageFormat::Png
     };
-    let image = Arc::new(Image::from_bytes(format, bytes.to_vec()));
+    // Both AI variants come from one static shape. Recolor only once when the
+    // fixed cache entry is created, never for a theme RGB or rendered size.
+    let bytes = if key == "ai-black" {
+        AI.replace("#fff", "#000").into_bytes()
+    } else {
+        bytes.to_vec()
+    };
+    let image = Arc::new(Image::from_bytes(format, bytes));
     map.insert(key, image.clone());
     Some(image)
 }
@@ -136,6 +146,8 @@ fn canonical_icon_name(name: &str) -> Option<&'static str> {
         "file" => Some("file"),
         "symlink" => Some("symlink"),
         "history" => Some("history"),
+        "ai" => Some("ai"),
+        "ai-black" => Some("ai-black"),
         _ => BUNDLED_ICONS
             .iter()
             .find_map(|(icon_name, _)| (*icon_name == canonical).then_some(*icon_name)),
@@ -300,6 +312,30 @@ pub fn history_icon_image_element(size: f32) -> gpui::Img {
         .min_h(px(size))
         .flex_shrink_0()
         .object_fit(ObjectFit::Contain)
+}
+
+/// AI uses the history tile's image/layout mechanism. Two fixed black/white
+/// images retain their identities across sizes and arbitrary theme colors.
+pub fn ai_icon_image_element(size: f32, background_color: u32) -> gpui::Div {
+    let red = (background_color >> 16) & 0xff;
+    let green = (background_color >> 8) & 0xff;
+    let blue = background_color & 0xff;
+    // Perceived brightness keeps the default blue themes white while giving
+    // light custom tiles a dark glyph without changing their exact color.
+    let light_background = red * 299 + green * 587 + blue * 114 >= 128_000;
+    let image = cached_image(if light_background { "ai-black" } else { "ai" }).expect("AI icon");
+    div()
+        .w(px(size))
+        .h(px(size))
+        .min_w(px(size))
+        .min_h(px(size))
+        .flex_shrink_0()
+        .rounded(px(size * 0.25))
+        .bg(rgb(background_color))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(png_icon_element(image, size * 0.74))
 }
 
 #[cfg(test)]

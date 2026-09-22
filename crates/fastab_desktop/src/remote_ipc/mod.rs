@@ -32,7 +32,9 @@ pub struct RemoteHook {
 impl fastab_remote_ipc::RemoteHookHandler for RemoteHook {
     type Error = anyhow::Error;
 
-    async fn sessions_changed(&mut self, _figterm_state: &Arc<FigtermState>) {}
+    async fn sessions_changed(&mut self, _figterm_state: &Arc<FigtermState>) {
+        let _ = self.proxy.send_event(Event::JevContextChanged);
+    }
 
     async fn edit_buffer(
         &mut self,
@@ -155,6 +157,8 @@ impl fastab_remote_ipc::RemoteHookHandler for RemoteHook {
             session.apply_context(hook.context.clone());
         });
 
+        let _ = self.proxy.send_event(Event::JevContextChanged);
+
         if cwd_changed {
             if let Err(err) = self
                 .notifications_state
@@ -253,6 +257,8 @@ impl fastab_remote_ipc::RemoteHookHandler for RemoteHook {
         figterm_state.with_update(session_id, |session| {
             session.apply_context(hook.context.clone());
         });
+
+        let _ = self.proxy.send_event(Event::JevContextChanged);
 
         self.notifications_state
             .broadcast_notification_all(

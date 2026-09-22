@@ -82,6 +82,12 @@ pub struct OverlayState {
     pub has_changed_index: bool,
     pub on_click_insert: Option<Arc<dyn Fn(crate::list::ClickInsert) + Send + Sync>>,
     pub on_disable_dev_mode: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub ai_preview: Option<crate::AiPreview>,
+    /// Changes synchronously with UI content so queued acceptance cannot
+    /// target a row from before a local click or refresh.
+    pub ai_revision: u64,
+    /// Original index of the row temporarily promoted by Jev.
+    ai_promoted_from: Option<usize>,
 }
 
 impl OverlayState {
@@ -127,6 +133,9 @@ impl OverlayState {
             has_changed_index: false,
             on_click_insert: None,
             on_disable_dev_mode: None,
+            ai_preview: None,
+            ai_revision: 0,
+            ai_promoted_from: None,
         }
     }
 
@@ -188,6 +197,7 @@ impl OverlayState {
         search_term: String,
         match_term: String,
     ) {
+        self.invalidate_ai();
         let content_changed = self.items.len() != items.len()
             || self
                 .items
@@ -234,6 +244,7 @@ impl OverlayState {
     }
 
     pub fn hide(&mut self) {
+        self.invalidate_ai();
         self.visible = false;
         self.loading = false;
         self.shaking = false;
@@ -277,6 +288,7 @@ impl OverlayState {
     }
 
     pub fn clear_suggestions(&mut self) {
+        self.invalidate_ai();
         if !self.items.is_empty() {
             self.suggestions_revision = self.suggestions_revision.wrapping_add(1);
         }
@@ -287,6 +299,53 @@ impl OverlayState {
         self.current_arg_name.clear();
         self.current_arg_description.clear();
         self.has_changed_index = false;
+    }
+
+    pub fn invalidate_ai(&mut self) {
+        self.invalidate_ai_request();
+        let Some(from) = self.ai_promoted_from.take() else { return; };
+        if let Some(prefix) = self.items.get_mut(..=from) {
+            prefix.rotate_left(1);
+            self.selected = if !self.has_changed_index {
+                0
+            } else if self.selected == 0 {
+                from
+            } else if self.selected <= from {
+                self.selected - 1
+            } else {
+                self.selected
+            };
+        }
+        self.suggestions_revision = self.suggestions_revision.wrapping_add(1);
+    }
+
+    /// Cancel late responses without changing the list the user is navigating.
+    pub fn invalidate_ai_request(&mut self) {
+        self.ai_preview = None;
+        self.ai_revision = self.ai_revision.wrapping_add(1);
+    }
+
+    pub fn has_ai_promotion(&self) -> bool {
+        self.ai_promoted_from.is_some()
+    }
+
+    /// Move one existing local row to the front, retaining all of its metadata.
+    pub fn promote_ai_suggestion(&mut self, index: usize) -> bool {
+        if index >= self.items.len() || self.has_changed_index || self.has_ai_promotion() {
+            return false;
+        }
+        self.items[..=index].rotate_right(1);
+        self.ai_promoted_from = Some(index);
+        self.selected = 0;
+        self.suggestions_revision = self.suggestions_revision.wrapping_add(1);
+        self.ai_preview = None;
+        true
+    }
+
+    pub fn ai_height(&self) -> f32 {
+        if self.loading { 0. } else {
+            self.ai_preview.as_ref().map_or(0., |preview| preview.height(self.effective_row_height()))
+        }
     }
 
     pub fn dismiss(&mut self) {

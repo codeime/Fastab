@@ -33,6 +33,9 @@ fn should_merge_history(include_history: bool, disabled: bool) -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompleteRequest {
+    /// Desktop-only opt-in. Never enabled by serialized CLI/protocol input.
+    #[serde(skip)]
+    pub include_public_ai: bool,
     pub buffer: String,
     #[serde(default)]
     pub cwd: String,
@@ -73,6 +76,7 @@ fn empty_env(value: &Arc<Vec<(String, String)>>) -> bool {
 impl Default for CompleteRequest {
     fn default() -> Self {
         Self {
+            include_public_ai: false,
             buffer: String::new(),
             cwd: String::new(),
             cursor: None,
@@ -90,6 +94,9 @@ impl Default for CompleteRequest {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Suggestion {
+    /// Provenance for the separate, constrained AI projection; not wire data.
+    #[serde(skip)]
+    pub public_ai_candidate: Option<crate::public_ai::PublicAiCandidate>,
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -145,6 +152,7 @@ pub struct Suggestion {
 impl Suggestion {
     pub fn new(name: impl Into<String>, description: impl Into<String>, kind: impl Into<String>) -> Self {
         Self {
+            public_ai_candidate: None,
             name: name.into(),
             description: description.into(),
             kind: kind.into(),
@@ -296,6 +304,8 @@ pub struct CurrentArg {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompleteResult {
+    #[serde(skip)]
+    pub public_ai_context: Option<crate::public_ai::PublicAiContext>,
     pub suggestions: Vec<Suggestion>,
     /// Effective fuzzy/prefix mode after applying the current spec/argument
     /// filterStrategy. This is distinct from CompleteRequest::fuzzy, which is
@@ -627,6 +637,7 @@ impl Engine {
             let prefix = rank::history_prefix_from_buffer(buffer, ends_with_space, &tokens);
             rank::merge_history_with_prefix(&mut result, &tokens, prefix, &self.frecency, effective_fuzzy);
         }
+        crate::public_ai::finalize(&mut result);
         let alphabetical =
             fastab_settings::settings::get_string_or("autocomplete.sortMethod", "default".into()) == "alphabetical";
         let root_command = ranking_root_command(&request.buffer, request.cursor);
@@ -655,6 +666,7 @@ impl Engine {
                 );
             }
         }
+        crate::public_ai::finalize(&mut result);
         Ok(result)
     }
 }

@@ -2,6 +2,7 @@ mod cli;
 mod event;
 mod event_loop;
 mod gpui_host;
+mod jev;
 mod overlay;
 #[cfg(test)]
 mod overlay_session;
