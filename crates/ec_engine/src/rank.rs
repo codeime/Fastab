@@ -660,23 +660,17 @@ pub(crate) fn load_commands_for(config: &HistorySourceConfig) -> Vec<(String, u6
 
     let mut from_shell = Vec::new();
     match config.current_shell {
-        HistoryShell::Zsh => {
-            from_shell.extend(login_history_commands("zsh", "fc -R; fc -ln 1"));
-        },
-        HistoryShell::Bash => {
-            from_shell.extend(login_history_commands("bash", "fc -ln 1"));
-        },
-        HistoryShell::Fish => {
-            from_shell.extend(login_history_commands("fish", "history search"));
+        HistoryShell::Zsh | HistoryShell::Bash | HistoryShell::Fish => {
+            from_shell.extend(login_history_commands(config.current_shell));
         },
         HistoryShell::Unknown => {},
     }
     if config.all_shells {
         if config.current_shell != HistoryShell::Zsh {
-            from_shell.extend(login_history_commands("zsh", "fc -R; fc -ln 1"));
+            from_shell.extend(login_history_commands(HistoryShell::Zsh));
         }
         if config.current_shell != HistoryShell::Bash {
-            from_shell.extend(login_history_commands("bash", "fc -ln 1"));
+            from_shell.extend(login_history_commands(HistoryShell::Bash));
         }
     }
     if from_shell.is_empty() {
@@ -689,9 +683,31 @@ pub(crate) fn load_commands_for(config: &HistorySourceConfig) -> Vec<(String, u6
     }
 }
 
-fn login_history_commands(shell: &str, command: &str) -> Vec<(String, u64)> {
-    crate::process::try_execute_isolated_success(shell, &["-lc".into(), command.into()], "", CUSTOM_HISTORY_TIMEOUT)
-        .map(|output| history_commands_from_output(&output))
+fn recent_shell_history_command(shell: HistoryShell) -> String {
+    match shell {
+        // `fc` lists oldest-first. A negative start is an offset from the
+        // current event, so this is the recent window only.
+        HistoryShell::Zsh => format!("fc -R; fc -ln -{MAX_DATABASE_HISTORY_COMMANDS}"),
+        HistoryShell::Bash => format!("fc -ln -{MAX_DATABASE_HISTORY_COMMANDS}"),
+        // fish lists newest-first. `--max` keeps that head.
+        HistoryShell::Fish => format!("history search --max={MAX_DATABASE_HISTORY_COMMANDS}"),
+        HistoryShell::Unknown => String::new(),
+    }
+}
+
+fn login_history_commands(shell: HistoryShell) -> Vec<(String, u64)> {
+    let command = recent_shell_history_command(shell);
+    if command.is_empty() {
+        return Vec::new();
+    }
+    let shell_name = match shell {
+        HistoryShell::Zsh => "zsh",
+        HistoryShell::Bash => "bash",
+        HistoryShell::Fish => "fish",
+        HistoryShell::Unknown => return Vec::new(),
+    };
+    crate::process::try_execute_isolated_success(shell_name, &["-lc".into(), command], "", CUSTOM_HISTORY_TIMEOUT)
+        .map(|output| history_commands_from_output_limited(&output, shell == HistoryShell::Fish))
         .unwrap_or_default()
 }
 
@@ -710,19 +726,33 @@ fn non_empty_history_command(command: &str) -> Option<String> {
 }
 
 fn history_commands_from_output(output: &str) -> Vec<(String, u64)> {
-    output
+    // Custom commands and `fc` are oldest-first, so the recent window is the tail.
+    history_commands_from_output_limited(output, false)
+}
+
+fn history_commands_from_output_limited(output: &str, newest_first: bool) -> Vec<(String, u64)> {
+    let mut commands: Vec<(String, u64)> = output
         .lines()
         .filter_map(non_empty_history_command)
         .map(|command| (command, 0))
-        .collect()
+        .collect();
+    if commands.len() > MAX_DATABASE_HISTORY_COMMANDS {
+        if newest_first {
+            commands.truncate(MAX_DATABASE_HISTORY_COMMANDS);
+        } else {
+            let start = commands.len() - MAX_DATABASE_HISTORY_COMMANDS;
+            commands = commands.split_off(start);
+        }
+    }
+    commands
 }
 
 /// Cap on how much shell history feeds frecency and history suggestions.
 ///
 /// The engine reloads this after every watchdog reset, and ranking walks the
-/// loaded list per request, so an unbounded `all_rows` scan made both scale
-/// with the lifetime size of the history database. Recent commands are the
-/// only ones frecency meaningfully weights anyway.
+/// loaded list per request, so an unbounded scan made both scale with the
+/// lifetime size of the history database and with `fc` / `history` output.
+/// Recent commands are the only ones frecency meaningfully weights anyway.
 const MAX_DATABASE_HISTORY_COMMANDS: usize = 10_000;
 
 fn load_database_commands<F>(include: F) -> Vec<(String, u64)>
@@ -1282,6 +1312,37 @@ mod tests {
             vec![("git status".into(), 0), (" git add . ".into(), 0)]
         );
         assert!(history_commands_from_output("\n  \n").is_empty());
+    }
+
+    #[test]
+    fn history_output_keeps_the_recent_window_in_source_order() {
+        let mut oldest_first = String::new();
+        let total = MAX_DATABASE_HISTORY_COMMANDS + 3;
+        for i in 0..total {
+            oldest_first.push_str(&format!("cmd{i}\n"));
+        }
+        let parsed = history_commands_from_output(&oldest_first);
+        assert_eq!(parsed.len(), MAX_DATABASE_HISTORY_COMMANDS);
+        assert_eq!(parsed[0].0, "cmd3");
+        assert_eq!(parsed.last().unwrap().0, format!("cmd{}", total - 1));
+
+        let mut newest_first = String::new();
+        for i in (0..total).rev() {
+            newest_first.push_str(&format!("cmd{i}\n"));
+        }
+        let parsed = history_commands_from_output_limited(&newest_first, true);
+        assert_eq!(parsed.len(), MAX_DATABASE_HISTORY_COMMANDS);
+        assert_eq!(parsed[0].0, format!("cmd{}", total - 1));
+        assert_eq!(parsed.last().unwrap().0, "cmd3");
+    }
+
+    #[test]
+    fn shell_history_commands_request_only_the_recent_window() {
+        let limit = MAX_DATABASE_HISTORY_COMMANDS.to_string();
+        assert!(recent_shell_history_command(HistoryShell::Zsh).contains(&limit));
+        assert!(recent_shell_history_command(HistoryShell::Bash).contains(&limit));
+        assert!(recent_shell_history_command(HistoryShell::Fish).contains(&limit));
+        assert!(!recent_shell_history_command(HistoryShell::Zsh).contains("fc -ln 1"));
     }
 
     #[test]

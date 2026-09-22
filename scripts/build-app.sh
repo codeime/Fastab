@@ -363,11 +363,21 @@ from pathlib import Path
 
 best = None
 best_ver = ()
+seen = set()
 for app in Path("/Applications").glob("Xcode_*.app"):
-    dev = app / "Contents" / "Developer"
+    try:
+        concrete = app.resolve(strict=True)
+    except OSError:
+        continue
+    if concrete in seen:
+        continue
+    seen.add(concrete)
+    # Use the resolved app. A version symlink such as Xcode_26.3.0.app
+    # makes actool fail to find its own tools.
+    dev = concrete / "Contents" / "Developer"
     if not (dev / "usr" / "bin" / "actool").is_file():
         continue
-    match = re.fullmatch(r"Xcode_(\d+(?:\.\d+)*)", app.stem)
+    match = re.fullmatch(r"Xcode_(\d+(?:\.\d+)*)", concrete.stem)
     if match is None:
         continue
     parts = tuple(int(part) for part in match.group(1).split("."))
