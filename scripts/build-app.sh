@@ -355,31 +355,72 @@ for group in doc.get("groups", []):
         if name and not (root / "Assets" / name).is_file():
             sys.exit(f"AppIcon.icon is missing Assets/{name}")
 PY
-  ACTOOL="$(xcrun --find actool 2>/dev/null || true)"
+  # macos-15 images keep Xcode 16 selected. That actool cannot compile an
+  # Icon Composer package, so look for a concrete Xcode 26+ app first.
+  ICON_DEVELOPER_DIR="$(python3 - <<'PY'
+import re
+from pathlib import Path
+
+best = None
+best_ver = ()
+for app in Path("/Applications").glob("Xcode_*.app"):
+    dev = app / "Contents" / "Developer"
+    if not (dev / "usr" / "bin" / "actool").is_file():
+        continue
+    match = re.fullmatch(r"Xcode_(\d+(?:\.\d+)*)", app.stem)
+    if match is None:
+        continue
+    parts = tuple(int(part) for part in match.group(1).split("."))
+    if parts[0] < 26:
+        continue
+    if best is None or parts > best_ver:
+        best = dev
+        best_ver = parts
+if best is not None:
+    print(best)
+PY
+)"
+  ACTOOL=""
+  if [ -n "$ICON_DEVELOPER_DIR" ]; then
+    ACTOOL="${ICON_DEVELOPER_DIR}/usr/bin/actool"
+  else
+    ACTOOL="$(xcrun --find actool 2>/dev/null || true)"
+  fi
   if [ -n "$ACTOOL" ]; then
     ICON_CAR_DIR="${BUILD_WORK_ROOT}/appicon-car"
     mkdir -p "$ICON_CAR_DIR"
-    if "$ACTOOL" "$ICON_COMPOSER" \
-      --compile "$ICON_CAR_DIR" \
-      --output-format human-readable-text \
-      --notices --warnings \
-      --output-partial-info-plist "$ICON_CAR_DIR/assetcatalog_generated_info.plist" \
-      --app-icon AppIcon \
-      --include-all-app-icons \
-      --enable-on-demand-resources NO \
-      --development-region en \
-      --target-device mac \
-      --minimum-deployment-target 26.0 \
+    actool_args=(
+      "$ICON_COMPOSER"
+      --compile "$ICON_CAR_DIR"
+      --output-format human-readable-text
+      --notices --warnings
+      --output-partial-info-plist "$ICON_CAR_DIR/assetcatalog_generated_info.plist"
+      --app-icon AppIcon
+      --include-all-app-icons
+      --enable-on-demand-resources NO
+      --development-region en
+      --target-device mac
+      --minimum-deployment-target 26.0
       --platform macosx
-    then
-      if [ -f "$ICON_CAR_DIR/Assets.car" ]; then
-        APPICON_CAR="$ICON_CAR_DIR/Assets.car"
-        # Only advertise the layered name when the catalog is actually in
-        # the bundle. A dangling CFBundleIconName on Tahoe hides icon.icns.
-        CFBUNDLE_ICON_NAME_ENTRIES="    <key>CFBundleIconName</key>
-    <string>AppIcon</string>"
-        info "Compiled AppIcon.icon → Assets.car (macOS 26 group shadow)"
+    )
+    actool_ok=0
+    if [ -n "$ICON_DEVELOPER_DIR" ]; then
+      if env DEVELOPER_DIR="$ICON_DEVELOPER_DIR" "$ACTOOL" "${actool_args[@]}"; then
+        actool_ok=1
       fi
+    elif "$ACTOOL" "${actool_args[@]}"; then
+      actool_ok=1
+    fi
+    if [ "$actool_ok" -eq 1 ] && [ -f "$ICON_CAR_DIR/Assets.car" ]; then
+      APPICON_CAR="$ICON_CAR_DIR/Assets.car"
+      # Only advertise the layered name when the catalog is actually in
+      # the bundle. A dangling CFBundleIconName on Tahoe hides icon.icns.
+      CFBUNDLE_ICON_NAME_ENTRIES="    <key>CFBundleIconName</key>
+    <string>AppIcon</string>"
+      info "Compiled AppIcon.icon → Assets.car (macOS 26 group shadow)"
+    elif [ -n "$ICON_DEVELOPER_DIR" ]; then
+      echo "error: actool at ${ICON_DEVELOPER_DIR} failed to compile AppIcon.icon" >&2
+      exit 1
     else
       echo "warning: actool failed to compile AppIcon.icon; shipping icon.icns only" >&2
     fi

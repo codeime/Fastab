@@ -80,6 +80,8 @@ done
 render_png "$MAIN_SVG" 512 "${DESKTOP_ICONS}/icon.png" "$(awk 'BEGIN { printf "%.6f", 512 * 100 / 1024 }')"
 render_png "$MAIN_SVG" 512 "${REPO_DIR}/assets/logo.png"
 render_png "$MAIN_SVG" 180 "${REPO_DIR}/website/src/assets/logo.png"
+# Same artwork as the Dock tile. The mounted DMG uses icon.icns via
+# make-dmg.sh --volicon; this PNG is that icon at the volume size.
 render_png "$MAIN_SVG" 256 "${DESKTOP_ICONS}/VolumeIcon.png" "$(awk 'BEGIN { printf "%.6f", 256 * 100 / 1024 }')"
 
 iconutil -c icns "$APP_ICONSET" -o "${DESKTOP_ICONS}/icon.icns"
