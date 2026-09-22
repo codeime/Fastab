@@ -8,18 +8,19 @@ use tracing::level_filters::LevelFilter;
 use tracing::{debug, error};
 
 use crate::history::{HistoryCommand, HistorySender};
-use crate::{INSERT_ON_NEW_CMD, MainLoopEvent, shell_state_to_context};
+use crate::ipc::{ContextAdmission, RemoteSender};
+use crate::{INSERT_ON_NEW_CMD, MainLoopEvent, shell_context_epoch, shell_state_to_context};
 
-pub struct EventHandler {
-    socket_sender: Sender<Hostbound>,
+pub(crate) struct EventHandler {
+    socket_sender: RemoteSender,
     history_sender: HistorySender,
     main_loop_sender: Sender<MainLoopEvent>,
     csi_u_enabled: bool,
 }
 
 impl EventHandler {
-    pub fn new(
-        socket_sender: Sender<Hostbound>,
+    pub(crate) fn new(
+        socket_sender: RemoteSender,
         history_sender: HistorySender,
         main_loop_sender: Sender<MainLoopEvent>,
     ) -> Self {
@@ -28,6 +29,15 @@ impl EventHandler {
             history_sender,
             main_loop_sender,
             csi_u_enabled: fastab_settings::settings::get_bool_or("qterm.csi-u.enabled", false),
+        }
+    }
+
+    fn send_full_context_hook(&self, message: Hostbound) {
+        if let Some(sender) = self.socket_sender.current() {
+            let _ = sender.try_send_with_context(message, ContextAdmission {
+                full_context: true,
+                environment_epoch: Some(shell_context_epoch()),
+            });
         }
     }
 }
@@ -49,24 +59,25 @@ impl EventListener for EventHandler {
                     }
                 }
 
-                if let Some((text, bracketed, execute)) = insert_on_new_cmd {
-                    self.main_loop_sender
-                        .send(MainLoopEvent::Insert {
-                            insert: text.into_bytes(),
-                            unlock: false,
-                            bracketed,
-                            execute,
-                        })
-                        .unwrap();
+                if let Some(pending) = insert_on_new_cmd {
+                    if pending.origin.is_current(self.socket_sender.phase().ready_generation()) {
+                        self.main_loop_sender
+                            .send(MainLoopEvent::Insert {
+                                insert: pending.text.into_bytes(),
+                                unlock: false,
+                                bracketed: pending.bracketed,
+                                execute: pending.execute,
+                                origin: pending.origin,
+                            })
+                            .unwrap();
+                    }
                 }
 
                 self.main_loop_sender
                     .send(MainLoopEvent::SetImmediateMode(false))
                     .unwrap();
 
-                if let Err(err) = self.socket_sender.send(message) {
-                    error!(%err, "Sender error");
-                }
+                self.send_full_context_hook(message);
 
                 if self.csi_u_enabled {
                     if let Err(err) = self.main_loop_sender.send(MainLoopEvent::SetCsiU) {
@@ -84,9 +95,7 @@ impl EventListener for EventHandler {
                     .send(MainLoopEvent::SetImmediateMode(true))
                     .unwrap();
 
-                if let Err(err) = self.socket_sender.send(message) {
-                    error!(%err, "Sender error");
-                }
+                self.send_full_context_hook(message);
 
                 if self.csi_u_enabled {
                     if let Err(err) = self.main_loop_sender.send(MainLoopEvent::UnsetCsiU) {
@@ -98,9 +107,7 @@ impl EventListener for EventHandler {
                 let context = shell_state_to_context(shell_state);
                 let hook = new_postexec_hook(context, command_info.command.clone(), command_info.exit_code);
                 let message = hook_to_message(hook);
-                if let Err(err) = self.socket_sender.send(message) {
-                    error!(%err, "Sender error");
-                }
+                self.send_full_context_hook(message);
 
                 if let Err(err) = self.history_sender.send(HistoryCommand::Insert(command_info.clone())) {
                     error!(%err, "Sender error");

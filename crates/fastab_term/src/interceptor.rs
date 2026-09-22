@@ -5,6 +5,7 @@ use fastab_settings::keybindings::{KeyBinding, KeyBindings};
 use tracing::trace;
 
 use crate::input::{KeyCode, KeyEvent, Modifiers};
+use crate::ipc::{Generation, RequestOrigin};
 
 // TODO: remove hardcoded list of global actions and use `availability`
 const GLOBAL_ACTIONS: &[&str] = &["toggleAutocomplete", "showAutocomplete"];
@@ -101,8 +102,10 @@ pub fn key_from_text(text: impl AsRef<str>) -> Option<KeyEvent> {
 pub struct KeyInterceptor {
     intercept_global: bool,
     intercept: bool,
+    intercepts_owner: Option<RequestOrigin>,
 
     window_visible: bool,
+    visibility_owner: Option<RequestOrigin>,
 
     // TODO: this should be based on `availability`
     _global_actions: Vec<Action>,
@@ -128,16 +131,43 @@ impl KeyInterceptor {
     pub fn set_intercept_global(&mut self, intercept_global: bool) {
         trace!("Setting intercept global to {intercept_global}");
         self.intercept_global = intercept_global;
+        self.intercepts_owner = Some(RequestOrigin::Local);
     }
 
     pub fn set_intercept(&mut self, intercept: bool) {
         trace!("Setting intercept to {intercept}");
         self.intercept = intercept;
+        self.intercepts_owner = Some(RequestOrigin::Local);
     }
 
     pub fn set_window_visible(&mut self, window_visible: bool) {
+        self.set_window_visible_from(window_visible, RequestOrigin::Local);
+    }
+
+    pub(crate) fn set_window_visible_from(&mut self, window_visible: bool, origin: RequestOrigin) {
         trace!("Setting window visible to {window_visible}");
         self.window_visible = window_visible;
+        self.visibility_owner = Some(origin);
+    }
+
+    pub(crate) fn set_intercepts_from(&mut self, global: bool, bound: bool, origin: RequestOrigin) {
+        self.intercept_global = global;
+        self.intercept = bound;
+        self.intercepts_owner = Some(origin);
+    }
+
+    /// Connection retirement must not clear local IPC state written after the
+    /// old remote request. Visibility arrives separately from the flag pair.
+    pub(crate) fn retire_remote_except(&mut self, ready: Option<Generation>) {
+        if self.intercepts_owner.is_some_and(|origin| !origin.is_current(ready)) {
+            self.intercept_global = false;
+            self.intercept = false;
+            self.intercepts_owner = None;
+        }
+        if self.visibility_owner.is_some_and(|origin| !origin.is_current(ready)) {
+            self.window_visible = false;
+            self.visibility_owner = None;
+        }
     }
 
     pub fn set_actions(&mut self, actions: &[Action], override_actions: bool) {
@@ -201,6 +231,7 @@ impl KeyInterceptor {
         trace!("Resetting key interceptor");
         self.intercept_global = false;
         self.intercept = false;
+        self.intercepts_owner = None;
     }
 
     pub fn intercept_key(&self, key_event: &KeyEvent) -> Option<String> {

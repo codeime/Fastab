@@ -16,7 +16,7 @@ use std::env;
 #[cfg(unix)]
 use std::ffi::{CString, OsStr};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex, OnceLock, RwLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use alacritty_terminal::Term;
@@ -31,7 +31,6 @@ use cli::Cli;
 use fastab_log::{LogArgs, initialize_logging};
 use fastab_os_shim::{Context, Env};
 use fastab_proto::local::{self, EnvironmentVariable, TerminalCursorCoordinates};
-use fastab_proto::remote::Hostbound;
 use fastab_proto::remote_hooks::{hook_to_message, new_edit_buffer_hook};
 use fastab_settings::state;
 use fastab_util::env_var::{Q_LOG_LEVEL, Q_SHELL, Q_TERM, QTERM_SESSION_ID};
@@ -49,7 +48,10 @@ use tracing::{debug, error, info, trace, warn};
 use crate::event_handler::EventHandler;
 use crate::input::{InputEvent, KeyCode, KeyCodeEncodeModes, KeyboardEncoding, Modifiers};
 use crate::interceptor::KeyInterceptor;
-use crate::ipc::{spawn_figterm_ipc, spawn_remote_ipc};
+use crate::ipc::{
+    ContextAdmission, ContextProgress, Generation, RemoteIncoming, RemoteSender, RequestOrigin, spawn_figterm_ipc,
+    spawn_remote_ipc,
+};
 use crate::message::{process_figterm_message, process_remote_message};
 #[cfg(unix)]
 use crate::pty::unix::open_pty;
@@ -63,9 +65,21 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 const BUFFER_SIZE: usize = 16384;
 
-static INSERT_ON_NEW_CMD: Mutex<Option<(String, bool, bool)>> = Mutex::new(None);
-static INSERTION_LOCKED_AT: RwLock<Option<SystemTime>> = RwLock::new(None);
-static EXPECTED_BUFFER: Mutex<String> = Mutex::new(String::new());
+pub(crate) struct PendingInsertion {
+    text: String,
+    bracketed: bool,
+    execute: bool,
+    origin: RequestOrigin,
+}
+
+pub(crate) struct InsertionLock {
+    at: SystemTime,
+    expected: String,
+    origin: RequestOrigin,
+}
+
+static INSERT_ON_NEW_CMD: Mutex<Option<PendingInsertion>> = Mutex::new(None);
+static INSERTION_LOCK: Mutex<Option<InsertionLock>> = Mutex::new(None);
 
 static SHELL_ENVIRONMENT_VARIABLES: Mutex<Vec<EnvironmentVariable>> = Mutex::new(Vec::new());
 static SHELL_ALIAS: Mutex<Option<String>> = Mutex::new(None);
@@ -73,7 +87,6 @@ static SHELL_ALIAS: Mutex<Option<String>> = Mutex::new(None);
 /// frames send env/alias only when this changes, so the desktop session
 /// learns about a just-finished `export` without cloning env on every key.
 static SHELL_CONTEXT_EPOCH: AtomicU64 = AtomicU64::new(0);
-static LAST_SENT_SHELL_CONTEXT_EPOCH: AtomicU64 = AtomicU64::new(u64::MAX);
 
 pub(crate) fn note_shell_context_updated() {
     SHELL_CONTEXT_EPOCH.fetch_add(1, Ordering::Relaxed);
@@ -105,12 +118,13 @@ fn hostname() -> Option<String> {
     }
 }
 
-pub enum MainLoopEvent {
+pub(crate) enum MainLoopEvent {
     Insert {
         insert: Vec<u8>,
         unlock: bool,
         bracketed: bool,
         execute: bool,
+        origin: RequestOrigin,
     },
     UnlockInterception,
     SetImmediateMode(bool),
@@ -174,13 +188,25 @@ fn edit_buffer_context(shell_state: &ShellState, include_environment: bool) -> l
     }
 }
 
-fn pending_shell_context_epoch() -> Option<u64> {
-    let epoch = SHELL_CONTEXT_EPOCH.load(Ordering::Relaxed);
-    (LAST_SENT_SHELL_CONTEXT_EPOCH.load(Ordering::Relaxed) != epoch).then_some(epoch)
+fn shell_context_epoch() -> u64 {
+    SHELL_CONTEXT_EPOCH.load(Ordering::Relaxed)
 }
 
-fn mark_shell_context_sent(epoch: u64) {
-    LAST_SENT_SHELL_CONTEXT_EPOCH.store(epoch, Ordering::Relaxed);
+/// Watch notifications may coalesce A -> disconnected -> B. Check the owners
+/// themselves against the current generation, preserving newer local writes.
+fn reconcile_remote_state(sender: &RemoteSender, interceptor: &mut KeyInterceptor) -> Option<Generation> {
+    let ready = sender.phase().ready_generation();
+    interceptor.retire_remote_except(ready);
+    let mut insertion = INSERTION_LOCK.lock().unwrap();
+    if insertion.as_ref().is_some_and(|lock| !lock.origin.is_current(ready)) {
+        insertion.take();
+    }
+    drop(insertion);
+    let mut pending = INSERT_ON_NEW_CMD.lock().unwrap();
+    if pending.as_ref().is_some_and(|pending| !pending.origin.is_current(ready)) {
+        pending.take();
+    }
+    ready
 }
 
 fn cwd_string(shell_state: &ShellState) -> Option<String> {
@@ -230,8 +256,8 @@ async fn _should_install_remote_ssh_integration(
     uuid: String,
     remote_host: String,
     main_loop_tx: Sender<MainLoopEvent>,
-    remote_receiver: Receiver<fastab_proto::remote::Clientbound>,
-    remote_sender: Sender<Hostbound>,
+    remote_receiver: Receiver<RemoteIncoming>,
+    remote_sender: RemoteSender,
     term: &Term<EventHandler>,
     pty_master: &mut Box<dyn crate::pty::AsyncMasterPty + Send + Sync>,
     key_interceptor: &mut KeyInterceptor,
@@ -256,7 +282,13 @@ async fn _should_install_remote_ssh_integration(
     // Wait for child ssh session to connect to local desktop instance.
     let got_child_connection = tokio::time::timeout(tokio::time::Duration::from_millis(prompt_timeout), async {
         loop {
-            if let Ok(msg) = remote_receiver.recv_async().await {
+            if let Ok(incoming) = remote_receiver.recv_async().await {
+                reconcile_remote_state(&remote_sender, key_interceptor);
+                let response_sender = remote_sender.for_generation(incoming.generation);
+                if !response_sender.is_current_ready() {
+                    continue;
+                }
+                let msg = incoming.message;
                 if let Some(clientbound::Packet::NotifyChildSessionStarted(clientbound::NotifyChildSessionStarted {
                     parent_id,
                 })) = msg.packet
@@ -268,7 +300,7 @@ async fn _should_install_remote_ssh_integration(
                     process_remote_message(
                         msg,
                         main_loop_tx.clone(),
-                        remote_sender.clone(),
+                        response_sender,
                         term,
                         pty_master,
                         key_interceptor,
@@ -319,14 +351,14 @@ where
         });
     let preexec = term.shell_state().preexec;
 
-    let mut handle = INSERTION_LOCKED_AT.write().unwrap();
+    let mut handle = INSERTION_LOCK.lock().unwrap();
     let insertion_locked = match handle.as_ref() {
-        Some(at) => {
-            let lock_expired = at.elapsed().unwrap_or(Duration::ZERO) > Duration::from_millis(16);
+        Some(lock) => {
+            let lock_expired = lock.at.elapsed().unwrap_or(Duration::ZERO) > Duration::from_millis(16);
             let should_unlock = lock_expired
                 || term
                     .get_current_buffer()
-                    .is_none_or(|buff| &buff.buffer == (&EXPECTED_BUFFER.lock().unwrap() as &String));
+                    .is_none_or(|buff| buff.buffer == lock.expected);
             if should_unlock {
                 handle.take();
                 if lock_expired {
@@ -358,7 +390,7 @@ static AUTOCOMPLETE_ENABLED: LazyLock<bool> = LazyLock::new(|| autocomplete_enab
 
 async fn send_edit_buffer<T>(
     term: &Term<T>,
-    sender: &Sender<Hostbound>,
+    sender: &RemoteSender,
     cursor_coordinates: Option<TerminalCursorCoordinates>,
 ) -> Result<()>
 where
@@ -367,6 +399,12 @@ where
     if !*AUTOCOMPLETE_ENABLED {
         return Ok(());
     }
+    let Some(bound) = sender.current() else {
+        return Ok(());
+    };
+    let Some(progress): Option<ContextProgress> = bound.context_progress() else {
+        return Ok(());
+    };
 
     match term.get_current_buffer() {
         Some(edit_buffer) => {
@@ -375,8 +413,14 @@ where
                 trace!("buffer bytes: {:02X?}", edit_buffer.buffer.as_bytes());
                 trace!("buffer chars: {:?}", edit_buffer.buffer.chars().collect::<Vec<_>>());
 
-                let sent_epoch = pending_shell_context_epoch();
-                let context = edit_buffer_context(term.shell_state(), sent_epoch.is_some());
+                let epoch = shell_context_epoch();
+                let full_context = !progress.full_context_admitted;
+                let include_environment = full_context || progress.needs_environment(epoch);
+                let context = if full_context {
+                    shell_state_to_context(term.shell_state())
+                } else {
+                    edit_buffer_context(term.shell_state(), include_environment)
+                };
 
                 let edit_buffer_hook =
                     new_edit_buffer_hook(Some(context), edit_buffer.buffer, cursor_idx, 0, cursor_coordinates);
@@ -384,10 +428,12 @@ where
 
                 trace!("Sending: {message:?}");
 
-                sender.send_async(message).await?;
-                if let Some(epoch) = sent_epoch {
-                    mark_shell_context_sent(epoch);
-                }
+                // Admission, generation validation and the context marker
+                // commit are one operation. A rejected frame synchronizes nothing.
+                let _ = bound.try_send_with_context(message, ContextAdmission {
+                    full_context,
+                    environment_epoch: include_environment.then_some(epoch),
+                });
             }
             Ok(())
         },
@@ -586,8 +632,8 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
         let (remote_sender, remote_receiver, stop_ipc_tx) = spawn_remote_ipc(
             session_id.clone(),
             parent_id,
-            main_loop_tx.clone()
         ).await?;
+        let mut remote_state_changes = remote_sender.subscribe();
 
         let mut stdout = io::stdout();
         let mut master = pty.master.get_async_master_pty()?;
@@ -647,12 +693,19 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
 
             let select_result: Result<()> = select! {
                 biased;
+                _ = remote_state_changes.changed() => {
+                    reconcile_remote_state(&remote_sender, &mut key_interceptor);
+                    Ok(())
+                }
                 res = main_loop_rx.recv_async() => {
                     match res {
                         Ok(event) => {
                             match event {
-                                MainLoopEvent::Insert { insert, unlock, bracketed, execute } => {
+                                MainLoopEvent::Insert { insert, unlock, bracketed, execute, origin } => {
                                     use bstr::ByteSlice;
+                                    if !origin.is_current(remote_sender.phase().ready_generation()) {
+                                        continue 'select_loop;
+                                    }
                                     if bracketed {
                                         if term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE) {
                                             master.write_all(b"\x1b[200~").await?;
@@ -737,6 +790,9 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                             for event in events {
                                 match event {
                                     Ok((raw, InputEvent::Key(event))) => {
+                                        // Capture the generation whose state made this key
+                                        // interceptable. Never retarget the key after reconnect.
+                                        let key_generation = reconcile_remote_state(&remote_sender, &mut key_interceptor);
                                         // Do not do most stuff during not preexec since that means a command is running
                                         let preexec = term.shell_state().preexec;
 
@@ -763,12 +819,21 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                                                     .unwrap_or_default();
                                                 let context = shell_state_to_context(term.shell_state());
                                                 let hook = fastab_proto::remote_hooks::new_intercepted_key_hook(context, action, s);
-                                                remote_sender.send(hook_to_message(hook)).unwrap();
+                                                // The desktop's InterceptedKey handler does not
+                                                // apply its context, so it must not advance the
+                                                // generation's context synchronization marker.
+                                                let admitted = key_generation.is_some_and(|generation| {
+                                                    remote_sender.for_generation(generation)
+                                                        .try_send(hook_to_message(hook)).is_ok()
+                                                });
+                                                if !admitted {
+                                                    reconcile_remote_state(&remote_sender, &mut key_interceptor);
+                                                }
 
                                                 if event.key == KeyCode::Escape {
                                                     key_interceptor.reset();
                                                 }
-                                                true
+                                                admitted
                                             } else {
                                                 false
                                             }
@@ -879,12 +944,18 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                 }
                 msg = remote_receiver.recv_async() => {
                     match msg {
-                        Ok(message) => {
+                        Ok(incoming) => {
+                            reconcile_remote_state(&remote_sender, &mut key_interceptor);
+                            let response_sender = remote_sender.for_generation(incoming.generation);
+                            if !response_sender.is_current_ready() {
+                                continue 'select_loop;
+                            }
+                            let message = incoming.message;
                             trace!("Received message from socket: {message:?}");
                             process_remote_message(
                                 message,
                                 main_loop_tx.clone(),
-                                remote_sender.clone(),
+                                response_sender,
                                 &term,
                                 &mut master,
                                 &mut key_interceptor
@@ -919,7 +990,8 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                 }
                 // Check if to send the edit buffer because of timeout
                 _ = edit_buffer_interval.tick() => {
-                    let send_eb = INSERTION_LOCKED_AT.read().unwrap().is_some();
+                    reconcile_remote_state(&remote_sender, &mut key_interceptor);
+                    let send_eb = INSERTION_LOCK.lock().unwrap().is_some();
                     if send_eb && can_send_edit_buffer(&term) {
                         let cursor_coordinates = get_cursor_coordinates(&terminal);
                         if let Err(err) = send_edit_buffer(&term, &remote_sender, cursor_coordinates).await {
@@ -1024,15 +1096,21 @@ mod tests {
 
     #[test]
     fn edit_buffer_sends_env_only_after_shell_context_updates() {
+        let mut progress = ContextProgress::default();
         note_shell_context_updated();
-        let epoch = pending_shell_context_epoch().expect("pending after update");
-        assert_eq!(pending_shell_context_epoch(), Some(epoch));
-        mark_shell_context_sent(epoch);
-        assert_eq!(pending_shell_context_epoch(), None);
+        let epoch = shell_context_epoch();
+        assert!(progress.needs_environment(epoch));
+        progress.record(ContextAdmission { full_context: true, environment_epoch: Some(epoch) });
+        assert!(!progress.needs_environment(epoch));
         note_shell_context_updated();
-        let next = pending_shell_context_epoch().expect("pending after a later update");
+        let next = shell_context_epoch();
         assert_ne!(next, epoch);
-        mark_shell_context_sent(next);
-        assert_eq!(pending_shell_context_epoch(), None);
+        assert!(progress.needs_environment(next));
+        progress.record(ContextAdmission { full_context: false, environment_epoch: Some(next) });
+        assert!(!progress.needs_environment(next));
+        // A new connection must synchronize even when the shell epoch did not change.
+        let reconnected = ContextProgress::default();
+        assert!(!reconnected.full_context_admitted);
+        assert!(reconnected.needs_environment(next));
     }
 }

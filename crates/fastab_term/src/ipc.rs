@@ -1,5 +1,11 @@
 //! Utiities for IPC with Tauri App
 
+mod outbox;
+
+pub(crate) use outbox::{
+    ContextAdmission, ContextProgress, Generation, GenerationSender, RemoteSender, RequestOrigin,
+};
+
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -15,14 +21,26 @@ use fastab_util::{PTY_BINARY_NAME, directories, gen_hex_string};
 use flume::{Receiver, Sender, unbounded};
 use pin_project::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
-use tokio::join;
-use tokio::process::{ChildStdin, ChildStdout};
+use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
-use tokio::time::{MissedTickBehavior, interval};
+use tokio::time::{MissedTickBehavior, interval, timeout};
 use tracing::{debug, error, info, trace};
 
-use crate::MainLoopEvent;
+// These use the existing connect/retry timescale. The handshake and write
+// deadlines are engineering bounds, not measured remote-network optima.
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub(crate) struct RemoteIncoming {
+    pub(crate) generation: Generation,
+    pub(crate) message: Clientbound,
+}
+
+struct ForwardedConnection {
+    reader: MessageSource,
+    writer: MessageSink,
+    child: Option<Child>,
+}
 
 #[allow(dead_code)]
 #[pin_project(project = MessageSourceProj)]
@@ -74,7 +92,7 @@ impl AsyncWrite for MessageSink {
     }
 }
 
-async fn get_forwarded_stream() -> Result<(MessageSource, MessageSink, Option<JoinHandle<()>>)> {
+async fn get_forwarded_stream() -> Result<ForwardedConnection> {
     #[cfg(target_os = "linux")]
     if fastab_util::system_info::in_wsl() {
         use std::process::Stdio;
@@ -86,28 +104,27 @@ async fn get_forwarded_stream() -> Result<(MessageSource, MessageSink, Option<Jo
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
+            .kill_on_drop(true)
             .spawn()?;
 
         let stdin = child.stdin.take().context("Failed to open stdin")?;
         let stdout = child.stdout.take().context("Failed to open stdout")?;
 
-        let child_task = tokio::spawn(async move {
-            if let Err(err) = child.wait().await {
-                error!(%err, "Error waiting for child");
-            }
+        return Ok(ForwardedConnection {
+            reader: MessageSource::ChildStdout(stdout),
+            writer: MessageSink::ChildStdin(stdin),
+            child: Some(child),
         });
-
-        return Ok((
-            MessageSource::ChildStdout(stdout),
-            MessageSink::ChildStdin(stdin),
-            Some(child_task),
-        ));
     }
 
     let socket = directories::remote_socket_path()?;
-    let stream = fastab_ipc::socket_connect_timeout(&socket, Duration::from_secs(5)).await?;
+    let stream = fastab_ipc::socket_connect_timeout(&socket, CONNECTION_TIMEOUT).await?;
     let (reader, writer) = tokio::io::split(stream);
-    Ok((MessageSource::UnixStream(reader), MessageSink::UnixStream(writer), None))
+    Ok(ForwardedConnection {
+        reader: MessageSource::UnixStream(reader),
+        writer: MessageSink::UnixStream(writer),
+        child: None,
+    })
 }
 
 /// Spawns a local unix socket for communicating with figterm on a local machine
@@ -199,14 +216,16 @@ pub async fn spawn_figterm_ipc(
 }
 
 /// Connects to the desktop app and allows for a remote connection from remote hosts
-pub async fn spawn_remote_ipc(
+pub(crate) async fn spawn_remote_ipc(
     session_id: String,
     parent_id: Option<String>,
-    main_loop_sender: Sender<MainLoopEvent>,
-) -> Result<(Sender<Hostbound>, Receiver<Clientbound>, oneshot::Sender<()>)> {
+) -> Result<(RemoteSender, Receiver<RemoteIncoming>, oneshot::Sender<()>)> {
     let (stop_ipc_tx, mut stop_ipc_rx) = oneshot::channel::<()>();
-    let (outgoing_tx, outgoing_rx) = unbounded::<Hostbound>();
-    let (incoming_tx, incoming_rx) = unbounded::<Clientbound>();
+    let outgoing = RemoteSender::new();
+    let supervisor = outgoing.clone();
+    // This change bounds the outbox; it does not claim to bound incoming
+    // protocol parsing or the local figterm listener.
+    let (incoming_tx, incoming_rx) = unbounded::<RemoteIncoming>();
 
     tokio::spawn(async move {
         let mut interval = interval(Duration::from_secs(5));
@@ -214,115 +233,149 @@ pub async fn spawn_remote_ipc(
         let secret = gen_hex_string();
 
         loop {
-            interval.tick().await;
             tokio::select! {
                 _ = &mut stop_ipc_rx => {
+                    supervisor.stop();
                     break;
                 }
-                res = get_forwarded_stream() => {
-                    let (reader, mut writer, child) = match res {
-                        Ok((reader, writer, child)) => (reader, writer, child),
-                        Err(err) => {
-                            error!("failed to get forwarded stream: {err}");
-                            continue;
-                        },
-                    };
-
-                    let mut reader = BufferedReader::new(reader);
-                    info!("Attempting handshake...");
-                    if let Err(err) = writer.send_message(Hostbound {
-                        packet: Some(hostbound::Packet::Handshake(Handshake {
-                            id: session_id.clone(),
-                            parent_id: parent_id.clone(),
-                            secret: secret.clone(),
-                        })),
-                    })
-                    .await
-                    {
-                        error!(%err, "error sending handshake");
+                _ = interval.tick() => {}
+            }
+            let Some(generation) = supervisor.begin_attempt() else {
+                break;
+            };
+            let connection = tokio::select! {
+                _ = &mut stop_ipc_rx => {
+                    supervisor.stop();
+                    break;
+                }
+                result = timeout(CONNECTION_TIMEOUT, get_forwarded_stream()) => match result {
+                    Ok(Ok(connection)) => connection,
+                    Ok(Err(err)) => {
+                        supervisor.retire(generation, &format!("connect failed: {err}"));
                         continue;
                     }
-                    let mut handshake_success = false;
-                    info!("Awaiting handshake response...");
-                    while let Some(message) = reader.recv_message::<Clientbound>().await.unwrap_or_else(|err| {
-                        error!(%err, "failed receiving handshake response");
-                        None
-                    }) {
-                        if let Some(clientbound::Packet::HandshakeResponse(response)) = message.packet {
-                            handshake_success = response.success;
-                            break;
-                        }
-                    }
-                    if !handshake_success {
-                        error!("failed performing handshake");
+                    Err(err) => {
+                        supervisor.retire(generation, &format!("connect timed out: {err}"));
                         continue;
-                    }
-                    info!("Handshake succeeded");
-
-                    // send outgoing messages
-                    outgoing_rx.drain();
-                    let outgoing_rx = outgoing_rx.clone();
-                    let main_loop_sender = main_loop_sender.clone();
-                    let outgoing_task = tokio::spawn(async move {
-                        while let Ok(message) = outgoing_rx.recv_async().await {
-                            trace!(?message, "Sending remote message");
-                            match writer.send_message(message).await {
-                                Ok(()) => {
-                                    if let Err(err) = writer.flush().await {
-                                        error!(%err, "Failed to flush socket");
-                                        main_loop_sender
-                                            .send(MainLoopEvent::Insert {
-                                                insert: Vec::new(),
-                                                unlock: true,
-                                                bracketed: false,
-                                                execute: false,
-                                            })
-                                            .unwrap();
-                                    }
-                                }
-                                Err(err) => {
-                                    error!(%err, "Failed to send message");
-                                    main_loop_sender
-                                        .send(MainLoopEvent::Insert {
-                                            insert: Vec::new(),
-                                            unlock: true,
-                                            bracketed: false,
-                                            execute: false,
-                                        })
-                                        .unwrap();
-                                    let _ = writer.shutdown().await;
-                                    break;
-                                }
-                            }
-                        }
-                        debug!("outgoing_task exited");
-                    });
-
-                    // receive incoming messages
-                    let incoming_tx = incoming_tx.clone();
-                    let incoming_task = tokio::spawn(async move {
-                        while let Some(message) = reader.recv_message().await.unwrap_or_else(|err| {
-                            error!("failed receiving message from host: {err}");
-                            None
-                        }) {
-                            trace!(?message, "Received remote message");
-                            if let Err(err) = incoming_tx.send(message) {
-                                error!("no more listeners for incoming messages: {err}");
-                                break;
-                            }
-                        }
-                        debug!("incoming_task exited");
-                    });
-
-                    if let Some(child) = child {
-                        let _ = join!(outgoing_task, incoming_task, child);
-                    } else {
-                        let _ = join!(outgoing_task, incoming_task);
                     }
                 }
+            };
+            let ForwardedConnection { reader, mut writer, mut child } = connection;
+            let mut reader = BufferedReader::new(reader);
+            supervisor.set_handshaking(generation);
+
+            // Both halves are scoped to this select. Finishing either half,
+            // invalidating admission, or stopping drops the other half's
+            // future (including an in-flight frame) before the next generation.
+            let result: Result<()> = {
+                let run_connection = async {
+                    timeout(CONNECTION_TIMEOUT, async {
+                        writer.send_message(Hostbound {
+                            packet: Some(hostbound::Packet::Handshake(Handshake {
+                                id: session_id.clone(),
+                                parent_id: parent_id.clone(),
+                                secret: secret.clone(),
+                            })),
+                        }).await?;
+                        loop {
+                            let Some(message) = reader.recv_message::<Clientbound>().await? else {
+                                anyhow::bail!("EOF awaiting handshake");
+                            };
+                            if let Some(clientbound::Packet::HandshakeResponse(response)) = message.packet {
+                                if !response.success {
+                                    anyhow::bail!("handshake rejected");
+                                }
+                                return Ok::<(), anyhow::Error>(());
+                            }
+                        }
+                    }).await??;
+                    supervisor.set_ready(generation);
+                    info!(?generation, "Remote handshake succeeded");
+
+                    let receive = async {
+                        while let Some(message) = reader.recv_message::<Clientbound>().await? {
+                            incoming_tx.send(RemoteIncoming { generation, message })
+                                .map_err(|err| anyhow::anyhow!("remote incoming receiver closed: {err}"))?;
+                        }
+                        Err::<(), anyhow::Error>(anyhow::anyhow!("remote reader reached EOF"))
+                    };
+                    let send = async {
+                        while let Some(frame) = supervisor.next_frame(generation).await {
+                            timeout(WRITE_TIMEOUT, async {
+                                writer.write_all(&frame.bytes).await?;
+                                writer.flush().await
+                            }).await??;
+                        }
+                        Ok::<(), anyhow::Error>(())
+                    };
+                    tokio::select! {
+                        result = receive => result,
+                        result = send => result,
+                    }
+                };
+                tokio::select! {
+                    _ = &mut stop_ipc_rx => {
+                        supervisor.stop();
+                        Ok(())
+                    }
+                    _ = supervisor.invalidated(generation) => Ok(()),
+                    status = async {
+                        match child.as_mut() {
+                            Some(child) => child.wait().await,
+                            None => std::future::pending().await,
+                        }
+                    } => Err(anyhow::anyhow!("forwarder exited: {status:?}")),
+                    result = run_connection => result,
+                }
+            };
+            let reason = match result {
+                Ok(()) => "connection cancelled".to_owned(),
+                Err(err) => format!("connection failed: {err}"),
+            };
+            supervisor.retire(generation, &reason);
+            drop(reader);
+            drop(writer);
+            if let Some(mut child) = child {
+                // A WSL forwarder is owned by this connection, not by a
+                // detached wait task. Close its pipes, terminate and reap it.
+                if let Err(err) = child.start_kill() {
+                    debug!(%err, "Could not stop remote forwarder");
+                }
+                let mut stopping = supervisor.phase() == outbox::ConnectionPhase::Stopped;
+                let reaped = {
+                    let wait = timeout(CONNECTION_TIMEOUT, child.wait());
+                    tokio::pin!(wait);
+                    loop {
+                        tokio::select! {
+                            result = &mut wait => break match result {
+                                Ok(Ok(_)) => true,
+                                Ok(Err(err)) => {
+                                    error!(%err, "Could not confirm remote forwarder exit");
+                                    false
+                                }
+                                Err(err) => {
+                                    error!(%err, "Remote forwarder cleanup timed out; stopping IPC without reconnecting");
+                                    false
+                                }
+                            },
+                            _ = &mut stop_ipc_rx, if !stopping => {
+                                stopping = true;
+                                supervisor.stop();
+                            }
+                        }
+                    }
+                };
+                if !reaped {
+                    // kill_on_drop remains a best-effort fallback. Do not
+                    // accumulate forwarders whose exit we could not confirm.
+                    supervisor.stop();
+                }
+            }
+            if supervisor.phase() == outbox::ConnectionPhase::Stopped {
+                break;
             }
         }
     });
 
-    Ok((outgoing_tx, incoming_rx, stop_ipc_tx))
+    Ok((outgoing, incoming_rx, stop_ipc_tx))
 }

@@ -19,10 +19,11 @@ use tracing::{debug, error, trace, warn};
 use crate::event_handler::EventHandler;
 use crate::history::HistorySender;
 use crate::interceptor::KeyInterceptor;
+use crate::ipc::{GenerationSender, RequestOrigin};
 use crate::pty::AsyncMasterPty;
 use crate::{
-    EXPECTED_BUFFER, INSERT_ON_NEW_CMD, INSERTION_LOCKED_AT, MainLoopEvent, SHELL_ALIAS, SHELL_ENVIRONMENT_VARIABLES,
-    shell_state_to_context,
+    INSERT_ON_NEW_CMD, INSERTION_LOCK, InsertionLock, MainLoopEvent, PendingInsertion, SHELL_ALIAS,
+    SHELL_ENVIRONMENT_VARIABLES, shell_state_to_context,
 };
 
 fn working_directory(path: Option<&str>, shell_state: &ShellState) -> PathBuf {
@@ -118,12 +119,13 @@ fn create_command(executable: impl AsRef<Path>, working_directory: impl AsRef<Pa
 }
 
 /// Process the inner figterm request enum, shared between local and remote
-pub async fn process_figterm_request(
+pub(crate) async fn process_figterm_request(
     figterm_request: FigtermRequest,
     main_loop_tx: Sender<MainLoopEvent>,
     term: &Term<EventHandler>,
     pty_master: &mut Box<dyn AsyncMasterPty + Send + Sync>,
     key_interceptor: &mut KeyInterceptor,
+    origin: RequestOrigin,
 ) -> Result<Option<FigtermResponse>> {
     match figterm_request {
         FigtermRequest::InsertText(request) => {
@@ -151,10 +153,13 @@ pub async fn process_figterm_request(
                     // // split text by cursor
                     // let (left, right) = buffer.split_at(position);
 
-                    INSERTION_LOCKED_AT.write().unwrap().replace(SystemTime::now());
                     let expected = format!("{buffer}{text_to_insert}");
                     trace!(?expected, "lock set, expected buffer");
-                    *EXPECTED_BUFFER.lock().unwrap() = expected;
+                    *INSERTION_LOCK.lock().unwrap() = Some(InsertionLock {
+                        at: SystemTime::now(),
+                        expected,
+                        origin,
+                    });
                 }
                 if let Some(ref insertion_buffer) = request.insertion_buffer {
                     if buffer.ne(insertion_buffer) {
@@ -180,12 +185,11 @@ pub async fn process_figterm_request(
                     actions,
                     override_actions,
                 })) => {
-                    key_interceptor.set_intercept_global(intercept_global_keystrokes);
-                    key_interceptor.set_intercept(intercept_bound_keystrokes);
+                    key_interceptor.set_intercepts_from(intercept_global_keystrokes, intercept_bound_keystrokes, origin);
                     key_interceptor.set_actions(&actions, override_actions);
                 },
                 Some(InterceptCommand::SetFigjsVisible(SetFigjsVisible { visible })) => {
-                    key_interceptor.set_window_visible(visible);
+                    key_interceptor.set_window_visible_from(visible, origin);
                 },
                 None => {},
             }
@@ -230,7 +234,12 @@ pub async fn process_figterm_request(
             Ok(Some(response))
         },
         FigtermRequest::InsertOnNewCmd(command) => {
-            *INSERT_ON_NEW_CMD.lock().unwrap() = Some((command.text, command.bracketed, command.execute));
+            *INSERT_ON_NEW_CMD.lock().unwrap() = Some(PendingInsertion {
+                text: command.text,
+                bracketed: command.bracketed,
+                execute: command.execute,
+                origin,
+            });
             Ok(None)
         },
         FigtermRequest::SetBuffer(_) => Err(anyhow::anyhow!("SetBuffer is not supported in figterm")),
@@ -267,7 +276,7 @@ pub async fn process_figterm_request(
 
 /// Process a figterm request message
 #[allow(clippy::too_many_arguments)]
-pub async fn process_figterm_message(
+pub(crate) async fn process_figterm_message(
     figterm_request_message: FigtermRequestMessage,
     main_loop_tx: Sender<MainLoopEvent>,
     response_tx: Sender<FigtermResponseMessage>,
@@ -287,7 +296,7 @@ pub async fn process_figterm_message(
             // Telemetry removed
         },
         Some(request) => {
-            match process_figterm_request(request, main_loop_tx, term, pty_master, key_interceptor).await {
+            match process_figterm_request(request, main_loop_tx, term, pty_master, key_interceptor, RequestOrigin::Local).await {
                 Ok(Some(response)) => {
                     let response_message = FigtermResponseMessage {
                         response: Some(response),
@@ -305,10 +314,10 @@ pub async fn process_figterm_message(
     Ok(())
 }
 
-async fn send_figterm_response_hostbound(
+fn send_figterm_response_hostbound(
     response: Option<FigtermResponse>,
     nonce: Option<u64>,
-    response_tx: &Sender<Hostbound>,
+    response_tx: &GenerationSender,
 ) {
     use hostbound::response::Response;
 
@@ -323,22 +332,27 @@ async fn send_figterm_response_hostbound(
             })),
         };
 
-        if let Err(err) = response_tx.send_async(hostbound).await {
-            error!(%err, "Failed sending request response");
-        }
+        let _ = response_tx.try_send(hostbound);
     }
 }
 
-pub async fn process_remote_message(
+pub(crate) async fn process_remote_message(
     clientbound_message: Clientbound,
     main_loop_tx: Sender<MainLoopEvent>,
-    response_tx: Sender<Hostbound>,
+    response_tx: GenerationSender,
     term: &Term<EventHandler>,
     pty_master: &mut Box<dyn AsyncMasterPty + Send + Sync>,
     key_interceptor: &mut KeyInterceptor,
 ) -> Result<()> {
     use clientbound::request::Request;
     use hostbound::response::Response;
+
+    // Queued inbound messages and their replies belong to one connection.
+    // Applying old interception/insertion after reconnect would be stale too.
+    if !response_tx.is_current_ready() {
+        return Ok(());
+    }
+    let origin = RequestOrigin::Remote(response_tx.generation());
 
     match clientbound_message.packet {
         Some(clientbound::Packet::Request(request)) => {
@@ -361,12 +375,12 @@ pub async fn process_remote_message(
                             term,
                             pty_master,
                             key_interceptor,
+                            origin,
                         )
                         .await?,
                         nonce,
                         &response_tx,
-                    )
-                    .await;
+                    );
                 },
                 Some(Request::Intercept(request)) => {
                     send_figterm_response_hostbound(
@@ -376,12 +390,12 @@ pub async fn process_remote_message(
                             term,
                             pty_master,
                             key_interceptor,
+                            origin,
                         )
                         .await?,
                         nonce,
                         &response_tx,
-                    )
-                    .await;
+                    );
                 },
                 Some(Request::Diagnostics(request)) => {
                     send_figterm_response_hostbound(
@@ -391,12 +405,12 @@ pub async fn process_remote_message(
                             term,
                             pty_master,
                             key_interceptor,
+                            origin,
                         )
                         .await?,
                         nonce,
                         &response_tx,
-                    )
-                    .await;
+                    );
                 },
                 Some(Request::InsertOnNewCmd(request)) => {
                     send_figterm_response_hostbound(
@@ -406,12 +420,12 @@ pub async fn process_remote_message(
                             term,
                             pty_master,
                             key_interceptor,
+                            origin,
                         )
                         .await?,
                         nonce,
                         &response_tx,
-                    )
-                    .await;
+                    );
                 },
                 Some(Request::RunProcess(request)) => {
                     // TODO: we can infer shell as above for execute if no executable is provided.
@@ -432,10 +446,19 @@ pub async fn process_remote_message(
                         debug!("running command");
 
                         let timeout_duration = request.timeout.map_or(Duration::from_secs(60), Into::into);
-                        let command_timeout = tokio::time::timeout(timeout_duration, cmd.output());
+                        let command_timeout = tokio::time::timeout(timeout_duration, async {
+                            // Run at the task's actual first poll, immediately
+                            // before output starts. Once admitted to start,
+                            // retain the existing command timeout on disconnect.
+                            if !response_tx.is_current_ready() {
+                                return None;
+                            }
+                            Some(cmd.output().await)
+                        });
 
                         let response = match command_timeout.await {
-                            Ok(Ok(output)) => {
+                            Ok(None) => return,
+                            Ok(Some(Ok(output))) => {
                                 debug!("command successfully ran");
                                 make_response(Response::RunProcess(RunProcessResponse {
                                     stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -443,7 +466,7 @@ pub async fn process_remote_message(
                                     exit_code: output.status.code().unwrap_or(0),
                                 }))
                             },
-                            Ok(Err(err)) => {
+                            Ok(Some(Err(err))) => {
                                 warn!(%err, executable = request.executable, "failed running executable");
                                 make_response(Response::Error(format!(
                                     "failed running executable ({}): {err}",
@@ -465,9 +488,7 @@ pub async fn process_remote_message(
                             },
                         };
 
-                        if let Err(err) = response_tx.send_async(response).await {
-                            error!(%err, "Failed sending request response");
-                        }
+                        let _ = response_tx.try_send(response);
                     });
                 },
                 _ => warn!("unhandled request {request:?}"),
@@ -478,9 +499,7 @@ pub async fn process_remote_message(
                 packet: Some(hostbound::Packet::Pong(())),
             };
 
-            if let Err(err) = response_tx.send_async(response).await {
-                error!(%err, "Failed sending request response");
-            }
+            let _ = response_tx.try_send(response);
         },
         packet => warn!("unhandled packet {packet:?}"),
     };
