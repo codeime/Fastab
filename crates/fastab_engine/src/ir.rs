@@ -963,6 +963,13 @@ impl Registry {
         }
     }
 
+    fn prune_dead_options(&mut self) {
+        self.option_pool.retain(|_, bucket| {
+            bucket.retain(|option| option.strong_count() != 0);
+            !bucket.is_empty()
+        });
+    }
+
     fn ensure_loaded(&mut self, name: &str) {
         if let Some(spec) = self.specs.get(name).cloned() {
             self.touch_loaded(&spec);
@@ -982,6 +989,10 @@ impl Registry {
             Ok(mut spec) => {
                 if self.loaded.len() >= MAX_CACHED_SPECS {
                     self.evict_oldest_spec();
+                    // The eviction's temporary Arc must be dropped before
+                    // pruning. Also collect options whose external owners
+                    // were released after an earlier eviction.
+                    self.prune_dead_options();
                 }
                 if !spec.names.iter().any(|candidate| candidate == name) {
                     spec.names.push(name.to_string());
