@@ -1556,9 +1556,9 @@ fn merge_persistent_options(parent: &[OptionSpec], spec: &Spec) -> Vec<OptionSpe
     let mut options = parent.to_vec();
     for option in &spec.persistent_options {
         if let Some(existing) = options.iter_mut().find(|existing| options_are_equal(existing, option)) {
-            *existing = option.clone();
+            *existing = option.as_ref().clone();
         } else {
-            options.push(option.clone());
+            options.push(option.as_ref().clone());
         }
     }
     options
@@ -1592,6 +1592,7 @@ fn find_option_in<'a>(
     let option_name = separator_at(token, directives).map_or(token, |(index, _)| &token[..index]);
     spec.options
         .iter()
+        .map(Arc::as_ref)
         .find(|option| option.names.iter().any(|name| name == option_name))
         .or_else(|| {
             persistent
@@ -1609,17 +1610,21 @@ fn short_option_name(option: &OptionSpec) -> Option<&str> {
 }
 
 fn find_short_option_in<'a>(spec: &'a Spec, persistent: &[&'a OptionSpec], letter: char) -> Option<&'a OptionSpec> {
-    spec.options.iter().chain(persistent.iter().copied()).find(|option| {
-        option.names.iter().any(|name| {
-            let Some(rest) = name.strip_prefix('-') else {
-                return false;
-            };
-            !rest.starts_with('-') && {
-                let mut chars = rest.chars();
-                chars.next() == Some(letter) && chars.next().is_none()
-            }
+    spec.options
+        .iter()
+        .map(Arc::as_ref)
+        .chain(persistent.iter().copied())
+        .find(|option| {
+            option.names.iter().any(|name| {
+                let Some(rest) = name.strip_prefix('-') else {
+                    return false;
+                };
+                !rest.starts_with('-') && {
+                    let mut chars = rest.chars();
+                    chars.next() == Some(letter) && chars.next().is_none()
+                }
+            })
         })
-    })
 }
 
 fn parse_short_option_chain<'spec, 'token>(
@@ -2580,7 +2585,12 @@ fn collect_option_suggestions(
     directives: &ParserDirectives,
 ) -> Vec<Suggestion> {
     let mut options = Vec::new();
-    for option in current.options.iter().chain(persistent.iter().copied()) {
+    for option in current
+        .options
+        .iter()
+        .map(Arc::as_ref)
+        .chain(persistent.iter().copied())
+    {
         if option_is_excluded(option, passed)
             || option_repetition_limit(option)
                 .is_some_and(|limit| option_repetition_count(option, passed) as f64 >= limit)
@@ -2645,7 +2655,7 @@ fn option_chain_suggestions(
     let mandatory_arg = chain.option.args.first().is_some_and(|arg| !arg.is_optional);
     let mut suggestions = Vec::new();
 
-    for option in spec.options.iter().chain(persistent.iter().copied()) {
+    for option in spec.options.iter().map(Arc::as_ref).chain(persistent.iter().copied()) {
         if option_is_excluded(option, passed)
             || option_repetition_limit(option)
                 .is_some_and(|limit| option_repetition_count(option, passed) as f64 >= limit)

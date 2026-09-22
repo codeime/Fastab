@@ -86,6 +86,61 @@ impl HookCache {
             .clear();
         self.spec_cache.lock().unwrap_or_else(|err| err.into_inner()).clear();
     }
+
+    /// Bytes retained by the three maps. Hash-map nodes are omitted. Each
+    /// cached spec is measured on its own, and an option `Arc` shared by two
+    /// entries is counted in each. This number does not evict; the maps still
+    /// clear only when they pass [`MAX_CACHE_ENTRIES`] or [`HookCache::clear`].
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        fn string_key(key: &str) -> usize {
+            std::mem::size_of::<String>() + key.len()
+        }
+
+        fn suggestion_heap(suggestion: &Suggestion) -> usize {
+            suggestion.name.len()
+                + suggestion.description.len()
+                + suggestion.kind.len()
+                + suggestion.args_hint.len()
+                + suggestion.insert_value.as_ref().map_or(0, String::len)
+                + suggestion.display_name.as_ref().map_or(0, String::len)
+                + suggestion.primary_name.as_ref().map_or(0, String::len)
+                + suggestion.separator_to_add.as_ref().map_or(0, String::len)
+                + suggestion.icon.as_ref().map_or(0, String::len)
+                + suggestion.original_type.as_ref().map_or(0, String::len)
+                + suggestion.query_term.as_ref().map_or(0, String::len)
+                + suggestion.alias_names.capacity() * std::mem::size_of::<String>()
+                + suggestion.alias_names.iter().map(String::len).sum::<usize>()
+        }
+
+        let suggestion_bytes = {
+            let suggestions = self.suggestion_cache.lock().unwrap_or_else(|err| err.into_inner());
+            suggestions
+                .iter()
+                .map(|(key, entry)| {
+                    string_key(key)
+                        + std::mem::size_of::<CacheEntry<Vec<Suggestion>>>()
+                        + entry.value.capacity() * std::mem::size_of::<Suggestion>()
+                        + entry.value.iter().map(suggestion_heap).sum::<usize>()
+                })
+                .sum::<usize>()
+        };
+        let script_bytes = {
+            let scripts = self.script_output_cache.lock().unwrap_or_else(|err| err.into_inner());
+            scripts
+                .iter()
+                .map(|(key, entry)| string_key(key) + std::mem::size_of::<CacheEntry<String>>() + entry.value.len())
+                .sum::<usize>()
+        };
+        let spec_bytes = {
+            let specs = self.spec_cache.lock().unwrap_or_else(|err| err.into_inner());
+            specs
+                .iter()
+                .map(|(key, spec)| string_key(key) + spec.allocated_bytes())
+                .sum::<usize>()
+        };
+        suggestion_bytes + script_bytes + spec_bytes
+    }
 }
 
 pub struct BoundCache {
@@ -253,4 +308,62 @@ pub fn cached_spec(cache_key: &str, run: impl FnOnce() -> Option<Spec>) -> Optio
     evict_at_cap(&mut map, cache_key);
     map.insert(cache_key.to_string(), value.clone());
     Some(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_hook_cache_reports_no_retained_bytes() {
+        assert_eq!(HookCache::default().allocated_bytes(), 0);
+    }
+
+    #[test]
+    fn spec_entry_counts_the_key_and_tree_and_clear_drops_it() {
+        let cache = HookCache::default();
+        let spec = Spec {
+            names: vec!["tool".into()],
+            description: "demo".into(),
+            ..Spec::default()
+        };
+        let expected = std::mem::size_of::<String>() + "tool-spec".len() + spec.allocated_bytes();
+        cache
+            .spec_cache
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .insert("tool-spec".into(), spec);
+        assert_eq!(cache.allocated_bytes(), expected);
+        cache.clear();
+        assert_eq!(cache.allocated_bytes(), 0);
+    }
+
+    #[test]
+    fn script_and_suggestion_payloads_are_counted_without_map_nodes() {
+        let cache = HookCache::default();
+        let aliases = vec!["g".to_owned()];
+        assert_eq!(aliases.capacity(), 1);
+        let suggestion = Suggestion::new("git", "checkout", "subcommand").with_alias_names(aliases);
+        let rows = vec![suggestion];
+        assert_eq!(rows.capacity(), 1);
+        let suggestion_expected = std::mem::size_of::<String>()
+            + "rows".len()
+            + std::mem::size_of::<CacheEntry<Vec<Suggestion>>>()
+            + std::mem::size_of::<Suggestion>()
+            + "git".len()
+            + "checkout".len()
+            + "subcommand".len()
+            + std::mem::size_of::<String>()
+            + "g".len();
+        cache_put(&cache.suggestion_cache, "rows".into(), rows);
+        let script_expected =
+            std::mem::size_of::<String>() + "out".len() + std::mem::size_of::<CacheEntry<String>>() + "stdout".len();
+        cache_put(&cache.script_output_cache, "out".into(), "stdout".into());
+        assert_eq!(cache.allocated_bytes(), suggestion_expected + script_expected);
+    }
+
+    #[test]
+    fn hook_cache_entry_cap_stays_at_512() {
+        assert_eq!(MAX_CACHE_ENTRIES, 512);
+    }
 }

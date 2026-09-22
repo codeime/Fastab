@@ -29,6 +29,15 @@ fn escape_string(s: impl AsRef<str>) -> String {
         .replace('\x0c', "\\f")
 }
 
+/// The three columns frecency reads. The full [`CommandInfo`] row stays on
+/// [`History::rows`] for callers that still need pid, cwd, and exit status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryCommand {
+    pub command: Option<String>,
+    pub shell: Option<String>,
+    pub start_time: Option<SystemTime>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CommandInfo {
     pub command: Option<String>,
@@ -221,6 +230,30 @@ impl History {
         Ok(rows_mapped)
     }
 
+    /// Newest or oldest history commands without the columns frecency ignores.
+    pub fn command_rows(&self, order_by: Vec<OrderBy>, limit: usize, offset: usize) -> Result<Vec<HistoryCommand>> {
+        let order_by = match order_by.is_empty() {
+            true => "".to_owned(),
+            false => format!(
+                "ORDER BY {}",
+                order_by
+                    .iter()
+                    .map(|order| order.to_string())
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
+        };
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT command, shell, start_time FROM history {order_by} LIMIT ? OFFSET ?",
+        ))?;
+        let rows = stmt.query(params![limit, offset])?;
+        let rows_mapped = rows
+            .mapped(map_command_row)
+            .collect::<rusqlite::Result<Vec<HistoryCommand>>>()?;
+        Ok(rows_mapped)
+    }
+
     /// A raw sql query that returns a json array of objects
     pub fn query<P: rusqlite::Params>(
         &self,
@@ -252,10 +285,23 @@ impl History {
     }
 }
 
+fn map_command_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryCommand> {
+    let start_time = unix_seconds(row.get::<_, Option<i64>>(2)?);
+    Ok(HistoryCommand {
+        command: row.get(0)?,
+        shell: row.get(1)?,
+        start_time,
+    })
+}
+
+fn unix_seconds(seconds: Option<i64>) -> Option<SystemTime> {
+    seconds.and_then(|seconds| {
+        std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(u64::try_from(seconds).ok()?))
+    })
+}
+
 fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CommandInfo> {
-    let start_time = row
-        .get::<_, Option<i64>>(6)?
-        .and_then(|t| std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(u64::try_from(t).ok()?)));
+    let start_time = unix_seconds(row.get::<_, Option<i64>>(6)?);
 
     let duration = row
         .get::<_, Option<i64>>(7)?
@@ -515,6 +561,32 @@ mod tests {
             .unwrap();
         assert_eq!(row.len(), 1);
         assert_eq!(row[0].command, Some("cargo run".into()));
+
+        let narrow = history
+            .command_rows(vec![OrderBy::new(HistoryColumn::Id, Order::Desc)], 2, 0)
+            .unwrap();
+        assert_eq!(
+            narrow,
+            vec![
+                HistoryCommand {
+                    command: Some("cargo run".into()),
+                    shell: Some("zsh".into()),
+                    start_time: Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(126)),
+                },
+                HistoryCommand {
+                    command: Some("cargo test".into()),
+                    shell: Some("zsh".into()),
+                    start_time: Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(124)),
+                },
+            ]
+        );
+        let full = history
+            .rows(None, vec![OrderBy::new(HistoryColumn::Id, Order::Desc)], 2, 0)
+            .unwrap();
+        assert_eq!(narrow[0].command, full[0].command);
+        assert_eq!(narrow[0].shell, full[0].shell);
+        assert_eq!(narrow[0].start_time, full[0].start_time);
+        assert_eq!(full[0].cwd, Some("/home/grant/".into()));
 
         let row = history
             .rows(

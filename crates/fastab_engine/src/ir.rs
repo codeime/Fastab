@@ -3,8 +3,9 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -357,12 +358,24 @@ pub struct Spec {
     pub description: String,
     #[serde(default)]
     pub subcommands: Vec<Spec>,
-    #[serde(default)]
-    pub options: Vec<OptionSpec>,
+    /// Shared within a file and across specs loaded by one [`Registry`].
+    /// `persistentOptions` stays a separate list: lookup merges that list
+    /// and treats `options` as the node's own flags.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_shared_options",
+        serialize_with = "serialize_shared_options"
+    )]
+    pub options: Vec<Arc<OptionSpec>>,
     /// Effective persistent options for this node. For a lazy `loadSpec`, the
     /// lookup walker merges the parent set into this set as it descends.
-    #[serde(default, alias = "persistentOptions")]
-    pub persistent_options: Vec<OptionSpec>,
+    #[serde(
+        default,
+        alias = "persistentOptions",
+        deserialize_with = "deserialize_shared_options",
+        serialize_with = "serialize_shared_options"
+    )]
+    pub persistent_options: Vec<Arc<OptionSpec>>,
     #[serde(default)]
     pub args: Vec<ArgSpec>,
     #[serde(default, alias = "additionalSuggestions")]
@@ -395,6 +408,387 @@ impl Spec {
     pub fn find_subcommand(&self, name: &str) -> Option<&Spec> {
         self.subcommands.iter().find(|spec| spec.has_name(name))
     }
+
+    /// Drop the spare capacity serde leaves on every `Vec` in this tree.
+    ///
+    /// JSON arrays have no length prefix, so deserialize doubles storage and
+    /// a loaded spec keeps that slack until the LRU drops it. Element order
+    /// and values stay put; only `capacity` changes.
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.names.shrink_to_fit();
+        shrink_vec(&mut self.subcommands);
+        shrink_vec(&mut self.options);
+        shrink_vec(&mut self.persistent_options);
+        shrink_vec(&mut self.args);
+        shrink_vec(&mut self.additional_suggestions);
+        if let Some(LoadSpec::Inline(spec)) = &mut self.load_spec {
+            spec.shrink_to_fit();
+        }
+        if let Some(directives) = &mut self.parser_directives {
+            directives.shrink_to_fit();
+        }
+    }
+
+    /// Bytes retained by this tree: the struct itself, vector buffers, string
+    /// payloads, and each distinct [`OptionSpec`] once. Shared options are not
+    /// counted again. String spare capacity and allocator headers are left
+    /// out so the figure does not depend on the allocator. Nothing evicts
+    /// from this number.
+    pub fn allocated_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.heap_bytes(&mut std::collections::HashSet::new())
+    }
+
+    fn heap_bytes(&self, seen_options: &mut std::collections::HashSet<usize>) -> usize {
+        string_vec_heap(&self.names)
+            + string_heap(&self.description)
+            + self.subcommands.capacity() * std::mem::size_of::<Spec>()
+            + self
+                .subcommands
+                .iter()
+                .map(|child| child.heap_bytes(seen_options))
+                .sum::<usize>()
+            + shared_option_slots(&self.options)
+            + shared_option_bodies(&self.options, seen_options)
+            + shared_option_slots(&self.persistent_options)
+            + shared_option_bodies(&self.persistent_options, seen_options)
+            + self.args.capacity() * std::mem::size_of::<ArgSpec>()
+            + self.args.iter().map(|arg| arg.heap_bytes(seen_options)).sum::<usize>()
+            + self.additional_suggestions.capacity() * std::mem::size_of::<SuggestionSeed>()
+            + self
+                .additional_suggestions
+                .iter()
+                .map(SuggestionSeed::heap_bytes)
+                .sum::<usize>()
+            + self.meta.heap_bytes()
+            + load_spec_heap(&self.load_spec, seen_options)
+            + self.parser_directives.as_ref().map_or(0, ParserDirectives::heap_bytes)
+            + opt_string_heap(&self.js_generate_spec)
+            + opt_string_heap(&self.generate_spec_cache_key)
+            + opt_string_heap(&self.js_load_spec)
+    }
+}
+
+// A slice hides `capacity`, which is the spare allocation this measurement exists to see.
+#[allow(clippy::ptr_arg)]
+fn shared_option_slots(options: &Vec<Arc<OptionSpec>>) -> usize {
+    options.capacity() * std::mem::size_of::<Arc<OptionSpec>>()
+}
+
+fn shared_option_bodies(options: &[Arc<OptionSpec>], seen_options: &mut std::collections::HashSet<usize>) -> usize {
+    let mut total = 0;
+    for option in options {
+        if !seen_options.insert(Arc::as_ptr(option) as usize) {
+            continue;
+        }
+        total += std::mem::size_of::<OptionSpec>() + option.heap_bytes(seen_options);
+    }
+    total
+}
+
+fn load_spec_heap(load_spec: &Option<LoadSpec>, seen_options: &mut std::collections::HashSet<usize>) -> usize {
+    match load_spec {
+        Some(LoadSpec::Path(path)) => path.len(),
+        Some(LoadSpec::Inline(spec)) => std::mem::size_of::<Spec>() + spec.heap_bytes(seen_options),
+        None => 0,
+    }
+}
+
+fn shrink_vec<T: ShrinkSpecTree>(items: &mut Vec<T>) {
+    items.shrink_to_fit();
+    for item in items {
+        item.shrink_tree();
+    }
+}
+
+trait ShrinkSpecTree {
+    fn shrink_tree(&mut self);
+}
+
+impl ShrinkSpecTree for Spec {
+    fn shrink_tree(&mut self) {
+        self.shrink_to_fit();
+    }
+}
+
+impl ShrinkSpecTree for OptionSpec {
+    fn shrink_tree(&mut self) {
+        self.names.shrink_to_fit();
+        self.exclusive_on.shrink_to_fit();
+        self.depends_on.shrink_to_fit();
+        shrink_vec(&mut self.args);
+        if let Some(LoadSpec::Inline(spec)) = &mut self.load_spec {
+            spec.shrink_to_fit();
+        }
+    }
+}
+
+impl ShrinkSpecTree for Arc<OptionSpec> {
+    fn shrink_tree(&mut self) {
+        if let Some(option) = Arc::get_mut(self) {
+            option.shrink_tree();
+        }
+    }
+}
+
+impl OptionSpec {
+    fn heap_bytes(&self, seen_options: &mut std::collections::HashSet<usize>) -> usize {
+        string_vec_heap(&self.names)
+            + string_heap(&self.description)
+            + self.args.capacity() * std::mem::size_of::<ArgSpec>()
+            + self.args.iter().map(|arg| arg.heap_bytes(seen_options)).sum::<usize>()
+            + self.meta.heap_bytes()
+            + load_spec_heap(&self.load_spec, seen_options)
+            + self.requires_separator.as_ref().map_or(0, json_heap)
+            + string_vec_heap(&self.exclusive_on)
+            + string_vec_heap(&self.depends_on)
+            + self.is_repeatable.as_ref().map_or(0, json_heap)
+    }
+}
+
+fn deserialize_shared_options<'de, D>(deserializer: D) -> Result<Vec<Arc<OptionSpec>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let options = Vec::<OptionSpec>::deserialize(deserializer)?;
+    Ok(options.into_iter().map(Arc::new).collect())
+}
+
+fn serialize_shared_options<S>(options: &[Arc<OptionSpec>], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.collect_seq(options.iter().map(Arc::as_ref))
+}
+
+fn hash_option(option: &OptionSpec) -> u64 {
+    let bytes = serde_json::to_vec(option).unwrap_or_default();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn intern_one_option(option: Arc<OptionSpec>, pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>) -> Arc<OptionSpec> {
+    let hash = hash_option(&option);
+    let bucket = pool.entry(hash).or_default();
+    bucket.retain(|weak| weak.strong_count() > 0);
+    if let Some(existing) = bucket
+        .iter()
+        .filter_map(Weak::upgrade)
+        .find(|existing| existing.as_ref() == option.as_ref())
+    {
+        return existing;
+    }
+    bucket.push(Arc::downgrade(&option));
+    option
+}
+
+fn intern_arg_options(arg: &mut ArgSpec, pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>) {
+    if let Some(spec) = &mut arg.resolved_spec {
+        intern_spec_options(spec, pool);
+    }
+    if let Some(LoadSpec::Inline(spec)) = &mut arg.load_spec {
+        intern_spec_options(spec, pool);
+    }
+}
+
+fn intern_option_children(option: &mut Arc<OptionSpec>, pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>) {
+    let Some(option) = Arc::get_mut(option) else {
+        return;
+    };
+    for arg in &mut option.args {
+        intern_arg_options(arg, pool);
+    }
+    if let Some(LoadSpec::Inline(spec)) = &mut option.load_spec {
+        intern_spec_options(spec, pool);
+    }
+}
+
+fn intern_option_list(options: &mut Vec<Arc<OptionSpec>>, pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>) {
+    for option in options {
+        intern_option_children(option, pool);
+        *option = intern_one_option(Arc::clone(option), pool);
+    }
+}
+
+/// Share byte-identical options inside `spec`. `pool` is dropped with the
+/// caller, so this pass does not keep options alive after `spec` is dropped.
+fn intern_spec_options_local(spec: &mut Spec) {
+    let mut pool = HashMap::new();
+    intern_spec_options(spec, &mut pool);
+}
+
+fn intern_spec_options(spec: &mut Spec, pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>) {
+    for child in &mut spec.subcommands {
+        intern_spec_options(child, pool);
+    }
+    for arg in &mut spec.args {
+        intern_arg_options(arg, pool);
+    }
+    if let Some(LoadSpec::Inline(inner)) = &mut spec.load_spec {
+        intern_spec_options(inner, pool);
+    }
+    intern_option_list(&mut spec.options, pool);
+    intern_option_list(&mut spec.persistent_options, pool);
+}
+
+impl ShrinkSpecTree for ArgSpec {
+    fn shrink_tree(&mut self) {
+        self.templates.shrink_to_fit();
+        self.script.shrink_to_fit();
+        self.builtins.shrink_to_fit();
+        shrink_vec(&mut self.suggestions);
+        shrink_vec(&mut self.generators);
+        if let Some(LoadSpec::Inline(spec)) = &mut self.load_spec {
+            spec.shrink_to_fit();
+        }
+        if let Some(spec) = &mut self.resolved_spec {
+            spec.shrink_to_fit();
+        }
+        if let Some(directives) = &mut self.parser_directives {
+            directives.shrink_to_fit();
+        }
+    }
+}
+
+impl ArgSpec {
+    fn heap_bytes(&self, seen_options: &mut std::collections::HashSet<usize>) -> usize {
+        string_heap(&self.name)
+            + string_heap(&self.description)
+            + self.templates.capacity() * std::mem::size_of::<Template>()
+            + string_vec_heap(&self.script)
+            + opt_string_heap(&self.split_on)
+            + opt_string_heap(&self.js_post_process)
+            + opt_string_heap(&self.js_custom)
+            + opt_string_heap(&self.js_script)
+            + opt_string_heap(&self.cache_key)
+            + opt_string_heap(&self.cache_strategy)
+            + self.builtins.capacity() * std::mem::size_of::<Builtin>()
+            + self.suggestions.capacity() * std::mem::size_of::<SuggestionSeed>()
+            + self.suggestions.iter().map(SuggestionSeed::heap_bytes).sum::<usize>()
+            + self.meta.heap_bytes()
+            + load_spec_heap(&self.load_spec, seen_options)
+            + self
+                .resolved_spec
+                .as_ref()
+                .map_or(0, |spec| std::mem::size_of::<Spec>() + spec.heap_bytes(seen_options))
+            + opt_string_heap(&self.is_module)
+            + opt_string_heap(&self.js_load_spec)
+            + opt_string_heap(&self.js_get_query_term)
+            + self.parser_directives.as_ref().map_or(0, ParserDirectives::heap_bytes)
+            + self.generators.capacity() * std::mem::size_of::<GeneratorSpec>()
+            + self.generators.iter().map(GeneratorSpec::heap_bytes).sum::<usize>()
+    }
+}
+
+impl ShrinkSpecTree for SuggestionSeed {
+    fn shrink_tree(&mut self) {
+        self.names.shrink_to_fit();
+    }
+}
+
+impl SuggestionSeed {
+    fn heap_bytes(&self) -> usize {
+        string_vec_heap(&self.names)
+            + string_heap(&self.description)
+            + string_heap(&self.args_hint)
+            + self.meta.heap_bytes()
+    }
+}
+
+impl ShrinkSpecTree for GeneratorSpec {
+    fn shrink_tree(&mut self) {
+        self.templates.shrink_to_fit();
+        self.script.shrink_to_fit();
+        self.extensions.shrink_to_fit();
+        self.equals.shrink_to_fit();
+    }
+}
+
+impl GeneratorSpec {
+    fn heap_bytes(&self) -> usize {
+        self.templates.capacity() * std::mem::size_of::<Template>()
+            + string_vec_heap(&self.script)
+            + opt_string_heap(&self.split_on)
+            + opt_string_heap(&self.js_post_process)
+            + opt_string_heap(&self.js_custom)
+            + opt_string_heap(&self.js_script)
+            + opt_string_heap(&self.cache_key)
+            + opt_string_heap(&self.cache_strategy)
+            + opt_string_heap(&self.get_query_term)
+            + opt_string_heap(&self.js_get_query_term)
+            + opt_string_heap(&self.js_filter_template_suggestions)
+            + string_vec_heap(&self.extensions)
+            + string_vec_heap(&self.equals)
+            + opt_string_heap(&self.show_folders)
+            + opt_string_heap(&self.root_directory)
+            + opt_string_heap(&self.matches)
+            + opt_string_heap(&self.matches_flags)
+            + self.trigger.as_ref().map_or(0, GeneratorTrigger::heap_bytes)
+    }
+}
+
+impl GeneratorTrigger {
+    fn heap_bytes(&self) -> usize {
+        self.on.len() + self.string.as_ref().map_or(0, json_heap) + opt_string_heap(&self.js_trigger)
+    }
+}
+
+impl ParserDirectives {
+    fn shrink_to_fit(&mut self) {
+        if let Some(separators) = &mut self.option_arg_separators {
+            separators.shrink_to_fit();
+        }
+    }
+
+    fn heap_bytes(&self) -> usize {
+        opt_string_heap(&self.alias)
+            + opt_string_heap(&self.js_alias)
+            + self.option_arg_separators.as_ref().map_or(0, string_vec_heap)
+    }
+}
+
+fn string_heap(value: &str) -> usize {
+    value.len()
+}
+
+// A slice hides `capacity`, which is the spare allocation this measurement exists to see.
+#[allow(clippy::ptr_arg)]
+fn string_vec_heap(values: &Vec<String>) -> usize {
+    values.capacity() * std::mem::size_of::<String>() + values.iter().map(String::len).sum::<usize>()
+}
+
+fn json_heap(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => 0,
+        serde_json::Value::String(text) => text.len(),
+        serde_json::Value::Array(items) => {
+            items.capacity() * std::mem::size_of::<serde_json::Value>() + items.iter().map(json_heap).sum::<usize>()
+        },
+        serde_json::Value::Object(entries) => {
+            entries.len() * (std::mem::size_of::<String>() + std::mem::size_of::<serde_json::Value>())
+                + entries
+                    .iter()
+                    .map(|(key, value)| key.len() + json_heap(value))
+                    .sum::<usize>()
+        },
+    }
+}
+
+impl SuggestionMeta {
+    fn heap_bytes(&self) -> usize {
+        opt_string_heap(&self.suggestion_type)
+            + opt_string_heap(&self.original_type)
+            + opt_string_heap(&self.get_query_term)
+            + opt_string_heap(&self.js_get_query_term)
+            + opt_string_heap(&self.insert_value)
+            + opt_string_heap(&self.display_name)
+            + opt_string_heap(&self.separator_to_add)
+            + opt_string_heap(&self.icon)
+    }
+}
+
+fn opt_string_heap(value: &Option<String>) -> usize {
+    value.as_ref().map_or(0, String::len)
 }
 
 #[derive(Debug, Default, Clone)]
@@ -427,6 +821,9 @@ pub struct Registry {
     version_cache: HashMap<String, Option<String>>,
     /// Specs loaded by relative IR path for versioned selection.
     path_specs: HashMap<PathBuf, Arc<Spec>>,
+    /// Identical options loaded by this registry share one `Arc`. Entries are
+    /// `Weak`, so evicting the last spec that used an option drops the body.
+    option_pool: HashMap<u64, Vec<Weak<OptionSpec>>>,
 }
 
 /// How [`Registry::overlay_specs_dir`] treats a name the bundle already has.
@@ -474,7 +871,9 @@ impl Registry {
         self.insert_loaded(spec, None);
     }
 
-    fn insert_loaded(&mut self, spec: Spec, path: Option<&Path>) {
+    fn insert_loaded(&mut self, mut spec: Spec, path: Option<&Path>) {
+        spec.shrink_to_fit();
+        intern_spec_options(&mut spec, &mut self.option_pool);
         let spec = Arc::new(spec);
         for name in &spec.names {
             if name.is_empty() || self.is_pinned_name(name) {
@@ -586,6 +985,7 @@ impl Registry {
                 }
                 if !spec.names.iter().any(|candidate| candidate == name) {
                     spec.names.push(name.to_string());
+                    spec.names.shrink_to_fit();
                 }
                 if !self.has_command_file_map {
                     for alias in &spec.names {
@@ -659,7 +1059,10 @@ impl Registry {
             Ok(mut spec) => {
                 if !spec.names.iter().any(|candidate| candidate == name) {
                     spec.names.push(name.to_string());
+                    spec.names.shrink_to_fit();
                 }
+                spec.shrink_to_fit();
+                intern_spec_options(&mut spec, &mut self.option_pool);
                 let spec = Arc::new(spec);
                 self.path_specs.insert(relative_path, spec.clone());
                 Some(spec)
@@ -793,7 +1196,9 @@ impl Registry {
         self.rebuild_names();
     }
 
-    pub fn overlay_spec(&mut self, spec: Spec, mode: OverlayMode) {
+    pub fn overlay_spec(&mut self, mut spec: Spec, mode: OverlayMode) {
+        spec.shrink_to_fit();
+        intern_spec_options(&mut spec, &mut self.option_pool);
         let spec = Arc::new(spec);
         let mut claimed = false;
         for name in &spec.names {
@@ -1063,6 +1468,9 @@ fn resolve_spec_references(spec: &mut Spec, root: &Path, files: &HashMap<Arc<str
         resolve_arg_spec(arg, root, files, stack);
     }
     for option in &mut spec.options {
+        let Some(option) = Arc::get_mut(option) else {
+            continue;
+        };
         for arg in &mut option.args {
             resolve_arg_spec(arg, root, files, stack);
         }
@@ -1105,6 +1513,8 @@ fn load_spec_file_inner(
     stack.push(path.to_path_buf());
     resolve_spec_references(&mut spec, root, files, stack);
     stack.pop();
+    spec.shrink_to_fit();
+    intern_spec_options_local(&mut spec);
     Ok(spec)
 }
 
@@ -1169,6 +1579,9 @@ fn resolve_snapshot_spec_references(
         resolve_snapshot_arg_spec(arg, snapshot, files, stack)?;
     }
     for option in &mut spec.options {
+        let Some(option) = Arc::get_mut(option) else {
+            continue;
+        };
         for arg in &mut option.args {
             resolve_snapshot_arg_spec(arg, snapshot, files, stack)?;
         }
@@ -1219,6 +1632,8 @@ fn load_snapshot_file_inner(
     let resolved = resolve_snapshot_spec_references(&mut spec, snapshot, files, stack);
     stack.pop();
     resolved?;
+    spec.shrink_to_fit();
+    intern_spec_options_local(&mut spec);
     Ok(spec)
 }
 
@@ -1336,6 +1751,261 @@ mod tests {
         let mkdir = registry.get("mkdir").expect("mkdir spec");
         assert_eq!(mkdir.args[0].templates, vec![Template::Folders]);
         assert!(mkdir.options.iter().any(|opt| opt.names.iter().any(|n| n == "-p")));
+    }
+
+    #[test]
+    fn shrink_to_fit_drops_spare_capacity_without_changing_elements() {
+        let mut spec = Spec {
+            names: Vec::with_capacity(32),
+            options: Vec::with_capacity(16),
+            persistent_options: Vec::with_capacity(8),
+            subcommands: Vec::with_capacity(8),
+            ..Spec::default()
+        };
+        spec.names.push("tool".to_owned());
+        spec.options.push(Arc::new(OptionSpec {
+            names: Vec::with_capacity(20),
+            exclusive_on: Vec::with_capacity(6),
+            ..OptionSpec::default()
+        }));
+        Arc::get_mut(&mut spec.options[0])
+            .expect("option is not shared yet")
+            .names
+            .push("--flag".to_owned());
+        spec.persistent_options.push(Arc::new(OptionSpec {
+            names: vec!["--global".to_owned()],
+            ..OptionSpec::default()
+        }));
+        let mut child = Spec::default();
+        child.names = Vec::with_capacity(10);
+        child.names.push("sub".to_owned());
+        child.args.push(ArgSpec {
+            suggestions: Vec::with_capacity(12),
+            generators: vec![GeneratorSpec {
+                script: Vec::with_capacity(9),
+                extensions: vec!["rs".to_owned()],
+                ..GeneratorSpec::default()
+            }],
+            ..ArgSpec::default()
+        });
+        child.args[0].suggestions.push(SuggestionSeed {
+            names: Vec::with_capacity(7),
+            ..SuggestionSeed::default()
+        });
+        child.args[0].suggestions[0].names.push("one".to_owned());
+        child.parser_directives = Some(ParserDirectives {
+            option_arg_separators: Some(Vec::with_capacity(5)),
+            ..ParserDirectives::default()
+        });
+        spec.subcommands.push(child);
+
+        let names = spec.names.clone();
+        let option_names = spec.options[0].names.clone();
+        let sub_names = spec.subcommands[0].names.clone();
+        let suggestion_names = spec.subcommands[0].args[0].suggestions[0].names.clone();
+        assert!(spec.names.capacity() > spec.names.len());
+        assert!(spec.options.capacity() > spec.options.len());
+
+        spec.shrink_to_fit();
+
+        assert_eq!(spec.names, names);
+        assert_eq!(spec.options[0].names, option_names);
+        assert_eq!(spec.subcommands[0].names, sub_names);
+        assert_eq!(spec.subcommands[0].args[0].suggestions[0].names, suggestion_names);
+        assert_eq!(spec.options[0].exclusive_on, Vec::<String>::new());
+        assert_eq!(spec.names.capacity(), spec.names.len());
+        assert_eq!(spec.options.capacity(), spec.options.len());
+        assert_eq!(spec.options[0].names.capacity(), spec.options[0].names.len());
+        assert_eq!(spec.options[0].exclusive_on.capacity(), 0);
+        assert_eq!(spec.persistent_options.capacity(), spec.persistent_options.len());
+        assert_eq!(spec.subcommands.capacity(), spec.subcommands.len());
+        assert_eq!(spec.subcommands[0].names.capacity(), spec.subcommands[0].names.len());
+        assert_eq!(spec.subcommands[0].args.capacity(), spec.subcommands[0].args.len());
+        assert_eq!(
+            spec.subcommands[0].args[0].suggestions.capacity(),
+            spec.subcommands[0].args[0].suggestions.len()
+        );
+        assert_eq!(
+            spec.subcommands[0].args[0].suggestions[0].names.capacity(),
+            spec.subcommands[0].args[0].suggestions[0].names.len()
+        );
+        assert_eq!(
+            spec.subcommands[0].args[0].generators[0].script.capacity(),
+            spec.subcommands[0].args[0].generators[0].script.len()
+        );
+        let separators = spec.subcommands[0]
+            .parser_directives
+            .as_ref()
+            .and_then(|directives| directives.option_arg_separators.as_ref())
+            .expect("separators");
+        assert_eq!(separators.capacity(), separators.len());
+    }
+
+    #[test]
+    fn loaded_spec_vecs_match_their_length() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "tool",
+            r#"{
+              "names": ["tool"],
+              "options": [
+                {"names": ["--a"], "exclusiveOn": ["--b"]},
+                {"names": ["--b"]},
+                {"names": ["--c"]},
+                {"names": ["--d"]},
+                {"names": ["--e"]}
+              ],
+              "persistentOptions": [{"names": ["--global"]}],
+              "subcommands": [{
+                "names": ["sub"],
+                "args": [{
+                  "name": "x",
+                  "suggestions": [{"names": ["one", "two", "three"]}],
+                  "generators": [{"script": ["echo", "hi"], "extensions": ["rs", "toml"]}]
+                }]
+              }]
+            }"#,
+        );
+        let mut registry = Registry::load(dir.path()).expect("load");
+        let spec = registry.get("tool").expect("tool spec");
+        assert_eq!(spec.options.len(), 5);
+        assert_eq!(spec.options.capacity(), spec.options.len());
+        assert_eq!(spec.options[0].names.capacity(), spec.options[0].names.len());
+        assert_eq!(
+            spec.options[0].exclusive_on.capacity(),
+            spec.options[0].exclusive_on.len()
+        );
+        assert_eq!(spec.persistent_options.capacity(), spec.persistent_options.len());
+        assert_eq!(spec.subcommands.capacity(), spec.subcommands.len());
+        assert_eq!(spec.subcommands[0].args.capacity(), spec.subcommands[0].args.len());
+        assert_eq!(
+            spec.subcommands[0].args[0].suggestions.capacity(),
+            spec.subcommands[0].args[0].suggestions.len()
+        );
+        assert_eq!(
+            spec.subcommands[0].args[0].suggestions[0].names.capacity(),
+            spec.subcommands[0].args[0].suggestions[0].names.len()
+        );
+        assert_eq!(
+            spec.subcommands[0].args[0].generators[0].script.capacity(),
+            spec.subcommands[0].args[0].generators[0].script.len()
+        );
+        assert_eq!(
+            spec.subcommands[0].args[0].generators[0].extensions.capacity(),
+            spec.subcommands[0].args[0].generators[0].extensions.len()
+        );
+        assert_eq!(spec.names, vec!["tool".to_owned()]);
+        assert_eq!(spec.options[0].names, vec!["--a".to_owned()]);
+        assert!(spec.find_subcommand("sub").is_some());
+    }
+
+    #[test]
+    fn identical_options_share_one_allocation_and_the_pool_does_not_keep_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let option = r#"{"names":["--same"],"description":"one"}"#;
+        write_spec(
+            dir.path(),
+            "tool",
+            &format!(
+                r#"{{
+                  "names":["tool"],
+                  "options":[{option},{option}],
+                  "persistentOptions":[{option}],
+                  "subcommands":[{{"names":["sub"],"options":[{option},{{"names":["--other"],"description":"two"}}]}}]
+                }}"#
+            ),
+        );
+        write_spec(
+            dir.path(),
+            "other",
+            &format!(r#"{{"names":["other"],"options":[{option}]}}"#),
+        );
+        let mut registry = Registry::load(dir.path()).expect("load");
+        let tool = registry.get_arc("tool").expect("tool");
+        let other = registry.get_arc("other").expect("other");
+        assert!(Arc::ptr_eq(&tool.options[0], &tool.options[1]));
+        assert!(Arc::ptr_eq(&tool.options[0], &tool.persistent_options[0]));
+        assert!(Arc::ptr_eq(&tool.options[0], &tool.subcommands[0].options[0]));
+        assert!(Arc::ptr_eq(&tool.options[0], &other.options[0]));
+        assert!(!Arc::ptr_eq(&tool.options[0], &tool.subcommands[0].options[1]));
+        assert_eq!(tool.options[0].description, "one");
+        assert_eq!(tool.subcommands[0].options[1].names, vec!["--other".to_owned()]);
+
+        let weak = Arc::downgrade(&tool.options[0]);
+        drop(tool);
+        drop(other);
+        drop(registry);
+        assert!(weak.upgrade().is_none(), "the intern pool must not keep options alive");
+    }
+
+    #[test]
+    fn option_intern_replaces_a_dropped_body_instead_of_resurrecting_it() {
+        let mut pool = HashMap::new();
+        let option = Arc::new(OptionSpec {
+            names: vec!["--a".to_owned()],
+            ..OptionSpec::default()
+        });
+        let shared = intern_one_option(Arc::clone(&option), &mut pool);
+        assert!(Arc::ptr_eq(&option, &shared));
+        drop(shared);
+        drop(option);
+        let again = intern_one_option(
+            Arc::new(OptionSpec {
+                names: vec!["--a".to_owned()],
+                ..OptionSpec::default()
+            }),
+            &mut pool,
+        );
+        assert_eq!(Arc::strong_count(&again), 1);
+    }
+
+    #[test]
+    fn shared_option_body_is_counted_once() {
+        let option = Arc::new(OptionSpec {
+            names: vec!["--flag".into()],
+            description: "hello".into(),
+            ..OptionSpec::default()
+        });
+        let empty = Spec::default();
+        let once = Spec {
+            options: vec![Arc::clone(&option)],
+            ..Spec::default()
+        };
+        let shared = Spec {
+            options: vec![Arc::clone(&option), Arc::clone(&option)],
+            ..Spec::default()
+        };
+        let distinct = Spec {
+            options: vec![
+                Arc::clone(&option),
+                Arc::new(OptionSpec {
+                    names: vec!["--flag".into()],
+                    description: "hello".into(),
+                    ..OptionSpec::default()
+                }),
+            ],
+            ..Spec::default()
+        };
+        let listed_twice = Spec {
+            options: vec![Arc::clone(&option)],
+            persistent_options: vec![Arc::clone(&option)],
+            ..Spec::default()
+        };
+        assert_eq!(once.options.capacity(), 1);
+        assert_eq!(shared.options.capacity(), 2);
+        assert_eq!(distinct.options.capacity(), 2);
+        assert_eq!(listed_twice.options.capacity(), 1);
+        assert_eq!(listed_twice.persistent_options.capacity(), 1);
+        let slot = std::mem::size_of::<Arc<OptionSpec>>();
+        let body = once.allocated_bytes() - empty.allocated_bytes() - slot;
+        assert!(body > slot);
+        assert_eq!(shared.allocated_bytes(), once.allocated_bytes() + slot);
+        assert_eq!(distinct.allocated_bytes(), once.allocated_bytes() + slot + body);
+        assert_eq!(
+            listed_twice.allocated_bytes(),
+            empty.allocated_bytes() + (slot * 2) + body
+        );
     }
 
     #[test]

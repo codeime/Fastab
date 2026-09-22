@@ -15,7 +15,7 @@
 
 | ID | 目标 | 验收 |
 | --- | --- | --- |
-| **G1** | 启动不物化未使用的 typed hook IR | `parse_typed_hook_catalog_bytes` 之后 `parsed_descriptor_count() == 0`；只有第一次求值才 `parse_typed_hook_ir_bytes`。`LazyTypedHookIr::PartialEq` 不得 `get()`。测试钉住生产 sidecar 与「坏 descriptor 在首次使用时 fail closed」。 |
+| **G1** | 启动不物化未使用的 typed hook IR | `parse_typed_hook_catalog_bytes` 之后 `parsed_descriptor_count() == 0`；只有第一次求值才 `parse_typed_hook_ir_bytes`。同一次解析里字节相同的 descriptor 共享一份 `Arc`，所以求值一个 body 会让所有引用它的 hook 一起变成已解析，别的 body 仍保持未解析。解析结束就丢掉 intern 池，两份 catalog 不共享分配。`LazyTypedHookIr::PartialEq` 不得 `get()`。测试钉住生产 sidecar 与「坏 descriptor 在首次使用时 fail closed」。 |
 | **G2** | `NativeHooks` 不再复制一份 `HookMeta` HashMap | 适配器 SHA 从 runtime catalog 读；typed IR 从 catalog 懒解析。`into_runtime` 丢掉 `module` / `moduleSha256` / `path` / 每条 typed hook 的 `functionBodySha256`。 |
 | **G3** | 打包 spec 钉在已发布最新版 | `@chen86860/autocomplete-specs` 与 npm `latest`、fork `master` 一致。当前即 **3.1.0**（2026-09-02），仓库无更新提交。 |
 | **G4** | 打开 snapshot 时截下 sidecar，load 不再读第二遍 | `take_captured_file("typed-hooks.json")`；digest 仍在 open 时写入，后续 `read_file` 照常校验。 |
