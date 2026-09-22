@@ -98,7 +98,7 @@ export const reasons: Reason[] = [
  * They differ in how the caret is located, which is what positions the overlay:
  * the bundled macOS input method, xterm.js caret detection inside Electron
  * hosts, or the macOS Accessibility API. Mirrors the capability matrix in
- * `crates/fig_util/src/terminal.rs`.
+ * `crates/fastab_util/src/terminal.rs`.
  */
 export type TerminalIntegration = "input-method" | "xterm" | "accessibility";
 
@@ -347,7 +347,7 @@ export interface Process {
 export const processes: Process[] = [
   {
     bin: "fastab",
-    crate: "fig_desktop",
+    crate: "fastab_desktop",
     role: "Native app host — GPUI overlay and settings (not WKWebView), completion engine worker, system tray and window management.",
   },
   {
@@ -357,7 +357,7 @@ export const processes: Process[] = [
   },
   {
     bin: "ftab",
-    crate: "ec_cli",
+    crate: "fastab_cli",
     role: "CLI entry point — setup, integrations, diagnostic, settings and more.",
   },
 ];

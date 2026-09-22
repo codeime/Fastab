@@ -24,7 +24,7 @@ export const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const nativeHooksRoot = join(
   repoDir,
   "crates",
-  "ec_engine",
+  "fastab_engine",
   "testdata",
   "native-hooks",
 );
@@ -124,7 +124,7 @@ export function cloneJson(value) {
 }
 
 export function inputRelativePath(field, bodySha256) {
-  return ["crates", "ec_engine", "testdata", "native-hooks", "inputs", field, `${bodySha256}.json`].join(
+  return ["crates", "fastab_engine", "testdata", "native-hooks", "inputs", field, `${bodySha256}.json`].join(
     "/",
   );
 }

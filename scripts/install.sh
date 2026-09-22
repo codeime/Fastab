@@ -32,21 +32,40 @@ process_running_match() {
   pgrep -f "$1" >/dev/null 2>&1
 }
 
-# Kill only Fastab's IME. The helper executable is still named
-# `fig_input_method`; Easy Complete's helper uses the same basename.
-FASTAB_IME_MATCH="FastabInputMethod.app/Contents/MacOS/fig_input_method"
+# Kill only Fastab's IME. The current executable is `fastab_input_method`.
+# Builds before this rename used `fig_input_method` inside the same bundle.
+# Both patterns include FastabInputMethod.app, so Easy Complete's helper stays up.
+FASTAB_IME_MATCHES=(
+  "FastabInputMethod.app/Contents/MacOS/fastab_input_method"
+  "FastabInputMethod.app/Contents/MacOS/fig_input_method"
+)
+
+fastab_ime_running() {
+  local match
+  for match in "${FASTAB_IME_MATCHES[@]}"; do
+    if process_running_match "${match}"; then
+      return 0
+    fi
+  done
+  return 1
+}
 
 stop_fastab_ime() {
-  process_running_match "${FASTAB_IME_MATCH}" || return 0
-  pkill -f "${FASTAB_IME_MATCH}" 2>/dev/null || true
+  fastab_ime_running || return 0
+  local match
+  for match in "${FASTAB_IME_MATCHES[@]}"; do
+    pkill -f "${match}" 2>/dev/null || true
+  done
   local waited=0
   while [ "${waited}" -lt 20 ]; do
-    process_running_match "${FASTAB_IME_MATCH}" || return 0
+    fastab_ime_running || return 0
     sleep 0.1
     waited=$((waited + 1))
   done
   warn "Fastab IME did not exit; forcing it."
-  pkill -9 -f "${FASTAB_IME_MATCH}" 2>/dev/null || true
+  for match in "${FASTAB_IME_MATCHES[@]}"; do
+    pkill -9 -f "${match}" 2>/dev/null || true
+  done
   sleep 0.2
 }
 
@@ -111,7 +130,7 @@ probe_accessibility() {
 info "Installing to /Applications/..."
 
 DESKTOP_BIN="Contents/MacOS/${APP_NAME}"
-IME_BIN="Contents/Helpers/FastabInputMethod.app/Contents/MacOS/fig_input_method"
+IME_BIN="Contents/Helpers/FastabInputMethod.app/Contents/MacOS/fastab_input_method"
 
 for required in "${DESKTOP_BIN}" "${IME_BIN}"; do
   if [ ! -f "${STAGING_BUNDLE}/${required}" ]; then
@@ -142,7 +161,7 @@ stop_process "${APP_NAME}"
 keep_ime=0
 if [ "${ime_changed}" -eq 1 ]; then
   stop_fastab_ime
-elif process_running_match "${FASTAB_IME_MATCH}"; then
+elif fastab_ime_running; then
   keep_ime=1
 fi
 

@@ -16,7 +16,7 @@ const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const TYPED_IR_V2_OPS_PATH = join(
   repoDir,
   "crates",
-  "ec_engine",
+  "fastab_engine",
   "testdata",
   "native-hooks",
   "typed-ir-v2-ops.json",

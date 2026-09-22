@@ -72,6 +72,7 @@ if [[ -x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}" ]]; then
   "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}" --unregister-login-item 2>/dev/null || true
 fi
 pkill -x "${APP_NAME}"       2>/dev/null || true
+pkill -f "FastabInputMethod.app/Contents/MacOS/fastab_input_method" 2>/dev/null || true
 pkill -f "FastabInputMethod.app/Contents/MacOS/fig_input_method" 2>/dev/null || true
 pkill -f "fastabterm"        2>/dev/null || true
 sleep 0.5

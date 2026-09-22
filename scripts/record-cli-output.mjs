@@ -244,7 +244,7 @@ const HEX40_RE = /\b[0-9a-fA-F]{40}\b/g;
 export function cliOutputRelativePath(argv) {
   return [
     "crates",
-    "ec_engine",
+    "fastab_engine",
     "testdata",
     "native-hooks",
     "cli-output",

@@ -2,7 +2,7 @@
 /**
  * Build the native binaries while the bundled source/IR generation is locked.
  *
- * `ec_gpui` embeds icons from bundle/specs with `include_bytes!`, while the
+ * `fastab_gpui` embeds icons from bundle/specs with `include_bytes!`, while the
  * application ships bundle/specs-ir as a lazy runtime resource.  Holding the
  * publication lock across rustc and the IR snapshot prevents a concurrent
  * spec sync from making those two inputs come from different generations.
@@ -42,12 +42,12 @@ const SNAPSHOT_MANIFEST_NAME = ".build-input-snapshot.json";
 const SNAPSHOT_MANIFEST_FORMAT = 1;
 const SNAPSHOT_MANIFEST_KIND = "easy-complete-build-input-snapshot";
 const EXPECTED_BINARIES = new Map([
-  ["fastab", join(repoDir, "crates", "fig_desktop", "Cargo.toml")],
-  ["ftab", join(repoDir, "crates", "ec_cli", "Cargo.toml")],
-  ["fastabterm", join(repoDir, "crates", "figterm", "Cargo.toml")],
+  ["fastab", join(repoDir, "crates", "fastab_desktop", "Cargo.toml")],
+  ["ftab", join(repoDir, "crates", "fastab_cli", "Cargo.toml")],
+  ["fastabterm", join(repoDir, "crates", "fastab_term", "Cargo.toml")],
   [
-    "fig_input_method",
-    join(repoDir, "crates", "fig_input_method", "Cargo.toml"),
+    "fastab_input_method",
+    join(repoDir, "crates", "fastab_input_method", "Cargo.toml"),
   ],
 ]);
 
@@ -407,13 +407,13 @@ async function runCargo(profile) {
     profile,
     "--message-format=json-render-diagnostics",
     "-p",
-    "fig_desktop",
+    "fastab_desktop",
     "-p",
-    "figterm",
+    "fastab_term",
     "-p",
-    "ec_cli",
+    "fastab_cli",
     "-p",
-    "fig_input_method",
+    "fastab_input_method",
   ];
   const state = { artifacts: new Map(), finished: false, success: false };
   try {

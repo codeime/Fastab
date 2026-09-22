@@ -92,7 +92,7 @@ function PrivacyPage() {
         <p className={PARAGRAPH}>
           You can audit the disabled telemetry crate on{" "}
           <a
-            href={`${GITHUB_URL}/tree/main/crates/fig_telemetry`}
+            href={`${GITHUB_URL}/tree/main/crates/fastab_telemetry`}
             className="text-(--accent) underline decoration-(--accent-line) underline-offset-4"
           >
             GitHub

@@ -2,7 +2,7 @@
 /**
  * Emit compiled typed-hook descriptors for every T2.2-contract unique body.
  *
- * Used by `cargo test -p ec_engine typed_hook_baseline_parity`.  Production
+ * Used by `cargo test -p fastab_engine typed_hook_baseline_parity`.  Production
  * sidecars now cover the side-effect-free fields; this catalog is still
  * test-only and may bind factory helpers that the sidecar refused.
  *
@@ -30,7 +30,7 @@ import {
 const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const baselineRoot = join(
   repoDir,
-  "crates/ec_engine/testdata/native-hooks/baseline",
+  "crates/fastab_engine/testdata/native-hooks/baseline",
 );
 const IR_TO_SOURCE_FIELD = Object.fromEntries(
   Object.entries(SUPPORTED_HOOK_FIELDS).map(([source, ir]) => [ir, source]),

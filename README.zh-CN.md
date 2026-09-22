@@ -41,7 +41,7 @@ Mac。**本 fork 已关闭全部遥测，不采集任何数据。** 详见[隐�
 ## Native
 
 补全浮层和设置窗口是 GPUI 视图（Zed 的 UI 工具包）。补全本身从不进 WebView，
-应用里也没有 JavaScript 运行时：`ec_engine` 查的是构建期编好的 JSON IR，
+应用里也没有 JavaScript 运行时：`fastab_engine` 查的是构建期编好的 JSON IR，
 spec hook（`postProcess`、`script`、`custom`、`generateSpec`）同样在构建期
 编译成 typed IR 或具名 Rust 适配器。
 
@@ -189,12 +189,12 @@ Fastab 由三个相互协作的原生进程组成，通过 Unix 域套接字（P
 
 | 二进制          | Crate         | 职责                                                                                           |
 | --------------- | ------------- | ---------------------------------------------------------------------------------------------- |
-| `fastab` | `fig_desktop` | 原生应用宿主——GPUI 补全浮层与设置窗口（不是 WKWebView）、补全引擎工作线程、系统托盘、窗口管理 |
-| `fastabterm`        | `figterm`     | 介于 shell 与终端模拟器之间的伪终端；拦截 shell 编辑缓冲区以驱动补全                           |
-| `ftab`            | `ec_cli`      | CLI 入口——`setup`、`integrations`、`diagnostic`、`settings` 等                                 |
+| `fastab` | `fastab_desktop` | 原生应用宿主——GPUI 补全浮层与设置窗口（不是 WKWebView）、补全引擎工作线程、系统托盘、窗口管理 |
+| `fastabterm`        | `fastab_term`     | 介于 shell 与终端模拟器之间的伪终端；拦截 shell 编辑缓冲区以驱动补全                           |
+| `ftab`            | `fastab_cli`      | CLI 入口——`setup`、`integrations`、`diagnostic`、`settings` 等                                 |
 
 Shell 钩子（`.zshrc`、`.bashrc`、fish 配置）在每次提示符和按键时，把 shell 状态（当前目
-录、命令文本、光标位置）回报给 `fastabterm`。在 macOS 上，`fig_input_method` 辅助应用负责为绕
+录、命令文本、光标位置）回报给 `fastabterm`。在 macOS 上，`fastab_input_method` 辅助应用负责为绕
 过 PTY 的终端上报光标位置。
 
 **标识符**
@@ -217,7 +217,7 @@ Shell 钩子（`.zshrc`、`.bashrc`、fish 配置）在每次提示符和按键�
 
 ```bash
 # 构建所有 release 二进制
-cargo build --release -p fig_desktop -p figterm -p ec_cli -p fig_input_method
+cargo build --release -p fastab_desktop -p fastab_term -p fastab_cli -p fastab_input_method
 
 # 以 dev 模式运行单个 crate
 cargo run --bin ftab -- <子命令>
@@ -244,14 +244,14 @@ pnpm test                                   # 运行 Vitest
 
 | Crate                   | 职责                                                    |
 | ----------------------- | ------------------------------------------------------- |
-| `fig_desktop`           | 原生应用宿主：GPUI 浮层与设置、托盘、引擎客户端         |
-| `ec_gpui`               | 补全列表、主题、macOS 窗口定位                          |
-| `ec_engine`             | 无界面补全：IR 查找、生成器、typed hook IR              |
-| `figterm`               | PTY 拦截、shell 编辑缓冲区追踪                          |
-| `ec_cli`                | CLI crate，提供 `ftab` 二进制及其所有子命令               |
-| `fig_input_method`      | macOS 输入法辅助应用（光标追踪）                        |
-| `fig_integrations`      | shell / 终端 / 编辑器集成的安装逻辑                     |
-| `fig_ipc` / `fig_proto` | Unix 套接字 IPC 原语与生成的 Protobuf 类型              |
+| `fastab_desktop`           | 原生应用宿主：GPUI 浮层与设置、托盘、引擎客户端         |
+| `fastab_gpui`               | 补全列表、主题、macOS 窗口定位                          |
+| `fastab_engine`             | 无界面补全：IR 查找、生成器、typed hook IR              |
+| `fastab_term`               | PTY 拦截、shell 编辑缓冲区追踪                          |
+| `fastab_cli`                | CLI crate，提供 `ftab` 二进制及其所有子命令               |
+| `fastab_input_method`      | macOS 输入法辅助应用（光标追踪）                        |
+| `fastab_integrations`      | shell / 终端 / 编辑器集成的安装逻辑                     |
+| `fastab_ipc` / `fastab_proto` | Unix 套接字 IPC 原语与生成的 Protobuf 类型              |
 
 ### 核心 TypeScript 包
 

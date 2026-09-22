@@ -44,7 +44,7 @@ nothing.** See the [Privacy page](https://fastab.app/privacy-policy).
 
 The completion popup and the settings window are GPUI views (Zed's UI toolkit).
 Completions never enter a web view, and the app ships no JavaScript runtime:
-`ec_engine` looks up JSON IR compiled at build time, and every spec hook
+`fastab_engine` looks up JSON IR compiled at build time, and every spec hook
 (`postProcess`, `script`, `custom`, `generateSpec`) is compiled to typed IR or
 a named Rust adapter at build time too.
 
@@ -205,13 +205,13 @@ sockets (Protobuf messages):
 
 | Binary          | Crate         | Role                                                                                                                             |
 | --------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `fastab` | `fig_desktop` | Native app host — GPUI overlay and settings (not WKWebView), completion engine worker, system tray, and window management |
-| `fastabterm`        | `figterm`     | Pseudoterminal between your shell and terminal emulator; intercepts the shell edit buffer to drive completions                   |
-| `ftab`            | `ec_cli`      | CLI entry point — `setup`, `integrations`, `diagnostic`, `settings`, and more                                                    |
+| `fastab` | `fastab_desktop` | Native app host — GPUI overlay and settings (not WKWebView), completion engine worker, system tray, and window management |
+| `fastabterm`        | `fastab_term`     | Pseudoterminal between your shell and terminal emulator; intercepts the shell edit buffer to drive completions                   |
+| `ftab`            | `fastab_cli`      | CLI entry point — `setup`, `integrations`, `diagnostic`, `settings`, and more                                                    |
 
 Shell hooks (`.zshrc`, `.bashrc`, fish config) report shell state — CWD, command text,
 cursor position — back to `fastabterm` on every prompt and keystroke. On macOS, the
-`fig_input_method` helper app reports caret position for terminals that bypass the PTY.
+`fastab_input_method` helper app reports caret position for terminals that bypass the PTY.
 
 **Identifiers**
 
@@ -233,7 +233,7 @@ cursor position — back to `fastabterm` on every prompt and keystroke. On macOS
 
 ```bash
 # Build all release binaries
-cargo build --release -p fig_desktop -p figterm -p ec_cli -p fig_input_method
+cargo build --release -p fastab_desktop -p fastab_term -p fastab_cli -p fastab_input_method
 
 # Run a single crate in dev mode
 cargo run --bin ftab -- <subcommand>
@@ -260,14 +260,14 @@ Process memory: `./scripts/memory-usage.sh` (`--watch 5`, `--peak`, `--csv mem.c
 
 | Crate                   | Role                                                             |
 | ----------------------- | ---------------------------------------------------------------- |
-| `fig_desktop`           | Native app host: GPUI overlay + settings, tray, engine client    |
-| `ec_gpui`               | Overlay list, theme, macOS window placement                      |
-| `ec_engine`             | Headless completion: IR lookup, generators, typed hook IR        |
-| `figterm`               | PTY interceptor, shell edit-buffer tracking                      |
-| `ec_cli`                | CLI crate, providing the `ftab` binary and all its subcommands     |
-| `fig_input_method`      | macOS input method helper (cursor tracking)                      |
-| `fig_integrations`      | Shell/terminal/editor integration install logic                  |
-| `fig_ipc` / `fig_proto` | Unix-socket IPC primitives & generated Protobuf types            |
+| `fastab_desktop`           | Native app host: GPUI overlay + settings, tray, engine client    |
+| `fastab_gpui`               | Overlay list, theme, macOS window placement                      |
+| `fastab_engine`             | Headless completion: IR lookup, generators, typed hook IR        |
+| `fastab_term`               | PTY interceptor, shell edit-buffer tracking                      |
+| `fastab_cli`                | CLI crate, providing the `ftab` binary and all its subcommands     |
+| `fastab_input_method`      | macOS input method helper (cursor tracking)                      |
+| `fastab_integrations`      | Shell/terminal/editor integration install logic                  |
+| `fastab_ipc` / `fastab_proto` | Unix-socket IPC primitives & generated Protobuf types            |
 
 ### Key TypeScript packages
 

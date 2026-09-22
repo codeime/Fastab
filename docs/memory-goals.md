@@ -5,8 +5,8 @@
 ## 不变量（本阶段不改）
 
 - `ecterm` `max_scroll_limit = 1`（0 会丢掉滚出视口的 prompt）
-- `fig_util` 不链 AppKit
-- `fig_input_method` 不拉 `fig_ipc` / tokio / prost
+- `fastab_util` 不链 AppKit
+- `fastab_input_method` 不拉 `fastab_ipc` / tokio / prost
 - AX `Copy*` / `Create*` 走 create rule
 - Registry LRU 48、hook 结果缓存 512、generate LRU 32 的数字不改
 - 不为「再砍 figterm 直接依赖」开 PR（已量过约 2.8 KB）

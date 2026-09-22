@@ -70,7 +70,7 @@ jobs:
         run: |
           node -e '
             const expected = process.env.EC_GATE_PATH_SWITCH_EXPECTED;
-            const inventory = require("./crates/ec_engine/testdata/native-hooks/inventory.json");
+            const inventory = require("./crates/fastab_engine/testdata/native-hooks/inventory.json");
             const allowed = inventory.gate && inventory.gate.pathSwitchAllowed === true;
             if (expected === "false") {
               if (allowed) {
@@ -164,7 +164,7 @@ jobs:
           test -d "$swap_root/exclusive-existing"
 
       - name: Clippy
-        run: cargo clippy --locked --workspace --exclude fig_desktop-fuzz --exclude ec_overlay_spike --exclude figterm2 --color always -- -D warnings
+        run: cargo clippy --locked --workspace --exclude fastab_desktop-fuzz --exclude fastab_overlay_spike --exclude fastab_term2 --color always -- -D warnings
 
       # The engine's typed-hook provenance tests verify the checked-in
       # reference baselines against the compiled bundle/specs-ir pair, which is
@@ -190,11 +190,11 @@ jobs:
         run: ./scripts/assert-no-runtime-js.sh
 
       - name: Test
-        run: cargo test --workspace --locked --exclude fig_desktop-fuzz --exclude ec_overlay_spike --exclude figterm2
+        run: cargo test --workspace --locked --exclude fastab_desktop-fuzz --exclude fastab_overlay_spike --exclude fastab_term2
 
       # Thin LTO + codegen-units=1 is minutes on every PR and duplicates the
       # tag pipeline in release.yml. Keep the smoke on main so profile-specific
       # breakage (panic = "abort", LTO, strip) still lands before a tag.
       - name: Build release binaries (dist profile)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: cargo build --locked --profile dist -p fig_desktop -p figterm -p ec_cli -p fig_input_method
+        run: cargo build --locked --profile dist -p fastab_desktop -p fastab_term -p fastab_cli -p fastab_input_method

@@ -77,7 +77,7 @@ version = "0.0.2"
 dependencies = [
  "bitflags 2.13.1",
  "camino",
- "fig_os_shim",
+ "fastab_os_shim",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2263,7 +2263,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
-name = "ec_cli"
+name = "fastab_cli"
 version = "0.0.2"
 dependencies = [
  "anstream 1.0.0",
@@ -2285,19 +2285,19 @@ dependencies = [
  "crossterm",
  "ctrlc",
  "dialoguer",
- "ec_engine",
+ "fastab_engine",
  "eyre",
- "fig_diagnostic",
- "fig_install",
- "fig_integrations",
- "fig_ipc",
- "fig_log",
- "fig_os_shim",
- "fig_proto",
- "fig_remote_ipc",
- "fig_settings",
- "fig_telemetry",
- "fig_util",
+ "fastab_diagnostic",
+ "fastab_install",
+ "fastab_integrations",
+ "fastab_ipc",
+ "fastab_log",
+ "fastab_os_shim",
+ "fastab_proto",
+ "fastab_remote_ipc",
+ "fastab_settings",
+ "fastab_telemetry",
+ "fastab_util",
  "flume 0.12.0",
  "futures",
  "glob",
@@ -2341,12 +2341,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "ec_engine"
+name = "fastab_engine"
 version = "0.0.2"
 dependencies = [
  "anyhow",
  "fancy-regex 0.16.2",
- "fig_settings",
+ "fastab_settings",
  "futures",
  "libc",
  "nix 0.31.3",
@@ -2359,7 +2359,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ec_gpui"
+name = "fastab_gpui"
 version = "0.0.2"
 dependencies = [
  "anyhow",
@@ -2378,7 +2378,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ec_hitoolbox"
+name = "fastab_hitoolbox"
 version = "0.0.2"
 dependencies = [
  "core-foundation 0.10.0",
@@ -2386,10 +2386,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "ec_overlay_spike"
+name = "fastab_overlay_spike"
 version = "0.0.2"
 dependencies = [
- "ec_gpui",
+ "fastab_gpui",
  "gpui",
 ]
 
@@ -2670,7 +2670,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_desktop"
+name = "fastab_desktop"
 version = "0.0.2"
 dependencies = [
  "accessibility-sys",
@@ -2685,19 +2685,19 @@ dependencies = [
  "core-graphics 0.25.0",
  "dashmap",
  "dispatch",
- "ec_engine",
- "ec_gpui",
- "fig_desktop_api",
- "fig_install",
- "fig_integrations",
- "fig_ipc",
- "fig_log",
- "fig_os_shim",
- "fig_proto",
- "fig_remote_ipc",
- "fig_settings",
- "fig_telemetry",
- "fig_util",
+ "fastab_engine",
+ "fastab_gpui",
+ "fastab_desktop_api",
+ "fastab_install",
+ "fastab_integrations",
+ "fastab_ipc",
+ "fastab_log",
+ "fastab_os_shim",
+ "fastab_proto",
+ "fastab_remote_ipc",
+ "fastab_settings",
+ "fastab_telemetry",
+ "fastab_util",
  "flume 0.12.0",
  "fnv",
  "futures",
@@ -2732,43 +2732,43 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_desktop-fuzz"
+name = "fastab_desktop-fuzz"
 version = "0.0.0"
 dependencies = [
- "fig_ipc",
- "fig_proto",
- "fig_util",
+ "fastab_ipc",
+ "fastab_proto",
+ "fastab_util",
  "libfuzzer-sys",
  "tempfile",
  "tokio",
 ]
 
 [[package]]
-name = "fig_desktop_api"
+name = "fastab_desktop_api"
 version = "0.0.2"
 dependencies = [
  "anstream 1.0.0",
  "cfg-if",
- "fig_integrations",
- "fig_os_shim",
- "fig_proto",
- "fig_settings",
- "fig_util",
+ "fastab_integrations",
+ "fastab_os_shim",
+ "fastab_proto",
+ "fastab_settings",
+ "fastab_util",
  "macos-utils",
  "tokio",
  "tracing",
 ]
 
 [[package]]
-name = "fig_diagnostic"
+name = "fastab_diagnostic"
 version = "0.0.2"
 dependencies = [
  "cfg-if",
  "clap",
- "fig_ipc",
- "fig_os_shim",
- "fig_proto",
- "fig_util",
+ "fastab_ipc",
+ "fastab_os_shim",
+ "fastab_proto",
+ "fastab_util",
  "serde",
  "serde_json",
  "sysinfo 0.36.1",
@@ -2779,14 +2779,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_input_method"
+name = "fastab_input_method"
 version = "0.0.2"
 dependencies = [
  "apple-bundle",
  "core-foundation 0.10.0",
- "ec_hitoolbox",
- "fig_proto",
- "fig_util",
+ "fastab_hitoolbox",
+ "fastab_proto",
+ "fastab_util",
  "libc",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
@@ -2798,7 +2798,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_install"
+name = "fastab_install"
 version = "0.0.2"
 dependencies = [
  "bitflags 2.13.1",
@@ -2806,12 +2806,12 @@ dependencies = [
  "camino",
  "cfg-if",
  "cookie",
- "fig_integrations",
- "fig_ipc",
- "fig_os_shim",
- "fig_settings",
- "fig_test_utils",
- "fig_util",
+ "fastab_integrations",
+ "fastab_ipc",
+ "fastab_os_shim",
+ "fastab_settings",
+ "fastab_test_utils",
+ "fastab_util",
  "hex",
  "libc",
  "regex",
@@ -2832,7 +2832,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_integrations"
+name = "fastab_integrations"
 version = "0.0.2"
 dependencies = [
  "accessibility-sys",
@@ -2842,10 +2842,10 @@ dependencies = [
  "core-foundation 0.10.0",
  "dirs 5.0.1",
  "dispatch",
- "ec_hitoolbox",
- "fig_os_shim",
- "fig_settings",
- "fig_util",
+ "fastab_hitoolbox",
+ "fastab_os_shim",
+ "fastab_settings",
+ "fastab_util",
  "indoc",
  "insta",
  "macos-utils",
@@ -2864,15 +2864,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_ipc"
+name = "fastab_ipc"
 version = "0.0.2"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
  "bytes",
  "cfg-if",
- "fig_proto",
- "fig_util",
+ "fastab_proto",
+ "fastab_util",
  "flate2",
  "nix 0.31.3",
  "pin-project-lite",
@@ -2887,11 +2887,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_log"
+name = "fastab_log"
 version = "0.0.2"
 dependencies = [
- "fig_os_shim",
- "fig_util",
+ "fastab_os_shim",
+ "fastab_util",
  "parking_lot",
  "tempfile",
  "thiserror 2.0.20",
@@ -2901,7 +2901,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_os_shim"
+name = "fastab_os_shim"
 version = "0.0.2"
 dependencies = [
  "cfg-if",
@@ -2914,12 +2914,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_proto"
+name = "fastab_proto"
 version = "0.0.2"
 dependencies = [
  "arbitrary",
  "bytes",
- "fig_util",
+ "fastab_util",
  "flate2",
  "hex",
  "nix 0.31.3",
@@ -2937,14 +2937,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_remote_ipc"
+name = "fastab_remote_ipc"
 version = "0.0.2"
 dependencies = [
  "anyhow",
  "async-trait",
- "fig_ipc",
- "fig_proto",
- "fig_util",
+ "fastab_ipc",
+ "fastab_proto",
+ "fastab_util",
  "flume 0.12.0",
  "parking_lot",
  "serde",
@@ -2955,11 +2955,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_settings"
+name = "fastab_settings"
 version = "0.0.2"
 dependencies = [
  "fd-lock",
- "fig_util",
+ "fastab_util",
  "parking_lot",
  "r2d2",
  "r2d2_sqlite",
@@ -2974,13 +2974,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_telemetry"
+name = "fastab_telemetry"
 version = "0.0.2"
 dependencies = [
  "chrono",
- "fig_os_shim",
- "fig_settings",
- "fig_util",
+ "fastab_os_shim",
+ "fastab_settings",
+ "fastab_util",
  "reqwest",
  "serde",
  "serde_json",
@@ -2990,7 +2990,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_test_macro"
+name = "fastab_test_macro"
 version = "0.0.2"
 dependencies = [
  "quote",
@@ -2998,12 +2998,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_test_utils"
+name = "fastab_test_utils"
 version = "0.0.2"
 dependencies = [
  "bytes",
- "fig_os_shim",
- "fig_util",
+ "fastab_os_shim",
+ "fastab_util",
  "hex",
  "http",
  "http-body-util",
@@ -3016,7 +3016,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fig_util"
+name = "fastab_util"
 version = "0.0.2"
 dependencies = [
  "bstr",
@@ -3024,7 +3024,7 @@ dependencies = [
  "cfg-if",
  "clap",
  "dirs 5.0.1",
- "fig_os_shim",
+ "fastab_os_shim",
  "hex",
  "indoc",
  "insta",
@@ -3048,7 +3048,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "figterm"
+name = "fastab_term"
 version = "0.0.2"
 dependencies = [
  "alacritty_terminal",
@@ -3061,12 +3061,12 @@ dependencies = [
  "cfg-if",
  "clap",
  "dashmap",
- "fig_ipc",
- "fig_log",
- "fig_os_shim",
- "fig_proto",
- "fig_settings",
- "fig_util",
+ "fastab_ipc",
+ "fastab_log",
+ "fastab_os_shim",
+ "fastab_proto",
+ "fastab_settings",
+ "fastab_util",
  "filedescriptor",
  "flume 0.12.0",
  "fnv",
@@ -3092,15 +3092,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "figterm2"
+name = "fastab_term2"
 version = "0.0.2"
 dependencies = [
  "anyhow",
  "async-trait",
- "fig_ipc",
- "fig_proto",
- "fig_remote_ipc",
- "fig_util",
+ "fastab_ipc",
+ "fastab_proto",
+ "fastab_remote_ipc",
+ "fastab_util",
  "portable-pty",
  "tempfile",
  "tokio",

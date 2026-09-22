@@ -109,7 +109,7 @@ const faqsZh: Faq[] = [
 const processesZh: Process[] = [
   {
     bin: "fastab",
-    crate: "fig_desktop",
+    crate: "fastab_desktop",
     role: "原生应用宿主——GPUI 补全浮层与设置窗口（不是 WKWebView）、补全引擎工作线程、系统托盘和窗口管理",
   },
   {
@@ -119,7 +119,7 @@ const processesZh: Process[] = [
   },
   {
     bin: "ftab",
-    crate: "ec_cli",
+    crate: "fastab_cli",
     role: "命令行入口——setup、integrations、diagnostic、settings 等子命令",
   },
 ];

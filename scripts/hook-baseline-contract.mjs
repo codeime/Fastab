@@ -12,7 +12,7 @@ export const BASELINE_KIND = "native-hook-baseline";
 
 export const BASELINE_ROOT_SEGMENTS = Object.freeze([
   "crates",
-  "ec_engine",
+  "fastab_engine",
   "testdata",
   "native-hooks",
   "baseline",

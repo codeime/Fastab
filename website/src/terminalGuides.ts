@@ -4,7 +4,7 @@ import type { TerminalIntegration } from "./data.ts";
  * Per-terminal guide content. Every page must carry facts that are true for
  * that terminal only — bundle id, process names, and its own quirks — so the
  * set reads as ten real guides rather than one template with the name swapped.
- * Identifiers mirror `crates/fig_util/src/terminal.rs`.
+ * Identifiers mirror `crates/fastab_util/src/terminal.rs`.
  */
 export interface TerminalGuideSection {
   heading: string;

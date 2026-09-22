@@ -57,8 +57,8 @@ resolve_ec() {
         printf '%s\n' "$ROOT/target/release/ftab"
         return
     fi
-    echo "building ftab (cargo build -p ec_cli)..." >&2
-    cargo build -p ec_cli --quiet
+    echo "building ftab (cargo build -p fastab_cli)..." >&2
+    cargo build -p fastab_cli --quiet
     printf '%s\n' "$ROOT/target/debug/ftab"
 }
 

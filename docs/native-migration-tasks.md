@@ -30,8 +30,8 @@ node scripts/classify-native-hooks.mjs --check              # 清单（改了分
 node --test --test-concurrency=1 scripts/*.test.mjs         # 脚本测试
 cargo clippy --locked --workspace -- -D warnings
 cargo fmt --check
-cargo test -p ec_engine
-cargo test -p fig_desktop
+cargo test -p fastab_engine
+cargo test -p fastab_desktop
 ```
 
 注意：`capture-typed-trigger-reference` 的基线里含 `generatorSha256`（`scripts/compile-spec-ir.mjs` 的 hash）和 `harnessSha256`（若干 `scripts/*.mjs` 的 hash），**改了这些脚本必须 `--update` 两份基线并一起提交**。`bundle/specs/.source-manifest.json` 钉了根 `package.json` 的 hash，改 `package.json` 后要重新跑 `node scripts/sync-bundled-specs.mjs` 并提交 manifest。
@@ -39,8 +39,8 @@ cargo test -p fig_desktop
 ### 0.4 提交规则
 
 - 一个任务一个 commit，commit message 写清楚任务编号；每个 commit 上 0.3 的命令全部绿。
-- 新增的测试夹具放 `crates/ec_engine/testdata/native-hooks/` 下；临时文件不进仓库。
-- 不要改产品默认设置（fuzzy 开、history 显示、firstTokenCompletion 关）；不要恢复 WebView；不要在 `fig_util` 里链接 AppKit；不要把 `figterm` 的 `max_scroll_limit` 改成 0。这些在 `CLAUDE.md` 里都有原因。
+- 新增的测试夹具放 `crates/fastab_engine/testdata/native-hooks/` 下；临时文件不进仓库。
+- 不要改产品默认设置（fuzzy 开、history 显示、firstTokenCompletion 关）；不要恢复 WebView；不要在 `fastab_util` 里链接 AppKit；不要把 `fastab_term` 的 `max_scroll_limit` 改成 0。这些在 `CLAUDE.md` 里都有原因。
 
 ### 0.5 必读源码（先读完再动手）
 
@@ -51,11 +51,11 @@ cargo test -p fig_desktop
 | `scripts/spec-hook-contract.mjs` | 9 个 hook 字段、`KNOWN_NON_SPEC_FILES`、`KNOWN_UNAPPLIED_VERSION_DIFFS`、`KNOWN_VERSION_SELECTORS` |
 | `scripts/compile-spec-ir.mjs` | `convertNode/convertArg/convertGenerator`、`extractHook`、`bindExtractedHooks`、`closurePreservingHookModule`、`writeTypedHookSidecar`（目前只编 `trigger`） |
 | `scripts/typed-hook-ir.mjs` | 现有 typed IR v1：`TYPED_HOOK_CONTRACTS`、`TYPED_EXPRESSION_OPERATIONS`、`compileTypedHook`、`TypedHookCompileError` |
-| `crates/ec_engine/src/typed_hook.rs` | Rust 求值器（`#[cfg(test)]`，UTF-16 语义，`deny_unknown_fields`），基线解析器 |
-| `crates/ec_engine/src/js_host.rs` | 9 个运行时入口：`post_process/custom/script_command/generate_spec/alias/get_query_term/trigger/load_spec/filter_template_suggestions`；`enter_with_context`；缓存 `cached_suggestions/cached_spec/cached_script_output`；`clean_output`；`spec_from_fig_json`；`merge_generated_spec` |
-| `crates/ec_engine/src/generate.rs` | 生成器执行：`generate_for_arg`、`shape_script_output`、`run_script`、trigger 判定（`match trigger.on`）、`GeneratorSession`、debounce |
-| `crates/ec_engine/src/lookup.rs` | spec 遍历：`resolve_arg_alias`、`apply_js_load_spec`、`apply_generate_spec`、`next_spec_after_arg`、`complete_with_settings` |
-| `crates/ec_engine/src/ir.rs` | `ArgSpec`、`GeneratorSpec`、`GeneratorTrigger`、`Registry` |
+| `crates/fastab_engine/src/typed_hook.rs` | Rust 求值器（`#[cfg(test)]`，UTF-16 语义，`deny_unknown_fields`），基线解析器 |
+| `crates/fastab_engine/src/js_host.rs` | 9 个运行时入口：`post_process/custom/script_command/generate_spec/alias/get_query_term/trigger/load_spec/filter_template_suggestions`；`enter_with_context`；缓存 `cached_suggestions/cached_spec/cached_script_output`；`clean_output`；`spec_from_fig_json`；`merge_generated_spec` |
+| `crates/fastab_engine/src/generate.rs` | 生成器执行：`generate_for_arg`、`shape_script_output`、`run_script`、trigger 判定（`match trigger.on`）、`GeneratorSession`、debounce |
+| `crates/fastab_engine/src/lookup.rs` | spec 遍历：`resolve_arg_alias`、`apply_js_load_spec`、`apply_generate_spec`、`next_spec_after_arg`、`complete_with_settings` |
+| `crates/fastab_engine/src/ir.rs` | `ArgSpec`、`GeneratorSpec`、`GeneratorTrigger`、`Registry` |
 | `scripts/classify-native-hooks.mjs` | 清单/gate；`outputBaseline` 目前恒为 `not-yet-established` |
 | `scripts/capture-hook-reference-batch.mjs` + `reference-hook-worker.mjs` | 现有合成探针：`FIXTURE_MATRIX`、`$referenceExec` mock、VM 子进程硬超时 |
 | `packages/autocomplete-parser/src/*.ts` | Fig 语义的 TS 参考实现（`loadSpec.ts`、`tryResolveSpecToSubcommand.ts`、`loadHelpers.ts`） |
@@ -91,7 +91,7 @@ cargo test -p fig_desktop
 **改动**
 
 - 新建 `scripts/hook-baseline-contract.mjs`：导出 `BASELINE_VERSION = 1`、`BASELINE_KIND = "native-hook-baseline"`、每字段的参数契约（参数个数、类型、`exec` 位置）、`validateBaseline(value)`（未知字段抛错）。
-- 基线路径：`crates/ec_engine/testdata/native-hooks/baseline/<sourceField>/<bodySha256>.json`。
+- 基线路径：`crates/fastab_engine/testdata/native-hooks/baseline/<sourceField>/<bodySha256>.json`。
 - 文件形状：
 
 ```json
@@ -116,12 +116,12 @@ cargo test -p fig_desktop
 ```
 
 `expected.kind` ∈ `suggestions | string | bool | argv | spec | error | timeout`。`suggestions` 里的每个对象字段名与 `Fig.Suggestion` 一致，缺省字段不写；`spec` 用 `spec_from_fig_json` 能解析的 Fig JSON。
-- Rust：在 `crates/ec_engine/src/typed_hook.rs` 旁新建 `crates/ec_engine/src/hook_baseline.rs`（`#[cfg(test)]`），用 `serde(deny_unknown_fields)` 解析同一格式，并提供 `load_all() -> Vec<Baseline>`。在 `lib.rs` 里 `#[cfg(test)] mod hook_baseline;`。
+- Rust：在 `crates/fastab_engine/src/typed_hook.rs` 旁新建 `crates/fastab_engine/src/hook_baseline.rs`（`#[cfg(test)]`），用 `serde(deny_unknown_fields)` 解析同一格式，并提供 `load_all() -> Vec<Baseline>`。在 `lib.rs` 里 `#[cfg(test)] mod hook_baseline;`。
 
 **验收**
 
 - `node --test scripts/hook-baseline-contract.test.mjs`：合法样例通过；多一个未知字段、少一个必填字段、`args` 个数与字段契约不符都抛错。
-- `cargo test -p ec_engine hook_baseline`：同一份样例 Rust 能解析；多一个字段解析失败。
+- `cargo test -p fastab_engine hook_baseline`：同一份样例 Rust 能解析；多一个字段解析失败。
 
 ### T1.2 基线采集器
 
@@ -130,7 +130,7 @@ cargo test -p fig_desktop
 **改动**
 
 - 新建 `scripts/capture-hook-baseline.mjs`。复用 `reference-hook-worker.mjs` 的 VM 子进程（mock exec 通过 `mockExecRules` 精确匹配 `{command,args}`，硬超时），不要新写执行器。
-- 输入来源：每个函数体一个**输入夹具** `crates/ec_engine/testdata/native-hooks/inputs/<sourceField>/<bodySha256>.json`（形状 = 基线去掉 `expected`）。采集器读输入夹具 → 跑源闭包 → 写基线。
+- 输入来源：每个函数体一个**输入夹具** `crates/fastab_engine/testdata/native-hooks/inputs/<sourceField>/<bodySha256>.json`（形状 = 基线去掉 `expected`）。采集器读输入夹具 → 跑源闭包 → 写基线。
 - 输入夹具生成器 `scripts/scaffold-hook-inputs.mjs`：对没有输入夹具的函数体，按字段生成默认 3 个 case：
   - `postProcess`：`normal`（见 T1.3 的真实样本；没有则合成）、`empty`（`""`）、`malformed`（`"not json\n{{{"`）。`tokens` 取该函数体任一 hook 所在 spec 的根命令 + 子命令路径（从 IR 的 `path` 反推）+ `""`。
   - `script`：`tokens` 三种：只有根命令、带一个子命令、带 `--flag`。
@@ -156,7 +156,7 @@ cargo test -p fig_desktop
 
 **改动**
 
-- 新建 `scripts/record-cli-output.mjs`：读 IR 中所有 `script`（`ArgSpec.script` / `GeneratorSpec.script`，以及 T1.2 记录模式收集到的 `custom` 请求），去重后在**开发机**上执行并录制到 `crates/ec_engine/testdata/native-hooks/cli-output/<sha256(JSON argv)>.json`：`{ "argv": [...], "stdout": "...", "stderr": "...", "status": 0 }`。
+- 新建 `scripts/record-cli-output.mjs`：读 IR 中所有 `script`（`ArgSpec.script` / `GeneratorSpec.script`，以及 T1.2 记录模式收集到的 `custom` 请求），去重后在**开发机**上执行并录制到 `crates/fastab_engine/testdata/native-hooks/cli-output/<sha256(JSON argv)>.json`：`{ "argv": [...], "stdout": "...", "stderr": "...", "status": 0 }`。
 - 脱敏：录制前用 `scripts/record-cli-output.mjs --redact` 把 `$HOME`、用户名、IP、token 形状（`ghp_`、`sk-`、`AKIA`、40 位 hex）替换为占位符；命令白名单在脚本里显式列出（`git`、`npm`、`pnpm`、`yarn`、`docker`、`kubectl`、`brew`、`cargo`、`gh`、`aws-vault` 等只读子命令），不在白名单的命令不执行、写 `status: 127`。
 - 每条样本 ≤ 64 KB（超出截断到前 64 KB 并标 `"truncated": true`）。
 - T1.2 的 scaffold 优先取样本库，其次合成。
@@ -182,12 +182,12 @@ cargo test -p fig_desktop
 
 ### T1.5 引擎级 golden（六个维度）
 
-**目标**：把 `crates/ec_engine/testdata/phase1/expected.json` 从 "静态 IR" 扩到六个维度，用 mock exec 锁定 `CompleteResult`。
+**目标**：把 `crates/fastab_engine/testdata/phase1/expected.json` 从 "静态 IR" 扩到六个维度，用 mock exec 锁定 `CompleteResult`。
 
 **改动**
 
-- `crates/ec_engine/src/runtime.rs` 的 `phase1_static_ir_complete_result_golden` 旁新增 `engine_golden_six_dimensions`；夹具目录 `testdata/engine-golden/`，每条 case：`{ name, request: CompleteRequest, exec: [...mock], settings: {...}, result }`。
-- 需要在 `crates/ec_engine/src/process.rs`（`process::execute`）加一个 `#[cfg(test)]` 的 mock 注入点（thread-local 规则表），让 golden 不真的跑命令。
+- `crates/fastab_engine/src/runtime.rs` 的 `phase1_static_ir_complete_result_golden` 旁新增 `engine_golden_six_dimensions`；夹具目录 `testdata/engine-golden/`，每条 case：`{ name, request: CompleteRequest, exec: [...mock], settings: {...}, result }`。
+- 需要在 `crates/fastab_engine/src/process.rs`（`process::execute`）加一个 `#[cfg(test)]` 的 mock 注入点（thread-local 规则表），让 golden 不真的跑命令。
 - 维度与最少 case 数：
   - 候选：`git checkout `、`npm run `、`docker run `、`kubectl get `、`cd `、`ls -` 各 3 条（含 `name/insert_value/description/icon/priority/kind/should_add_space`）。
   - 插入：`getQueryTerm` 影响 `query_term`（`cd src/m`、`asdf install nodejs:`）、`insertValue` 带 `{cursor}`（`git commit -m "{cursor}"`）、带空格路径引号，≥ 6 条。
@@ -199,7 +199,7 @@ cargo test -p fig_desktop
 
 **验收**
 
-- `cargo test -p ec_engine engine_golden` 通过，case 数 ≥ 40；连续两次运行结果一致。
+- `cargo test -p fastab_engine engine_golden` 通过，case 数 ≥ 40；连续两次运行结果一致。
 
 **阶段 1 完成定义**：T1.1–T1.5 全部合入；`inventory.json` 的 `outputBaseline.status == "established"`；CI 有 baseline `--check`。
 
@@ -211,7 +211,7 @@ cargo test -p fig_desktop
 
 ### T2.1 Typed IR v2：值与字符串运算
 
-**目标**：扩展 `scripts/typed-hook-ir.mjs` 与 `crates/ec_engine/src/typed_hook.rs`，两端同步。
+**目标**：扩展 `scripts/typed-hook-ir.mjs` 与 `crates/fastab_engine/src/typed_hook.rs`，两端同步。
 
 **改动**（两端各一份，所有新 op 都要进 `TYPED_EXPRESSION_OPERATIONS` 和 Rust `TypedExpr` 枚举，Rust 侧 `deny_unknown_fields` 保留）
 
@@ -225,7 +225,7 @@ cargo test -p fig_desktop
 **验收**
 
 - `node scripts/classify-native-hooks.mjs` 中 `trigger` 与 `getQueryTerm` 的 `typed-ir-research-candidate + 已类型化` 覆盖全部 30 + 16 个函数体（不依赖 T2.2 的数组 op 的那部分）。
-- 两端测试通过；`cargo test -p ec_engine typed_hook` 通过。
+- 两端测试通过；`cargo test -p fastab_engine typed_hook` 通过。
 
 ### T2.2 Typed IR v2：数组、对象、控制流、正则、JSON
 
@@ -245,7 +245,7 @@ cargo test -p fig_desktop
 **验收**
 
 - `postProcess` 373 个函数体中 ≥ 330 个编译成 typed IR；`script` 31/31；`filterTemplateSuggestions` 5/5；`trigger` 30/30；`getQueryTerm` 16/16。剩余的进 T2.4。
-- 每个类型化的函数体，用 T1.2 基线的全部 case 在 Rust 求值器上跑，结果逐字节等于 `expected`（写成 `cargo test -p ec_engine typed_hook_baseline_parity`）。
+- 每个类型化的函数体，用 T1.2 基线的全部 case 在 Rust 求值器上跑，结果逐字节等于 `expected`（写成 `cargo test -p fastab_engine typed_hook_baseline_parity`）。
 
 ### T2.3 生产 sidecar 扩到全部无副作用字段
 
@@ -253,7 +253,7 @@ cargo test -p fig_desktop
 
 - `scripts/spec-hook-contract.mjs` / `typed-hook-ir.mjs` 的 `TYPED_HOOK_CONTRACTS` 加 `postProcess`（`params: ["string","string-array"]`, `resultType: "suggestion-array"`）、`script`（`["string-array"] → "string-array"`）、`getQueryTerm`（转正）、`filterTemplateSuggestions`（`["suggestion-array"] → "suggestion-array"`）。
 - `compile-spec-ir.mjs` 的 `writeTypedHookSidecar` 遍历这些字段（现在只 `trigger`）；`audit-spec-hooks.mjs` 的 typed 校验同步（`orphanTypedHooks/typedHookMismatches`）。
-- `capture-typed-trigger-reference.mjs` 泛化为 `capture-typed-reference.mjs --field <f>`，每个字段一份 `crates/ec_engine/testdata/typed-hooks/<field>-reference.json`（沿用现有 provenance 字段）。CI 全部 `--check`。
+- `capture-typed-trigger-reference.mjs` 泛化为 `capture-typed-reference.mjs --field <f>`，每个字段一份 `crates/fastab_engine/testdata/typed-hooks/<field>-reference.json`（沿用现有 provenance 字段）。CI 全部 `--check`。
 - Rust `typed_hook.rs`：`evaluate_typed_post_process/script/get_query_term/filter_template_suggestions`，输入输出类型与 `js_host.rs` 对应方法一致（`Vec<Suggestion>`、`ScriptCommand`、`String`）。
 
 **验收**
@@ -267,10 +267,10 @@ cargo test -p fig_desktop
 
 **改动**
 
-- 新建 `crates/ec_engine/src/native_adapters/mod.rs` + 每字段一个子模块；注册表 `static ADAPTERS: &[(&str /*bodySha256*/, &str /*field*/, AdapterFn)]`。
+- 新建 `crates/fastab_engine/src/native_adapters/mod.rs` + 每字段一个子模块；注册表 `static ADAPTERS: &[(&str /*bodySha256*/, &str /*field*/, AdapterFn)]`。
 - 每个适配器文件头注释写：函数体 sha、代表 hook id、JS 原文（从 `bundle/specs-ir/hooks/<id>.js` 拷贝）、为什么不能 typed。
-- 编译器：`compile-spec-ir.mjs` 读 `crates/ec_engine/testdata/native-hooks/adapters.json`（新增 `crates/ec_engine/examples/dump-adapters.rs`，`cargo run -p ec_engine --example dump-adapters` 生成并提交，列出全部已注册 sha；再加一个 Rust 测试断言该文件与注册表一致），typed 失败且不在 adapters 里的函数体 → **编译失败**（把今天的 `requires-native-adapter` 桶变成硬错误；可用 `EC_ALLOW_UNADAPTED=1` 临时放行以便分阶段合并，CI 不设置）。
-- 每个适配器必须在 `cargo test -p ec_engine native_adapters_baseline_parity` 里对 T1.2 基线全部 case 通过。
+- 编译器：`compile-spec-ir.mjs` 读 `crates/fastab_engine/testdata/native-hooks/adapters.json`（新增 `crates/fastab_engine/examples/dump-adapters.rs`，`cargo run -p fastab_engine --example dump-adapters` 生成并提交，列出全部已注册 sha；再加一个 Rust 测试断言该文件与注册表一致），typed 失败且不在 adapters 里的函数体 → **编译失败**（把今天的 `requires-native-adapter` 桶变成硬错误；可用 `EC_ALLOW_UNADAPTED=1` 临时放行以便分阶段合并，CI 不设置）。
+- 每个适配器必须在 `cargo test -p fastab_engine native_adapters_baseline_parity` 里对 T1.2 基线全部 case 通过。
 
 **验收**
 
@@ -316,38 +316,38 @@ cargo test -p fig_desktop
 
 **改动**
 
-- `crates/ec_engine/Cargo.toml` 加 feature `js-compat`（默认开），`rquickjs` 依赖改为 `optional = true` 挂在该 feature 下。
+- `crates/fastab_engine/Cargo.toml` 加 feature `js-compat`（默认开），`rquickjs` 依赖改为 `optional = true` 挂在该 feature 下。
 - `lib.rs`：`typed_hook` 与 `native_adapters` 去掉 `#[cfg(test)]`。
-- 新建 `crates/ec_engine/src/hook_backend.rs`：`enum HookBackend { Native, Js }`，`fn current() -> HookBackend`（默认值由 `EC_HOOK_BACKEND` 环境变量或设置 `autocomplete.hookBackend` 决定，**默认仍为 `Js`**，直到 T3.4）。
+- 新建 `crates/fastab_engine/src/hook_backend.rs`：`enum HookBackend { Native, Js }`，`fn current() -> HookBackend`（默认值由 `EC_HOOK_BACKEND` 环境变量或设置 `autocomplete.hookBackend` 决定，**默认仍为 `Js`**，直到 T3.4）。
 - 把 0.6 表里的 9 个调用点改为经 `hook_backend::dispatch_*`：Native → typed 求值器/适配器（按 hook id 查 `typed-hooks.json` → 无则查 adapters）；Js → 现有 `JsHost`。Native 路径找不到实现时**返回错误并记 `HookDiagnostic`**，不回落到 Js（回落会掩盖阶段 2 的漏网）。
 
 **验收**
 
-- `cargo test -p ec_engine`、`cargo test -p ec_engine --no-default-features` 都通过（后者不链接 rquickjs，`js_host` 整体 `#[cfg(feature = "js-compat")]`）。
-- `cargo tree -p ec_engine --no-default-features -e normal | grep -c rquickjs` 为 0。
+- `cargo test -p fastab_engine`、`cargo test -p fastab_engine --no-default-features` 都通过（后者不链接 rquickjs，`js_host` 整体 `#[cfg(feature = "js-compat")]`）。
+- `cargo tree -p fastab_engine --no-default-features -e normal | grep -c rquickjs` 为 0。
 
 ### T3.2 双路径测试
 
 **改动**
 
-- `crates/ec_engine/src/dual_path.rs`（`#[cfg(all(test, feature = "js-compat"))]`）：对 T1.2 基线全部 case 和 T1.5 引擎 golden，分别用 Native/Js 跑，`serde_json::to_value` 后逐字节比较。允许的归一化必须逐条写在 `DUAL_PATH_NORMALISATIONS` 常量里并注释原因（例如 JS `-0` vs Rust `0`）。
+- `crates/fastab_engine/src/dual_path.rs`（`#[cfg(all(test, feature = "js-compat"))]`）：对 T1.2 基线全部 case 和 T1.5 引擎 golden，分别用 Native/Js 跑，`serde_json::to_value` 后逐字节比较。允许的归一化必须逐条写在 `DUAL_PATH_NORMALISATIONS` 常量里并注释原因（例如 JS `-0` vs Rust `0`）。
 - 输出差异报告到 `target/dual-path-report.json`（测试失败时）。
 
 **验收**
 
-- `cargo test -p ec_engine dual_path` 零差异。
+- `cargo test -p fastab_engine dual_path` 零差异。
 
 ### T3.3 真实场景回放
 
 **改动**
 
-- `crates/ec_cli/src/cli/engine.rs`：`ec engine complete` 加 `--compare`（两路都跑，打印 JSON diff，非零退出表示有差异）。
+- `crates/fastab_cli/src/cli/engine.rs`：`ec engine complete` 加 `--compare`（两路都跑，打印 JSON diff，非零退出表示有差异）。
 - `scripts/dual-path-session.sh`：读 `tests/dual-path/sessions/*.jsonl`（每行 `{buffer, cwd}`），在 git/npm/docker/kubectl/cargo 五类真实仓库目录下逐条调用 `ec engine complete --compare`。录制 5 个 session，每个 ≥ 100 条 buffer（含逐字符输入序列）。T4.1 删掉 `--compare` 之后，脚本与数据改名为 `scripts/replay-sessions.sh` / `tests/session-replay/`，只做冒烟回放。
-- `fig_desktop`：新写一个测试驱动器（CLAUDE.md 的 Native UI 一节描述了帧格式：在 `remote.sock` 握手，向 `desktop.sock` 发 `EditBufferHook` + caret 帧，caret 帧编码见 `crates/fig_input_method/src/wire.rs`），回放 T3.3 的 session，`EC_HOOK_BACKEND=native` 下 overlay 测试全部通过。
+- `fastab_desktop`：新写一个测试驱动器（CLAUDE.md 的 Native UI 一节描述了帧格式：在 `remote.sock` 握手，向 `desktop.sock` 发 `EditBufferHook` + caret 帧，caret 帧编码见 `crates/fastab_input_method/src/wire.rs`），回放 T3.3 的 session，`EC_HOOK_BACKEND=native` 下 overlay 测试全部通过。
 
 **验收**
 
-- 5 个 session 零差异；`cargo test -p fig_desktop` 在两种后端下通过；人工在 Terminal.app / iTerm2 / Ghostty / VS Code 各输入 20 个常用命令无回归（记录在 PR 描述里）。
+- 5 个 session 零差异；`cargo test -p fastab_desktop` 在两种后端下通过；人工在 Terminal.app / iTerm2 / Ghostty / VS Code 各输入 20 个常用命令无回归（记录在 PR 描述里）。
 
 ### T3.4 切换默认后端
 
@@ -368,10 +368,10 @@ cargo test -p fig_desktop
 ### T4.2 发布门槛（写进 `ci.yml` 与 `release.yml`） ✅
 
 ```bash
-test "$(cargo tree -p fig_desktop -e normal | grep -c rquickjs)" = 0
+test "$(cargo tree -p fastab_desktop -e normal | grep -c rquickjs)" = 0
 test -z "$(find 'build/Fastab.app/Contents/Resources' -name '*.js' -o -name '*.mjs')"
 test "$(du -sm 'build/Fastab.app/Contents/Resources/specs-ir' | cut -f1)" -le 35
-cargo test --workspace --locked        # 基线 parity + 引擎 golden + fig_desktop
+cargo test --workspace --locked        # 基线 parity + 引擎 golden + fastab_desktop
 ```
 
 ### T4.3 文档 ✅

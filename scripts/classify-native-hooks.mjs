@@ -46,7 +46,7 @@ const defaultIrRoot = join(repoDir, "bundle", "specs-ir");
 const defaultInventoryPath = join(
   repoDir,
   "crates",
-  "ec_engine",
+  "fastab_engine",
   "testdata",
   "native-hooks",
   "inventory.json",
@@ -54,7 +54,7 @@ const defaultInventoryPath = join(
 const defaultBaselineRoot = join(
   repoDir,
   "crates",
-  "ec_engine",
+  "fastab_engine",
   "testdata",
   "native-hooks",
   "baseline",

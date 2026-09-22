@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# T4.2 publish gate: no rquickjs in fig_desktop, no runtime JS in the shipped
+# T4.2 publish gate: no rquickjs in fastab_desktop, no runtime JS in the shipped
 # tree, specs-ir payload ≤ 35 MiB.
 #
 #   scripts/assert-no-runtime-js.sh
@@ -13,10 +13,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-tree_hits="$(cargo tree -p fig_desktop -e normal | grep -c rquickjs || true)"
+tree_hits="$(cargo tree -p fastab_desktop -e normal | grep -c rquickjs || true)"
 if [ "$tree_hits" != "0" ]; then
-  echo "error: fig_desktop still links rquickjs ($tree_hits hits)" >&2
-  cargo tree -p fig_desktop -e normal | grep rquickjs >&2 || true
+  echo "error: fastab_desktop still links rquickjs ($tree_hits hits)" >&2
+  cargo tree -p fastab_desktop -e normal | grep rquickjs >&2 || true
   exit 1
 fi
 

@@ -175,7 +175,7 @@ test("snapshot manifest pins directory identities, binary digests, and IR pair d
   await writeFile(join(snapshot, "index.json"), "{}\n");
   const marker = await createPairMarker({ sourceRoot: source, irRoot: snapshot });
   await writePairMarker(snapshot, marker);
-  for (const name of ["fastab", "ftab", "fastabterm", "fig_input_method"]) {
+  for (const name of ["fastab", "ftab", "fastabterm", "fastab_input_method"]) {
     await writeFile(join(binaries, name), `${name}\n`);
     await chmod(join(binaries, name), 0o755);
   }

@@ -1,6 +1,6 @@
 # 纯原生补全迁移计划（桌面零运行时 JS）
 
-**状态（T4.3）：完成。** `Fastab.app` 运行时不执行 JavaScript。3701 个抽取 hook = 3136 typed IR + 565 named adapters；`hookFilesOnDisk = 0`；`gate.pathSwitchAllowed = true`；`rquickjs` / `js_host` / `hooks/` / `source-modules/` 已删除。构建期仍用 Node。清单以 `crates/ec_engine/testdata/native-hooks/inventory.json` 为准。
+**状态（T4.3）：完成。** `Fastab.app` 运行时不执行 JavaScript。3701 个抽取 hook = 3136 typed IR + 565 named adapters；`hookFilesOnDisk = 0`；`gate.pathSwitchAllowed = true`；`rquickjs` / `js_host` / `hooks/` / `source-modules/` 已删除。构建期仍用 Node。清单以 `crates/fastab_engine/testdata/native-hooks/inventory.json` 为准。
 
 目标：`Fastab.app` 运行时不执行任何 JavaScript（删除 `rquickjs`、`js_host`、`hooks/`、`source-modules/`），同时用户可见行为（候选、插入、排序、缓存、shell 环境、超时）与原先的 QuickJS 路径 / WebView v2.2.2 等价。构建期可以用 Node；`.app` 里不能有 JS。
 
@@ -10,7 +10,7 @@
 2. **仅在 dev/test 双路径比较。** 正式运行路径在全部 bundled hook 达标前不切换。
 3. **发布门槛是依赖树 + 包内容 + 回归测试**，不是“代码删掉了”。
 
-逐任务的执行说明（改哪些文件、验收命令）在 `docs/native-migration-tasks.md`。进度、数字与 gate 的单一事实来源是 `crates/ec_engine/testdata/native-hooks/inventory.json`（`node scripts/classify-native-hooks.mjs --check|--update`，CI 校验）。下面所有数字均来自 `@chen86860/autocomplete-specs@3.1.0` 的这份清单。
+逐任务的执行说明（改哪些文件、验收命令）在 `docs/native-migration-tasks.md`。进度、数字与 gate 的单一事实来源是 `crates/fastab_engine/testdata/native-hooks/inventory.json`（`node scripts/classify-native-hooks.mjs --check|--update`，CI 校验）。下面所有数字均来自 `@chen86860/autocomplete-specs@3.1.0` 的这份清单。
 
 ## 0. 现状快照（v3.0.0-beta.14）
 
@@ -47,7 +47,7 @@ gate 当前阻断项（`inventory.json` → `gate.blockers`）：`requires-nativ
 | 编号 | 交付物 | 验收 |
 | --- | --- | --- |
 | 1.1 ✅ | 逐类清单 `inventory.json`：每个不同函数体一行（字段、hook 数、分类、风险、依赖、示例 id）+ 版本化 spec 未适配项 + gate | CI `classify-native-hooks --check` 通过；specs 包升级或分类器变化必须以 diff 形式被 review |
-| 1.2 | **输出基线**：`crates/ec_engine/testdata/native-hooks/baseline/<field>/<bodySha256>.json`，每个函数体一份 `{ inputs[], expected[] }`。输入含 `args`、`exec` 夹具（按 `{command,args}` 精确匹配的 `stdout/stderr/status`）、`env`、`cwd` 树、`scriptTimeout`。期望值由现有 `reference-hook-worker.mjs`（Node VM、源闭包、mock exec、硬超时）采集 | `inventory.outputBaseline.coveredUniqueBodies == 594`；blocker `output-baseline-not-established` 消失；`--check` 进 CI |
+| 1.2 | **输出基线**：`crates/fastab_engine/testdata/native-hooks/baseline/<field>/<bodySha256>.json`，每个函数体一份 `{ inputs[], expected[] }`。输入含 `args`、`exec` 夹具（按 `{command,args}` 精确匹配的 `stdout/stderr/status`）、`env`、`cwd` 树、`scriptTimeout`。期望值由现有 `reference-hook-worker.mjs`（Node VM、源闭包、mock exec、硬超时）采集 | `inventory.outputBaseline.coveredUniqueBodies == 594`；blocker `output-baseline-not-established` 消失；`--check` 进 CI |
 | 1.3 | 六个维度的引擎级 golden（扩展 `testdata/phase1`）：候选（`name/insertValue/description/icon/priority/type/displayName/hidden/isDangerous`）、插入（`insertValue`、`{cursor}`、`getQueryTerm` 对预测 buffer 的影响）、排序（priority + frecency + acceptance）、缓存（`cache.ttl/strategy/cacheByDirectory`、`generatorArgId`、SWR 过期）、shell 环境（`custom` 的 `context.currentProcess/environmentVariables/currentWorkingDirectory/sshPrefix`）、超时（`scriptTimeout`、deadline 到期 → 空结果 + `HookDiagnostic`） | 200+ 条 buffer（git/npm/pnpm/docker/kubectl/cd/ls/brew/cargo…）在 mock exec 下的 `CompleteResult` JSON 全部锁定 |
 
 1.2 的主要人力在 373 个 `postProcess` 函数体的**真实 stdout 样本**。做法：
@@ -62,7 +62,7 @@ gate 当前阻断项（`inventory.json` → `gate.blockers`）：`requires-nativ
 
 ### 2.1 Typed IR v2（无副作用的 hook：`postProcess`、`getQueryTerm`、`trigger`、`script`、`filterTemplateSuggestions`，共 455 函数体）
 
-在 `scripts/typed-hook-ir.mjs` / `crates/ec_engine/src/typed_hook.rs` 的封闭表达式语言上扩展，两端同步、`deny_unknown_fields`、按 UTF-16 语义：
+在 `scripts/typed-hook-ir.mjs` / `crates/fastab_engine/src/typed_hook.rs` 的封闭表达式语言上扩展，两端同步、`deny_unknown_fields`、按 UTF-16 语义：
 
 - 值类型：`string`、`bool`、`integer`、`string[]`、`json`（`JSON.parse` 结果，带类型守卫）、`suggestion`、`suggestion[]`、`null`。
 - 字符串：`split/trim/trimStart/trimEnd/replace/replaceAll/match/startsWith/endsWith/includes/slice/substring/indexOf/lastIndexOf/toLowerCase/toUpperCase/padStart/padEnd/repeat`、模板字符串、拼接。
@@ -80,7 +80,7 @@ gate 当前阻断项（`inventory.json` → `gate.blockers`）：`requires-nativ
 - 新增效应节点：`exec { command, args, cwd?, env?, timeout? } → { stdout, stderr, status }`；顺序 `await` 编成直线效应序列，`Promise.all` 编成并行批。Rust 侧沿用 `process::execute` 和现有的 deadline 钳制。
 - 上下文访问：`context.currentWorkingDirectory/currentProcess/sshPrefix/environmentVariables[...]/searchTerm/isDangerous`（`JsHost::enter_with_context` 已经在喂这些字段，改为直接喂给 IR 求值器）。
 - `generateSpec`/`loadSpec` 返回 spec 对象：IR 提供 `spec` 构造算子，Rust 复用 `merge_generated_spec`。
-- 编不出来的函数体 → `crates/ec_engine/src/native_adapters.rs` 中以 `bodySha256` 为键的 Rust 实现，JS 原文只作注释参考；每个适配器必须有 1.2 基线对应的测试。预估 30–60 个（kubectl/docker/gh/npm/yarn/pnpm/git 的复杂 `custom`）。`aws`/`az` 已被 `specs.config.json` 排除，不在范围内。
+- 编不出来的函数体 → `crates/fastab_engine/src/native_adapters.rs` 中以 `bodySha256` 为键的 Rust 实现，JS 原文只作注释参考；每个适配器必须有 1.2 基线对应的测试。预估 30–60 个（kubectl/docker/gh/npm/yarn/pnpm/git 的复杂 `custom`）。`aws`/`az` 已被 `specs.config.json` 排除，不在范围内。
 
 ### 2.3 版本化 spec 适配（消除 `versioned-spec-behaviour-unadapted`）
 
@@ -97,9 +97,9 @@ gate 当前阻断项（`inventory.json` → `gate.blockers`）：`requires-nativ
 
 | 编号 | 内容 | 验收 |
 | --- | --- | --- |
-| 3.1 | `ec_engine` 增加 feature `js-compat`（默认开）；`#[cfg(test)] mod dual_path` 对 1.2 基线与 1.3 golden 同时跑 typed/native 与 QuickJS，断言 JSON 逐字节相等（允许的归一化逐条写明） | 594/594 函数体、全部 golden 双路径零差异 |
+| 3.1 | `fastab_engine` 增加 feature `js-compat`（默认开）；`#[cfg(test)] mod dual_path` 对 1.2 基线与 1.3 golden 同时跑 typed/native 与 QuickJS，断言 JSON 逐字节相等（允许的归一化逐条写明） | 594/594 函数体、全部 golden 双路径零差异 |
 | 3.2 | `ec engine complete --compare` 开发标志：真实 CLI 场景下两路都跑并打印 diff；`scripts/dual-path-session.sh` 用录制的 buffer/cwd 序列回放（T4.1 删掉 `--compare` 后改名 `scripts/replay-sessions.sh`，录制数据在 `tests/session-replay/`） | 在 git/npm/docker/kubectl/cd 五类真实仓库目录下零差异 |
-| 3.3 | 终端 + GPUI 场景：用 CLAUDE.md 提到的 `remote.sock`/`desktop.sock` 驱动器回放 `EditBufferHook` + caret 帧，overlay 走 native 路径 | `fig_desktop` 测试通过；人工在 Terminal/iTerm/Ghostty/VS Code 各跑一轮无回归 |
+| 3.3 | 终端 + GPUI 场景：用 CLAUDE.md 提到的 `remote.sock`/`desktop.sock` 驱动器回放 `EditBufferHook` + caret 帧，overlay 走 native 路径 | `fastab_desktop` 测试通过；人工在 Terminal/iTerm/Ghostty/VS Code 各跑一轮无回归 |
 | 3.4 | 切换条件全部满足后，把默认后端切到 native，QuickJS 留在 `js-compat` feature 后一个版本 | `inventory.gate.pathSwitchAllowed == true`，并且是 CI 强制项 |
 
 切换条件（全部满足，且由 `classify-native-hooks --check` 计算，不是人判断）：`requires-native-adapter == 0`、`typed-ir-research-candidate == 0`、基线 594/594 在 native 路径通过、`versioned-spec-behaviour-unadapted` 消失、引擎 golden 在 native 路径通过、3.2 零差异。
@@ -107,7 +107,7 @@ gate 当前阻断项（`inventory.json` → `gate.blockers`）：`requires-nativ
 ## 4. 阶段 4：删除运行时 JS ✅
 
 1. ✅ 删 `rquickjs` 依赖、`js_host.rs`、`snapshot.rs` 里的模块校验分支；编译器停止输出 `hooks/`、`source-modules/`、`hook-modules.json`；`audit-spec-hooks`/`spec-pair` 相应收紧（这三样出现即失败）。
-2. ✅ 发布门槛写进 CI / release：`scripts/assert-no-runtime-js.sh`（`fig_desktop` 不链 `rquickjs`；Resources / `specs-ir` 无 `*.js`/`*.mjs`；payload ≤ 35 MiB）。`cargo test --workspace --locked` 已在 CI Rust job。
+2. ✅ 发布门槛写进 CI / release：`scripts/assert-no-runtime-js.sh`（`fastab_desktop` 不链 `rquickjs`；Resources / `specs-ir` 无 `*.js`/`*.mjs`；payload ≤ 35 MiB）。`cargo test --workspace --locked` 已在 CI Rust job。
 3. ✅ 文档：CLAUDE.md 的 Completion engine / Bundled Specs 段落改写；CHANGELOG 记“桌面零运行时 JS”。
 
 ## 5. 工作量与顺序

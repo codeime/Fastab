@@ -17,7 +17,7 @@ const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const samplePath = join(
   repoDir,
   "crates",
-  "ec_engine",
+  "fastab_engine",
   "testdata",
   "native-hooks",
   "sample-baseline.json",
@@ -48,7 +48,7 @@ test("valid sample baseline passes", async () => {
   assert.equal(sample.kind, BASELINE_KIND);
   assert.equal(
     baselineRelativePath(sample.field, sample.bodySha256),
-    "crates/ec_engine/testdata/native-hooks/baseline/postProcess/57ac01d9a722bb8a6f4d8edfe88b6f8d52ababb70348740e130e2c5dfee28cbf.json",
+    "crates/fastab_engine/testdata/native-hooks/baseline/postProcess/57ac01d9a722bb8a6f4d8edfe88b6f8d52ababb70348740e130e2c5dfee28cbf.json",
   );
   assert.equal(validateBaseline(sample), sample);
 });

@@ -3,7 +3,7 @@
  * Named native-adapter catalog shared by classify and compile-spec-ir.
  *
  * `adapters.json` is generated from the Rust registry
- * (`cargo run -p ec_engine --example dump-adapters`) and is the only
+ * (`cargo run -p fastab_engine --example dump-adapters`) and is the only
  * allowlist that turns a typed-compile failure into `native-adapter`
  * instead of `requires-native-adapter` / a compiler hard error.
  */
@@ -40,7 +40,7 @@ export const NAMED_ADAPTER_FIELDS = Object.freeze([
 export const defaultAdaptersPath = join(
   repoDir,
   "crates",
-  "ec_engine",
+  "fastab_engine",
   "testdata",
   "native-hooks",
   "adapters.json",
@@ -140,7 +140,7 @@ export function formatUnadaptedHookError(unadapted) {
   return (
     `typed compile failed for ${unadapted.length} hook(s) ` +
     `with no named adapter: ${sample}${extra}. Register a native adapter ` +
-    `in crates/ec_engine/src/native_adapters or set EC_ALLOW_UNADAPTED=1 to stage.`
+    `in crates/fastab_engine/src/native_adapters or set EC_ALLOW_UNADAPTED=1 to stage.`
   );
 }
 

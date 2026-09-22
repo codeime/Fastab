@@ -54,7 +54,7 @@ const defaultIrRoot = join(repoDir, "bundle", "specs-ir");
 const defaultBaseline = join(
   repoDir,
   "crates",
-  "ec_engine",
+  "fastab_engine",
   "testdata",
   "typed-hooks",
   "reference.json",
@@ -62,7 +62,7 @@ const defaultBaseline = join(
 const defaultGetQueryTermBaseline = join(
   repoDir,
   "crates",
-  "ec_engine",
+  "fastab_engine",
   "testdata",
   "typed-hooks",
   "asdf-get-query-term-reference.json",
@@ -156,7 +156,7 @@ export function defaultFieldBaselinePath(field) {
   return join(
     repoDir,
     "crates",
-    "ec_engine",
+    "fastab_engine",
     "testdata",
     "typed-hooks",
     `${field}-reference.json`,

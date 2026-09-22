@@ -44,7 +44,7 @@ if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
   exit 1
 fi
 
-VERSION=$(cargo metadata --no-deps --format-version 1 | python3 -c "import sys,json; print(next(pkg['version'] for pkg in json.load(sys.stdin)['packages'] if pkg['name'] == 'fig_desktop'))")
+VERSION=$(cargo metadata --no-deps --format-version 1 | python3 -c "import sys,json; print(next(pkg['version'] for pkg in json.load(sys.stdin)['packages'] if pkg['name'] == 'fastab_desktop'))")
 
 FINAL_BUNDLE="${REPO_DIR}/build/${APP_DISPLAY}.app"
 SPARKLE_APPCAST_URL="${SPARKLE_APPCAST_URL:-$DEFAULT_SPARKLE_APPCAST_URL}"
@@ -283,7 +283,7 @@ cp "${BIN_BUILD_SNAPSHOT}/fastabterm"  "$MACOS_DIR/"
 
 cp themes/*.json                       "${RESOURCES_DIR}/themes/"
 # Only specs-ir ships. bundle/specs is build-time input: it feeds the IR compiler
-# above, and ec_gpui embeds its icons with include_bytes!. The .app never reads it.
+# above, and fastab_gpui embeds its icons with include_bytes!. The .app never reads it.
 node "${REPO_DIR}/scripts/build-spec-inputs.mjs" \
   --verify-snapshot "$SPECS_IR_BUILD_SNAPSHOT"
 if [ -d "$SPECS_IR_BUILD_SNAPSHOT" ]; then
@@ -312,9 +312,9 @@ mkdir -p "${IM_APP}/Contents/MacOS"
 mkdir -p "${IM_APP}/Contents/Resources"
 node "${REPO_DIR}/scripts/build-spec-inputs.mjs" \
   --verify-snapshot "$SPECS_IR_BUILD_SNAPSHOT"
-cp "${BIN_BUILD_SNAPSHOT}/fig_input_method" "${IM_APP}/Contents/MacOS/"
-cp "crates/fig_input_method/Info.plist" "${IM_APP}/Contents/"
-cp crates/fig_input_method/resources/*  "${IM_APP}/Contents/Resources/" 2>/dev/null || true
+cp "${BIN_BUILD_SNAPSHOT}/fastab_input_method" "${IM_APP}/Contents/MacOS/"
+cp "crates/fastab_input_method/Info.plist" "${IM_APP}/Contents/"
+cp crates/fastab_input_method/resources/*  "${IM_APP}/Contents/Resources/" 2>/dev/null || true
 node "${REPO_DIR}/scripts/build-spec-inputs.mjs" \
   --verify-snapshot "$SPECS_IR_BUILD_SNAPSHOT"
 
@@ -432,14 +432,24 @@ PY
       --minimum-deployment-target 26.0
       --platform macosx
     )
+    # AssetCatalogAgent sometimes exits before it answers. That is the
+    # Xcode 26 actool crash on a macOS 15 host, and it also flakes on a
+    # matching host. Retry after the dead agent is gone.
     actool_ok=0
-    if [ -n "$ICON_DEVELOPER_DIR" ]; then
-      if env DEVELOPER_DIR="$ICON_DEVELOPER_DIR" "$ACTOOL" "${actool_args[@]}"; then
+    for _actool_attempt in 1 2 3; do
+      if [ -n "$ICON_DEVELOPER_DIR" ]; then
+        if env DEVELOPER_DIR="$ICON_DEVELOPER_DIR" "$ACTOOL" "${actool_args[@]}"; then
+          actool_ok=1
+          break
+        fi
+      elif "$ACTOOL" "${actool_args[@]}"; then
         actool_ok=1
+        break
       fi
-    elif "$ACTOOL" "${actool_args[@]}"; then
-      actool_ok=1
-    fi
+      echo "warning: actool attempt ${_actool_attempt} failed to compile AppIcon.icon" >&2
+      killall ibtoold AssetCatalogAgent AssetCatalogSimulatorAgent 2>/dev/null || true
+      sleep 2
+    done
     if [ "$actool_ok" -eq 1 ] && [ -f "$ICON_CAR_DIR/Assets.car" ]; then
       APPICON_CAR="$ICON_CAR_DIR/Assets.car"
       # Only advertise the layered name when the catalog is actually in
@@ -517,7 +527,7 @@ ${SPARKLE_PLIST_ENTRIES}
 PLIST
 
 # Copy app icon to Resources
-cp "${REPO_DIR}/crates/fig_desktop/icons/icon.icns" "${RESOURCES_DIR}/icon.icns"
+cp "${REPO_DIR}/crates/fastab_desktop/icons/icon.icns" "${RESOURCES_DIR}/icon.icns"
 if [ -n "$APPICON_CAR" ]; then
   cp "$APPICON_CAR" "${RESOURCES_DIR}/Assets.car"
 fi

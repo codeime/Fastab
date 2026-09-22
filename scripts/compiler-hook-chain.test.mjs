@@ -12,7 +12,7 @@ const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureRoot = join(
   repoDir,
   "crates",
-  "ec_engine",
+  "fastab_engine",
   "testdata",
   "compiler-hook-chain",
 );
