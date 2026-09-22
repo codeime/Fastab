@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## v0.0.3
+## v0.0.2
 
 - fix: display-language chips use a static option id so the settings window compiles
 - change: app icon uses a Claude terracotta-to-peach gradient instead of a flat dark tile
