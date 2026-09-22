@@ -14,9 +14,11 @@
 //! new operation or a field with a different meaning must be rejected until
 //! both the compiler and this evaluator have been updated.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::sync::OnceLock;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -630,29 +632,97 @@ struct TypedHookContracts {
     generate_spec: TypedHookContract,
 }
 
-/// A catalog descriptor kept as raw JSON until the first evaluation.
-///
-/// Compile and `--check` still validate every body. The engine only builds
-/// the `TypedHookIr` tree for hooks that actually run (G1 in
-/// `docs/memory-goals.md`).
+/// One owned copy of a descriptor body. Identical raw JSON inside a single
+/// catalog parse shares this allocation, so the first evaluation fills one
+/// `TypedHookIr` for every hook that points at it.
 #[derive(Debug)]
-pub(crate) struct LazyTypedHookIr {
+struct SharedDescriptor {
     raw: Box<RawValue>,
     parsed: OnceLock<TypedHookIr>,
 }
 
+thread_local! {
+    static DESCRIPTOR_INTERN: RefCell<Option<HashMap<u64, Vec<Arc<SharedDescriptor>>>>> = const { RefCell::new(None) };
+}
+
+/// Installs the descriptor intern pool for one catalog parse and drops it
+/// afterwards. The catalog keeps the `Arc`s; a later parse does not reuse them.
+struct DescriptorInternGuard;
+
+impl DescriptorInternGuard {
+    fn enter() -> Self {
+        DESCRIPTOR_INTERN.with(|slot| {
+            let mut pool = slot.borrow_mut();
+            assert!(pool.is_none(), "typed-hook descriptor intern pools must not nest");
+            *pool = Some(HashMap::new());
+        });
+        Self
+    }
+}
+
+impl Drop for DescriptorInternGuard {
+    fn drop(&mut self) {
+        DESCRIPTOR_INTERN.with(|slot| *slot.borrow_mut() = None);
+    }
+}
+
+fn with_descriptor_intern<T>(body: impl FnOnce() -> T) -> T {
+    let _guard = DescriptorInternGuard::enter();
+    body()
+}
+
+fn intern_descriptor(raw: Box<RawValue>) -> Arc<SharedDescriptor> {
+    DESCRIPTOR_INTERN.with(|slot| {
+        let mut pool = slot.borrow_mut();
+        let Some(pool) = pool.as_mut() else {
+            return Arc::new(SharedDescriptor {
+                raw,
+                parsed: OnceLock::new(),
+            });
+        };
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        raw.get().hash(&mut hasher);
+        let hash = hasher.finish();
+        let bucket = pool.entry(hash).or_default();
+        if let Some(existing) = bucket.iter().find(|item| item.raw.get() == raw.get()) {
+            return Arc::clone(existing);
+        }
+        let shared = Arc::new(SharedDescriptor {
+            raw,
+            parsed: OnceLock::new(),
+        });
+        bucket.push(Arc::clone(&shared));
+        shared
+    })
+}
+
+/// A catalog descriptor kept as raw JSON until the first evaluation.
+///
+/// Compile and `--check` still validate every body. The engine only builds
+/// the `TypedHookIr` tree for hooks that actually run (G1 in
+/// `docs/memory-goals.md`). Hooks whose raw JSON is byte-identical share one
+/// [`SharedDescriptor`] for the life of that catalog.
+#[derive(Debug)]
+pub(crate) struct LazyTypedHookIr {
+    shared: Arc<SharedDescriptor>,
+}
+
 impl LazyTypedHookIr {
     pub(crate) fn get(&self) -> TypedHookResult<&TypedHookIr> {
-        if let Some(descriptor) = self.parsed.get() {
+        if let Some(descriptor) = self.shared.parsed.get() {
             return Ok(descriptor);
         }
-        let descriptor = parse_typed_hook_ir_bytes(self.raw.get().as_bytes())?;
-        let _ = self.parsed.set(descriptor);
-        Ok(self.parsed.get().expect("descriptor was just stored"))
+        let descriptor = parse_typed_hook_ir_bytes(self.shared.raw.get().as_bytes())?;
+        let _ = self.shared.parsed.set(descriptor);
+        Ok(self.shared.parsed.get().expect("descriptor was just stored"))
     }
 
     pub(crate) fn is_parsed(&self) -> bool {
-        self.parsed.get().is_some()
+        self.shared.parsed.get().is_some()
+    }
+
+    fn raw_json(&self) -> &str {
+        self.shared.raw.get()
     }
 }
 
@@ -661,30 +731,30 @@ impl From<TypedHookIr> for LazyTypedHookIr {
         let raw = serde_json::value::to_raw_value(&descriptor).expect("TypedHookIr always serializes to JSON");
         let parsed = OnceLock::new();
         let _ = parsed.set(descriptor);
-        Self { raw, parsed }
+        Self {
+            shared: Arc::new(SharedDescriptor { raw, parsed }),
+        }
     }
 }
 
 impl Clone for LazyTypedHookIr {
     fn clone(&self) -> Self {
-        let parsed = OnceLock::new();
-        if let Some(descriptor) = self.parsed.get() {
-            let _ = parsed.set(descriptor.clone());
-        }
         Self {
-            raw: RawValue::from_string(self.raw.get().to_owned()).expect("stored descriptor JSON is valid"),
-            parsed,
+            shared: Arc::clone(&self.shared),
         }
     }
 }
 
 impl PartialEq for LazyTypedHookIr {
     fn eq(&self, other: &Self) -> bool {
-        match (self.parsed.get(), other.parsed.get()) {
+        if Arc::ptr_eq(&self.shared, &other.shared) {
+            return true;
+        }
+        match (self.shared.parsed.get(), other.shared.parsed.get()) {
             (Some(left), Some(right)) => left == right,
-            (Some(left), None) => parsed_eq_raw(left, &other.raw),
-            (None, Some(right)) => parsed_eq_raw(right, &self.raw),
-            (None, None) => self.raw.get() == other.raw.get(),
+            (Some(left), None) => parsed_eq_raw(left, &other.shared.raw),
+            (None, Some(right)) => parsed_eq_raw(right, &self.shared.raw),
+            (None, None) => self.shared.raw.get() == other.shared.raw.get(),
         }
     }
 }
@@ -702,15 +772,14 @@ impl Eq for LazyTypedHookIr {}
 
 impl Serialize for LazyTypedHookIr {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.raw.serialize(serializer)
+        self.shared.raw.serialize(serializer)
     }
 }
 
 impl<'de> Deserialize<'de> for LazyTypedHookIr {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Ok(Self {
-            raw: Box::<RawValue>::deserialize(deserializer)?,
-            parsed: OnceLock::new(),
+            shared: intern_descriptor(Box::<RawValue>::deserialize(deserializer)?),
         })
     }
 }
@@ -1046,7 +1115,7 @@ pub(crate) fn parse_typed_hook_ir_bytes(bytes: &[u8]) -> TypedHookResult<TypedHo
 /// Parse and validate the build-time catalog of typed hook descriptors.
 pub(crate) fn parse_typed_hook_catalog(value: &JsonValue) -> TypedHookResult<TypedHookCatalog> {
     ensure_catalog_size(value)?;
-    let catalog = serde_json::from_value::<TypedHookCatalog>(value.clone())
+    let catalog = with_descriptor_intern(|| serde_json::from_value::<TypedHookCatalog>(value.clone()))
         .map_err(|error| TypedHookError::new(format!("typed hook catalog schema: {error}")))?;
     validate_typed_hook_catalog(&catalog)?;
     Ok(catalog)
@@ -1059,7 +1128,7 @@ pub(crate) fn parse_typed_hook_catalog_bytes(bytes: &[u8]) -> TypedHookResult<Ty
             "typed hook catalog exceeds {MAX_CATALOG_BYTES} bytes"
         )));
     }
-    let catalog = serde_json::from_slice::<TypedHookCatalog>(bytes)
+    let catalog = with_descriptor_intern(|| serde_json::from_slice::<TypedHookCatalog>(bytes))
         .map_err(|error| TypedHookError::new(format!("typed hook catalog schema: {error}")))?;
     // Production load validates the index only. Descriptor trees are parsed
     // on first use so an idle engine does not hold 3136 IR graphs (G1).
@@ -1633,7 +1702,7 @@ fn validate_typed_hook_catalog_index(catalog: &TypedHookCatalog) -> TypedHookRes
                 "typed hook {id:?} sourceField must be one of the sidecar contracts"
             )));
         }
-        if entry.descriptor.raw.get().len() > MAX_SERIALIZED_DESCRIPTOR_BYTES {
+        if entry.descriptor.raw_json().len() > MAX_SERIALIZED_DESCRIPTOR_BYTES {
             return Err(TypedHookError::new(format!(
                 "typed hook descriptor exceeds {MAX_SERIALIZED_DESCRIPTOR_BYTES} bytes"
             )));
@@ -4593,8 +4662,58 @@ mod tests {
             "into_runtime must not parse descriptors"
         );
         let descriptor = runtime.hooks.get(&hook_id).expect("first hook");
+        let first_body = descriptor.raw_json().to_owned();
         let _ = descriptor.get();
-        assert_eq!(runtime.parsed_descriptor_count(), 1);
+        let same_body = runtime
+            .hooks
+            .values()
+            .filter(|hook| hook.raw_json() == first_body)
+            .count();
+        assert_eq!(
+            runtime.parsed_descriptor_count(),
+            same_body,
+            "evaluating one body parses every hook that shares it, and no other"
+        );
+        assert!(runtime.hooks.values().any(|hook| !hook.is_parsed()));
+        let unique = runtime
+            .hooks
+            .values()
+            .map(|hook| Arc::as_ptr(&hook.shared))
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        assert!(
+            unique < hook_count,
+            "identical descriptor bodies must share one allocation ({unique} unique of {hook_count})"
+        );
+    }
+
+    #[test]
+    fn duplicate_descriptor_bodies_share_one_allocation_inside_one_parse() {
+        let mut hooks = serde_json::Map::new();
+        hooks.insert("hook#a".to_owned(), catalog_entry(bool_value(true)));
+        hooks.insert("hook#b".to_owned(), catalog_entry(bool_value(true)));
+        hooks.insert("hook#c".to_owned(), catalog_entry(bool_value(false)));
+        let bytes = serde_json::to_vec(&catalog_value(hooks)).expect("catalog JSON");
+        let catalog = parse_typed_hook_catalog_bytes(&bytes).expect("index");
+        assert_eq!(catalog.parsed_descriptor_count(), 0);
+        let a = &catalog.hooks["hook#a"].descriptor;
+        let b = &catalog.hooks["hook#b"].descriptor;
+        let c = &catalog.hooks["hook#c"].descriptor;
+        assert!(Arc::ptr_eq(&a.shared, &b.shared));
+        assert!(!Arc::ptr_eq(&a.shared, &c.shared));
+        assert!(a.get().is_ok());
+        assert!(b.is_parsed());
+        assert!(!c.is_parsed());
+        assert_eq!(catalog.parsed_descriptor_count(), 2);
+
+        let again = parse_typed_hook_catalog_bytes(&bytes).expect("second index");
+        assert!(!Arc::ptr_eq(
+            &catalog.hooks["hook#a"].descriptor.shared,
+            &again.hooks["hook#a"].descriptor.shared
+        ));
+        assert_eq!(again.parsed_descriptor_count(), 0);
+        assert_eq!(catalog, again);
+        assert_eq!(again.parsed_descriptor_count(), 0);
     }
 
     #[test]

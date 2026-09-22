@@ -82,28 +82,45 @@ pub(crate) fn normalize_history_shell(value: Option<&str>) -> HistoryShell {
 pub struct Frecency {
     /// command or `cmd sub` prefix -> (count, last_seen_unix_secs)
     stats: HashMap<String, (u32, u64)>,
-    commands: Vec<(String, u64)>,
-    /// The same commands as plain lines, shared with the `history` template
-    /// generator. History is loaded once and read on every keystroke, so a
-    /// per-request `Vec<String>` clone of ten thousand lines was the wrong
-    /// shape; the thread-local takes a clone of this `Arc` instead.
-    lines: Arc<Vec<String>>,
-    /// `""` / `"git"` / `"git checkout"` → next-token occurrence counts.
-    /// Built once when history is loaded so ranking does not walk the list
-    /// on every keystroke.
-    next_word_counts: HashMap<String, HashMap<String, usize>>,
+    /// Occurrence order, including repeats. Identical command text shares one
+    /// `Arc<str>`; the `history` template reads this same list.
+    lines: Arc<Vec<Arc<str>>>,
+    /// Next-token counts. Single-space prefixes are a word trie. A prefix
+    /// whose spacing is not `split_whitespace` joined by one space stays in
+    /// `irregular`, which is the key the old full-prefix map would have used.
+    next_words: NextWords,
+}
+
+#[derive(Debug, Clone, Default)]
+struct NextWords {
+    root: WordNode,
+    irregular: HashMap<String, HashMap<String, usize>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct WordNode {
+    children: HashMap<String, WordNode>,
+    counts: HashMap<String, usize>,
 }
 
 impl Frecency {
     pub fn from_commands(commands: impl IntoIterator<Item = (String, u64)>) -> Self {
         let mut stats = HashMap::new();
-        let mut stored = Vec::new();
+        let mut lines = Vec::new();
+        let mut intern: HashSet<Arc<str>> = HashSet::new();
+        let mut next_words = NextWords::default();
         for (command, ts) in commands {
             let command = command.trim();
             if command.is_empty() {
                 continue;
             }
-            stored.push((command.to_string(), ts));
+            let line = if let Some(existing) = intern.get(command) {
+                Arc::clone(existing)
+            } else {
+                let line: Arc<str> = Arc::from(command);
+                intern.insert(Arc::clone(&line));
+                line
+            };
             bump(&mut stats, command, ts);
             let tokens: Vec<&str> = command.split_whitespace().collect();
             if let Some(first) = tokens.first() {
@@ -112,18 +129,17 @@ impl Frecency {
             if tokens.len() >= 2 {
                 bump(&mut stats, &format!("{} {}", tokens[0], tokens[1]), ts);
             }
+            record_next_words(command, &mut next_words);
+            lines.push(line);
         }
-        let next_word_counts = next_word_counts(&stored);
-        let lines = Arc::new(stored.iter().map(|(command, _)| command.clone()).collect());
         Self {
             stats,
-            commands: stored,
-            lines,
-            next_word_counts,
+            lines: Arc::new(lines),
+            next_words,
         }
     }
 
-    pub(crate) fn command_lines(&self) -> Arc<Vec<String>> {
+    pub(crate) fn command_lines(&self) -> Arc<Vec<Arc<str>>> {
         Arc::clone(&self.lines)
     }
 
@@ -142,11 +158,11 @@ impl Frecency {
         // identical commands are what make the old history row more frequent.
         let first_word_counts = self.next_word_counts("");
         let mut seen = HashSet::new();
-        self.commands
+        self.lines
             .iter()
             .rev()
-            .filter(|(command, _)| query.is_empty() || crate::query::matches_query(command, query, fuzzy))
-            .filter_map(|(command, _)| {
+            .filter(|command| query.is_empty() || crate::query::matches_query(command, query, fuzzy))
+            .filter_map(|command| {
                 let command = command.trim_end();
                 seen.insert(command.to_string()).then_some(command)
             })
@@ -171,10 +187,10 @@ impl Frecency {
         let first_word_counts = self.next_word_counts(prefix.trim_end());
         let mut seen = HashSet::new();
 
-        self.commands
+        self.lines
             .iter()
             .rev()
-            .filter_map(|(command, _)| {
+            .filter_map(|command| {
                 if !command.starts_with(prefix) {
                     return None;
                 }
@@ -199,7 +215,7 @@ impl Frecency {
     }
 
     fn next_word_counts(&self, prefix: &str) -> &HashMap<String, usize> {
-        self.next_word_counts.get(prefix).unwrap_or(empty_word_counts())
+        self.next_words.counts(prefix)
     }
 }
 
@@ -208,29 +224,83 @@ fn empty_word_counts() -> &'static HashMap<String, usize> {
     EMPTY.get_or_init(HashMap::new)
 }
 
-/// Same keys the per-request walk used: `""` plus every `command[..space]`.
-fn next_word_counts(commands: &[(String, u64)]) -> HashMap<String, HashMap<String, usize>> {
-    let mut counts = HashMap::new();
-    for (command, _) in commands {
-        record_next_words(command, &mut counts);
+impl NextWords {
+    fn counts(&self, prefix: &str) -> &HashMap<String, usize> {
+        if !is_canonical_prefix(prefix) {
+            return self.irregular.get(prefix).unwrap_or_else(|| empty_word_counts());
+        }
+        let mut node = &self.root;
+        if !prefix.is_empty() {
+            for word in prefix.split_whitespace() {
+                match node.children.get(word) {
+                    Some(child) => node = child,
+                    None => return empty_word_counts(),
+                }
+            }
+        }
+        &node.counts
     }
-    counts
-}
 
-fn record_next_words(command: &str, counts: &mut HashMap<String, HashMap<String, usize>>) {
-    if let Some(word) = command.split_whitespace().next() {
-        *counts
-            .entry(String::new())
+    fn bump(&mut self, prefix: &str, word: &str) {
+        if is_canonical_prefix(prefix) {
+            let mut node = &mut self.root;
+            if !prefix.is_empty() {
+                for part in prefix.split_whitespace() {
+                    node = node.children.entry(part.to_string()).or_default();
+                }
+            }
+            *node.counts.entry(word.to_string()).or_default() += 1;
+            return;
+        }
+        *self
+            .irregular
+            .entry(prefix.to_string())
             .or_default()
             .entry(word.to_string())
             .or_default() += 1;
     }
+}
+
+/// A prefix lookup joins whitespace tokens with one space. `git  checkout`
+/// (two spaces) is a different key from `git checkout`.
+fn is_canonical_prefix(prefix: &str) -> bool {
+    let mut rest = prefix;
+    let mut first = true;
+    while !rest.is_empty() {
+        if !first {
+            if !rest.starts_with(' ') {
+                return false;
+            }
+            rest = &rest[1..];
+            if rest.is_empty() || rest.starts_with(|character: char| character.is_whitespace()) {
+                return false;
+            }
+        }
+        let word_len = rest
+            .find(|character: char| character.is_whitespace())
+            .unwrap_or(rest.len());
+        if word_len == 0 {
+            return false;
+        }
+        rest = &rest[word_len..];
+        first = false;
+    }
+    true
+}
+
+/// Same keys the per-request walk used: `""` plus every `command[..space]`
+/// that does not end in whitespace. The next word is still the first
+/// whitespace token of the remainder.
+fn record_next_words(command: &str, counts: &mut NextWords) {
+    if let Some(word) = command.split_whitespace().next() {
+        counts.bump("", word);
+    }
     let mut search_from = 0;
     while let Some(rel) = command[search_from..].find(' ') {
         let space_at = search_from + rel;
-        let prefix = command[..space_at].to_string();
+        let prefix = &command[..space_at];
         if let Some(word) = command[space_at + 1..].split_whitespace().next() {
-            *counts.entry(prefix).or_default().entry(word.to_string()).or_default() += 1;
+            counts.bump(prefix, word);
         }
         search_from = space_at + 1;
     }
@@ -771,8 +841,7 @@ where
     // then restored to chronological order, which history_suggestions
     // depends on to surface the most recent match.
     let mut rows = history
-        .rows(
-            None,
+        .command_rows(
             vec![OrderBy::new(HistoryColumn::Id, Order::Desc)],
             MAX_DATABASE_HISTORY_COMMANDS,
             0,
@@ -1393,15 +1462,32 @@ mod tests {
     }
 
     #[test]
+    fn repeated_history_commands_share_one_string() {
+        let frecency = Frecency::from_commands([
+            ("git checkout".into(), 1),
+            ("git status".into(), 2),
+            ("git checkout".into(), 3),
+        ]);
+        let lines = frecency.command_lines();
+        assert_eq!(lines.len(), 3);
+        assert!(Arc::ptr_eq(&lines[0], &lines[2]));
+        assert!(!Arc::ptr_eq(&lines[0], &lines[1]));
+        let rows = frecency.history_suggestions("", false, true);
+        let names: Vec<_> = rows.iter().map(|row| row.name.as_str()).collect();
+        assert_eq!(names, vec!["git checkout", "git status"]);
+    }
+
+    #[test]
     fn next_word_index_matches_the_per_request_walk() {
         let commands = [
             ("git checkout main".into(), 1_u64),
             ("git status".into(), 2),
             ("echo hi".into(), 3),
             ("git  checkout".into(), 4),
+            ("git  checkout main".into(), 5),
         ];
         let frecency = Frecency::from_commands(commands.clone());
-        for prefix in ["", "git", "git checkout", "echo", "missing", "git "] {
+        for prefix in ["", "git", "git checkout", "git  checkout", "echo", "missing", "git "] {
             assert_eq!(
                 frecency.next_word_counts(prefix),
                 &walk_next_word_counts(&commands, prefix),

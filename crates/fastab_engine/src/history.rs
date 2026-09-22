@@ -23,7 +23,7 @@
 //! value of a variadic argument therefore has no slot and is neither indexed
 //! nor offered, which is what the WebView did.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use crate::ir::{OptionSpec, Registry, Spec};
@@ -124,33 +124,77 @@ impl WalkTrace {
 
 type SlotIndex = HashMap<ArgSlot, Vec<String>>;
 
+/// How many spec argument indexes stay built. A shell session only completes
+/// a handful of commands; an index that falls out of this window is rebuilt
+/// from the same lines the next time that command is completed.
+const MAX_CACHED_INDEXES: usize = 32;
+
+#[derive(Debug, Default)]
+struct IndexCache {
+    entries: HashMap<String, Arc<SlotIndex>>,
+    recent: VecDeque<String>,
+}
+
+impl IndexCache {
+    fn get(&mut self, name: &str) -> Option<Arc<SlotIndex>> {
+        let index = Arc::clone(self.entries.get(name)?);
+        self.touch(name);
+        Some(index)
+    }
+
+    fn insert(&mut self, name: String, index: Arc<SlotIndex>) {
+        if self.entries.contains_key(&name) {
+            self.entries.insert(name.clone(), index);
+            self.touch(&name);
+            return;
+        }
+        while self.entries.len() >= MAX_CACHED_INDEXES {
+            let Some(old) = self.recent.pop_front() else {
+                break;
+            };
+            self.entries.remove(&old);
+        }
+        self.recent.push_back(name.clone());
+        self.entries.insert(name, index);
+    }
+
+    fn touch(&mut self, name: &str) {
+        if let Some(position) = self.recent.iter().position(|item| item == name) {
+            let existing = self.recent.remove(position).expect("position came from recent");
+            self.recent.push_back(existing);
+            return;
+        }
+        self.recent.push_back(name.to_string());
+    }
+}
+
 /// Shell history as the engine loaded it, plus the per-spec argument index
 /// built from it on demand. One instance lives on the engine for as long as
 /// that history load is current; requests borrow it through an `Arc`, so a
 /// keystroke never copies the line list.
 #[derive(Debug, Default)]
 pub(crate) struct HistoryStore {
-    lines: Arc<Vec<String>>,
-    /// Spec primary name → values by slot.
-    index: Mutex<HashMap<String, Arc<SlotIndex>>>,
+    lines: Arc<Vec<Arc<str>>>,
+    /// Spec primary name → values by slot, capped at [`MAX_CACHED_INDEXES`].
+    index: Mutex<IndexCache>,
 }
 
 impl HistoryStore {
-    pub fn new(lines: Arc<Vec<String>>) -> Self {
+    pub fn new(lines: Arc<Vec<Arc<str>>>) -> Self {
         Self {
             lines,
-            index: Mutex::new(HashMap::new()),
+            index: Mutex::new(IndexCache::default()),
         }
     }
 
     #[cfg(test)]
     pub fn from_lines(lines: Vec<String>) -> Self {
-        Self::new(Arc::new(lines))
+        Self::new(Arc::new(lines.into_iter().map(Arc::<str>::from).collect()))
     }
 
     /// The history lines this store indexes; the engine compares this by
     /// pointer to decide whether a reload has replaced them.
-    pub fn lines(&self) -> &Arc<Vec<String>> {
+    pub fn lines(&self) -> &Arc<Vec<Arc<str>>> {
         &self.lines
     }
 
@@ -191,13 +235,14 @@ impl HistoryStore {
         shell: Option<&str>,
     ) -> Arc<SlotIndex> {
         if let Some(index) = self.index.lock().unwrap_or_else(|err| err.into_inner()).get(root_name) {
-            return Arc::clone(index);
+            return index;
         }
         let built = Arc::new(build_index(&self.lines, registry, root_name, aliases, shell));
-        self.index
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .insert(root_name.to_string(), Arc::clone(&built));
+        let mut cache = self.index.lock().unwrap_or_else(|err| err.into_inner());
+        if let Some(index) = cache.get(root_name) {
+            return index;
+        }
+        cache.insert(root_name.to_string(), Arc::clone(&built));
         built
     }
 }
@@ -217,7 +262,7 @@ fn names_spec(token: &str, root_name: &str) -> bool {
 }
 
 fn build_index(
-    lines: &[String],
+    lines: &[Arc<str>],
     registry: &mut Registry,
     root_name: &str,
     aliases: Option<&str>,
@@ -419,5 +464,49 @@ mod tests {
             vec!["host2:", "b"]
         );
         assert!(store.arg_values(&mut registry, None, None, &[slot(2)]).is_empty());
+    }
+
+    #[test]
+    fn evicted_history_index_rebuilds_and_a_hot_spec_stays_cached() {
+        let mut owned = Vec::new();
+        let mut lines = Vec::new();
+        for index in 0..=MAX_CACHED_INDEXES {
+            let name = format!("cmd{index}");
+            owned.push((
+                name.clone(),
+                format!(r#"{{"names":["{name}"],"args":[{{"name":"value"}}]}}"#),
+            ));
+            lines.push(format!("{name} value{index}"));
+        }
+        let pairs: Vec<(&str, &str)> = owned
+            .iter()
+            .map(|(name, spec)| (name.as_str(), spec.as_str()))
+            .collect();
+        let mut registry = registry_with(&pairs);
+        let store = HistoryStore::from_lines(lines);
+
+        let mut cached = Vec::new();
+        for index in 0..=MAX_CACHED_INDEXES {
+            cached.push(store.index_for(&mut registry, &format!("cmd{index}"), None, None));
+        }
+        let rebuilt = store.index_for(&mut registry, "cmd0", None, None);
+        assert_eq!(rebuilt.as_ref(), cached[0].as_ref());
+        assert!(
+            !Arc::ptr_eq(&rebuilt, &cached[0]),
+            "the evicted index is rebuilt instead of retained"
+        );
+        let hot = store.index_for(&mut registry, &format!("cmd{MAX_CACHED_INDEXES}"), None, None);
+        assert!(Arc::ptr_eq(&hot, &cached[MAX_CACHED_INDEXES]));
+
+        let slot = ArgSlot {
+            root: "cmd0".into(),
+            path: Vec::new(),
+            option: None,
+            index: 0,
+        };
+        assert_eq!(
+            store.arg_values(&mut registry, None, None, &[slot]),
+            vec!["value0".to_owned()]
+        );
     }
 }
