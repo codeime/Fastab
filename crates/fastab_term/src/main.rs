@@ -697,6 +697,13 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                     reconcile_remote_state(&remote_sender, &mut key_interceptor);
                     Ok(())
                 }
+                _ = remote_sender.key_delivery_changed() => {
+                    reconcile_remote_state(&remote_sender, &mut key_interceptor);
+                    for raw in remote_sender.take_failed_keys() {
+                        master.write_all(&raw).await?;
+                    }
+                    Ok(())
+                }
                 res = main_loop_rx.recv_async() => {
                     match res {
                         Ok(event) => {
@@ -813,6 +820,16 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
 
                                         let handled_action = if !preexec {
                                             if let Some(action) = key_interceptor.intercept_key(&event) {
+                                                // Place already buffered ordinary input before
+                                                // this key, without overtaking earlier unresolved
+                                                // intercepted keys from this or an older batch.
+                                                if !write_buffer.is_empty() {
+                                                    for failed in remote_sender.take_failed_keys_before_input().await {
+                                                        master.write_all(&failed).await?;
+                                                    }
+                                                    master.write_all(&write_buffer).await?;
+                                                    write_buffer.clear();
+                                                }
                                                 debug!(?action, "Intercepted action");
                                                 let s = raw.clone()
                                                     .and_then(|b| String::from_utf8(b.to_vec()).ok())
@@ -824,7 +841,7 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                                                 // generation's context synchronization marker.
                                                 let admitted = key_generation.is_some_and(|generation| {
                                                     remote_sender.for_generation(generation)
-                                                        .try_send(hook_to_message(hook)).is_ok()
+                                                        .try_send_key(hook_to_message(hook), raw.clone().unwrap_or_default()).is_ok()
                                                 });
                                                 if !admitted {
                                                     reconcile_remote_state(&remote_sender, &mut key_interceptor);
@@ -892,7 +909,12 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                                     }
                                 };
                             }
-                            master.write_all(&write_buffer).await?;
+                            if !write_buffer.is_empty() {
+                                for failed in remote_sender.take_failed_keys_before_input().await {
+                                    master.write_all(&failed).await?;
+                                }
+                                master.write_all(&write_buffer).await?;
+                            }
                         }
                         Err(err) => {
                             warn!("Failed recv: {err}");

@@ -29,7 +29,6 @@ use tracing::{debug, error, info, trace};
 // These use the existing connect/retry timescale. The handshake and write
 // deadlines are engineering bounds, not measured remote-network optima.
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
-const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) struct RemoteIncoming {
     pub(crate) generation: Generation,
@@ -300,11 +299,8 @@ pub(crate) async fn spawn_remote_ipc(
                         Err::<(), anyhow::Error>(anyhow::anyhow!("remote reader reached EOF"))
                     };
                     let send = async {
-                        while let Some(frame) = supervisor.next_frame(generation).await {
-                            timeout(WRITE_TIMEOUT, async {
-                                writer.write_all(&frame.bytes).await?;
-                                writer.flush().await
-                            }).await??;
+                        while let Some(mut frame) = supervisor.next_frame(generation).await {
+                            frame.write_to(&mut writer).await?;
                         }
                         Ok::<(), anyhow::Error>(())
                     };
