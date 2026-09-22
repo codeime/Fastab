@@ -114,8 +114,12 @@ impl<T> Row<T> {
     /// headroom so ordinary resize oscillation does not reallocate each row.
     pub(super) fn shrink_excess_capacity(&mut self) {
         let len = self.inner.len();
-        if self.inner.capacity() > len.saturating_mul(2) {
-            self.inner.shrink_to(len.saturating_add(len / 4));
+        // Reclaim once spare capacity exceeds 50%, retaining 25% headroom.
+        // Separate small-row floors also keep one-column oscillation inside
+        // the retained allocation instead of repeatedly shrinking and growing.
+        let threshold = len.saturating_add(max(len / 2, 8));
+        if self.inner.capacity() > threshold {
+            self.inner.shrink_to(len.saturating_add(max(len / 4, 4)));
         }
     }
 
@@ -291,5 +295,74 @@ impl<T> IndexMut<RangeToInclusive<Column>> for Row<T> {
     fn index_mut(&mut self, index: RangeToInclusive<Column>) -> &mut [T] {
         self.occ = max(self.occ, *index.end);
         &mut self.inner[..=(index.end.0)]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::grid::{Dimensions, Grid};
+    use crate::index::{Column, Line, Point};
+    use crate::term::cell::{Cell, ShellFlags};
+
+    #[test]
+    fn shrink_columns_reclaims_moderately_wide_surviving_rows() {
+        for reflow in [false, true] {
+            let mut grid = Grid::<Cell>::new(2, 220, 1);
+            grid.scroll_up(&(Line(0)..Line(2)), 1);
+            let lines = [Line(-1), Line(0), Line(1)];
+            for (line, character) in lines.into_iter().zip(['h', 'a', 'b']) {
+                let cell = &mut grid[line][Column(0)];
+                cell.c = character;
+                cell.flags = ShellFlags::BOLD;
+                cell.push_zerowidth('\u{301}');
+            }
+            grid.cursor.point = Point::new(Line(1), Column(2));
+            grid.saved_cursor.point = Point::new(Line(0), Column(3));
+            let cursor = grid.cursor.clone();
+            let saved_cursor = grid.saved_cursor.clone();
+            let before: Vec<_> = lines.iter().map(|line| {
+                let row = &grid[*line];
+                (row.inner[..140].to_vec(), row.occ, row.inner.capacity())
+            }).collect();
+
+            grid.resize(reflow, 2, 140);
+
+            assert_eq!(grid.history_size(), 1);
+            assert_eq!(grid.total_lines(), 3);
+            assert_eq!(grid.max_scroll_limit, 1);
+            assert_eq!(grid.cursor, cursor);
+            assert_eq!(grid.saved_cursor, saved_cursor);
+            for (line, (cells, occ, old_capacity)) in lines.into_iter().zip(before) {
+                let row = &grid[line];
+                assert_eq!(row.inner, cells);
+                assert_eq!(row.occ, occ);
+                assert!(row.inner.capacity() >= 140);
+                assert!(row.inner.capacity() < old_capacity);
+            }
+        }
+    }
+
+    #[test]
+    fn one_column_resize_oscillation_reuses_surviving_row_allocation() {
+        for reflow in [false, true] {
+            for columns in [1, 140] {
+                let mut grid = Grid::<Cell>::new(1, 220, 0);
+                grid[Line(0)][Column(0)].c = 'x';
+                grid.resize(reflow, 1, columns);
+                let capacity = grid[Line(0)].inner.capacity();
+                let allocation = grid[Line(0)].inner.as_ptr();
+
+                for _ in 0..16 {
+                    for width in [columns + 1, columns] {
+                        grid.resize(reflow, 1, width);
+                        let row = &grid[Line(0)];
+                        assert_eq!(row.len(), width);
+                        assert_eq!(row.inner.capacity(), capacity);
+                        assert_eq!(row.inner.as_ptr(), allocation);
+                        assert_eq!(row[Column(0)].c, 'x');
+                    }
+                }
+            }
+        }
     }
 }
