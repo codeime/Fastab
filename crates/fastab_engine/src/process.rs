@@ -66,6 +66,150 @@ pub fn execute_full(
     wait_child_output(child, timeout)
 }
 
+#[cfg(unix)]
+fn wait_child_output(mut child: Child, timeout: Duration) -> Result<CommandOutput, CommandError> {
+    use std::io::ErrorKind;
+    use std::os::fd::AsRawFd;
+    use std::time::Instant;
+
+    let pid = child.id();
+    let started = Instant::now();
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let result = (|| {
+        let mut stdout = stdout.ok_or(CommandError::Failed)?;
+        let mut stderr = stderr.ok_or(CommandError::Failed)?;
+        let stdout_fd = stdout.as_raw_fd();
+        let stderr_fd = stderr.as_raw_fd();
+        for fd in [stdout_fd, stderr_fd] {
+            // SAFETY: both descriptors are pipes owned for this entire scope.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL, 0) };
+            if flags < 0 {
+                return Err(CommandError::Failed);
+            }
+            // SAFETY: setting nonblocking mode preserves the descriptor's other flags.
+            if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+                return Err(CommandError::Failed);
+            }
+        }
+
+        let mut stdout_buf = Vec::new();
+        let mut stderr_buf = Vec::new();
+        let mut tmp = [0u8; 4096];
+        let mut stdout_eof = false;
+        let mut stderr_eof = false;
+        loop {
+            if !(stdout_eof && stderr_eof) && started.elapsed() >= timeout {
+                return Err(CommandError::TimedOut);
+            }
+            if !stdout_eof {
+                stdout_eof = drain_full_pipe(&mut stdout, &mut tmp, &mut stdout_buf, started, timeout)?;
+            }
+            if !stderr_eof {
+                stderr_eof = drain_full_pipe(&mut stderr, &mut tmp, &mut stderr_buf, started, timeout)?;
+            }
+            // Do not reap the leader while a descendant can still hold a pipe.
+            // Keeping its PID reserved makes timeout/error group cleanup safe.
+            // Once both pipes close, a reaped status is returned immediately;
+            // no later code signals that PID or process group.
+            // Check status before timing out: the leader may have exited while
+            // poll slept with both pipe descriptors disabled below.
+            if stdout_eof && stderr_eof {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        return Ok(CommandOutput {
+                            status: status.code().unwrap_or(-1),
+                            stdout: String::from_utf8_lossy(&stdout_buf).into_owned(),
+                            stderr: String::from_utf8_lossy(&stderr_buf).into_owned(),
+                        });
+                    },
+                    Ok(None) => {},
+                    Err(err) if err.kind() == ErrorKind::Interrupted => {},
+                    Err(_) => return Err(CommandError::Failed),
+                }
+            }
+
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(CommandError::TimedOut);
+            }
+            let mut pollfds = [
+                libc::pollfd {
+                    fd: if stdout_eof { -1 } else { stdout_fd },
+                    events: libc::POLLIN | libc::POLLHUP,
+                    revents: 0,
+                },
+                libc::pollfd {
+                    fd: if stderr_eof { -1 } else { stderr_fd },
+                    events: libc::POLLIN | libc::POLLHUP,
+                    revents: 0,
+                },
+            ];
+            // Negative fds disable closed pipes, including their persistent HUP.
+            // With two EOFs this is a bounded sleep before the next exit check.
+            let ms = remaining.as_millis().clamp(1, 20) as i32;
+            // SAFETY: pollfds contains two valid, owned descriptors or -1.
+            let ready = unsafe { libc::poll(pollfds.as_mut_ptr(), pollfds.len() as libc::nfds_t, ms) };
+            if ready < 0 {
+                if std::io::Error::last_os_error().kind() == ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(CommandError::Failed);
+            }
+            if pollfds.iter().any(|fd| fd.revents & (libc::POLLNVAL | libc::POLLERR) != 0) {
+                return Err(CommandError::Failed);
+            }
+        }
+    })();
+
+    // The closure has dropped both pipes before cleanup. No reader thread can
+    // remain blocked on a descendant that escaped the original process group.
+    if result.is_err() {
+        kill_process_group(pid);
+        // Also stop the leader if it moved out of the original process group.
+        let _ = child.kill();
+        loop {
+            match child.wait() {
+                Err(err) if err.kind() == ErrorKind::Interrupted => continue,
+                _ => break,
+            }
+        }
+    }
+    result
+}
+
+#[cfg(unix)]
+fn drain_full_pipe(
+    pipe: &mut impl std::io::Read,
+    tmp: &mut [u8; 4096],
+    buf: &mut Vec<u8>,
+    started: std::time::Instant,
+    timeout: Duration,
+) -> Result<bool, CommandError> {
+    use std::io::ErrorKind;
+
+    // At most 64 KiB per pipe per turn, even after its saved prefix is full.
+    // Continuous stdout must not starve stderr or the deadline checks.
+    for _ in 0..16 {
+        if started.elapsed() >= timeout {
+            return Err(CommandError::TimedOut);
+        }
+        match pipe.read(tmp) {
+            Ok(0) => return Ok(true),
+            Ok(n) => {
+                let keep = n.min(MAX_STDOUT - buf.len());
+                buf.extend_from_slice(&tmp[..keep]);
+            },
+            Err(err) if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::Interrupted => {
+                return Ok(false);
+            },
+            Err(_) => return Err(CommandError::Failed),
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(not(unix))]
 fn wait_child_output(child: Child, timeout: Duration) -> Result<CommandOutput, CommandError> {
     use std::sync::mpsc;
     use std::thread;
