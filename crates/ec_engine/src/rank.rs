@@ -646,10 +646,10 @@ pub fn load_commands() -> Vec<(String, u64)> {
 ///
 /// A configured custom command is run through the same default zsh path as
 /// the old WebView implementation. Its output wins when it is non-empty; a
-/// failure, timeout, or empty output falls back to the complete local history
-/// database. Without a custom command, known shells are filtered to the
-/// current shell (or zsh+bash when `allShells` is enabled); unknown shells use
-/// the complete database source.
+/// failure, timeout, or empty output falls back to the local history
+/// database, both capped at the recent window. Without a custom command,
+/// known shells are filtered to the current shell (or zsh+bash when
+/// `allShells` is enabled); unknown shells use the database source.
 pub(crate) fn load_commands_for(config: &HistorySourceConfig) -> Vec<(String, u64)> {
     if let Some(command) = config.custom_command.as_deref() {
         if let Some(commands) = run_custom_history(command) {
@@ -689,7 +689,8 @@ fn recent_shell_history_command(shell: HistoryShell) -> String {
         // current event, so this is the recent window only.
         HistoryShell::Zsh => format!("fc -R; fc -ln -{MAX_DATABASE_HISTORY_COMMANDS}"),
         HistoryShell::Bash => format!("fc -ln -{MAX_DATABASE_HISTORY_COMMANDS}"),
-        // fish lists newest-first. `--max` keeps that head.
+        // fish lists newest-first. `--max` keeps that head; the parser then
+        // flips it to oldest-first so it matches `fc`.
         HistoryShell::Fish => format!("history search --max={MAX_DATABASE_HISTORY_COMMANDS}"),
         HistoryShell::Unknown => String::new(),
     }
@@ -743,6 +744,11 @@ fn history_commands_from_output_limited(output: &str, newest_first: bool) -> Vec
             let start = commands.len() - MAX_DATABASE_HISTORY_COMMANDS;
             commands = commands.split_off(start);
         }
+    }
+    // `history_suggestions` walks this list backwards. Fish emits newest-first,
+    // so flip that window; `fc` is already oldest-first.
+    if newest_first {
+        commands.reverse();
     }
     commands
 }
@@ -1332,8 +1338,8 @@ mod tests {
         }
         let parsed = history_commands_from_output_limited(&newest_first, true);
         assert_eq!(parsed.len(), MAX_DATABASE_HISTORY_COMMANDS);
-        assert_eq!(parsed[0].0, format!("cmd{}", total - 1));
-        assert_eq!(parsed.last().unwrap().0, "cmd3");
+        assert_eq!(parsed[0].0, "cmd3");
+        assert_eq!(parsed.last().unwrap().0, format!("cmd{}", total - 1));
     }
 
     #[test]
