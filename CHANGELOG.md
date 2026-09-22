@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- fix: the app icon keeps the prompt-and-list mark. Liquid Glass was replacing that artwork, so Finder, drag images, and the Accessibility list showed only the gradient
+- fix: the Accessibility grant card centers the icon with its name and the title with the close button, and animates an arrow toward the list
+
 ## v0.0.2
 
 - fix: display-language chips use a static option id so the settings window compiles

@@ -31,13 +31,26 @@ use crate::accessibility::{accessibility_is_enabled, open_accessibility};
 use crate::applications::running_application_pids;
 use crate::bundle::{get_bundle_identifier, get_bundle_path};
 
-const CARD_WIDTH: f64 = 288.0;
-const CARD_HEIGHT: f64 = 172.0;
+const CARD_WIDTH: f64 = 300.0;
+const CARD_HEIGHT: f64 = 188.0;
 const CARD_GAP: f64 = 20.0;
+const CARD_MARGIN: f64 = 20.0;
 const ARROW_TAG: isize = 7101;
+const ARROW_SIZE: f64 = 22.0;
+const ARROW_GAP: f64 = 10.0;
+const CHIP_Y: f64 = 16.0;
+const CHIP_HEIGHT: f64 = 56.0;
+const CHIP_ICON: f64 = 36.0;
+const TITLE_HEIGHT: f64 = 22.0;
+const CLOSE_SIZE: f64 = 22.0;
 const SETTINGS_GONE_TICKS: u8 = 25;
 const NS_DRAG_OPERATION_COPY: usize = 1;
-const DRAG_CHIP_RADIUS: f64 = 10.0;
+const DRAG_CHIP_RADIUS: f64 = 12.0;
+const NS_IMAGE_ALIGN_CENTER: u64 = 0;
+const NS_IMAGE_SCALE_PROPORTIONALLY: u64 = 3;
+/// 0 unknown, 1 arrow points right, -1 arrow points left.
+static ARROW_DIRECTION: AtomicI8 = AtomicI8::new(0);
+static CHIP: Mutex<Option<usize>> = Mutex::new(None);
 
 /// Same mask as the overlay: click/drag must not activate Fastab.
 const NS_WINDOW_STYLE_NONACTIVATING_PANEL: u64 = 1 << 7;
@@ -157,19 +170,20 @@ fn show_card_beside_settings(settings: (f64, f64, f64, f64)) {
     }
     let screen = screen_containing(settings.0 + settings.2 / 2.0, settings.1 + settings.3 / 2.0);
     let docked = docked_card_frame(settings, screen);
+    let points_right = card_is_left_of(settings, docked);
     if panel_ptr().is_none() {
-        present_card_at(NSPoint::new(docked.0, docked.1));
+        present_card_at(NSPoint::new(docked.0, docked.1), points_right);
     } else if let Some(panel) = panel_ptr() {
         let frame = NSRect::new(NSPoint::new(docked.0, docked.1), NSSize::new(CARD_WIDTH, CARD_HEIGHT));
         unsafe {
             let _: () = msg_send![panel, setFrame: frame display: YES];
         }
+        update_arrow(points_right);
     }
-    update_arrow(card_is_left_of(settings, docked));
     schedule_tick();
 }
 
-fn present_card_at(origin: NSPoint) {
+fn present_card_at(origin: NSPoint, points_right: bool) {
     if !GUIDE_ACTIVE.load(Ordering::SeqCst) {
         return;
     }
@@ -217,8 +231,9 @@ fn present_card_at(origin: NSPoint) {
         let content: id = msg_send![panel, contentView];
         autoreleasepool(|| build_card_content(content));
 
-        let _: () = msg_send![panel, orderFrontRegardless];
         *PANEL.lock().unwrap_or_else(|err| err.into_inner()) = Some(panel as usize);
+        update_arrow(points_right);
+        let _: () = msg_send![panel, orderFrontRegardless];
     }
     debug!("accessibility guide card shown");
 }
@@ -255,27 +270,54 @@ fn build_card_content(content: id) {
             "Drag the icon into the app list beside this card, then turn it on."
         };
 
-        add_label(
+        let title_y = CARD_HEIGHT - CARD_MARGIN - TITLE_HEIGHT;
+        let close_x = CARD_WIDTH - CARD_MARGIN - CLOSE_SIZE;
+        let title_label = add_label(
             effect,
             title,
             15.0,
             true,
-            NSRect::new(NSPoint::new(20.0, 132.0), NSSize::new(220.0, 22.0)),
+            NSRect::new(
+                NSPoint::new(CARD_MARGIN, title_y),
+                NSSize::new(close_x - CARD_MARGIN - 8.0, TITLE_HEIGHT),
+            ),
         );
+        let body_y = CHIP_Y + CHIP_HEIGHT + 12.0;
+        let body_height = (title_y - 8.0 - body_y).max(36.0);
         add_label(
             effect,
             body,
             12.0,
             false,
-            NSRect::new(NSPoint::new(20.0, 78.0), NSSize::new(248.0, 50.0)),
+            NSRect::new(
+                NSPoint::new(CARD_MARGIN, body_y),
+                NSSize::new(CARD_WIDTH - CARD_MARGIN * 2.0, body_height),
+            ),
         );
-        add_close_button(effect);
+        let close = add_close_button(
+            effect,
+            NSRect::new(NSPoint::new(close_x, title_y), NSSize::new(CLOSE_SIZE, CLOSE_SIZE)),
+        );
+        // The title's frame is only a placeholder. Center its text on the
+        // close button so the two sit on one line.
+        pin_center_y(title_label, close);
+        pin_anchor(
+            msg_send![title_label, leadingAnchor],
+            msg_send![effect, leadingAnchor],
+            CARD_MARGIN,
+        );
+        pin_constant(msg_send![title_label, widthAnchor], close_x - CARD_MARGIN - 8.0);
+        let _: () = msg_send![title_label, setUsesSingleLineMode: YES];
+        let _: () = msg_send![title_label, setMaximumNumberOfLines: 1i64];
+        let _: () = msg_send![title_label, setLineBreakMode: 4i64];
         add_arrow(effect);
-        add_drag_row(effect, NSRect::new(NSPoint::new(20.0, 16.0), NSSize::new(248.0, 52.0)));
+        let row = guide_row_frames(true);
+        add_drag_row(effect, rect_from_tuple(row.chip));
+        let _: () = msg_send![content, layoutSubtreeIfNeeded];
     }
 }
 
-fn add_label(parent: id, text: &str, size: f64, bold: bool, frame: NSRect) {
+fn add_label(parent: id, text: &str, size: f64, bold: bool, frame: NSRect) -> id {
     unsafe {
         let label: id = msg_send![class!(NSTextField), labelWithString: ns_string(text)];
         let _: () = msg_send![label, setFrame: frame];
@@ -306,10 +348,11 @@ fn add_label(parent: id, text: &str, size: f64, bold: bool, frame: NSRect) {
             let _: () = msg_send![cell, setWraps: YES];
         }
         let _: () = msg_send![parent, addSubview: label];
+        label
     }
 }
 
-fn add_close_button(parent: id) {
+fn add_close_button(parent: id, frame: NSRect) -> id {
     let button_cls = Class::get("ECAccessibilityCloseButton").unwrap_or_else(|| class!(NSButton));
     unsafe {
         let button: id = msg_send![button_cls, new];
@@ -323,44 +366,47 @@ fn add_close_button(parent: id) {
         } else {
             let _: () = msg_send![button, setImage: symbol];
             let _: () = msg_send![button, setTitle: ns_string("")];
+            let _: () = msg_send![button, setImageScaling: NS_IMAGE_SCALE_PROPORTIONALLY];
         }
         let _: () = msg_send![button, setBezelStyle: 1u64];
         let _: () = msg_send![button, setBordered: NO];
         let _: () = msg_send![button, setImagePosition: 1u64];
-        let _: () = msg_send![
-            button,
-            setFrame: NSRect::new(NSPoint::new(254.0, 140.0), NSSize::new(22.0, 22.0))
-        ];
+        let _: () = msg_send![button, setFrame: frame];
         let target = close_target();
         let _: () = msg_send![button, setTarget: target];
         let _: () = msg_send![button, setAction: sel!(closeGuide:)];
         adopt_subview(parent, button);
+        button
     }
 }
 
 fn add_arrow(parent: id) {
     unsafe {
-        let label: id = msg_send![class!(NSTextField), labelWithString: ns_string("")];
-        let _: () = msg_send![label, setTag: ARROW_TAG];
-        let _: () = msg_send![label, setHidden: YES];
-        let font: id = msg_send![class!(NSFont), systemFontOfSize: 16.0f64];
-        let _: () = msg_send![label, setFont: font];
-        let color: id = msg_send![class!(NSColor), tertiaryLabelColor];
-        let _: () = msg_send![label, setTextColor: color];
-        let _: () = msg_send![label, setDrawsBackground: NO];
-        let _: () = msg_send![label, setBezeled: NO];
-        let _: () = msg_send![label, setEditable: NO];
-        let _: () = msg_send![label, setSelectable: NO];
-        let _: () = msg_send![label, setAlignment: 1u64];
-        let _: () = msg_send![parent, addSubview: label];
+        let view: id = msg_send![class!(NSImageView), new];
+        let _: () = msg_send![view, setTag: ARROW_TAG];
+        let _: () = msg_send![view, setHidden: YES];
+        let _: () = msg_send![view, setEditable: NO];
+        let _: () = msg_send![view, setImageAlignment: NS_IMAGE_ALIGN_CENTER];
+        let _: () = msg_send![view, setImageScaling: NS_IMAGE_SCALE_PROPORTIONALLY];
+        let _: () = msg_send![view, setWantsLayer: YES];
+        let tint: id = msg_send![class!(NSColor), secondaryLabelColor];
+        let _: () = msg_send![view, setContentTintColor: tint];
+        let _: () = msg_send![parent, addSubview: view];
+        let _: () = msg_send![view, release];
     }
 }
 
-fn update_arrow(docked_on_left: bool) {
+fn update_arrow(points_right: bool) {
     let Some(panel) = panel_ptr() else {
         return;
     };
+    let direction = if points_right { 1 } else { -1 };
+    let direction_changed = ARROW_DIRECTION.swap(direction, Ordering::SeqCst) != direction;
+    let frames = guide_row_frames(points_right);
     autoreleasepool(|| unsafe {
+        if let Some(chip) = chip_ptr() {
+            let _: () = msg_send![chip, setFrame: rect_from_tuple(frames.chip)];
+        }
         let content: id = msg_send![panel, contentView];
         if content.is_null() {
             return;
@@ -369,18 +415,79 @@ fn update_arrow(docked_on_left: bool) {
         if arrow.is_null() {
             return;
         }
-        let (text, frame) = if docked_on_left {
-            (
-                "▸",
-                NSRect::new(NSPoint::new(CARD_WIDTH - 18.0, 28.0), NSSize::new(16.0, 20.0)),
-            )
-        } else {
-            ("◂", NSRect::new(NSPoint::new(4.0, 28.0), NSSize::new(16.0, 20.0)))
-        };
-        let _: () = msg_send![arrow, setStringValue: ns_string(text)];
-        let _: () = msg_send![arrow, setFrame: frame];
+        let _: () = msg_send![arrow, setFrame: rect_from_tuple(frames.arrow)];
         let _: () = msg_send![arrow, setHidden: NO];
+        if direction_changed {
+            let symbol = arrow_symbol(points_right);
+            if !symbol.is_null() {
+                let _: () = msg_send![arrow, setImage: symbol];
+            }
+            animate_guide_arrow(arrow, points_right);
+        }
     });
+}
+
+/// Nudge the arrow toward the Accessibility list, then back, for as long as
+/// the card is up. The chip itself stays still so the drag gesture does not
+/// start from a moving target.
+fn animate_guide_arrow(view: id, points_right: bool) {
+    let Some(cls) = Class::get("CABasicAnimation") else {
+        return;
+    };
+    unsafe {
+        let layer: id = msg_send![view, layer];
+        if layer.is_null() {
+            return;
+        }
+        let key = ns_string("nudge");
+        let _: () = msg_send![layer, removeAnimationForKey: key];
+        let anim: id = msg_send![cls, animationWithKeyPath: ns_string("transform.translation.x")];
+        if anim.is_null() {
+            return;
+        }
+        let distance = if points_right { 6.0 } else { -6.0 };
+        let from: id = msg_send![class!(NSNumber), numberWithDouble: 0.0f64];
+        let to: id = msg_send![class!(NSNumber), numberWithDouble: distance];
+        let _: () = msg_send![anim, setFromValue: from];
+        let _: () = msg_send![anim, setToValue: to];
+        let _: () = msg_send![anim, setDuration: 0.85f64];
+        let _: () = msg_send![anim, setAutoreverses: YES];
+        let _: () = msg_send![anim, setRepeatCount: 1.0e9_f32];
+        if let Some(timing) = Class::get("CAMediaTimingFunction") {
+            let ease: id = msg_send![timing, functionWithName: ns_string("easeInEaseOut")];
+            if !ease.is_null() {
+                let _: () = msg_send![anim, setTimingFunction: ease];
+            }
+        }
+        let _: () = msg_send![layer, addAnimation: anim forKey: key];
+    }
+}
+
+fn arrow_symbol(points_right: bool) -> id {
+    let name = if points_right { "arrow.right" } else { "arrow.left" };
+    unsafe {
+        let image: id = msg_send![
+            class!(NSImage),
+            imageWithSystemSymbolName: ns_string(name)
+            accessibilityDescription: nil
+        ];
+        if image.is_null() {
+            return nil;
+        }
+        let Some(config_cls) = Class::get("NSImageSymbolConfiguration") else {
+            return image;
+        };
+        let config: id = msg_send![
+            config_cls,
+            configurationWithPointSize: 16.0f64
+            weight: NS_FONT_WEIGHT_SEMIBOLD
+        ];
+        if config.is_null() {
+            return image;
+        }
+        let styled: id = msg_send![image, imageWithSymbolConfiguration: config];
+        if styled.is_null() { image } else { styled }
+    }
 }
 
 fn add_drag_row(parent: id, frame: NSRect) {
@@ -404,21 +511,57 @@ fn add_drag_row(parent: id, frame: NSRect) {
         style_drag_row_layer(layer, false);
 
         let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-        let icon: id = msg_send![workspace, iconForFile: path];
-        let _: () = msg_send![icon, setSize: NSSize::new(36.0, 36.0)];
+        let shared_icon: id = msg_send![workspace, iconForFile: path];
+        // `iconForFile` hands back a cached image. Resizing that cache makes
+        // every later icon in this process draw at the chip size.
+        let owned_icon: id = msg_send![shared_icon, copy];
+        let icon = if owned_icon.is_null() { shared_icon } else { owned_icon };
+        if !owned_icon.is_null() {
+            let _: () = msg_send![icon, setSize: NSSize::new(CHIP_ICON, CHIP_ICON)];
+        }
         let image_view: id = msg_send![class!(NSImageView), new];
         let _: () = msg_send![image_view, setImage: icon];
-        let _: () = msg_send![image_view, setFrame: NSRect::new(NSPoint::new(10.0, 8.0), NSSize::new(36.0, 36.0))];
         let _: () = msg_send![image_view, setEditable: NO];
+        let _: () = msg_send![image_view, setImageAlignment: NS_IMAGE_ALIGN_CENTER];
+        let _: () = msg_send![image_view, setImageScaling: NS_IMAGE_SCALE_PROPORTIONALLY];
+        if !owned_icon.is_null() {
+            let _: () = msg_send![owned_icon, release];
+        }
         adopt_subview(view, image_view);
 
-        add_label(
-            view,
-            &name,
-            13.0,
-            true,
-            NSRect::new(NSPoint::new(54.0, 15.0), NSSize::new(184.0, 22.0)),
+        let label: id = msg_send![class!(NSTextField), labelWithString: ns_string(&name)];
+        let font: id = msg_send![class!(NSFont), systemFontOfSize: 13.0f64 weight: NS_FONT_WEIGHT_SEMIBOLD];
+        if !font.is_null() {
+            let _: () = msg_send![label, setFont: font];
+        }
+        let color: id = msg_send![class!(NSColor), labelColor];
+        let _: () = msg_send![label, setTextColor: color];
+        let _: () = msg_send![label, setDrawsBackground: NO];
+        let _: () = msg_send![label, setBezeled: NO];
+        let _: () = msg_send![label, setEditable: NO];
+        let _: () = msg_send![label, setSelectable: NO];
+        let _: () = msg_send![label, setLineBreakMode: 4i64];
+        let _: () = msg_send![label, setUsesSingleLineMode: YES];
+        let _: () = msg_send![label, setMaximumNumberOfLines: 1i64];
+        adopt_subview(view, label);
+
+        pin_center_y(image_view, view);
+        pin_center_y(label, view);
+        pin_anchor(
+            msg_send![image_view, leadingAnchor],
+            msg_send![view, leadingAnchor],
+            10.0,
         );
+        pin_constant(msg_send![image_view, widthAnchor], CHIP_ICON);
+        pin_constant(msg_send![image_view, heightAnchor], CHIP_ICON);
+        pin_anchor(
+            msg_send![label, leadingAnchor],
+            msg_send![image_view, trailingAnchor],
+            8.0,
+        );
+        pin_anchor(msg_send![label, trailingAnchor], msg_send![view, trailingAnchor], -12.0);
+
+        *CHIP.lock().unwrap_or_else(|err| err.into_inner()) = Some(view as usize);
         adopt_subview(parent, view);
     }
 }
@@ -586,7 +729,14 @@ fn style_drag_row_layer(layer: id, for_preview: bool) {
             let _: () = msg_send![layer, setBorderColor: stroke_cg];
             let _: () = msg_send![layer, setBorderWidth: 1.0f64];
         } else {
-            let _: () = msg_send![layer, setBorderWidth: 0.0f64];
+            let stroke: id = if dark {
+                msg_send![class!(NSColor), colorWithWhite: 1.0f64 alpha: 0.16f64]
+            } else {
+                msg_send![class!(NSColor), colorWithWhite: 0.0f64 alpha: 0.10f64]
+            };
+            let stroke_cg: id = msg_send![stroke, CGColor];
+            let _: () = msg_send![layer, setBorderColor: stroke_cg];
+            let _: () = msg_send![layer, setBorderWidth: 1.0f64];
         }
     }
 }
@@ -844,6 +994,8 @@ fn dismiss_guide() {
     GUIDE_ACTIVE.store(false, Ordering::SeqCst);
     DRAGGING.store(false, Ordering::SeqCst);
     SETTINGS_MISSING.store(0, Ordering::SeqCst);
+    ARROW_DIRECTION.store(0, Ordering::SeqCst);
+    *CHIP.lock().unwrap_or_else(|err| err.into_inner()) = None;
     dismiss_panel_only();
 }
 
@@ -1019,6 +1171,59 @@ pub(crate) fn docked_card_frame(settings: (f64, f64, f64, f64), screen: (f64, f6
 
 fn card_is_left_of(settings: (f64, f64, f64, f64), docked: (f64, f64, f64, f64)) -> bool {
     docked.0 + docked.2 / 2.0 < settings.0 + settings.2 / 2.0
+}
+
+struct GuideRowFrames {
+    chip: (f64, f64, f64, f64),
+    arrow: (f64, f64, f64, f64),
+}
+
+/// The arrow sits in the margin facing the Accessibility list. The chip takes
+/// the rest of the row so the two never overlap, and both share one midline.
+fn guide_row_frames(points_right: bool) -> GuideRowFrames {
+    let chip_w = CARD_WIDTH - CARD_MARGIN - ARROW_SIZE - ARROW_GAP - CARD_MARGIN;
+    let (chip_x, arrow_x) = if points_right {
+        (CARD_MARGIN, CARD_MARGIN + chip_w + ARROW_GAP)
+    } else {
+        (CARD_MARGIN + ARROW_SIZE + ARROW_GAP, CARD_MARGIN)
+    };
+    let arrow_y = CHIP_Y + (CHIP_HEIGHT - ARROW_SIZE) / 2.0;
+    GuideRowFrames {
+        chip: (chip_x, CHIP_Y, chip_w, CHIP_HEIGHT),
+        arrow: (arrow_x, arrow_y, ARROW_SIZE, ARROW_SIZE),
+    }
+}
+
+fn rect_from_tuple(frame: (f64, f64, f64, f64)) -> NSRect {
+    NSRect::new(NSPoint::new(frame.0, frame.1), NSSize::new(frame.2, frame.3))
+}
+
+fn chip_ptr() -> Option<id> {
+    (*CHIP.lock().unwrap_or_else(|err| err.into_inner())).map(|ptr| ptr as id)
+}
+
+fn pin_center_y(view: id, container: id) {
+    unsafe {
+        let _: () = msg_send![view, setTranslatesAutoresizingMaskIntoConstraints: NO];
+        let anchor: id = msg_send![view, centerYAnchor];
+        let other: id = msg_send![container, centerYAnchor];
+        let constraint: id = msg_send![anchor, constraintEqualToAnchor: other];
+        let _: () = msg_send![constraint, setActive: YES];
+    }
+}
+
+fn pin_anchor(anchor: id, other: id, constant: f64) {
+    unsafe {
+        let constraint: id = msg_send![anchor, constraintEqualToAnchor: other constant: constant];
+        let _: () = msg_send![constraint, setActive: YES];
+    }
+}
+
+fn pin_constant(anchor: id, value: f64) {
+    unsafe {
+        let constraint: id = msg_send![anchor, constraintEqualToConstant: value];
+        let _: () = msg_send![constraint, setActive: YES];
+    }
 }
 
 pub(crate) fn quartz_to_cocoa(bounds: CGRect, primary_h: f64) -> (f64, f64, f64, f64) {
@@ -1284,7 +1489,7 @@ mod tests {
         assert!(drag.contains("drag_preview_image"));
         assert!(drag.contains("setDraggingFrame: bounds"));
         assert!(!drag.contains("36.0, 36.0"));
-        assert_eq!(DRAG_CHIP_RADIUS, 10.0);
+        assert_eq!(DRAG_CHIP_RADIUS, 12.0);
     }
 
     #[test]
@@ -1318,5 +1523,82 @@ mod tests {
         let scale = render.find("cg.scale(scale, scale)").expect("point mapping");
         let paint = render.find("renderInContext").expect("paint");
         assert!(scale < paint);
+    }
+
+    #[test]
+    fn app_icon_mark_is_painted_rather_than_clear_glass() {
+        let icon = include_str!("../../../assets/AppIcon.icon/icon.json");
+        let mark = icon.split("\"name\": \"Mark\"").nth(1).expect("Mark group");
+        let layer = mark.split("\"name\": \"Prompt and list\"").next().expect("mark layer");
+        assert!(
+            layer.contains("\"glass\": false"),
+            "glass replaces the SVG paint, so Finder and the drag image show only the gradient"
+        );
+        assert!(mark.contains("\"kind\": \"neutral\"") || mark.contains("\"kind\": \"layer-color\""));
+    }
+
+    #[test]
+    fn guide_arrow_shares_the_chip_midline_and_switches_sides() {
+        let mid = |frame: (f64, f64, f64, f64)| frame.1 + frame.3 / 2.0;
+        let right = guide_row_frames(true);
+        let left = guide_row_frames(false);
+        assert!((mid(right.chip) - mid(right.arrow)).abs() < 0.01);
+        assert!((mid(left.chip) - mid(left.arrow)).abs() < 0.01);
+        assert!(right.chip.0 + right.chip.2 <= right.arrow.0);
+        assert!(left.arrow.0 + left.arrow.2 <= left.chip.0);
+        assert!(right.arrow.0 + right.arrow.2 <= CARD_WIDTH - CARD_MARGIN + 0.01);
+        assert!(left.chip.0 + left.chip.2 <= CARD_WIDTH - CARD_MARGIN + 0.01);
+        assert_eq!(TITLE_HEIGHT, CLOSE_SIZE);
+    }
+
+    #[test]
+    fn drag_chip_centers_the_icon_with_the_name_and_the_title_with_the_close_button() {
+        let src = include_str!("accessibility_guide.rs");
+        let row = src
+            .split("fn add_drag_row")
+            .nth(1)
+            .and_then(|rest| rest.split("fn register_classes").next())
+            .expect("add_drag_row");
+        assert!(row.contains("pin_center_y(image_view, view)"));
+        assert!(row.contains("pin_center_y(label, view)"));
+        assert!(row.contains("setImageAlignment: NS_IMAGE_ALIGN_CENTER"));
+        let copy = row.find("shared_icon, copy").expect("copy the shared icon");
+        let resize = row.find("setSize:").expect("resize the copy");
+        assert!(copy < resize);
+        assert!(!row.contains("NSPoint::new(54.0, 15.0)"));
+        let card = src
+            .split("fn build_card_content")
+            .nth(1)
+            .and_then(|rest| rest.split("fn add_label").next())
+            .expect("build_card_content");
+        assert!(card.contains("pin_center_y(title_label, close)"));
+        assert!(card.contains("NSPoint::new(close_x, title_y)"));
+    }
+
+    #[test]
+    fn guide_arrow_nudges_toward_the_list_without_restarting_every_tick() {
+        let src = include_str!("accessibility_guide.rs");
+        let update = src
+            .split("fn update_arrow")
+            .nth(1)
+            .and_then(|rest| rest.split("fn animate_guide_arrow").next())
+            .expect("update_arrow");
+        let changed = update.find("if direction_changed").expect("side change");
+        let animate = update.find("animate_guide_arrow").expect("animate");
+        assert!(changed < animate);
+        let anim = src
+            .split("fn animate_guide_arrow")
+            .nth(1)
+            .and_then(|rest| rest.split("fn arrow_symbol").next())
+            .expect("animate");
+        assert!(anim.contains("transform.translation.x"));
+        assert!(anim.contains("setAutoreverses: YES"));
+        assert!(anim.contains("setRepeatCount"));
+        let dismiss = src
+            .split("fn dismiss_guide")
+            .nth(1)
+            .and_then(|rest| rest.split("fn dismiss_panel_only").next())
+            .expect("dismiss");
+        assert!(dismiss.contains("ARROW_DIRECTION.store(0"));
     }
 }

@@ -349,6 +349,13 @@ if shadow.get("kind") not in ("neutral", "layer-color"):
     sys.exit("AppIcon.icon Mark group must set shadow.kind to neutral or layer-color")
 if not isinstance(shadow.get("opacity"), (int, float)):
     sys.exit("AppIcon.icon Mark group is missing shadow.opacity")
+# Liquid Glass replaces the SVG paint with a clear material. Finder, the
+# drag image, and the Accessibility list then show only the gradient.
+for layer in mark.get("layers") or []:
+    if layer.get("glass") is True:
+        sys.exit(
+            "AppIcon.icon Mark layer must keep glass off so the prompt-and-list mark stays visible"
+        )
 for group in doc.get("groups", []):
     for layer in group.get("layers", []):
         name = layer.get("image-name")

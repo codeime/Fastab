@@ -28,7 +28,7 @@
       "name": "Mark",
       "layers": [
         {
-          "glass": true,
+          "glass": false,
           "hidden": false,
           "image-name": "mark.svg",
           "name": "Prompt and list"
@@ -39,7 +39,7 @@
         "kind": "neutral",
         "opacity": 0.5
       },
-      "specular": true,
+      "specular": false,
       "translucency": {
         "enabled": false,
         "value": 0.5
