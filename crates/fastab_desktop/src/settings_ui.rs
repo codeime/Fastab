@@ -216,10 +216,15 @@ impl Render for SettingsWindow {
                             Section::Appearance => {
                                 appearance_page(zh, chrome, entity.clone(), theme_controls).into_any_element()
                             },
-                            Section::Behavior => {
-                                behavior_page(zh, chrome, entity, self.gate.input_method, self.repairing, self.ai.clone())
-                                    .into_any_element()
-                            },
+                            Section::Behavior => behavior_page(
+                                zh,
+                                chrome,
+                                entity,
+                                self.gate.input_method,
+                                self.repairing,
+                                self.ai.clone(),
+                            )
+                            .into_any_element(),
                             Section::About => about_page(zh, chrome, entity, self.copied_doctor).into_any_element(),
                         }),
                 ),

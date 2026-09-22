@@ -911,9 +911,19 @@ impl OverlayController {
             debug!(action, loading, "ignoring overlay action without an actionable list");
             return;
         }
-        if matches!(action, "navigateUp" | "navigateDown" | "insertSelected" | "insertSelectedAndExecute"
-            | "insertCommonPrefix" | "insertCommonPrefixOrInsertSelected" | "insertCommonPrefixOrNavigateDown"
-            | "execute" | "toggleHistoryMode" | "toggleFuzzySearch") || action.starts_with("selectSuggestion")
+        if matches!(
+            action,
+            "navigateUp"
+                | "navigateDown"
+                | "insertSelected"
+                | "insertSelectedAndExecute"
+                | "insertCommonPrefix"
+                | "insertCommonPrefixOrInsertSelected"
+                | "insertCommonPrefixOrNavigateDown"
+                | "execute"
+                | "toggleHistoryMode"
+                | "toggleFuzzySearch"
+        ) || action.starts_with("selectSuggestion")
         {
             self.cancel_jev_request(cx);
         }

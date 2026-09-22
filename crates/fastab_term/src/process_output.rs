@@ -29,10 +29,19 @@ async fn read_prefix(mut pipe: impl AsyncRead + Unpin) -> io::Result<Vec<u8>> {
 /// Spawn and concurrently drain both pipes, retaining their raw-byte prefixes.
 /// Dropping this future drops the Child, preserving its kill-on-drop setting.
 pub async fn run(command: &mut Command) -> io::Result<RunProcessResponse> {
-    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = command.spawn()?;
-    let stdout = child.stdout.take().ok_or_else(|| io::Error::other("missing stdout pipe"))?;
-    let stderr = child.stderr.take().ok_or_else(|| io::Error::other("missing stderr pipe"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("missing stdout pipe"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| io::Error::other("missing stderr pipe"))?;
     let (status, stdout, stderr) = tokio::try_join!(child.wait(), read_prefix(stdout), read_prefix(stderr))?;
     Ok(RunProcessResponse {
         stdout: String::from_utf8_lossy(&stdout).into_owned(),
@@ -76,10 +85,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_process_truncates_raw_bytes_before_lossy_decoding() {
-        let output = shell(
-            "dd if=/dev/zero bs=262143 count=1 2>/dev/null; printf '\\342\\202\\254'; exit 0",
-        )
-        .await;
+        let output = shell("dd if=/dev/zero bs=262143 count=1 2>/dev/null; printf '\\342\\202\\254'; exit 0").await;
         assert_eq!(output.stdout.len(), MAX_PIPE_BYTES + 2);
         assert!(output.stdout.ends_with('\u{fffd}'));
         assert!(output.stderr.is_empty());

@@ -57,8 +57,26 @@ use crate::message::{process_figterm_message, process_remote_message};
 use crate::pty::unix::open_pty;
 #[cfg(windows)]
 use crate::pty::win::open_pty;
-use crate::pty::{AsyncMasterPtyExt, CommandBuilder};
+use crate::pty::{AsyncMasterPty, AsyncMasterPtyExt, CommandBuilder};
 use crate::term::{SystemTerminal, Terminal};
+
+/// Replay settled failed intercepted keys, then flush deferred ordinary PTY
+/// input once no intercepted key is still awaiting write settlement. Never
+/// blocks the main loop on in-flight key delivery.
+async fn flush_settled_pty_input(
+    remote_sender: &RemoteSender,
+    master: &mut (dyn AsyncMasterPty + Send),
+    deferred: &mut BytesMut,
+) -> Result<()> {
+    for failed in remote_sender.take_failed_keys() {
+        master.write_all(&failed).await?;
+    }
+    if !deferred.is_empty() && !remote_sender.has_pending_keys() {
+        master.write_all(deferred).await?;
+        deferred.clear();
+    }
+    Ok(())
+}
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -128,6 +146,8 @@ pub(crate) enum MainLoopEvent {
     },
     UnlockInterception,
     SetImmediateMode(bool),
+    // SSH remote-install prompt path is currently commented out at the match site.
+    #[allow(dead_code)]
     PromptSSH {
         uuid: String,
         remote_host: String,
@@ -203,7 +223,10 @@ fn reconcile_remote_state(sender: &RemoteSender, interceptor: &mut KeyIntercepto
     }
     drop(insertion);
     let mut pending = INSERT_ON_NEW_CMD.lock().unwrap();
-    if pending.as_ref().is_some_and(|pending| !pending.origin.is_current(ready)) {
+    if pending
+        .as_ref()
+        .is_some_and(|pending| !pending.origin.is_current(ready))
+    {
         pending.take();
     }
     ready
@@ -430,10 +453,13 @@ where
 
                 // Admission, generation validation and the context marker
                 // commit are one operation. A rejected frame synchronizes nothing.
-                let _ = bound.try_send_with_context(message, ContextAdmission {
-                    full_context,
-                    environment_epoch: include_environment.then_some(epoch),
-                });
+                let _ = bound.try_send_with_context(
+                    message,
+                    ContextAdmission {
+                        full_context,
+                        environment_epoch: include_environment.then_some(epoch),
+                    },
+                );
             }
             Ok(())
         },
@@ -634,6 +660,7 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
             parent_id,
         ).await?;
         let mut remote_state_changes = remote_sender.subscribe();
+        let mut deferred_pty_input = BytesMut::new();
 
         let mut stdout = io::stdout();
         let mut master = pty.master.get_async_master_pty()?;
@@ -699,10 +726,8 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                 }
                 _ = remote_sender.key_delivery_changed() => {
                     reconcile_remote_state(&remote_sender, &mut key_interceptor);
-                    for raw in remote_sender.take_failed_keys() {
-                        master.write_all(&raw).await?;
-                    }
-                    Ok(())
+                    flush_settled_pty_input(&remote_sender, master.as_mut(), &mut deferred_pty_input)
+                        .await
                 }
                 res = main_loop_rx.recv_async() => {
                     match res {
@@ -713,6 +738,14 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                                     if !origin.is_current(remote_sender.phase().ready_generation()) {
                                         continue 'select_loop;
                                     }
+                                    // Keep Insert after any deferred ordinary bytes that became
+                                    // writable once intercepted keys settled.
+                                    flush_settled_pty_input(
+                                        &remote_sender,
+                                        master.as_mut(),
+                                        &mut deferred_pty_input,
+                                    )
+                                    .await?;
                                     if bracketed {
                                         if term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE) {
                                             master.write_all(b"\x1b[200~").await?;
@@ -820,37 +853,70 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
 
                                         let handled_action = if !preexec {
                                             if let Some(action) = key_interceptor.intercept_key(&event) {
-                                                // Place already buffered ordinary input before
-                                                // this key, without overtaking earlier unresolved
-                                                // intercepted keys from this or an older batch.
+                                                // Ordinary bytes already in this batch must reach
+                                                // the PTY before this key is admitted — otherwise a
+                                                // later desktop Insert can overtake them. Defer them
+                                                // behind any still-pending intercepted keys without
+                                                // blocking the main loop on settlement.
                                                 if !write_buffer.is_empty() {
-                                                    for failed in remote_sender.take_failed_keys_before_input().await {
-                                                        master.write_all(&failed).await?;
-                                                    }
-                                                    master.write_all(&write_buffer).await?;
+                                                    deferred_pty_input.extend_from_slice(&write_buffer);
                                                     write_buffer.clear();
                                                 }
-                                                debug!(?action, "Intercepted action");
-                                                let s = raw.clone()
-                                                    .and_then(|b| String::from_utf8(b.to_vec()).ok())
-                                                    .unwrap_or_default();
-                                                let context = shell_state_to_context(term.shell_state());
-                                                let hook = fastab_proto::remote_hooks::new_intercepted_key_hook(context, action, s);
-                                                // The desktop's InterceptedKey handler does not
-                                                // apply its context, so it must not advance the
-                                                // generation's context synchronization marker.
-                                                let admitted = key_generation.is_some_and(|generation| {
-                                                    remote_sender.for_generation(generation)
-                                                        .try_send_key(hook_to_message(hook), raw.clone().unwrap_or_default()).is_ok()
-                                                });
-                                                if !admitted {
-                                                    reconcile_remote_state(&remote_sender, &mut key_interceptor);
-                                                }
+                                                flush_settled_pty_input(
+                                                    &remote_sender,
+                                                    master.as_mut(),
+                                                    &mut deferred_pty_input,
+                                                )
+                                                .await?;
+                                                // Only admit once older keys have settled and
+                                                // deferred ordinary input has been flushed.
+                                                let can_admit = !remote_sender.has_pending_keys()
+                                                    && deferred_pty_input.is_empty();
+                                                if !can_admit {
+                                                    reconcile_remote_state(
+                                                        &remote_sender,
+                                                        &mut key_interceptor,
+                                                    );
+                                                    false
+                                                } else {
+                                                    debug!(?action, "Intercepted action");
+                                                    let s = raw
+                                                        .clone()
+                                                        .and_then(|b| {
+                                                            String::from_utf8(b.to_vec()).ok()
+                                                        })
+                                                        .unwrap_or_default();
+                                                    let context =
+                                                        shell_state_to_context(term.shell_state());
+                                                    let hook = fastab_proto::remote_hooks::new_intercepted_key_hook(
+                                                        context, action, s,
+                                                    );
+                                                    // The desktop's InterceptedKey handler does not
+                                                    // apply its context, so it must not advance the
+                                                    // generation's context synchronization marker.
+                                                    let admitted = key_generation.is_some_and(
+                                                        |generation| {
+                                                            remote_sender
+                                                                .for_generation(generation)
+                                                                .try_send_key(
+                                                                    hook_to_message(hook),
+                                                                    raw.clone().unwrap_or_default(),
+                                                                )
+                                                                .is_ok()
+                                                        },
+                                                    );
+                                                    if !admitted {
+                                                        reconcile_remote_state(
+                                                            &remote_sender,
+                                                            &mut key_interceptor,
+                                                        );
+                                                    }
 
-                                                if event.key == KeyCode::Escape {
-                                                    key_interceptor.reset();
+                                                    if event.key == KeyCode::Escape {
+                                                        key_interceptor.reset();
+                                                    }
+                                                    admitted
                                                 }
-                                                admitted
                                             } else {
                                                 false
                                             }
@@ -910,11 +976,14 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                                 };
                             }
                             if !write_buffer.is_empty() {
-                                for failed in remote_sender.take_failed_keys_before_input().await {
-                                    master.write_all(&failed).await?;
-                                }
-                                master.write_all(&write_buffer).await?;
+                                deferred_pty_input.extend_from_slice(&write_buffer);
                             }
+                            flush_settled_pty_input(
+                                &remote_sender,
+                                master.as_mut(),
+                                &mut deferred_pty_input,
+                            )
+                            .await?;
                         }
                         Err(err) => {
                             warn!("Failed recv: {err}");
@@ -1122,13 +1191,19 @@ mod tests {
         note_shell_context_updated();
         let epoch = shell_context_epoch();
         assert!(progress.needs_environment(epoch));
-        progress.record(ContextAdmission { full_context: true, environment_epoch: Some(epoch) });
+        progress.record(ContextAdmission {
+            full_context: true,
+            environment_epoch: Some(epoch),
+        });
         assert!(!progress.needs_environment(epoch));
         note_shell_context_updated();
         let next = shell_context_epoch();
         assert_ne!(next, epoch);
         assert!(progress.needs_environment(next));
-        progress.record(ContextAdmission { full_context: false, environment_epoch: Some(next) });
+        progress.record(ContextAdmission {
+            full_context: false,
+            environment_epoch: Some(next),
+        });
         assert!(!progress.needs_environment(next));
         // A new connection must synchronize even when the shell epoch did not change.
         let reconnected = ContextProgress::default();

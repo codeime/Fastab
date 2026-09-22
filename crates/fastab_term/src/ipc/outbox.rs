@@ -8,8 +8,8 @@ use bytes::Bytes;
 use fastab_proto::FigProtobufEncodable;
 use fastab_proto::prost::Message;
 use fastab_proto::remote::Hostbound;
-use tokio::sync::{Notify, watch};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::sync::{Notify, watch};
 use tracing::warn;
 
 // Engineering limits, not measured optima. Count the frame being written too:
@@ -23,15 +23,31 @@ const KEY_PENDING: u8 = 0;
 const KEY_WRITTEN: u8 = 1;
 const KEY_FAILED: u8 = 2;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BeginAttempt {
+    /// A new connection generation may start.
+    Started(Generation),
+    /// An in-flight frame still owes its accounting debit. Retry later.
+    Busy,
+    /// The supervisor is finished (explicit stop or generation overflow).
+    Stopped,
+}
+
 struct KeyDelivery {
     status: AtomicU8,
     changed: Arc<Notify>,
+    // Used by the test-only settlement barrier to retire the right generation.
+    #[cfg_attr(not(test), allow(dead_code))]
     generation: Generation,
 }
 
 impl KeyDelivery {
     fn settle(&self, status: u8) {
-        if self.status.compare_exchange(KEY_PENDING, status, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+        if self
+            .status
+            .compare_exchange(KEY_PENDING, status, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
             self.changed.notify_one();
         }
     }
@@ -44,7 +60,9 @@ struct QueuedFrame {
 
 impl Drop for QueuedFrame {
     fn drop(&mut self) {
-        if let Some(key) = &self.key { key.settle(KEY_FAILED); }
+        if let Some(key) = &self.key {
+            key.settle(KEY_FAILED);
+        }
     }
 }
 
@@ -214,39 +232,46 @@ impl RemoteSender {
     }
 
     pub(crate) fn for_generation(&self, generation: Generation) -> GenerationSender {
-        GenerationSender { sender: self.clone(), generation }
+        GenerationSender {
+            sender: self.clone(),
+            generation,
+        }
     }
 
     pub(crate) fn current(&self) -> Option<GenerationSender> {
-        self.phase().ready_generation().map(|generation| self.for_generation(generation))
+        self.phase()
+            .ready_generation()
+            .map(|generation| self.for_generation(generation))
     }
 
-    pub(super) fn begin_attempt(&self) -> Option<Generation> {
+    pub(super) fn begin_attempt(&self) -> BeginAttempt {
         let mut state = self.shared.state.lock().unwrap();
         if state.phase == ConnectionPhase::Stopped {
-            return None;
+            return BeginAttempt::Stopped;
         }
-        // This is a release-build invariant too. Retiring clears queued frames,
-        // but an I/O future must release its in-flight allocation before a new
-        // generation can receive a fresh budget.
+        // Retiring clears queued frames, but an I/O future must release its
+        // in-flight allocation before a new generation can receive a fresh budget.
+        // Callers must retry on Busy — never treat it as a permanent stop.
         if state.pending_messages != 0 || state.pending_bytes != 0 {
-            return None;
+            return BeginAttempt::Busy;
         }
         let Some(next) = state.last_generation.checked_add(1) else {
             self.shared.set_phase(&mut state, ConnectionPhase::Stopped);
-            return None;
+            return BeginAttempt::Stopped;
         };
         let generation = Generation(next);
         state.last_generation = next;
         state.context = ContextProgress::default();
-        self.shared.set_phase(&mut state, ConnectionPhase::Connecting(generation));
-        Some(generation)
+        self.shared
+            .set_phase(&mut state, ConnectionPhase::Connecting(generation));
+        BeginAttempt::Started(generation)
     }
 
     pub(super) fn set_handshaking(&self, generation: Generation) {
         let mut state = self.shared.state.lock().unwrap();
         if state.phase == ConnectionPhase::Connecting(generation) {
-            self.shared.set_phase(&mut state, ConnectionPhase::Handshaking(generation));
+            self.shared
+                .set_phase(&mut state, ConnectionPhase::Handshaking(generation));
         }
     }
 
@@ -292,11 +317,25 @@ impl RemoteSender {
                     return None;
                 }
                 if let Some(frame) = state.queue.pop_front() {
-                    return Some(PendingFrame { frame, sender: self.clone() });
+                    return Some(PendingFrame {
+                        frame,
+                        sender: self.clone(),
+                    });
                 }
             }
             notified.await;
         }
+    }
+
+    /// True while at least one intercepted key is still awaiting write settlement.
+    /// Ordinary input must not overtake those keys, but the PTY main loop must
+    /// not block waiting for them either.
+    pub(crate) fn has_pending_keys(&self) -> bool {
+        let state = self.shared.state.lock().unwrap();
+        state
+            .keys
+            .iter()
+            .any(|key| key.delivery.status.load(Ordering::Acquire) == KEY_PENDING)
     }
 
     pub(crate) async fn key_delivery_changed(&self) {
@@ -310,21 +349,27 @@ impl RemoteSender {
         let mut failed = Vec::new();
         while let Some(key) = state.keys.front() {
             let status = key.delivery.status.load(Ordering::Acquire);
-            if status == KEY_PENDING { break; }
+            if status == KEY_PENDING {
+                break;
+            }
             let key = state.keys.pop_front().unwrap();
             state.key_bytes -= key.raw.len();
-            if status == KEY_FAILED { failed.push(key.raw); }
+            if status == KEY_FAILED {
+                failed.push(key.raw);
+            }
         }
         failed
     }
 
     /// Preserve the position of ordinary/rejected input after older intercepted
-    /// keys. The main loop calls this before admitting a later intercepted key,
-    /// so only this bounded batch is retained while the writer settles.
+    /// keys. Kept for tests that pin barrier ordering; the PTY main loop uses
+    /// the non-blocking [`take_failed_keys`] + [`has_pending_keys`] path instead.
+    #[cfg(test)]
     pub(crate) async fn take_failed_keys_before_input(&self) -> Vec<Bytes> {
         self.take_failed_keys_with_timeout(WRITE_TIMEOUT).await
     }
 
+    #[cfg(test)]
     async fn take_failed_keys_with_timeout(&self, limit: Duration) -> Vec<Bytes> {
         let mut failed = Vec::new();
         let deadline = tokio::time::sleep(limit);
@@ -335,7 +380,9 @@ impl RemoteSender {
             tokio::pin!(changed);
             changed.as_mut().enable();
             failed.extend(self.take_failed_keys());
-            if self.shared.state.lock().unwrap().keys.is_empty() { break; }
+            if self.shared.state.lock().unwrap().keys.is_empty() {
+                break;
+            }
             tokio::select! {
                 biased;
                 _ = &mut deadline, if !retired => {
@@ -402,7 +449,8 @@ impl GenerationSender {
         let encoded = match message.encode_fastab_protobuf() {
             Ok(encoded) => encoded,
             Err(err) => {
-                self.sender.retire(self.generation, &format!("outgoing frame encoding failed: {err}"));
+                self.sender
+                    .retire(self.generation, &format!("outgoing frame encoding failed: {err}"));
                 return Err(AdmissionError::EncodingFailed);
             },
         };
@@ -412,24 +460,38 @@ impl GenerationSender {
         }
         // Completed keys need no recovery allocation. In particular a batch of
         // successfully written keys must not fill the fallback-record budget.
-        while state.keys.front().is_some_and(|key| key.delivery.status.load(Ordering::Acquire) == KEY_WRITTEN) {
+        while state
+            .keys
+            .front()
+            .is_some_and(|key| key.delivery.status.load(Ordering::Acquire) == KEY_WRITTEN)
+        {
             let key = state.keys.pop_front().unwrap();
             state.key_bytes -= key.raw.len();
         }
         if state.pending_messages >= MAX_PENDING_MESSAGES
             || encoded.len() > MAX_PENDING_BYTES - state.pending_bytes
-            || raw.as_ref().is_some_and(|raw| state.keys.len() >= MAX_PENDING_MESSAGES
-                || raw.len() > MAX_PENDING_BYTES - state.key_bytes)
+            || raw.as_ref().is_some_and(|raw| {
+                state.keys.len() >= MAX_PENDING_MESSAGES || raw.len() > MAX_PENDING_BYTES - state.key_bytes
+            })
         {
-            self.sender.shared.invalidate(&mut state, self.generation, "outgoing queue exceeds budget");
+            self.sender
+                .shared
+                .invalidate(&mut state, self.generation, "outgoing queue exceeds budget");
             return Err(AdmissionError::CapacityExceeded);
         }
         state.pending_messages += 1;
         state.pending_bytes += encoded.len();
         let key = raw.map(|raw| {
-            let delivery = Arc::new(KeyDelivery { status: AtomicU8::new(KEY_PENDING), changed: self.sender.shared.keys_changed.clone(), generation: self.generation });
+            let delivery = Arc::new(KeyDelivery {
+                status: AtomicU8::new(KEY_PENDING),
+                changed: self.sender.shared.keys_changed.clone(),
+                generation: self.generation,
+            });
             state.key_bytes += raw.len();
-            state.keys.push_back(RecoverableKey { raw, delivery: delivery.clone() });
+            state.keys.push_back(RecoverableKey {
+                raw,
+                delivery: delivery.clone(),
+            });
             delivery
         });
         state.queue.push_back(QueuedFrame { bytes: encoded, key });
@@ -455,9 +517,13 @@ impl PendingFrame {
             writer.write_all(&self.frame.bytes).await?;
             // Flush failure is not evidence that a fully written key was lost.
             // Never replay it after crossing the explicit write_all boundary.
-            if let Some(key) = &self.frame.key { key.settle(KEY_WRITTEN); }
+            if let Some(key) = &self.frame.key {
+                key.settle(KEY_WRITTEN);
+            }
             writer.flush().await
-        }).await.map_err(|_elapsed| io::Error::new(io::ErrorKind::TimedOut, "remote frame write timed out"))?
+        })
+        .await
+        .map_err(|_elapsed| io::Error::new(io::ErrorKind::TimedOut, "remote frame write timed out"))?
     }
 }
 
@@ -475,8 +541,8 @@ impl Drop for PendingFrame {
 mod tests {
     use std::future::Future;
     use std::pin::Pin;
-    use std::task::{Context, Poll};
     use std::sync::atomic::AtomicUsize;
+    use std::task::{Context, Poll};
 
     use fastab_proto::remote_hooks::{hook_to_message, new_intercepted_key_hook};
 
@@ -488,7 +554,9 @@ mod tests {
 
     fn ready() -> (RemoteSender, GenerationSender) {
         let sender = RemoteSender::new();
-        let generation = sender.begin_attempt().unwrap();
+        let BeginAttempt::Started(generation) = sender.begin_attempt() else {
+            panic!("expected a fresh generation");
+        };
         sender.set_handshaking(generation);
         sender.set_ready(generation);
         let bound = sender.for_generation(generation);
@@ -507,23 +575,37 @@ mod tests {
 
     impl Writer {
         fn new(limit: usize) -> Self {
-            Self { bytes: Vec::new(), limit, fail_flush: false, stall_flush: false, started: None }
+            Self {
+                bytes: Vec::new(),
+                limit,
+                fail_flush: false,
+                stall_flush: false,
+                started: None,
+            }
         }
     }
 
     impl AsyncWrite for Writer {
         fn poll_write(mut self: Pin<&mut Self>, _: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
             let count = bytes.len().min(self.limit.saturating_sub(self.bytes.len()));
-            if count == 0 { return Poll::Pending; }
+            if count == 0 {
+                return Poll::Pending;
+            }
             self.bytes.extend_from_slice(&bytes[..count]);
-            if let Some(started) = &self.started { started.notify_one(); }
+            if let Some(started) = &self.started {
+                started.notify_one();
+            }
             Poll::Ready(Ok(count))
         }
 
         fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
-            if self.stall_flush { Poll::Pending }
-            else if self.fail_flush { Poll::Ready(Err(io::ErrorKind::BrokenPipe.into())) }
-            else { Poll::Ready(Ok(())) }
+            if self.stall_flush {
+                Poll::Pending
+            } else if self.fail_flush {
+                Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()))
+            } else {
+                Poll::Ready(Ok(()))
+            }
         }
 
         fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -534,14 +616,33 @@ mod tests {
     #[test]
     fn oversized_frame_preserves_ready_queue_and_context() {
         let (sender, bound) = ready();
-        bound.try_send_with_context(message(1), ContextAdmission { full_context: true, environment_epoch: Some(7) }).unwrap();
+        bound
+            .try_send_with_context(
+                message(1),
+                ContextAdmission {
+                    full_context: true,
+                    environment_epoch: Some(7),
+                },
+            )
+            .unwrap();
         let before = {
             let state = sender.shared.state.lock().unwrap();
-            (state.phase, state.pending_bytes, state.queue.front().unwrap().bytes.clone())
+            (
+                state.phase,
+                state.pending_bytes,
+                state.queue.front().unwrap().bytes.clone(),
+            )
         };
-        assert_eq!(bound.try_send_with_context(message(MAX_PENDING_BYTES), ContextAdmission {
-            full_context: true, environment_epoch: Some(8),
-        }), Err(AdmissionError::FrameTooLarge));
+        assert_eq!(
+            bound.try_send_with_context(
+                message(MAX_PENDING_BYTES),
+                ContextAdmission {
+                    full_context: true,
+                    environment_epoch: Some(8),
+                }
+            ),
+            Err(AdmissionError::FrameTooLarge)
+        );
         let state = sender.shared.state.lock().unwrap();
         assert_eq!(state.phase, before.0);
         assert_eq!(state.pending_messages, 1);
@@ -555,10 +656,19 @@ mod tests {
     #[test]
     fn cumulative_bytes_retire_and_clear_the_generation() {
         let (sender, bound) = ready();
-        bound.try_send_with_context(message(MAX_PENDING_BYTES / 2), ContextAdmission {
-            full_context: true, environment_epoch: Some(7),
-        }).unwrap();
-        assert_eq!(bound.try_send(message(MAX_PENDING_BYTES / 2)), Err(AdmissionError::CapacityExceeded));
+        bound
+            .try_send_with_context(
+                message(MAX_PENDING_BYTES / 2),
+                ContextAdmission {
+                    full_context: true,
+                    environment_epoch: Some(7),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            bound.try_send(message(MAX_PENDING_BYTES / 2)),
+            Err(AdmissionError::CapacityExceeded)
+        );
         let state = sender.shared.state.lock().unwrap();
         assert_eq!(state.phase, ConnectionPhase::Disconnected);
         assert!(state.queue.is_empty());
@@ -572,16 +682,20 @@ mod tests {
         let (sender, bound) = ready();
         bound.try_send(message(0)).unwrap();
         let frame = sender.next_frame(bound.generation()).await.unwrap();
-        for _ in 1..MAX_PENDING_MESSAGES { bound.try_send(message(0)).unwrap(); }
+        for _ in 1..MAX_PENDING_MESSAGES {
+            bound.try_send(message(0)).unwrap();
+        }
         assert_eq!(bound.try_send(message(0)), Err(AdmissionError::CapacityExceeded));
         assert_eq!(sender.shared.state.lock().unwrap().pending_messages, 1);
-        assert_eq!(sender.begin_attempt(), None);
+        assert_eq!(sender.begin_attempt(), BeginAttempt::Busy);
         drop(frame);
         {
             let state = sender.shared.state.lock().unwrap();
             assert_eq!((state.pending_messages, state.pending_bytes), (0, 0));
         }
-        let next = sender.begin_attempt().unwrap();
+        let BeginAttempt::Started(next) = sender.begin_attempt() else {
+            panic!("expected the next generation after the in-flight frame released");
+        };
         assert_ne!(next, bound.generation());
         sender.set_handshaking(next);
         sender.set_ready(next);
@@ -597,7 +711,10 @@ mod tests {
     async fn oversized_key_is_not_registered_for_a_second_fallback() {
         let (sender, bound) = ready();
         let raw = Bytes::from_static(b"\x1b[A");
-        assert_eq!(bound.try_send_key(message(MAX_PENDING_BYTES), raw.clone()), Err(AdmissionError::FrameTooLarge));
+        assert_eq!(
+            bound.try_send_key(message(MAX_PENDING_BYTES), raw.clone()),
+            Err(AdmissionError::FrameTooLarge)
+        );
         // The caller still owns the exact original bytes for its immediate
         // fallback. The outbox must never produce a second copy on retirement.
         assert_eq!(raw.as_ref(), b"\x1b[A");
@@ -614,16 +731,22 @@ mod tests {
         bound.try_send_key(message(0), Bytes::from_static(b"A")).unwrap();
         let inflight = sender.next_frame(bound.generation()).await.unwrap();
         bound.try_send_key(message(0), Bytes::from_static(b"B")).unwrap();
-        for _ in 2..MAX_PENDING_MESSAGES { bound.try_send(message(0)).unwrap(); }
+        for _ in 2..MAX_PENDING_MESSAGES {
+            bound.try_send(message(0)).unwrap();
+        }
         let rejected = Bytes::from_static(b"C");
-        assert_eq!(bound.try_send_key(message(0), rejected.clone()), Err(AdmissionError::CapacityExceeded));
+        assert_eq!(
+            bound.try_send_key(message(0), rejected.clone()),
+            Err(AdmissionError::CapacityExceeded)
+        );
         assert!(sender.take_failed_keys().is_empty());
         let barrier = sender.take_failed_keys_before_input();
         tokio::pin!(barrier);
         std::future::poll_fn(|cx| {
             assert!(barrier.as_mut().poll(cx).is_pending());
             Poll::Ready(())
-        }).await;
+        })
+        .await;
         drop(inflight);
         let recovered = barrier.await;
         let mut pty = recovered.concat();
@@ -639,7 +762,10 @@ mod tests {
         bound.try_send_key(message(8), raw.clone()).unwrap();
         let mut frame = sender.next_frame(bound.generation()).await.unwrap();
         let mut writer = Writer::new(7);
-        let error = frame.write_with_timeout(&mut writer, Duration::from_millis(1)).await.unwrap_err();
+        let error = frame
+            .write_with_timeout(&mut writer, Duration::from_millis(1))
+            .await
+            .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert_eq!(writer.bytes.len(), 7);
         sender.retire(bound.generation(), "timed out");
@@ -648,7 +774,8 @@ mod tests {
         std::future::poll_fn(|cx| {
             assert!(barrier.as_mut().poll(cx).is_pending());
             Poll::Ready(())
-        }).await;
+        })
+        .await;
         drop(frame);
         let mut pty = barrier.await.concat();
         pty.extend_from_slice(b"ordinary input");
@@ -670,8 +797,11 @@ mod tests {
             let mut writer = Writer::new(usize::MAX);
             writer.fail_flush = fail_flush;
             let result = frame.write_to(&mut writer).await;
-            if fail_flush { assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe); }
-            else { result.unwrap(); }
+            if fail_flush {
+                assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+            } else {
+                result.unwrap();
+            }
             assert_eq!(writer.bytes, expected.as_ref());
             sender.retire(bound.generation(), "connection closed");
             drop(frame);
@@ -692,7 +822,8 @@ mod tests {
             std::future::poll_fn(|cx| {
                 assert!(write.as_mut().poll(cx).is_pending());
                 Poll::Ready(())
-            }).await;
+            })
+            .await;
         }
         assert!(!writer.bytes.is_empty());
         sender.stop();
@@ -702,11 +833,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pending_keys_block_ordinary_flush_until_settled() {
+        let (sender, bound) = ready();
+        bound.try_send_key(message(0), Bytes::from_static(b"A")).unwrap();
+        assert!(sender.has_pending_keys());
+        assert!(sender.take_failed_keys().is_empty());
+        let frame = sender.next_frame(bound.generation()).await.unwrap();
+        assert!(sender.has_pending_keys());
+        drop(frame);
+        assert!(!sender.has_pending_keys());
+        assert_eq!(sender.take_failed_keys(), vec![Bytes::from_static(b"A")]);
+        assert!(!sender.has_pending_keys());
+    }
+
+    #[tokio::test]
     async fn undrained_raw_recovery_has_its_own_byte_bound() {
         let (sender, bound) = ready();
         let raw = Bytes::from(vec![b'a'; MAX_PENDING_BYTES]);
         bound.try_send_key(message(0), raw).unwrap();
-        assert_eq!(bound.try_send_key(message(0), Bytes::from_static(b"b")), Err(AdmissionError::CapacityExceeded));
+        assert_eq!(
+            bound.try_send_key(message(0), Bytes::from_static(b"b")),
+            Err(AdmissionError::CapacityExceeded)
+        );
         let failed = sender.take_failed_keys_before_input().await;
         assert_eq!(failed.len(), 1);
         assert_eq!(failed[0].len(), MAX_PENDING_BYTES);
@@ -756,7 +904,9 @@ mod tests {
     impl AsyncWrite for SlowFlushWriter {
         fn poll_write(mut self: Pin<&mut Self>, _: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
             self.delivered.fetch_add(1, Ordering::SeqCst);
-            self.delay.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(2));
+            self.delay
+                .as_mut()
+                .reset(tokio::time::Instant::now() + Duration::from_millis(2));
             self.started.notify_one();
             Poll::Ready(Ok(bytes.len()))
         }
@@ -774,12 +924,15 @@ mod tests {
     async fn barrier_has_one_deadline_despite_successive_completed_frames() {
         let (sender, bound) = ready();
         let generation = bound.generation();
-        for key in 0..64 { bound.try_send_key(message(0), Bytes::from(vec![key])).unwrap(); }
+        for key in 0..64 {
+            bound.try_send_key(message(0), Bytes::from(vec![key])).unwrap();
+        }
         let delivered = Arc::new(AtomicUsize::new(0));
         let started = Arc::new(Notify::new());
         let mut writer = SlowFlushWriter {
             delay: Box::pin(tokio::time::sleep(Duration::ZERO)),
-            delivered: delivered.clone(), started: started.clone(),
+            delivered: delivered.clone(),
+            started: started.clone(),
         };
         let supervisor = sender.clone();
         let worker = tokio::spawn(async move {

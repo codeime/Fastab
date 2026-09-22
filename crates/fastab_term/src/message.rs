@@ -185,7 +185,11 @@ pub(crate) async fn process_figterm_request(
                     actions,
                     override_actions,
                 })) => {
-                    key_interceptor.set_intercepts_from(intercept_global_keystrokes, intercept_bound_keystrokes, origin);
+                    key_interceptor.set_intercepts_from(
+                        intercept_global_keystrokes,
+                        intercept_bound_keystrokes,
+                        origin,
+                    );
                     key_interceptor.set_actions(&actions, override_actions);
                 },
                 Some(InterceptCommand::SetFigjsVisible(SetFigjsVisible { visible })) => {
@@ -296,7 +300,16 @@ pub(crate) async fn process_figterm_message(
             // Telemetry removed
         },
         Some(request) => {
-            match process_figterm_request(request, main_loop_tx, term, pty_master, key_interceptor, RequestOrigin::Local).await {
+            match process_figterm_request(
+                request,
+                main_loop_tx,
+                term,
+                pty_master,
+                key_interceptor,
+                RequestOrigin::Local,
+            )
+            .await
+            {
                 Ok(Some(response)) => {
                     let response_message = FigtermResponseMessage {
                         response: Some(response),

@@ -32,7 +32,11 @@ pub struct ClientError {
 
 impl ClientError {
     fn new(kind: ClientErrorKind) -> Self {
-        Self { kind, status: None, cooldown: None }
+        Self {
+            kind,
+            status: None,
+            cooldown: None,
+        }
     }
 }
 
@@ -81,15 +85,16 @@ impl JevClient {
         if !profile.integrity_is_valid() {
             return Err(ClientError::new(ClientErrorKind::InvalidRequest));
         }
-        let body = encode_request(profile, input).map_err(|_error| ClientError::new(ClientErrorKind::InvalidRequest))?;
+        let body =
+            encode_request(profile, input).map_err(|_error| ClientError::new(ClientErrorKind::InvalidRequest))?;
         if key.is_empty() || key.len() > 4096 || !key.iter().all(|byte| byte.is_ascii_graphic()) {
             return Err(ClientError::new(ClientErrorKind::InvalidCredential));
         }
         let mut bearer = Vec::with_capacity(7 + key.len());
         bearer.extend_from_slice(b"Bearer ");
         bearer.extend_from_slice(key);
-        let mut authorization = HeaderValue::from_bytes(&bearer)
-            .map_err(|_error| ClientError::new(ClientErrorKind::InvalidCredential))?;
+        let mut authorization =
+            HeaderValue::from_bytes(&bearer).map_err(|_error| ClientError::new(ClientErrorKind::InvalidCredential))?;
         authorization.set_sensitive(true);
         drop(bearer);
         match tokio::time::timeout(REQUEST_TIMEOUT, self.attempt(profile, authorization, body, input)).await {
@@ -105,13 +110,17 @@ impl JevClient {
         body: Vec<u8>,
         input: &RecommendationInput,
     ) -> Result<Recommendation, ClientError> {
-        let mut response = self.http.post(profile.endpoint.clone())
+        let mut response = self
+            .http
+            .post(profile.endpoint.clone())
             .header(AUTHORIZATION, authorization)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
             .header(ACCEPT_ENCODING, "identity")
             .body(body)
-            .send().await.map_err(transport_error)?;
+            .send()
+            .await
+            .map_err(transport_error)?;
         let status = response.status();
         if !status.is_success() {
             let kind = match status.as_u16() {
@@ -124,16 +133,35 @@ impl JevClient {
             let delay = matches!(kind, ClientErrorKind::RateLimited | ClientErrorKind::Overloaded)
                 .then(|| cooldown(response.headers()));
             // Do not read an error body: it can be huge or contain echoed secrets.
-            return Err(ClientError { kind, status: Some(status.as_u16()), cooldown: delay });
+            return Err(ClientError {
+                kind,
+                status: Some(status.as_u16()),
+                cooldown: delay,
+            });
         }
-        if response.headers().get(CONTENT_ENCODING).is_some_and(|value| value != "identity") {
+        if response
+            .headers()
+            .get(CONTENT_ENCODING)
+            .is_some_and(|value| value != "identity")
+        {
             return Err(ClientError::new(ClientErrorKind::InvalidResponse));
         }
-        let content_type = response.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok());
-        if !content_type.is_some_and(|value| value.split(';').next().is_some_and(|mime| mime.trim().eq_ignore_ascii_case("application/json"))) {
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok());
+        if !content_type.is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("application/json"))
+        }) {
             return Err(ClientError::new(ClientErrorKind::InvalidResponse));
         }
-        if response.content_length().is_some_and(|length| length > MAX_RESPONSE_BYTES as u64) {
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+        {
             return Err(ClientError::new(ClientErrorKind::ResponseTooLarge));
         }
         let mut bytes = Vec::new();
@@ -148,5 +176,9 @@ impl JevClient {
 }
 
 fn transport_error(error: reqwest::Error) -> ClientError {
-    ClientError::new(if error.is_timeout() { ClientErrorKind::Timeout } else { ClientErrorKind::Transport })
+    ClientError::new(if error.is_timeout() {
+        ClientErrorKind::Timeout
+    } else {
+        ClientErrorKind::Transport
+    })
 }

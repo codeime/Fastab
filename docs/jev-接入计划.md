@@ -86,8 +86,8 @@ flowchart LR
 | 锚 | SHA-256 |
 | --- | --- |
 | source tree | `69d4bdd9fa05ee698c4e72ea677dabb6db0623fccc89e844509cf55ca69501a7` |
-| manifest | `efea68eddad4549ad1fd96a06ced085556efda70ff042ff63dcceca5c364d65f` |
-| IR tree | `fec0a6a2ed769a1c47d8f2c63d8e60f08d5003b01822676fef0137bdc3df4ebb` |
+| manifest | `c0e22579987e58414c56f5e80e9c1d72f11081747e6eaf7aa774c860f118b866` |
+| IR tree | `6872d27a71ecc760f4b7ff169c9f57e2ca37347740d13a7768d879f571781661` |
 
 **覆盖边界：** 只接受光标在末尾、最长 256 字节的简单 ASCII 命令路径，最多 8 段；已消费的每段必须是公共静态命令/子命令，当前前缀须匹配公共候选。首 token 的 PATH 搜索、自由参数、alias 展开、动态 loadSpec/generateSpec 路径都跳过。当前 `git`、`cargo`、`rustup` 根规格存在 generateSpec，因此不能把 `git ch` 当作已支持的演示；部分 `docker`、`go`、`brew`、`kubectl` 纯静态路径可进入准入判断，但其实际请求和效果未验证。
 

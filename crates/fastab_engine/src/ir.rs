@@ -895,9 +895,9 @@ impl Registry {
         if snapshot.is_stale() || snapshot.generation_changed() {
             return false;
         }
-        *self.public_ai_baseline.get_or_insert_with(|| {
-            crate::spec_pair::matches_public_ai_baseline(snapshot)
-        })
+        *self
+            .public_ai_baseline
+            .get_or_insert_with(|| crate::spec_pair::matches_public_ai_baseline(snapshot))
     }
 
     fn insert_loaded(&mut self, mut spec: Spec, path: Option<&Path>) {

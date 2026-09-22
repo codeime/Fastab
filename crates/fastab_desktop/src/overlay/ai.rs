@@ -88,7 +88,10 @@ pub(super) struct JevRuntime {
 impl JevRuntime {
     pub(super) fn is_ready(&self) -> bool {
         self.config_revision == config::runtime_revision()
-            && self.profile.is_some() && self.client.is_some() && self.key.is_some() && !self.blocked
+            && self.profile.is_some()
+            && self.client.is_some()
+            && self.key.is_some()
+            && !self.blocked
     }
 }
 
@@ -114,7 +117,9 @@ impl OverlayController {
         let config = AiConfig::load().ok();
         // Several settings notifications may describe the same saved state.
         // Keep its pending Keychain operation instead of starting a Busy read.
-        if config == self.jev.config && revision == self.jev.config_revision { return; }
+        if config == self.jev.config && revision == self.jev.config_revision {
+            return;
+        }
         self.cancel_jev(cx);
         self.jev.epoch = self.jev.epoch.wrapping_add(1);
         self.jev.key = None;
@@ -125,10 +130,18 @@ impl OverlayController {
         self.jev.blocked = false;
         self.jev.config = config;
         self.jev.config_revision = revision;
-        let Some(config) = &self.jev.config else { return; };
-        if !config.enabled { return; }
-        let Some(profile) = config.active_profile().and_then(|profile| profile.validate().ok()) else { return; };
-        let Ok(client) = JevClient::new() else { return; };
+        let Some(config) = &self.jev.config else {
+            return;
+        };
+        if !config.enabled {
+            return;
+        }
+        let Some(profile) = config.active_profile().and_then(|profile| profile.validate().ok()) else {
+            return;
+        };
+        let Ok(client) = JevClient::new() else {
+            return;
+        };
         let task = credentials::read(&profile.credential_service, cx);
         self.jev.client = Some(client);
         self.jev.profile = Some(profile);
@@ -141,7 +154,9 @@ impl OverlayController {
     }
 
     pub(crate) fn jev_credentials_loaded(&mut self, epoch: u64, credentials: LoadedCredentials, cx: &mut App) {
-        if epoch != self.jev.epoch { return; }
+        if epoch != self.jev.epoch {
+            return;
+        }
         self.jev.credentials = None;
         match credentials.0 {
             Ok(Some(key)) if !key.is_empty() && key.len() <= 4096 && key.iter().all(u8::is_ascii_graphic) => {
@@ -189,47 +204,75 @@ impl OverlayController {
             } else {
                 overlay.invalidate_ai_request();
             }
-            if changed { cx.notify(); }
+            if changed {
+                cx.notify();
+            }
         });
-        if changed { self.relayout_and_sync(cx); }
+        if changed {
+            self.relayout_and_sync(cx);
+        }
     }
 
     pub(super) fn capture_jev_request_context(&mut self, request: &CompleteRequest, session: Uuid) {
         self.jev.request_context = if request.include_public_ai && request.buffer.len() <= 256 {
             canonical_shell(request.current_shell.as_deref()).map(|shell| ContextStamp {
                 input: LastInput {
-                    buffer: request.buffer.clone(), cwd: request.cwd.clone(),
-                    cursor: request.cursor.unwrap_or(request.buffer.len() as u32), session_id: session,
+                    buffer: request.buffer.clone(),
+                    cwd: request.cwd.clone(),
+                    cursor: request.cursor.unwrap_or(request.buffer.len() as u32),
+                    session_id: session,
                 },
                 environment: request.environment_variables.clone(),
-                details: context_digest(request.alias.as_deref(), request.current_shell.as_deref(), request.current_process.as_deref()),
+                details: context_digest(
+                    request.alias.as_deref(),
+                    request.current_shell.as_deref(),
+                    request.current_process.as_deref(),
+                ),
                 shell: shell.into(),
             })
-        } else { None };
+        } else {
+            None
+        };
     }
 
     fn stamp_is_current(&self, stamp: &ContextStamp) -> bool {
         if self.current_session() != Some(stamp.input.session_id)
-            || self.last_input.lock().unwrap_or_else(|error| error.into_inner()).as_ref() != Some(&stamp.input)
-        { return false; }
-        self.figterm_state.with(&stamp.input.session_id, |session| {
-            let context = session.context.as_ref();
-            session.dead_since.is_none()
-                && session.edit_buffer.text == stamp.input.buffer
-                && session.edit_buffer.cursor.max(0) as u32 == stamp.input.cursor
-                && context.and_then(|context| context.current_working_directory.as_deref()).unwrap_or_default() == stamp.input.cwd
-                && Arc::ptr_eq(&session.flattened_env, &stamp.environment)
-                && context_digest(
-                    context.and_then(|context| context.alias.as_deref()),
-                    context.and_then(|context| context.shell_path.as_deref()),
-                    context.and_then(|context| context.process_name.as_deref()),
-                ) == stamp.details
-        }).unwrap_or(false)
+            || self
+                .last_input
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .as_ref()
+                != Some(&stamp.input)
+        {
+            return false;
+        }
+        self.figterm_state
+            .with(&stamp.input.session_id, |session| {
+                let context = session.context.as_ref();
+                session.dead_since.is_none()
+                    && session.edit_buffer.text == stamp.input.buffer
+                    && session.edit_buffer.cursor.max(0) as u32 == stamp.input.cursor
+                    && context
+                        .and_then(|context| context.current_working_directory.as_deref())
+                        .unwrap_or_default()
+                        == stamp.input.cwd
+                    && Arc::ptr_eq(&session.flattened_env, &stamp.environment)
+                    && context_digest(
+                        context.and_then(|context| context.alias.as_deref()),
+                        context.and_then(|context| context.shell_path.as_deref()),
+                        context.and_then(|context| context.process_name.as_deref()),
+                    ) == stamp.details
+            })
+            .unwrap_or(false)
     }
 
     pub(super) fn jev_context_is_current(&self) -> bool {
-        self.jev.snapshot.as_ref().map(|snapshot| &snapshot.context)
-            .or(self.jev.request_context.as_ref()).is_none_or(|context| self.stamp_is_current(context))
+        self.jev
+            .snapshot
+            .as_ref()
+            .map(|snapshot| &snapshot.context)
+            .or(self.jev.request_context.as_ref())
+            .is_none_or(|context| self.stamp_is_current(context))
     }
 
     pub(crate) fn reconcile_jev_context(&mut self, cx: &mut App) {
@@ -237,33 +280,54 @@ impl OverlayController {
         // Restore local order before that action reads a stale promoted row.
         let stale_promotion = self.state.read(cx).has_ai_promotion()
             && (!self.jev.is_ready() || AiConfig::load().ok() != self.jev.config);
-        if stale_promotion || !self.jev_context_is_current() { self.cancel_jev(cx); }
+        if stale_promotion || !self.jev_context_is_current() {
+            self.cancel_jev(cx);
+        }
     }
 
     pub(super) fn prepare_jev(&self, result: &CompleteResult) -> Option<Prepared> {
-        if !self.jev.is_ready() || result.pending_generators { return None; }
+        if !self.jev.is_ready() || result.pending_generators {
+            return None;
+        }
         let context = result.public_ai_context.as_ref()?;
         let stamp = self.jev.request_context.as_ref()?;
-        if !self.stamp_is_current(stamp) { return None; }
+        if !self.stamp_is_current(stamp) {
+            return None;
+        }
         let mut candidates = Vec::new();
         let mut insertion = Vec::new();
         for (index, suggestion) in result.suggestions.iter().enumerate() {
-            let Some(public) = &suggestion.public_ai_candidate else { continue; };
-            if !safe_insertion(suggestion) || public.name != suggestion.name { continue; }
+            let Some(public) = &suggestion.public_ai_candidate else {
+                continue;
+            };
+            if !safe_insertion(suggestion) || public.name != suggestion.name {
+                continue;
+            }
             let id = format!("c{}", candidates.len());
             candidates.push(Candidate {
-                id: id.clone(), name: public.name.clone(),
+                id: id.clone(),
+                name: public.name.clone(),
                 description: truncate_utf8(&public.description, MAX_DESCRIPTION_BYTES),
             });
             // apply_complete_result maps this final vector to UI rows 1:1.
-            insertion.push(CandidateInsertion { id, index, click: click_for(suggestion, &result.search_term) });
-            if candidates.len() == MAX_CANDIDATES { break; }
+            insertion.push(CandidateInsertion {
+                id,
+                index,
+                click: click_for(suggestion, &result.search_term),
+            });
+            if candidates.len() == MAX_CANDIDATES {
+                break;
+            }
         }
-        if candidates.len() < 2 { return None; }
+        if candidates.len() < 2 {
+            return None;
+        }
         Some(Prepared {
             input: RecommendationInput {
-                shell: stamp.shell.clone(), command_path: context.command_path.clone(),
-                token_prefix: context.token_prefix.clone(), candidates,
+                shell: stamp.shell.clone(),
+                command_path: context.command_path.clone(),
+                token_prefix: context.token_prefix.clone(),
+                candidates,
             },
             insertion,
         })
@@ -272,11 +336,19 @@ impl OverlayController {
     pub(super) fn schedule_jev(&mut self, prepared: Option<Prepared>, cx: &mut App) {
         let context = self.jev.request_context.take();
         self.cancel_jev(cx);
-        let Some(prepared) = prepared else { return; };
+        let Some(prepared) = prepared else {
+            return;
+        };
         let overlay = self.state.read(cx);
-        if !overlay.visible || overlay.loading || overlay.history_mode || overlay.has_changed_index { return; }
-        let Some(context) = context else { return; };
-        if !self.stamp_is_current(&context) { return; }
+        if !overlay.visible || overlay.loading || overlay.history_mode || overlay.has_changed_index {
+            return;
+        }
+        let Some(context) = context else {
+            return;
+        };
+        if !self.stamp_is_current(&context) {
+            return;
+        }
         self.jev.next_request = self.jev.next_request.wrapping_add(1);
         let token = RequestToken {
             session: context.input.session_id,
@@ -285,7 +357,11 @@ impl OverlayController {
             request_id: self.jev.next_request,
             settings_epoch: self.jev.epoch,
         };
-        self.jev.snapshot = Some(Snapshot { token: token.clone(), context, prepared });
+        self.jev.snapshot = Some(Snapshot {
+            token: token.clone(),
+            context,
+            prepared,
+        });
         let executor = cx.background_executor().clone();
         let proxy = self.proxy.clone();
         self.jev.debounce = Some(cx.spawn(async move |_cx| {
@@ -296,38 +372,68 @@ impl OverlayController {
 
     fn token_is_current(&self, token: &RequestToken, cx: &App) -> bool {
         let overlay = self.state.read(cx);
-        self.enabled && self.jev.is_ready() && overlay.visible && !overlay.loading
+        self.enabled
+            && self.jev.is_ready()
+            && overlay.visible
+            && !overlay.loading
             && AiConfig::load().ok() == self.jev.config
             && !overlay.history_mode
             && !overlay.has_changed_index
             && overlay.ai_revision == token.revision
             && self.jev.epoch == token.settings_epoch
             && self.generation.load(std::sync::atomic::Ordering::Relaxed) == token.generation
-            && self.jev.snapshot.as_ref().is_some_and(|snapshot| snapshot.token == *token && self.stamp_is_current(&snapshot.context))
+            && self
+                .jev
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.token == *token && self.stamp_is_current(&snapshot.context))
     }
 
     pub(crate) fn start_jev_request(&mut self, token: RequestToken, cx: &mut App) {
-        if !self.token_is_current(&token, cx) { return; }
+        if !self.token_is_current(&token, cx) {
+            return;
+        }
         self.jev.debounce = None;
         let now = Instant::now();
-        if self.jev.cooldown.is_some_and(|until| now < until) { return; }
-        while self.jev.admitted.front().is_some_and(|time| now.duration_since(*time) >= Duration::from_secs(60)) {
+        if self.jev.cooldown.is_some_and(|until| now < until) {
+            return;
+        }
+        while self
+            .jev
+            .admitted
+            .front()
+            .is_some_and(|time| now.duration_since(*time) >= Duration::from_secs(60))
+        {
             self.jev.admitted.pop_front();
         }
-        if self.jev.admitted.len() >= REQUESTS_PER_MINUTE { return; }
-        if self.jev.flight.as_ref().is_some_and(|flight| !flight.is_finished()) { return; }
+        if self.jev.admitted.len() >= REQUESTS_PER_MINUTE {
+            return;
+        }
+        if self.jev.flight.as_ref().is_some_and(|flight| !flight.is_finished()) {
+            return;
+        }
         self.jev.flight = None;
-        let Some(snapshot) = &self.jev.snapshot else { return; };
-        let Some(profile) = self.jev.profile.clone() else { return; };
-        let Some(client) = self.jev.client.clone() else { return; };
-        let Some(key) = self.jev.key.clone() else { return; };
+        let Some(snapshot) = &self.jev.snapshot else {
+            return;
+        };
+        let Some(profile) = self.jev.profile.clone() else {
+            return;
+        };
+        let Some(client) = self.jev.client.clone() else {
+            return;
+        };
+        let Some(key) = self.jev.key.clone() else {
+            return;
+        };
         let input = snapshot.prepared.input.clone();
         self.jev.admitted.push_back(now);
         self.show_jev_status(text("Jev 正在推荐…", "Jev is recommending…"), cx);
         let proxy = self.proxy.clone();
         let revision = self.jev.config_revision;
         self.jev.flight = Some(tokio::spawn(async move {
-            if config::runtime_revision() != revision { return; }
+            if config::runtime_revision() != revision {
+                return;
+            }
             let result = client.recommend(&profile, key.as_slice(), &input).await;
             let _ = proxy.send_event(Event::JevComplete { token, result });
         }));
@@ -340,31 +446,46 @@ impl OverlayController {
         if token.settings_epoch != self.jev.epoch
             || self.jev.config_revision != config::runtime_revision()
             || AiConfig::load().ok() != self.jev.config
-        { return; }
+        {
+            return;
+        }
         let current = self.token_is_current(&token, cx);
         match result {
             Ok(result) => {
-                if !current { return; }
+                if !current {
+                    return;
+                }
                 if result.choice == KEEP_LOCAL {
                     self.show_jev_status(text("Jev · 保留本地建议", "Jev · Keep local suggestions"), cx);
                     return;
                 }
-                let Some(snapshot) = &self.jev.snapshot else { return; };
-                let Some(candidate) = snapshot.prepared.insertion.iter().find(|candidate| candidate.id == result.choice) else {
+                let Some(snapshot) = &self.jev.snapshot else {
+                    return;
+                };
+                let Some(candidate) = snapshot
+                    .prepared
+                    .insertion
+                    .iter()
+                    .find(|candidate| candidate.id == result.choice)
+                else {
                     self.cancel_jev(cx);
                     return;
                 };
                 let overlay = self.state.read(cx);
-                if !overlay.items.get(candidate.index).is_some_and(|item| {
-                    matches_candidate(item, &candidate.click, &overlay.search_term)
-                }) {
+                if !overlay
+                    .items
+                    .get(candidate.index)
+                    .is_some_and(|item| matches_candidate(item, &candidate.click, &overlay.search_term))
+                {
                     self.cancel_jev(cx);
                     return;
                 }
                 let index = candidate.index;
                 let promoted = self.state.update(cx, |overlay, cx| {
                     let promoted = overlay.promote_ai_suggestion(index);
-                    if promoted { cx.notify(); }
+                    if promoted {
+                        cx.notify();
+                    }
                     promoted
                 });
                 if promoted {
@@ -387,14 +508,25 @@ impl OverlayController {
                         self.jev.blocked = true;
                         text("Jev · 请检查服务商账户额度", "Jev · Check provider account credit")
                     },
-                    ClientErrorKind::RateLimited | ClientErrorKind::Overloaded => text("Jev · 暂时不可用，继续使用本地建议", "Jev · Unavailable; local suggestions remain"),
-                    ClientErrorKind::Timeout => text("Jev · 请求超时，继续使用本地建议", "Jev · Timed out; local suggestions remain"),
-                    _ => text("Jev · 未能推荐，继续使用本地建议", "Jev · No recommendation; local suggestions remain"),
+                    ClientErrorKind::RateLimited | ClientErrorKind::Overloaded => text(
+                        "Jev · 暂时不可用，继续使用本地建议",
+                        "Jev · Unavailable; local suggestions remain",
+                    ),
+                    ClientErrorKind::Timeout => text(
+                        "Jev · 请求超时，继续使用本地建议",
+                        "Jev · Timed out; local suggestions remain",
+                    ),
+                    _ => text(
+                        "Jev · 未能推荐，继续使用本地建议",
+                        "Jev · No recommendation; local suggestions remain",
+                    ),
                 };
                 if error.cooldown.is_some() || self.jev.blocked {
                     self.cancel_jev(cx);
                 }
-                if !current { return; }
+                if !current {
+                    return;
+                }
                 self.show_jev_status(message, cx);
             },
         }
@@ -442,39 +574,68 @@ fn context_digest(alias: Option<&str>, shell: Option<&str>, process: Option<&str
 
 fn canonical_shell(path: Option<&str>) -> Option<&'static str> {
     match path?.rsplit('/').next()? {
-        "zsh" => Some("zsh"), "bash" => Some("bash"), "fish" => Some("fish"),
-        "sh" => Some("sh"), _ => None,
+        "zsh" => Some("zsh"),
+        "bash" => Some("bash"),
+        "fish" => Some("fish"),
+        "sh" => Some("sh"),
+        _ => None,
     }
 }
 
 fn safe_insertion(suggestion: &Suggestion) -> bool {
-    !suggestion.is_dangerous && !suggestion.hidden
+    !suggestion.is_dangerous
+        && !suggestion.hidden
         && matches!(suggestion.kind.as_str(), "cmd" | "subcommand" | "option")
         && !matches!(suggestion.original_type.as_deref(), Some("auto-execute" | "special"))
-        && !suggestion.name.is_empty() && suggestion.name.len() <= 256
-        && suggestion.name.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
-        && suggestion.insert_value.as_ref().is_none_or(|value| value == &suggestion.name)
-        && suggestion.separator_to_add.as_deref().is_none_or(|value| matches!(value, "" | " " | "="))
+        && !suggestion.name.is_empty()
+        && suggestion.name.len() <= 256
+        && suggestion
+            .name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+        && suggestion
+            .insert_value
+            .as_ref()
+            .is_none_or(|value| value == &suggestion.name)
+        && suggestion
+            .separator_to_add
+            .as_deref()
+            .is_none_or(|value| matches!(value, "" | " " | "="))
         && suggestion.query_term.is_none()
 }
 
 fn click_for(suggestion: &Suggestion, search: &str) -> ClickInsert {
     ClickInsert {
-        name: suggestion.name.clone(), description: suggestion.description.clone(), search: search.into(),
-        kind: suggestion.kind.clone(), args_hint: suggestion.args_hint.clone(), insert_value: suggestion.insert_value.clone(),
-        display_name: suggestion.display_name.clone(), primary_name: suggestion.primary_name.clone(),
-        separator_to_add: suggestion.separator_to_add.clone(), should_add_space: suggestion.should_add_space,
-        hidden: suggestion.hidden, priority: suggestion.priority, icon_identifier: suggestion.icon.clone(),
-        original_type: suggestion.original_type.clone(), query_term: suggestion.query_term.clone(),
+        name: suggestion.name.clone(),
+        description: suggestion.description.clone(),
+        search: search.into(),
+        kind: suggestion.kind.clone(),
+        args_hint: suggestion.args_hint.clone(),
+        insert_value: suggestion.insert_value.clone(),
+        display_name: suggestion.display_name.clone(),
+        primary_name: suggestion.primary_name.clone(),
+        separator_to_add: suggestion.separator_to_add.clone(),
+        should_add_space: suggestion.should_add_space,
+        hidden: suggestion.hidden,
+        priority: suggestion.priority,
+        icon_identifier: suggestion.icon.clone(),
+        original_type: suggestion.original_type.clone(),
+        query_term: suggestion.query_term.clone(),
     }
 }
 
 fn truncate_utf8(value: &str, bytes: usize) -> String {
     let mut end = value.len().min(bytes);
-    while !value.is_char_boundary(end) { end -= 1; }
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
     value[..end].into()
 }
 
 fn text(zh: &str, en: &str) -> String {
-    if crate::settings_ui::locale_is_zh() { zh.into() } else { en.into() }
+    if crate::settings_ui::locale_is_zh() {
+        zh.into()
+    } else {
+        en.into()
+    }
 }

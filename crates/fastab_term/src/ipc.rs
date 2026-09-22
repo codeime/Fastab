@@ -2,9 +2,7 @@
 
 mod outbox;
 
-pub(crate) use outbox::{
-    ContextAdmission, ContextProgress, Generation, GenerationSender, RemoteSender, RequestOrigin,
-};
+pub(crate) use outbox::{ContextAdmission, ContextProgress, Generation, GenerationSender, RemoteSender, RequestOrigin};
 
 use std::io;
 use std::pin::Pin;
@@ -239,7 +237,15 @@ pub(crate) async fn spawn_remote_ipc(
                 }
                 _ = interval.tick() => {}
             }
-            let Some(generation) = supervisor.begin_attempt() else {
+            let Some(generation) = (match supervisor.begin_attempt() {
+                outbox::BeginAttempt::Started(generation) => Some(generation),
+                outbox::BeginAttempt::Busy => {
+                    // In-flight accounting has not cleared yet. Wait for the
+                    // next reconnect tick instead of permanently stopping IPC.
+                    continue;
+                },
+                outbox::BeginAttempt::Stopped => None,
+            }) else {
                 break;
             };
             let connection = tokio::select! {
@@ -259,7 +265,11 @@ pub(crate) async fn spawn_remote_ipc(
                     }
                 }
             };
-            let ForwardedConnection { reader, mut writer, mut child } = connection;
+            let ForwardedConnection {
+                reader,
+                mut writer,
+                mut child,
+            } = connection;
             let mut reader = BufferedReader::new(reader);
             supervisor.set_handshaking(generation);
 
@@ -269,13 +279,15 @@ pub(crate) async fn spawn_remote_ipc(
             let result: Result<()> = {
                 let run_connection = async {
                     timeout(CONNECTION_TIMEOUT, async {
-                        writer.send_message(Hostbound {
-                            packet: Some(hostbound::Packet::Handshake(Handshake {
-                                id: session_id.clone(),
-                                parent_id: parent_id.clone(),
-                                secret: secret.clone(),
-                            })),
-                        }).await?;
+                        writer
+                            .send_message(Hostbound {
+                                packet: Some(hostbound::Packet::Handshake(Handshake {
+                                    id: session_id.clone(),
+                                    parent_id: parent_id.clone(),
+                                    secret: secret.clone(),
+                                })),
+                            })
+                            .await?;
                         loop {
                             let Some(message) = reader.recv_message::<Clientbound>().await? else {
                                 anyhow::bail!("EOF awaiting handshake");
@@ -287,13 +299,15 @@ pub(crate) async fn spawn_remote_ipc(
                                 return Ok::<(), anyhow::Error>(());
                             }
                         }
-                    }).await??;
+                    })
+                    .await??;
                     supervisor.set_ready(generation);
                     info!(?generation, "Remote handshake succeeded");
 
                     let receive = async {
                         while let Some(message) = reader.recv_message::<Clientbound>().await? {
-                            incoming_tx.send(RemoteIncoming { generation, message })
+                            incoming_tx
+                                .send(RemoteIncoming { generation, message })
                                 .map_err(|err| anyhow::anyhow!("remote incoming receiver closed: {err}"))?;
                         }
                         Err::<(), anyhow::Error>(anyhow::anyhow!("remote reader reached EOF"))

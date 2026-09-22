@@ -79,7 +79,9 @@ impl ResolvedProfile {
     /// Public fields are convenient for UI display, but never confer permission
     /// to change a request destination after selecting its credential service.
     pub(crate) fn integrity_is_valid(&self) -> bool {
-        self.validated_profile.validate().is_ok_and(|expected| expected == *self)
+        self.validated_profile
+            .validate()
+            .is_ok_and(|expected| expected == *self)
     }
 }
 
@@ -114,18 +116,23 @@ impl Profile {
             hex.push(char::from(b"0123456789abcdef"[usize::from(byte >> 4)]));
             hex.push(char::from(b"0123456789abcdef"[usize::from(byte & 15)]));
         }
-        Ok(format!("app.fastab.ai.jev.v1.{}.{}", self.provider.credential_namespace(), hex))
+        Ok(format!(
+            "app.fastab.ai.jev.v1.{}.{}",
+            self.provider.credential_namespace(),
+            hex
+        ))
     }
 
     pub fn validate(&self) -> Result<ResolvedProfile> {
         self.validate_identity()?;
-        ensure!(self.data_policy_version == DATA_POLICY_VERSION, "AI data policy has not been confirmed");
+        ensure!(
+            self.data_policy_version == DATA_POLICY_VERSION,
+            "AI data policy has not been confirmed"
+        );
         let (_, endpoint) = self.normalized_address()?;
         let allowed_responses = match (self.provider, self.model.as_str()) {
             (Provider::TypeSafe | Provider::CustomSystemOne, "jev-1.13.0") => DIRECT_RESPONSES,
-            (Provider::OpenRouter | Provider::CustomSystemOne, "typesafe/jev-1.13" | "jev-1.13") => {
-                ROUTER_RESPONSES
-            },
+            (Provider::OpenRouter | Provider::CustomSystemOne, "typesafe/jev-1.13" | "jev-1.13") => ROUTER_RESPONSES,
             _ => bail!("System One model mapping has not been reviewed"),
         };
         Ok(ResolvedProfile {
@@ -140,8 +147,12 @@ impl Profile {
 
     fn validate_identity(&self) -> Result<()> {
         ensure!(
-            !self.id.is_empty() && self.id.len() <= 64
-                && self.id.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte)),
+            !self.id.is_empty()
+                && self.id.len() <= 64
+                && self
+                    .id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte)),
             "Invalid AI profile ID"
         );
         ensure!(!self.model.is_empty() && self.model.len() <= 128, "Invalid AI model ID");
@@ -156,7 +167,10 @@ impl Profile {
             Provider::CustomSystemOne => None,
         };
         if let Some(required) = required {
-            ensure!(base == required, "Changing a preset address requires a separate custom profile");
+            ensure!(
+                base == required,
+                "Changing a preset address requires a separate custom profile"
+            );
         }
         Ok((base, endpoint))
     }
@@ -165,28 +179,54 @@ impl Profile {
 /// The supported custom URL subset intentionally excludes escaped path segments,
 /// dot segments and duplicate slashes. No guessing of chat/completions endpoints.
 pub fn normalize_base_url(value: &str) -> Result<(String, Url)> {
-    ensure!(value.len() <= 2048 && !value.is_empty(), "Invalid System One base URL length");
-    ensure!(!value.chars().any(|ch| ch.is_whitespace() || ch.is_control()), "Invalid whitespace in base URL");
-    ensure!(!value.contains(['%', '\\']), "Encoded or backslash URL paths are unsupported");
-    let (scheme, authority_and_path) = value.split_once("://")
+    ensure!(
+        value.len() <= 2048 && !value.is_empty(),
+        "Invalid System One base URL length"
+    );
+    ensure!(
+        !value.chars().any(|ch| ch.is_whitespace() || ch.is_control()),
+        "Invalid whitespace in base URL"
+    );
+    ensure!(
+        !value.contains(['%', '\\']),
+        "Encoded or backslash URL paths are unsupported"
+    );
+    let (scheme, authority_and_path) = value
+        .split_once("://")
         .ok_or_else(|| anyhow::anyhow!("Enter an absolute HTTPS base URL"))?;
     let authority = authority_and_path.split('/').next().unwrap_or_default();
-    ensure!(scheme.eq_ignore_ascii_case("https") && !authority.is_empty(), "Enter an absolute HTTPS base URL");
+    ensure!(
+        scheme.eq_ignore_ascii_case("https") && !authority.is_empty(),
+        "Enter an absolute HTTPS base URL"
+    );
     ensure!(!authority.contains('@'), "URL credentials are forbidden");
     let mut url = Url::parse(value).map_err(|error| anyhow::anyhow!("Invalid System One base URL: {error}"))?;
-    ensure!(url.scheme() == "https" && url.host_str().is_some(), "System One requires an HTTPS host");
-    ensure!(url.username().is_empty() && url.password().is_none(), "URL credentials are forbidden");
-    ensure!(url.query().is_none() && url.fragment().is_none(), "URL query and fragment are forbidden");
+    ensure!(
+        url.scheme() == "https" && url.host_str().is_some(),
+        "System One requires an HTTPS host"
+    );
+    ensure!(
+        url.username().is_empty() && url.password().is_none(),
+        "URL credentials are forbidden"
+    );
+    ensure!(
+        url.query().is_none() && url.fragment().is_none(),
+        "URL query and fragment are forbidden"
+    );
     ensure!(url.port() != Some(0), "Invalid HTTPS port");
     // Check the unnormalized spelling too: URL parsing removes dot segments.
-    let raw_path = value.split_once("://").and_then(|(_, rest)| rest.split_once('/')).map_or("", |(_, path)| path);
+    let raw_path = value
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split_once('/'))
+        .map_or("", |(_, path)| path);
     ensure!(
         raw_path.split('/').all(|segment| segment != "." && segment != "..") && !raw_path.contains("//"),
         "Ambiguous URL path"
     );
     let path = url.path().trim_end_matches('/').to_owned();
     ensure!(
-        path.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"/_-.~".contains(&byte)),
+        path.bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"/_-.~".contains(&byte)),
         "Unsupported URL path"
     );
     ensure!(
@@ -251,7 +291,8 @@ impl AiConfig {
                 // that cache off. There may be no global backend at all, in
                 // which case the latch still makes every future load fail closed.
                 let mut global = OldSettings::data_lock().write();
-                if let Some(config) = global.as_mut()
+                if let Some(config) = global
+                    .as_mut()
                     .and_then(|map| map.get_mut(SETTINGS_KEY))
                     .and_then(serde_json::Value::as_object_mut)
                 {
@@ -310,13 +351,18 @@ impl AiConfig {
             profile.validate_identity()?;
             profile.normalized_address()?;
             ensure!(ids.insert(&profile.id), "Duplicate AI profile ID");
-            ensure!(credential_services.insert(profile.credential_key()?), "Duplicate AI credential endpoint");
+            ensure!(
+                credential_services.insert(profile.credential_key()?),
+                "Duplicate AI credential endpoint"
+            );
         }
         if self.active_profile_id.is_some() {
             ensure!(self.active_profile().is_some(), "Missing active AI profile");
         }
         if self.enabled {
-            self.active_profile().ok_or_else(|| anyhow::anyhow!("Missing active AI profile"))?.validate()?;
+            self.active_profile()
+                .ok_or_else(|| anyhow::anyhow!("Missing active AI profile"))?
+                .validate()?;
         }
         Ok(())
     }
