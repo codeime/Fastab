@@ -819,7 +819,8 @@ fn language_select(
 }
 
 /// The permission pages render before the sidebar, so this is the only language
-/// control a first-run window can reach.
+/// control a first-run window can reach. The chips sit under the titlebar band:
+/// that strip drags the window, and clicks there do not reach this view.
 fn permission_language_bar(
     id_prefix: &'static str,
     zh: bool,
@@ -828,22 +829,28 @@ fn permission_language_bar(
 ) -> impl IntoElement {
     div()
         .w_full()
-        .h(px(SETTINGS_TITLEBAR_H))
         .flex_none()
         .flex()
-        .flex_row()
-        .items_center()
-        .justify_end()
-        .gap(px(12.))
-        .pl(px(SETTINGS_TITLE_LEFT))
-        .pr(px(16.))
+        .flex_col()
+        .child(div().h(px(SETTINGS_TITLEBAR_H)).flex_none())
         .child(
             div()
-                .text_size(px(13.))
-                .text_color(rgb(chrome.muted))
-                .child(if zh { "显示语言" } else { "Display Language" }.to_string()),
+                .w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_end()
+                .gap(px(12.))
+                .px(px(28.))
+                .pt(px(8.))
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(rgb(chrome.muted))
+                        .child(if zh { "显示语言" } else { "Display Language" }.to_string()),
+                )
+                .child(language_select(id_prefix, zh, chrome, entity)),
         )
-        .child(language_select(id_prefix, zh, chrome, entity))
 }
 
 fn appearance_page(
@@ -2687,6 +2694,18 @@ mod tests {
             .expect("language select");
         assert!(select.contains("dashboard.language"));
         assert!(select.contains("set_string"));
+
+        let bar = production
+            .split("fn permission_language_bar")
+            .nth(1)
+            .and_then(|rest| rest.split("fn appearance_page").next())
+            .expect("language bar");
+        let reserved = bar.find("SETTINGS_TITLEBAR_H").expect("titlebar spacer");
+        let chips = bar.find("language_select").expect("language chips");
+        assert!(
+            reserved < chips,
+            "language chips must sit below the titlebar drag strip"
+        );
 
         let checking = production
             .split("fn permission_checking_page")

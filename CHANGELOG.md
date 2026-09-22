@@ -8,6 +8,7 @@
 - change: icon compilation uses Xcode 26+ actool when that Xcode is installed, following the real app path rather than a version symlink
 - change: shell history suggestions use the same recent window as the on-disk history database
 - change: the first-run permission page can switch display language before the rest of settings is available
+- change: that language control sits below the window title bar so the click reaches the page
 
 ## v0.0.1
 

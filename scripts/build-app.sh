@@ -358,13 +358,35 @@ PY
   # macos-15 images keep Xcode 16 selected. That actool cannot compile an
   # Icon Composer package, so look for a concrete Xcode 26+ app first.
   ICON_DEVELOPER_DIR="$(python3 - <<'PY'
+import plistlib
 import re
 from pathlib import Path
+
+def xcode_version(app: Path):
+    plist = app / "Contents" / "version.plist"
+    if plist.is_file():
+        try:
+            data = plistlib.loads(plist.read_bytes())
+        except Exception:
+            data = {}
+        raw = str(data.get("CFBundleShortVersionString") or "")
+        parts = tuple(int(part) for part in raw.split(".") if part.isdigit())
+        if parts:
+            return parts
+    match = re.fullmatch(r"Xcode_(\d+(?:\.\d+)*)", app.stem)
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.group(1).split("."))
+
+candidates = list(Path("/Applications").glob("Xcode_*.app"))
+plain = Path("/Applications/Xcode.app")
+if plain.exists():
+    candidates.append(plain)
 
 best = None
 best_ver = ()
 seen = set()
-for app in Path("/Applications").glob("Xcode_*.app"):
+for app in candidates:
     try:
         concrete = app.resolve(strict=True)
     except OSError:
@@ -377,11 +399,8 @@ for app in Path("/Applications").glob("Xcode_*.app"):
     dev = concrete / "Contents" / "Developer"
     if not (dev / "usr" / "bin" / "actool").is_file():
         continue
-    match = re.fullmatch(r"Xcode_(\d+(?:\.\d+)*)", concrete.stem)
-    if match is None:
-        continue
-    parts = tuple(int(part) for part in match.group(1).split("."))
-    if parts[0] < 26:
+    parts = xcode_version(concrete)
+    if parts is None or parts[0] < 26:
         continue
     if best is None or parts > best_ver:
         best = dev
