@@ -807,15 +807,17 @@ fn language_select(
     entity: Entity<SettingsWindow>,
 ) -> impl IntoElement {
     let lang = fig_settings::settings::get_string_or("dashboard.language", "system".into());
-    select_chips(
-        id_prefix,
-        language_options(zh),
-        lang.as_str(),
-        chrome,
-        move |value, cx| {
-            entity.update(cx, |this, cx| this.set_string("dashboard.language", value, cx));
-        },
-    )
+    // select_chips captures `current` for the life of the returned element.
+    // A local String cannot leave this function, so the stored value is mapped
+    // onto one of the static option ids.
+    let current = match lang.as_str() {
+        "en" => "en",
+        "zh-CN" | "zh" => "zh-CN",
+        _ => "system",
+    };
+    select_chips(id_prefix, language_options(zh), current, chrome, move |value, cx| {
+        entity.update(cx, |this, cx| this.set_string("dashboard.language", value, cx));
+    })
 }
 
 /// The permission pages render before the sidebar, so this is the only language
@@ -2694,6 +2696,11 @@ mod tests {
             .expect("language select");
         assert!(select.contains("dashboard.language"));
         assert!(select.contains("set_string"));
+        assert!(select.contains("\"zh-CN\" | \"zh\""));
+        assert!(
+            select.contains("language_options(zh), current,"),
+            "the chip row must take the static option id, not the local String"
+        );
 
         let bar = production
             .split("fn permission_language_bar")
