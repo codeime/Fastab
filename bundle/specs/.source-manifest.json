@@ -9,7 +9,7 @@
   "inputs": {
     "packageJsonSha256": "b9193948979b9725d4f64bb93f2055b066413c7919800fbf780afdbb42ce04fd",
     "pnpmLockSha256": "46c51b37864d8ca14766393f70c038d560ba11c71b9062e8d18db46f2d4c17fd",
-    "specsConfigSha256": "b9cdfa6e450f596c832855c7840213cbeb4b8cf83aca6597e3c359b7b1732fea",
+    "specsConfigSha256": "6eba8c47c79433354d9603b0b0b6a779cccf64c79f0c4cd14d390832b93282d9",
     "dependency": {
       "specifier": "3.1.0",
       "lockVersion": "3.1.0"
