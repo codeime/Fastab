@@ -12,6 +12,7 @@ pub mod pty;
 pub mod term;
 pub mod update;
 
+use std::collections::VecDeque;
 use std::env;
 #[cfg(unix)]
 use std::ffi::{CString, OsStr};
@@ -60,20 +61,68 @@ use crate::pty::win::open_pty;
 use crate::pty::{AsyncMasterPty, AsyncMasterPtyExt, CommandBuilder};
 use crate::term::{SystemTerminal, Terminal};
 
+struct DeferredInsert {
+    insert: Vec<u8>,
+    unlock: bool,
+    bracketed: bool,
+    execute: bool,
+    origin: RequestOrigin,
+}
+
 /// Replay settled failed intercepted keys, then flush deferred ordinary PTY
-/// input once no intercepted key is still awaiting write settlement. Never
-/// blocks the main loop on in-flight key delivery.
+/// input and deferred Inserts once no intercepted key is still awaiting write
+/// settlement. Never blocks the main loop on in-flight key delivery.
 async fn flush_settled_pty_input(
     remote_sender: &RemoteSender,
     master: &mut (dyn AsyncMasterPty + Send),
     deferred: &mut BytesMut,
+    deferred_inserts: &mut VecDeque<DeferredInsert>,
+    key_interceptor: &mut KeyInterceptor,
+    bracketed_paste: bool,
 ) -> Result<()> {
     for failed in remote_sender.take_failed_keys() {
         master.write_all(&failed).await?;
     }
-    if !deferred.is_empty() && !remote_sender.has_pending_keys() {
+    if remote_sender.has_pending_keys() {
+        return Ok(());
+    }
+    if !deferred.is_empty() {
         master.write_all(deferred).await?;
         deferred.clear();
+    }
+    while let Some(item) = deferred_inserts.pop_front() {
+        if !item.origin.is_current(remote_sender.phase().ready_generation()) {
+            continue;
+        }
+        write_insert_bytes(master, &item, bracketed_paste).await?;
+        if item.unlock {
+            key_interceptor.reset();
+        }
+    }
+    Ok(())
+}
+
+async fn write_insert_bytes(
+    master: &mut (dyn AsyncMasterPty + Send),
+    item: &DeferredInsert,
+    bracketed_paste: bool,
+) -> Result<()> {
+    use bstr::ByteSlice;
+    if item.bracketed {
+        if bracketed_paste {
+            master.write_all(b"\x1b[200~").await?;
+            master.write_all(&item.insert.replace(b"\x1b", "")).await?;
+            master.write_all(b"\x1b[201~").await?;
+        } else {
+            master
+                .write_all(&item.insert.replace("\r\n", "\r").replace("\n", "\r"))
+                .await?;
+        }
+    } else {
+        master.write_all(&item.insert).await?;
+    }
+    if item.execute {
+        master.write_all(b"\r").await?;
     }
     Ok(())
 }
@@ -661,6 +710,7 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
         ).await?;
         let mut remote_state_changes = remote_sender.subscribe();
         let mut deferred_pty_input = BytesMut::new();
+        let mut deferred_inserts = VecDeque::new();
 
         let mut stdout = io::stdout();
         let mut master = pty.master.get_async_master_pty()?;
@@ -722,49 +772,57 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                 biased;
                 _ = remote_state_changes.changed() => {
                     reconcile_remote_state(&remote_sender, &mut key_interceptor);
-                    Ok(())
+                    let bracketed_paste = term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+                    flush_settled_pty_input(
+                        &remote_sender,
+                        master.as_mut(),
+                        &mut deferred_pty_input,
+                        &mut deferred_inserts,
+                        &mut key_interceptor,
+                        bracketed_paste,
+                    )
+                    .await
                 }
                 _ = remote_sender.key_delivery_changed() => {
                     reconcile_remote_state(&remote_sender, &mut key_interceptor);
-                    flush_settled_pty_input(&remote_sender, master.as_mut(), &mut deferred_pty_input)
-                        .await
+                    let bracketed_paste = term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+                    flush_settled_pty_input(
+                        &remote_sender,
+                        master.as_mut(),
+                        &mut deferred_pty_input,
+                        &mut deferred_inserts,
+                        &mut key_interceptor,
+                        bracketed_paste,
+                    )
+                    .await
                 }
                 res = main_loop_rx.recv_async() => {
                     match res {
                         Ok(event) => {
                             match event {
                                 MainLoopEvent::Insert { insert, unlock, bracketed, execute, origin } => {
-                                    use bstr::ByteSlice;
                                     if !origin.is_current(remote_sender.phase().ready_generation()) {
                                         continue 'select_loop;
                                     }
-                                    // Keep Insert after any deferred ordinary bytes that became
-                                    // writable once intercepted keys settled.
+                                    // Queue behind any still-pending intercepted keys so Insert
+                                    // cannot overtake deferred ordinary input.
+                                    deferred_inserts.push_back(DeferredInsert {
+                                        insert,
+                                        unlock,
+                                        bracketed,
+                                        execute,
+                                        origin,
+                                    });
+                                    let bracketed_paste = term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
                                     flush_settled_pty_input(
                                         &remote_sender,
                                         master.as_mut(),
                                         &mut deferred_pty_input,
+                                        &mut deferred_inserts,
+                                        &mut key_interceptor,
+                                        bracketed_paste,
                                     )
                                     .await?;
-                                    if bracketed {
-                                        if term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE) {
-                                            master.write_all(b"\x1b[200~").await?;
-                                            master.write_all(&insert.replace(b"\x1b", "")).await?;
-                                            master.write_all(b"\x1b[201~").await?;
-                                        } else {
-                                            master.write_all(&insert.replace("\r\n", "\r").replace("\n", "\r")).await?;
-                                        }
-                                    } else {
-                                        master.write_all(&insert).await?;
-                                    }
-
-                                    if execute {
-                                        master.write_all(b"\r").await?; 
-                                    }
-
-                                    if unlock {
-                                        key_interceptor.reset();
-                                    }
                                 },
                                 MainLoopEvent::UnlockInterception => {
                                     key_interceptor.reset();
@@ -853,11 +911,11 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
 
                                         let handled_action = if !preexec {
                                             if let Some(action) = key_interceptor.intercept_key(&event) {
-                                                // Ordinary bytes already in this batch must reach
-                                                // the PTY before this key is admitted — otherwise a
-                                                // later desktop Insert can overtake them. Defer them
-                                                // behind any still-pending intercepted keys without
-                                                // blocking the main loop on settlement.
+                                                // Park ordinary bytes from this batch behind any
+                                                // still-pending intercepted keys without blocking.
+                                                // Insert / key_delivery flush paths drain deferred
+                                                // once settlement clears, so desktop Insert cannot
+                                                // overtake those bytes.
                                                 if !write_buffer.is_empty() {
                                                     deferred_pty_input.extend_from_slice(&write_buffer);
                                                     write_buffer.clear();
@@ -866,57 +924,46 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                                                     &remote_sender,
                                                     master.as_mut(),
                                                     &mut deferred_pty_input,
+                                                    &mut deferred_inserts,
+                                                    &mut key_interceptor,
+                                                    term.mode().contains(
+                                                        alacritty_terminal::term::TermMode::BRACKETED_PASTE,
+                                                    ),
                                                 )
                                                 .await?;
-                                                // Only admit once older keys have settled and
-                                                // deferred ordinary input has been flushed.
-                                                let can_admit = !remote_sender.has_pending_keys()
-                                                    && deferred_pty_input.is_empty();
-                                                if !can_admit {
+                                                debug!(?action, "Intercepted action");
+                                                let s = raw
+                                                    .clone()
+                                                    .and_then(|b| String::from_utf8(b.to_vec()).ok())
+                                                    .unwrap_or_default();
+                                                let context =
+                                                    shell_state_to_context(term.shell_state());
+                                                let hook = fastab_proto::remote_hooks::new_intercepted_key_hook(
+                                                    context, action, s,
+                                                );
+                                                // The desktop's InterceptedKey handler does not
+                                                // apply its context, so it must not advance the
+                                                // generation's context synchronization marker.
+                                                let admitted = key_generation.is_some_and(|generation| {
+                                                    remote_sender
+                                                        .for_generation(generation)
+                                                        .try_send_key(
+                                                            hook_to_message(hook),
+                                                            raw.clone().unwrap_or_default(),
+                                                        )
+                                                        .is_ok()
+                                                });
+                                                if !admitted {
                                                     reconcile_remote_state(
                                                         &remote_sender,
                                                         &mut key_interceptor,
                                                     );
-                                                    false
-                                                } else {
-                                                    debug!(?action, "Intercepted action");
-                                                    let s = raw
-                                                        .clone()
-                                                        .and_then(|b| {
-                                                            String::from_utf8(b.to_vec()).ok()
-                                                        })
-                                                        .unwrap_or_default();
-                                                    let context =
-                                                        shell_state_to_context(term.shell_state());
-                                                    let hook = fastab_proto::remote_hooks::new_intercepted_key_hook(
-                                                        context, action, s,
-                                                    );
-                                                    // The desktop's InterceptedKey handler does not
-                                                    // apply its context, so it must not advance the
-                                                    // generation's context synchronization marker.
-                                                    let admitted = key_generation.is_some_and(
-                                                        |generation| {
-                                                            remote_sender
-                                                                .for_generation(generation)
-                                                                .try_send_key(
-                                                                    hook_to_message(hook),
-                                                                    raw.clone().unwrap_or_default(),
-                                                                )
-                                                                .is_ok()
-                                                        },
-                                                    );
-                                                    if !admitted {
-                                                        reconcile_remote_state(
-                                                            &remote_sender,
-                                                            &mut key_interceptor,
-                                                        );
-                                                    }
-
-                                                    if event.key == KeyCode::Escape {
-                                                        key_interceptor.reset();
-                                                    }
-                                                    admitted
                                                 }
+
+                                                if event.key == KeyCode::Escape {
+                                                    key_interceptor.reset();
+                                                }
+                                                admitted
                                             } else {
                                                 false
                                             }
@@ -982,6 +1029,11 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                                 &remote_sender,
                                 master.as_mut(),
                                 &mut deferred_pty_input,
+                                &mut deferred_inserts,
+                                &mut key_interceptor,
+                                term.mode().contains(
+                                    alacritty_terminal::term::TermMode::BRACKETED_PASTE,
+                                ),
                             )
                             .await?;
                         }
