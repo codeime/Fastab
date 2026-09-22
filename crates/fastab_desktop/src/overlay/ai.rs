@@ -23,7 +23,7 @@ use crate::jev::types::{Candidate, Recommendation, RecommendationInput};
 const INPUT_PAUSE: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RequestToken {
+pub struct RequestToken {
     session: Uuid,
     generation: u64,
     revision: u64,
@@ -32,7 +32,7 @@ pub(crate) struct RequestToken {
 }
 
 /// Event itself derives Debug; keychain bytes must never inherit that logging.
-pub(crate) struct LoadedCredentials(Result<Option<Vec<u8>>, CredentialError>);
+pub struct LoadedCredentials(Result<Option<Vec<u8>>, CredentialError>);
 
 impl fmt::Debug for LoadedCredentials {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

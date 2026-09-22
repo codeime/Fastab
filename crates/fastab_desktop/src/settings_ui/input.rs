@@ -28,7 +28,7 @@ pub(super) struct Input {
 }
 
 impl Input {
-    pub(super) fn new(value: String, password: bool, limit: usize, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(value: String, password: bool, limit: usize, cx: &mut Context<'_, Self>) -> Self {
         Self {
             value: Self::bounded(value, limit),
             password,
@@ -54,7 +54,7 @@ impl Input {
         self.edit_revision
     }
 
-    pub(super) fn set(&mut self, value: String, cx: &mut Context<Self>) {
+    pub(super) fn set(&mut self, value: String, cx: &mut Context<'_, Self>) {
         self.value = Self::bounded(value, self.limit);
         self.cursor = self.value.len();
         self.anchor = self.cursor;
@@ -64,7 +64,7 @@ impl Input {
         cx.notify();
     }
 
-    pub(super) fn take(&mut self, cx: &mut Context<Self>) -> String {
+    pub(super) fn take(&mut self, cx: &mut Context<'_, Self>) -> String {
         let value = std::mem::take(&mut self.value);
         self.set(String::new(), cx);
         value
@@ -133,7 +133,7 @@ impl Input {
         })
     }
 
-    fn replace(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) -> bool {
+    fn replace(&mut self, range: Range<usize>, text: &str, cx: &mut Context<'_, Self>) -> bool {
         if !self.enabled
             || text.chars().any(char::is_control)
             || self.value.len() - range.len() + text.len() > self.limit
@@ -149,7 +149,7 @@ impl Input {
         true
     }
 
-    fn key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<'_, Self>) {
         if !self.enabled {
             return;
         }
@@ -253,7 +253,7 @@ impl EntityInputHandler for Input {
         range: Range<usize>,
         adjusted: &mut Option<Range<usize>>,
         _: &mut Window,
-        _: &mut Context<Self>,
+        _: &mut Context<'_, Self>,
     ) -> Option<String> {
         if self.password {
             *adjusted = None;
@@ -263,7 +263,7 @@ impl EntityInputHandler for Input {
         *adjusted = Some(self.utf16(range.start)..self.utf16(range.end));
         Some(self.value[range].to_owned())
     }
-    fn selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) -> Option<UTF16Selection> {
+    fn selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut Context<'_, Self>) -> Option<UTF16Selection> {
         if !self.enabled {
             return None;
         }
@@ -273,12 +273,12 @@ impl EntityInputHandler for Input {
             reversed: self.cursor < self.anchor,
         })
     }
-    fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
+    fn marked_text_range(&self, _: &mut Window, _: &mut Context<'_, Self>) -> Option<Range<usize>> {
         self.marked
             .as_ref()
             .map(|range| self.utf16(range.start)..self.utf16(range.end))
     }
-    fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) {
         self.marked = None;
         cx.notify();
     }
@@ -287,7 +287,7 @@ impl EntityInputHandler for Input {
         range: Option<Range<usize>>,
         text: &str,
         _: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<'_, Self>,
     ) {
         let range = range
             .map(|range| self.range(range))
@@ -301,7 +301,7 @@ impl EntityInputHandler for Input {
         text: &str,
         selected: Option<Range<usize>>,
         _: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<'_, Self>,
     ) {
         let range = range
             .map(|range| self.range(range))
@@ -321,7 +321,7 @@ impl EntityInputHandler for Input {
         range: Range<usize>,
         bounds: Bounds<Pixels>,
         _: &mut Window,
-        _: &mut Context<Self>,
+        _: &mut Context<'_, Self>,
     ) -> Option<Bounds<Pixels>> {
         let line = self.layout.as_ref()?;
         let range = self.range(range);
@@ -340,7 +340,7 @@ impl EntityInputHandler for Input {
         &mut self,
         position: Point<Pixels>,
         _: &mut Window,
-        _: &mut Context<Self>,
+        _: &mut Context<'_, Self>,
     ) -> Option<usize> {
         self.layout.as_ref()?;
         Some(self.utf16(self.mouse_index(position)))
@@ -348,7 +348,7 @@ impl EntityInputHandler for Input {
 }
 
 impl Render for Input {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let chrome = Chrome::current();
         let entity = cx.entity();
         div()

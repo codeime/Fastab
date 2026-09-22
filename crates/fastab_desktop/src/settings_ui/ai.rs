@@ -34,7 +34,7 @@ pub(super) struct AiSettings {
 }
 
 impl AiSettings {
-    pub(super) fn new(proxy: EventLoopProxy, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(proxy: EventLoopProxy, cx: &mut Context<'_, Self>) -> Self {
         let loaded = AiConfig::load();
         let load_failed = loaded.is_err();
         let config = loaded.unwrap_or_default();
@@ -94,7 +94,7 @@ impl AiSettings {
 
     /// Also invalidates every pending apply. The OS operation is deliberately
     /// allowed to finish, retaining its global credential lease until then.
-    pub(super) fn clear_draft(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn clear_draft(&mut self, cx: &mut Context<'_, Self>) {
         self.observe_current_edits(cx);
         self.epoch = self.epoch.wrapping_add(1);
         self.key.update(cx, |input, cx| {
@@ -117,7 +117,7 @@ impl AiSettings {
         profile
     }
 
-    fn select(&mut self, profile: Profile, cx: &mut Context<Self>) {
+    fn select(&mut self, profile: Profile, cx: &mut Context<'_, Self>) {
         self.status.clear();
         self.suspend_for_edit(cx);
         self.clear_draft(cx);
@@ -131,7 +131,7 @@ impl AiSettings {
         cx.notify();
     }
 
-    fn provider(&mut self, provider: Provider, cx: &mut Context<Self>) {
+    fn provider(&mut self, provider: Provider, cx: &mut Context<'_, Self>) {
         let profile = self
             .config
             .profiles
@@ -152,7 +152,7 @@ impl AiSettings {
         self.select(profile, cx);
     }
 
-    fn set_busy(&mut self, busy: bool, cx: &mut Context<Self>) {
+    fn set_busy(&mut self, busy: bool, cx: &mut Context<'_, Self>) {
         self.busy = busy;
         for field in [&self.key, &self.model, &self.base] {
             field.update(cx, |input, cx| {
@@ -167,7 +167,7 @@ impl AiSettings {
         let _ = self.proxy.send_event(Event::JevSettingsChanged);
     }
 
-    fn input_edited(&mut self, field: usize, revision: u64, cx: &mut Context<Self>) {
+    fn input_edited(&mut self, field: usize, revision: u64, cx: &mut Context<'_, Self>) {
         if self.edit_revisions[field] != revision {
             self.edit_revisions[field] = revision;
             self.suspend_for_edit(cx);
@@ -175,7 +175,7 @@ impl AiSettings {
         cx.notify();
     }
 
-    fn observe_current_edits(&mut self, cx: &mut Context<Self>) {
+    fn observe_current_edits(&mut self, cx: &mut Context<'_, Self>) {
         let revisions = [
             self.key.read(cx).edit_revision(),
             self.model.read(cx).edit_revision(),
@@ -190,7 +190,7 @@ impl AiSettings {
     /// Only the first user edit of an enabled configuration writes the disabled
     /// state. Subsequent characters stay in the draft, including its intended
     /// enabled switch; programmatic field resets do not count as user edits.
-    fn suspend_for_edit(&mut self, cx: &mut Context<Self>) {
+    fn suspend_for_edit(&mut self, cx: &mut Context<'_, Self>) {
         if !self.config.enabled {
             return;
         }
@@ -214,7 +214,7 @@ impl AiSettings {
         cx.notify();
     }
 
-    fn persist(&mut self, config: &AiConfig, failure: &str, cx: &mut Context<Self>) -> bool {
+    fn persist(&mut self, config: &AiConfig, failure: &str, cx: &mut Context<'_, Self>) -> bool {
         if config.save().is_err() {
             // Config::save latches the process off even when settings storage
             // mutated its in-memory copy before returning an I/O error.
@@ -248,7 +248,7 @@ impl AiSettings {
         }
     }
 
-    fn save(&mut self, cx: &mut Context<Self>) {
+    fn save(&mut self, cx: &mut Context<'_, Self>) {
         if self.busy || self.load_failed {
             return;
         }
@@ -302,8 +302,7 @@ impl AiSettings {
             .profiles
             .iter()
             .find(|old| old.credential_key().ok().as_deref() == Some(service.as_str()))
-            .map(|old| old.id.clone())
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            .map_or_else(|| uuid::Uuid::new_v4().to_string(), |old| old.id.clone());
         let mut disabled = self.config.clone();
         if disabled.upsert_profile(profile.clone()).is_err() {
             self.status = Self::label(
@@ -399,7 +398,7 @@ impl AiSettings {
         .detach();
     }
 
-    fn delete_profile(&mut self, profile: Profile, cx: &mut Context<Self>) {
+    fn delete_profile(&mut self, profile: Profile, cx: &mut Context<'_, Self>) {
         if self.busy || self.load_failed {
             return;
         }
@@ -483,8 +482,8 @@ impl AiSettings {
         &mut self,
         id: String,
         label: String,
-        cx: &mut Context<Self>,
-        action: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+        cx: &mut Context<'_, Self>,
+        action: impl Fn(&mut Self, &mut Context<'_, Self>) + 'static,
     ) -> gpui::AnyElement {
         let chrome = Chrome::current();
         let focus = self
@@ -528,7 +527,7 @@ impl AiSettings {
 }
 
 impl Render for AiSettings {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.buttons.retain(|id, _| {
             let profile_id = id
                 .strip_prefix("jev-select-")
@@ -538,9 +537,10 @@ impl Render for AiSettings {
         let chrome = Chrome::current();
         let draft = self.draft(cx);
         let confirmed = draft.data_policy_version == DATA_POLICY_VERSION;
-        let destination = normalize_base_url(&draft.base_url)
-            .map(|(_, endpoint)| endpoint.to_string())
-            .unwrap_or_else(|_| Self::label("尚无有效 HTTPS 地址", "No valid HTTPS destination").into());
+        let destination = normalize_base_url(&draft.base_url).map_or_else(
+            |_| Self::label("尚无有效 HTTPS 地址", "No valid HTTPS destination").into(),
+            |(_, endpoint)| endpoint.to_string(),
+        );
         let mut providers = div().flex().flex_wrap().gap(px(6.));
         for (id, label, provider) in [
             ("typesafe", "TypeSafe", Provider::TypeSafe),
@@ -553,7 +553,7 @@ impl Render for AiSettings {
                 label.into()
             };
             providers = providers.child(self.button(format!("jev-{id}"), label, cx, move |this, cx| {
-                this.provider(provider, cx)
+                this.provider(provider, cx);
             }));
         }
         let enable_label = if self.enabled {
@@ -643,7 +643,7 @@ impl Render for AiSettings {
             };
             let label = format!("{provider} · {}", profile.base_url);
             let select = self.button(format!("jev-select-{}", profile.id), label, cx, move |this, cx| {
-                this.select(select_profile.clone(), cx)
+                this.select(select_profile.clone(), cx);
             });
             let delete = self.button(
                 format!("jev-delete-{}", profile.id),
