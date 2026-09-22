@@ -30,6 +30,9 @@ const PAGE: Record<
     helpEmpty: string;
     helpIme: string;
     helpCli: string;
+    helpEc: string;
+    helpEcLink: string;
+    helpEcHref: string;
   }
 > = {
   en: {
@@ -48,6 +51,10 @@ const PAGE: Record<
     helpIme:
       "Ghostty, Otty, Kitty, WezTerm, Zed, Alacritty: Settings → Behavior, or ftab integrations install input-method.",
     helpCli: "If ftab is missing, add ~/.local/bin to PATH.",
+    helpEc:
+      "Coming from Easy Complete? Fastab will not uninstall it. Open a new terminal after removing ecterm.",
+    helpEcLink: "Uninstall Easy Complete",
+    helpEcHref: `${GITHUB_URL}/blob/main/docs/uninstall-easy-complete.md`,
   },
   "zh-CN": {
     install: "安装",
@@ -63,6 +70,10 @@ const PAGE: Record<
     helpIme:
       "Ghostty、Otty、Kitty、WezTerm、Zed、Alacritty：设置 → 行为，或 ftab integrations install input-method。",
     helpCli: "找不到 ftab 时，把 ~/.local/bin 加进 PATH。",
+    helpEc:
+      "从 Easy Complete 迁过来？Fastab 不会替你卸。卸掉 ecterm 之后请新开终端。",
+    helpEcLink: "卸载 Easy Complete",
+    helpEcHref: `${GITHUB_URL}/blob/main/docs/uninstall-easy-complete.zh-CN.md`,
   },
 };
 
@@ -220,6 +231,15 @@ export function App({
               <li>{t.helpEmpty}</li>
               <li>{t.helpIme}</li>
               <li>{t.helpCli}</li>
+              <li>
+                {t.helpEc}{" "}
+                <a
+                  href={t.helpEcHref}
+                  className="text-(--accent) underline-offset-4 hover:underline"
+                >
+                  {t.helpEcLink}
+                </a>
+              </li>
             </ul>
           </div>
         </section>

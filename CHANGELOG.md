@@ -13,6 +13,7 @@
 - change: shell history suggestions use the same recent window as the on-disk history database
 - change: the first-run permission page can switch display language before the rest of settings is available
 - change: that language control sits below the window title bar so the click reaches the page
+- docs: how to uninstall Easy Complete before installing Fastab
 
 ## v0.0.1
 

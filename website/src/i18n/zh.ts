@@ -104,6 +104,11 @@ const faqsZh: Faq[] = [
     answer:
       "从 GitHub Releases 下载 ARM64 DMG，然后按首页的安装步骤操作。",
   },
+  {
+    question: "装 Fastab 前要先卸 Easy Complete 吗?",
+    answer:
+      "只有想把 Easy Complete 卸干净时才需要。Fastab 不会替你卸。两个可以并排装，但不能包装同一个终端。步骤见 GitHub 上的 docs/uninstall-easy-complete.zh-CN.md。",
+  },
 ];
 
 const processesZh: Process[] = [
