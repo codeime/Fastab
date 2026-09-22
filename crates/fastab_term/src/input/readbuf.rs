@@ -1,5 +1,9 @@
 use memmem::{Searcher, TwoWaySearcher};
 
+const INITIAL_CAPACITY: usize = 16;
+// Keep ordinary input reusable; only retire a large, fully consumed paste.
+const MAX_IDLE_CAPACITY: usize = 64 * 1024;
+
 /// This is a simple, small, read buffer that always has the buffer
 /// contents available as a contiguous slice.
 #[derive(Debug)]
@@ -16,7 +20,7 @@ impl Default for ReadBuffer {
 impl ReadBuffer {
     pub fn new() -> Self {
         Self {
-            storage: Vec::with_capacity(16),
+            storage: Vec::with_capacity(INITIAL_CAPACITY),
         }
     }
 
@@ -44,6 +48,13 @@ impl ReadBuffer {
     /// Append the contents of the slice to the read buffer
     pub fn extend_with(&mut self, slice: &[u8]) {
         self.storage.extend_from_slice(slice);
+    }
+
+    /// Run after a whole parse pass, never between bytes of the same paste.
+    pub fn release_large_empty_buffer(&mut self) {
+        if self.storage.is_empty() && self.storage.capacity() > MAX_IDLE_CAPACITY {
+            self.storage = Vec::with_capacity(INITIAL_CAPACITY);
+        }
     }
 
     /// Search for `needle` starting at `offset`.  Returns its offset

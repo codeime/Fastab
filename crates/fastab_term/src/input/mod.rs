@@ -1624,6 +1624,7 @@ impl InputParser {
     pub fn parse<F: FnMut(Option<Bytes>, InputEvent)>(&mut self, bytes: &[u8], callback: F, maybe_more: bool) {
         self.buf.extend_with(bytes);
         self.process_bytes(callback, maybe_more);
+        self.buf.release_large_empty_buffer();
     }
 
     fn advance_buf(&mut self, len: usize) {
