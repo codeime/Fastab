@@ -253,7 +253,7 @@ pub fn generate(spec: &Spec, tokens: &[String], query: &str, cwd: &str, fuzzy: b
             arg: arg.clone(),
             query: query.to_string(),
             search_term: query.to_string(),
-            exclusive: false,
+            only_suggest_args: false,
         })
     });
     if let Some(active) = active {

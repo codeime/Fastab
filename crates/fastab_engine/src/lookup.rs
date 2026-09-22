@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::ir::{ArgSpec, OptionSpec, ParserDirectives, Registry, Spec, SuggestionMeta, Template};
+use crate::ir::{ArgSpec, LoadSpec, OptionSpec, ParserDirectives, Registry, Spec, SuggestionMeta, Template};
 use crate::query::matches_query;
 use crate::runtime::{CompleteRequest, CompleteResult, CurrentArg, Suggestion};
 
@@ -683,11 +683,11 @@ pub(crate) struct ActiveArg {
     pub query: String,
     /// Raw shell text used as the result search term for deletion.
     pub search_term: String,
-    /// Mandatory option arguments and explicit `--option=value` forms are
-    /// exclusive completion contexts: sibling options and subcommands must
-    /// not replace their argument suggestions. A separated optional value is
-    /// intentionally non-exclusive because it may also be the next option.
-    pub exclusive: bool,
+    /// Fig `onlySuggestArgs`: the caret is inside an attached option value
+    /// (`--opt=value`, `-ovalue`). Subcommands and sibling options stay out
+    /// of that list. A separated value is not this case; the walker's
+    /// `canConsume*` flags decide those.
+    pub only_suggest_args: bool,
 }
 
 #[derive(Debug)]
@@ -706,8 +706,14 @@ pub(crate) struct CompletionContext {
     pub passed_options: Vec<OptionSpec>,
     /// Parser directives inherited along the current spec path.
     pub parser_directives: ParserDirectives,
-    /// Whether sibling options are legal at the current parser state.
+    /// Fig `canConsumeOptions` at the final parser state.
     pub options_allowed: bool,
+    /// Fig `canConsumeSubcommands` at the final parser state. Entering a
+    /// positional argument clears this until the next subcommand or loadSpec.
+    pub subcommands_allowed: bool,
+    /// Fig `isEndOfOptions`. Combined with [`ActiveArg::only_suggest_args`]
+    /// this is `onlySuggestArgs`, which suppresses both subcommands and options.
+    pub end_of_options: bool,
     /// Argument slots the token being typed fills, for `template: history`.
     pub history_slots: Vec<crate::history::ArgSlot>,
 }
@@ -841,6 +847,8 @@ pub(crate) fn resolve_context(
         passed_options: walked.passed_options,
         parser_directives: walked.parser_directives,
         options_allowed: walked.options_allowed,
+        subcommands_allowed: walked.subcommands_allowed,
+        end_of_options: walked.end_of_options,
         history_slots: trace.current,
     }
 }
@@ -855,6 +863,8 @@ struct WalkedSpec {
     passed_options: Vec<OptionSpec>,
     parser_directives: ParserDirectives,
     options_allowed: bool,
+    subcommands_allowed: bool,
+    end_of_options: bool,
 }
 
 /// Parse a finished history command with the same walker the buffer uses,
@@ -933,6 +943,7 @@ fn walk_spec(
                             if let Some(trace) = trace.as_deref_mut() {
                                 trace.enter_root(next.as_ref());
                             }
+                            let restart_parser = load_restarts_parser(arg);
                             enter_loaded_spec(
                                 &mut current,
                                 &mut parent,
@@ -947,6 +958,8 @@ fn walk_spec(
                                 next,
                                 index,
                                 tokens,
+                                restart_parser,
+                                &mut after_double_dash,
                             );
                         }
                         substituted_aliases.clear();
@@ -974,6 +987,7 @@ fn walk_spec(
                             if let Some(trace) = trace.as_deref_mut() {
                                 trace.enter_root(next.as_ref());
                             }
+                            let restart_parser = load_restarts_parser(arg);
                             enter_loaded_spec(
                                 &mut current,
                                 &mut parent,
@@ -988,6 +1002,8 @@ fn walk_spec(
                                 next,
                                 index,
                                 tokens,
+                                restart_parser,
+                                &mut after_double_dash,
                             );
                         }
                         substituted_aliases.clear();
@@ -1080,6 +1096,7 @@ fn walk_spec(
                     None => trace.record_positional(&current.args, annotation_index, &token),
                 }
             }
+            let restart_parser = next.is_some() && load_restarts_parser(arg);
             if let Some(next) = next {
                 enter_loaded_spec(
                     &mut current,
@@ -1095,6 +1112,8 @@ fn walk_spec(
                     next,
                     index,
                     tokens,
+                    restart_parser,
+                    &mut after_double_dash,
                 );
             }
             substituted_aliases.clear();
@@ -1111,14 +1130,16 @@ fn walk_spec(
             option_arg.as_ref().map(|state| (&state.option, state.count)),
         );
     }
+    let subcommand_arg = positional_arg(&current.args, positional);
     let options_allowed = can_consume_options(
         &parser_directives,
         after_double_dash,
         entered_args,
         option_arg.as_ref(),
-        positional_arg(&current.args, positional),
+        subcommand_arg,
         subcommand_variadic_count,
     );
+    let subcommands_allowed = can_consume_subcommands(option_arg.as_ref(), entered_args);
     WalkedSpec {
         spec: current,
         parent,
@@ -1128,6 +1149,8 @@ fn walk_spec(
         passed_options,
         parser_directives,
         options_allowed,
+        subcommands_allowed,
+        end_of_options: after_double_dash,
     }
 }
 
@@ -1224,6 +1247,8 @@ fn enter_loaded_spec(
     next: Arc<Spec>,
     index: usize,
     tokens: &[String],
+    restart_parser: bool,
+    after_double_dash: &mut bool,
 ) {
     *parent = current.clone();
     *current = next;
@@ -1239,6 +1264,25 @@ fn enter_loaded_spec(
     *option_arg = None;
     *entered_args = false;
     *subcommand_variadic_count = 0;
+    // Fig re-parses a path/`isCommand` loadSpec from a fresh command, which
+    // clears `isEndOfOptions`. An inline object or a JS loadSpec that returns
+    // a spec object is merged into the current state and keeps the flag.
+    if restart_parser {
+        *after_double_dash = false;
+    }
+}
+
+/// A string `loadSpec`, `isCommand`, `isScript`, or `isModule` starts a new
+/// parser. A JS hook or an inline spec object does not.
+fn load_restarts_parser(arg: &ArgSpec) -> bool {
+    if arg.js_load_spec.is_some() {
+        return false;
+    }
+    match &arg.load_spec {
+        Some(LoadSpec::Path(_)) => true,
+        Some(LoadSpec::Inline(_)) => false,
+        None => arg.is_command || arg.is_script || arg.is_module.is_some(),
+    }
 }
 
 /// Fig prefers a static `loadSpec` on the argument. Only when that is absent
@@ -1345,7 +1389,7 @@ fn active_arg<'a>(
                             arg: arg.clone(),
                             query: value.to_string(),
                             search_term: raw_value,
-                            exclusive: true,
+                            only_suggest_args: true,
                         });
                     }
                     if let Some(arg) = option.args.first().filter(|arg| arg.is_variadic) {
@@ -1383,7 +1427,7 @@ fn active_arg<'a>(
                         arg: arg.clone(),
                         query: query.to_string(),
                         search_term: raw_query.to_string(),
-                        exclusive: !arg.is_optional,
+                        only_suggest_args: false,
                     });
                 }
             }
@@ -1415,7 +1459,7 @@ fn active_arg<'a>(
             arg: state.arg,
             query: query.to_string(),
             search_term: raw_query.to_string(),
-            exclusive: true,
+            only_suggest_args: false,
         });
     }
 
@@ -1446,7 +1490,7 @@ fn active_arg<'a>(
                                 arg: arg.clone(),
                                 query: value.to_string(),
                                 search_term: raw_value,
-                                exclusive: true,
+                                only_suggest_args: true,
                             });
                         }
                     }
@@ -1461,7 +1505,7 @@ fn active_arg<'a>(
                             arg: arg.clone(),
                             query: String::new(),
                             search_term: String::new(),
-                            exclusive: !arg.is_optional,
+                            only_suggest_args: false,
                         });
                     }
                 }
@@ -1479,7 +1523,7 @@ fn active_arg<'a>(
         arg: arg.clone(),
         query: query.to_string(),
         search_term: raw_query.to_string(),
-        exclusive: false,
+        only_suggest_args: false,
     })
 }
 
@@ -2057,12 +2101,21 @@ pub(crate) fn complete_with_settings(
         description: active.arg.description.clone(),
     });
 
-    let completing_exclusive_arg = context.active_arg.as_ref().is_some_and(|active| active.exclusive);
-    let mut subcommands = current.subcommands.clone();
-    subcommands.sort_by(|left, right| cmp_named_names(&left.names, &right.names));
-    let mut suggestions = if completing_exclusive_arg || open_option_chain.is_some() {
-        Vec::new()
-    } else {
+    // Fig `getResultFromState`: args are always eligible, additional
+    // suggestions are always pushed, and subcommands/options are added only
+    // when their consume flags are set. `onlySuggestArgs` (a finished `--`,
+    // or the caret inside `--opt=value` / `-ovalue`) suppresses both.
+    // An open short-option chain is filtered down to options and args by
+    // `getAllSuggestions`, which is the chain branch below.
+    let only_suggest_args = context.end_of_options
+        || context
+            .active_arg
+            .as_ref()
+            .is_some_and(|active| active.only_suggest_args);
+    let suggest_subcommands = context.subcommands_allowed && !only_suggest_args && open_option_chain.is_none();
+    let mut suggestions = if suggest_subcommands {
+        let mut subcommands = current.subcommands.clone();
+        subcommands.sort_by(|left, right| cmp_named_names(&left.names, &right.names));
         collect_named(
             &subcommands,
             |spec| spec.names.as_slice(),
@@ -2082,6 +2135,8 @@ pub(crate) fn complete_with_settings(
             fuzzy,
             prefer_verbose,
         )
+    } else {
+        Vec::new()
     };
     // Fig presents argument/generator results before additional shortcuts and
     // options. Keep that ordering so a generated git alias does not jump
@@ -2157,8 +2212,8 @@ pub(crate) fn complete_with_settings(
         }
     }
     suggestions.extend(additional);
-    let include_options = context.options_allowed && !completing_exclusive_arg;
-    if let Some(chain) = open_option_chain {
+    let include_options = context.options_allowed && !only_suggest_args;
+    if !only_suggest_args && let Some(chain) = open_option_chain {
         suggestions.extend(option_chain_suggestions(
             current,
             &persistent_refs,
@@ -4128,6 +4183,13 @@ mod tests {
             completed
                 .suggestions
                 .iter()
+                .any(|suggestion| suggestion.name == "--target-only"),
+            "a path loadSpec restarts the parser, so -- no longer suppresses the loaded spec"
+        );
+        assert!(
+            completed
+                .suggestions
+                .iter()
                 .all(|suggestion| suggestion.name != "--profile-only")
         );
     }
@@ -4242,6 +4304,251 @@ mod tests {
                 .iter()
                 .any(|suggestion| suggestion.kind == "option" && suggestion.name == "--long")
         );
+    }
+
+    fn names_of(result: &CompleteResult) -> Vec<&str> {
+        result
+            .suggestions
+            .iter()
+            .map(|suggestion| suggestion.name.as_str())
+            .collect()
+    }
+
+    fn complete_fuzzy(registry: &mut Registry, buffer: &str, fuzzy: bool) -> CompleteResult {
+        complete(
+            registry,
+            &CompleteRequest {
+                buffer: buffer.into(),
+                fuzzy,
+                include_history: false,
+                ..CompleteRequest::default()
+            },
+        )
+    }
+
+    /// Fig keeps subcommands in the list only while `canConsumeSubcommands` is
+    /// set and `onlySuggestArgs` is clear. Fuzzy search then filters that
+    /// list; it does not invent a second candidate set. `git check m` used to
+    /// list `merge` / `mv` / `commit` because the consumed alias argument
+    /// never cleared the subcommand flag.
+    #[test]
+    fn suggestion_flags_follow_fig_after_a_consumed_argument() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("git.json"),
+            r#"{
+              "names":["git"],
+              "args":[{"name":"alias","isOptional":true,"suggestions":[{"names":["mine"]}]}],
+              "additionalSuggestions":[{"names":["ship"],"description":"Ship it"}],
+              "options":[
+                {"names":["--namespace"],"description":"Namespace"},
+                {"names":["--version"],"description":"Version"}
+              ],
+              "subcommands":[
+                {"names":["checkout"],"description":"Switch","args":[
+                  {"name":"branch","isOptional":true,"suggestions":[{"names":["master"]},{"names":["main"]}]}
+                ]},
+                {"names":["merge"]},
+                {"names":["mv"]},
+                {"names":["commit"]},
+                {"names":["maintenance"]}
+              ]
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+
+        let typing = complete_fuzzy(&mut registry, "git che", false);
+        let typing_names = names_of(&typing);
+        assert!(typing_names.contains(&"checkout"), "{typing_names:?}");
+        assert!(!typing_names.contains(&"merge"), "{typing_names:?}");
+
+        let fuzzy_slot = complete_fuzzy(&mut registry, "git m", true);
+        let fuzzy_slot_names = names_of(&fuzzy_slot);
+        assert!(fuzzy_slot_names.contains(&"merge"), "{fuzzy_slot_names:?}");
+        assert!(fuzzy_slot_names.contains(&"mv"), "{fuzzy_slot_names:?}");
+        assert!(fuzzy_slot_names.contains(&"commit"), "{fuzzy_slot_names:?}");
+        assert!(fuzzy_slot_names.contains(&"maintenance"), "{fuzzy_slot_names:?}");
+        assert!(
+            fuzzy_slot
+                .suggestions
+                .iter()
+                .any(|suggestion| suggestion.name == "merge" && suggestion.kind == "subcommand"),
+            "{fuzzy_slot_names:?}"
+        );
+
+        let consumed = complete_fuzzy(&mut registry, "git check m", true);
+        let consumed_names = names_of(&consumed);
+        for hidden in ["checkout", "merge", "mv", "commit", "maintenance"] {
+            assert!(!consumed_names.contains(&hidden), "{hidden} in {consumed_names:?}");
+        }
+        assert!(
+            consumed
+                .suggestions
+                .iter()
+                .all(|suggestion| suggestion.kind != "subcommand"),
+            "{consumed_names:?}"
+        );
+        assert!(
+            consumed_names.contains(&"--namespace"),
+            "options stay legal after a positional, and fuzzy still filters them: {consumed_names:?}"
+        );
+        assert!(!consumed_names.contains(&"mine"), "{consumed_names:?}");
+
+        let checkout = complete_fuzzy(&mut registry, "git checkout m", true);
+        let checkout_names = names_of(&checkout);
+        assert!(checkout_names.contains(&"master"), "{checkout_names:?}");
+        assert!(checkout_names.contains(&"main"), "{checkout_names:?}");
+        assert!(!checkout_names.contains(&"merge"), "{checkout_names:?}");
+
+        let after_arg = complete_fuzzy(&mut registry, "git check ", false);
+        let after_arg_names = names_of(&after_arg);
+        assert!(after_arg_names.contains(&"ship"), "{after_arg_names:?}");
+        assert!(after_arg_names.contains(&"--namespace"), "{after_arg_names:?}");
+        assert!(!after_arg_names.contains(&"merge"), "{after_arg_names:?}");
+        assert!(!after_arg_names.contains(&"checkout"), "{after_arg_names:?}");
+    }
+
+    #[test]
+    fn bundled_git_check_m_does_not_list_sibling_subcommands() {
+        let source = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bundle/specs-ir/git.json");
+        let dir = tempfile::tempdir().unwrap();
+        fs::copy(&source, dir.path().join("git.json")).unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+
+        let typing = complete_fuzzy(&mut registry, "git che", true);
+        assert!(names_of(&typing).contains(&"checkout"), "{:?}", names_of(&typing));
+
+        let fuzzy_slot = complete_fuzzy(&mut registry, "git m", true);
+        assert!(
+            names_of(&fuzzy_slot).contains(&"merge"),
+            "fuzzy still matches subcommands before any argument is consumed: {:?}",
+            names_of(&fuzzy_slot)
+        );
+
+        let consumed = complete_fuzzy(&mut registry, "git check m", true);
+        let names = names_of(&consumed);
+        for hidden in [
+            "checkout",
+            "merge",
+            "mv",
+            "commit",
+            "maintenance",
+            "remote",
+            "rm",
+            "submodule",
+        ] {
+            assert!(!names.contains(&hidden), "{hidden} in {names:?}");
+        }
+        assert!(
+            consumed
+                .suggestions
+                .iter()
+                .all(|suggestion| suggestion.kind != "subcommand"),
+            "{names:?}"
+        );
+
+        let checkout = complete_fuzzy(&mut registry, "git checkout m", false);
+        assert!(
+            checkout.current_arg.is_some(),
+            "checkout must consume the exact subcommand"
+        );
+        assert!(!names_of(&checkout).contains(&"merge"));
+    }
+
+    #[test]
+    fn end_of_options_suppresses_subcommands_and_options() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("git.json"),
+            r#"{
+              "names":["git"],
+              "args":[{"name":"alias","isOptional":true,"suggestions":[{"names":["mine"]}]}],
+              "additionalSuggestions":[{"names":["ship"]}],
+              "options":[{"names":["--namespace"]}],
+              "subcommands":[{"names":["merge"]},{"names":["checkout"]}]
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+
+        let result = complete_fuzzy(&mut registry, "git -- m", true);
+        let names = names_of(&result);
+        assert!(names.contains(&"mine"), "{names:?}");
+        assert!(!names.contains(&"merge"), "{names:?}");
+        assert!(!names.contains(&"checkout"), "{names:?}");
+        assert!(!names.contains(&"--namespace"), "{names:?}");
+        assert!(!names.contains(&"ship"), "{names:?}");
+
+        let spaced = complete_fuzzy(&mut registry, "git -- ", false);
+        let spaced_names = names_of(&spaced);
+        assert!(spaced_names.contains(&"mine"), "{spaced_names:?}");
+        assert!(spaced_names.contains(&"ship"), "{spaced_names:?}");
+        assert!(!spaced_names.contains(&"merge"), "{spaced_names:?}");
+        assert!(!spaced_names.contains(&"--namespace"), "{spaced_names:?}");
+    }
+
+    #[test]
+    fn variadic_option_argument_breaks_for_options_only() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("pack.json"),
+            r#"{
+              "names":["pack"],
+              "subcommands":[{"names":["child"]}],
+              "options":[
+                {"names":["--files"],"args":[{"name":"file","isVariadic":true,"suggestions":[{"names":["a.txt"]}]}]},
+                {"names":["--flag"],"description":"Flag"},
+                {"names":["--locked"],"args":[{"name":"file","isVariadic":true,"optionsCanBreakVariadicArg":false}]}
+              ]
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+
+        let open = complete_fuzzy(&mut registry, "pack --files one ", false);
+        let open_names = names_of(&open);
+        assert!(open_names.contains(&"--flag"), "{open_names:?}");
+        assert!(open_names.contains(&"a.txt"), "{open_names:?}");
+        assert!(!open_names.contains(&"child"), "{open_names:?}");
+
+        let locked = complete_fuzzy(&mut registry, "pack --locked one ", false);
+        let locked_names = names_of(&locked);
+        assert!(!locked_names.contains(&"--flag"), "{locked_names:?}");
+        assert!(!locked_names.contains(&"child"), "{locked_names:?}");
+
+        let typing = complete_fuzzy(&mut registry, "pack --files o", false);
+        let typing_names = names_of(&typing);
+        assert!(!typing_names.contains(&"--flag"), "{typing_names:?}");
+        assert!(!typing_names.contains(&"child"), "{typing_names:?}");
+    }
+
+    #[test]
+    fn inline_load_spec_keeps_the_end_of_options_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("tool.json"),
+            r#"{
+              "names":["tool"],
+              "args":[{"name":"input","loadSpec":{
+                "names":["inner"],
+                "subcommands":[{"names":["child"]}],
+                "options":[{"names":["--inner"]}],
+                "args":[{"name":"next","suggestions":[{"names":["kept"]}]}]
+              }}]
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let completed = complete_fuzzy(&mut registry, "tool -- value ", false);
+        let names = names_of(&completed);
+        assert_eq!(
+            completed.current_arg.as_ref().map(|arg| arg.name.as_str()),
+            Some("next")
+        );
+        assert!(names.contains(&"kept"), "{names:?}");
+        assert!(!names.contains(&"child"), "{names:?}");
+        assert!(!names.contains(&"--inner"), "{names:?}");
     }
 
     #[test]
@@ -4633,7 +4940,7 @@ mod tests {
                 arg: arg.clone(),
                 query: "value".into(),
                 search_term: "value".into(),
-                exclusive: false,
+                only_suggest_args: false,
             }
         }
 
