@@ -16,9 +16,8 @@ env:
 jobs:
   build-arm-dmg:
     name: Build ARM DMG
-    # Xcode 26.3's actool crashes in AssetCatalogAgent when the host is
-    # macOS 15 (IBPlatformToolFailureException: the tool closed the
-    # connection). The same AppIcon.icon compiles on macOS 26.
+    # The app icon is the committed icon.icns. This runner stays on macOS 26
+    # so the rest of the app build matches the current Xcode.
     runs-on: macos-26
     timeout-minutes: 90
     steps:

@@ -27,10 +27,6 @@ info() { echo -e "${GREEN}==>${NC} $*"; }
 
 [ -d "$APP" ] || { echo "error: $APP not found — run scripts/build-app.sh first" >&2; exit 1; }
 [ -f "$BG" ]  || { echo "error: $BG not found — run: swift scripts/make-dmg-background.swift" >&2; exit 1; }
-# Same icns the Dock uses. create-dmg only stamps a volume icon when
-# --volicon is set; omitting it leaves the generic disk.
-VOL_ICON="${APP}/Contents/Resources/icon.icns"
-[ -f "$VOL_ICON" ] || { echo "error: $VOL_ICON not found" >&2; exit 1; }
 
 "${REPO_DIR}/scripts/verify-license-bundle.sh" "$APP"
 
@@ -58,7 +54,6 @@ info "Creating DMG: $OUT"
 #   create-dmg picks up background@2x.png automatically when it sits next to background.png
 create-dmg \
   --volname         "$VOL_NAME" \
-  --volicon         "$VOL_ICON" \
   --background      "$BG" \
   --window-pos      200 120 \
   --window-size     658 498 \

@@ -4,9 +4,8 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 MAIN_SVG="${REPO_DIR}/assets/logo.svg"
 MENU_BAR_SVG="${REPO_DIR}/assets/menu-bar.svg"
-# Layered macOS 26 icon lives in assets/AppIcon.icon. The Dock shadow is
-# groups[name=Mark].shadow in icon.json; build-app.sh compiles it to
-# Assets.car. Do not bake that shadow into these rasters.
+# icon.icns is the only app icon the bundle ships. It is painted from
+# assets/logo.svg, including the prompt and the completion list.
 SVG_RENDERER_SOURCE="${REPO_DIR}/scripts/render-svg.m"
 DESKTOP_ICONS="${REPO_DIR}/crates/fastab_desktop/icons"
 APP_ICONSET="${DESKTOP_ICONS}/AppIcon.iconset"
@@ -83,18 +82,10 @@ done
 render_png "$MAIN_SVG" 512 "${DESKTOP_ICONS}/icon.png" "$(awk 'BEGIN { printf "%.6f", 512 * 100 / 1024 }')"
 render_png "$MAIN_SVG" 512 "${REPO_DIR}/assets/logo.png"
 render_png "$MAIN_SVG" 180 "${REPO_DIR}/website/src/assets/logo.png"
-# Same artwork as the Dock tile. The mounted DMG uses icon.icns via
-# make-dmg.sh --volicon; this PNG is that icon at the volume size.
 render_png "$MAIN_SVG" 256 "${DESKTOP_ICONS}/VolumeIcon.png" "$(awk 'BEGIN { printf "%.6f", 256 * 100 / 1024 }')"
 
 iconutil -c icns "$APP_ICONSET" -o "${DESKTOP_ICONS}/icon.icns"
 copy_if_changed "${DESKTOP_ICONS}/icon.icns" "$IME_ICON"
-
-# Icon Composer does not paint gradient SVG layers, so the layered macOS 26
-# icon would show only the document fill. These rasters are what actool embeds.
-ICON_ASSETS="${REPO_DIR}/assets/AppIcon.icon/Assets"
-render_png "$ICON_ASSETS/mark.svg" 1024 "$ICON_ASSETS/mark.png" 0
-render_png "$ICON_ASSETS/background.svg" 1024 "$ICON_ASSETS/background.png" 0 0
 
 render_png "$MENU_BAR_SVG" 512 "${REPO_DIR}/assets/menu-bar.png"
 # tray-icon displays macOS tray icons at 18 pt. Keep a logical 18 px asset for

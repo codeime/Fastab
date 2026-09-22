@@ -1532,19 +1532,20 @@ mod tests {
     }
 
     #[test]
-    fn app_icon_mark_is_painted_rather_than_clear_glass() {
-        let icon = include_str!("../../../assets/AppIcon.icon/icon.json");
-        let mark = icon.split("\"name\": \"Mark\"").nth(1).expect("Mark group");
-        let layer = mark.split("\"name\": \"Prompt and list\"").next().expect("mark layer");
+    fn dock_icon_is_the_painted_icns() {
+        let build = include_str!("../../../scripts/build-app.sh");
+        assert!(build.contains("CFBundleIconFile"));
         assert!(
-            layer.contains("\"glass\": false"),
-            "glass replaces the artwork, so Finder and the drag image show only the gradient"
+            !build.contains("CFBundleIconName"),
+            "a layered icon name hides icon.icns on macOS 26"
         );
-        assert!(
-            layer.contains("\"image-name\": \"mark.png\""),
-            "Icon Composer drops gradient SVG paint and leaves only the background fill"
-        );
-        assert!(mark.contains("\"kind\": \"neutral\"") || mark.contains("\"kind\": \"layer-color\""));
+        assert!(!build.contains("Assets.car"));
+        let dmg = include_str!("../../../scripts/make-dmg.sh");
+        assert!(!dmg.contains("--volicon"));
+        let logo = include_str!("../../../assets/logo.svg");
+        assert!(logo.contains("#343637"));
+        assert!(logo.contains("#39DB68"));
+        assert!(!logo.contains("#D97757"));
     }
 
     #[test]

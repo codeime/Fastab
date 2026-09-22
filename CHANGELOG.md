@@ -5,14 +5,11 @@
 ## v0.0.2
 
 - fix: completion kinds match the previous parser. Once a positional argument is consumed, or after `--`, subcommands leave the list, so fuzzy search no longer offers unrelated commands such as `merge` for `git check m`
-- fix: the app icon keeps the prompt-and-list mark. Icon Composer drops gradient SVG layers and was showing only the background fill, so that mark now ships as a PNG
+- fix: the app icon is the previous dark tile again, with the green prompt and completion list painted into `icon.icns`. The ochre gradient and the layered icon catalog are gone, so macOS 26 no longer shows a plain background
 - fix: granting Accessibility no longer quits the app. The drag row's name label was released while the card was still showing it
 - fix: the Accessibility grant card centers the icon with its name and the title with the close button, and animates an arrow toward the list
 - fix: display-language chips use a static option id so the settings window compiles
-- change: app icon uses a Claude terracotta-to-peach gradient instead of a flat dark tile
-- change: app icon ships an Icon Composer Mark group so macOS 26 can apply its system shadow under the prompt-and-list mark
-- change: the DMG volume uses the same app icon as the Dock tile
-- change: icon compilation uses Xcode 26+ actool when that Xcode is installed, following the real app path rather than a version symlink
+- change: the DMG no longer stamps a custom volume icon
 - change: shell history suggestions use the same recent window as the on-disk history database
 - change: the first-run permission page can switch display language before the rest of settings is available
 - change: that language control sits below the window title bar so the click reaches the page
