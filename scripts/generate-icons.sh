@@ -30,12 +30,15 @@ render_png() {
   local size="$2"
   local output="$3"
   local inset="${4:-0}"
+  local check_corners="${5:-1}"
   local candidate="${WORK_DIR}/$(basename "$output").${size}.${inset}.png"
 
   # Render every target directly from its SVG source. Scaling a 1024 px
   # intermediate bitmap with sips makes the small AppKit icons noticeably soft.
   "$SVG_RENDERER" "$source" "$size" "$candidate" "$inset"
-  "$SVG_RENDERER" --check-transparent-corners "$candidate"
+  if [[ "$check_corners" == "1" ]]; then
+    "$SVG_RENDERER" --check-transparent-corners "$candidate"
+  fi
   if [[ ! -f "$output" ]] || ! cmp -s "$candidate" "$output"; then
     cp "$candidate" "$output"
   fi
@@ -86,6 +89,12 @@ render_png "$MAIN_SVG" 256 "${DESKTOP_ICONS}/VolumeIcon.png" "$(awk 'BEGIN { pri
 
 iconutil -c icns "$APP_ICONSET" -o "${DESKTOP_ICONS}/icon.icns"
 copy_if_changed "${DESKTOP_ICONS}/icon.icns" "$IME_ICON"
+
+# Icon Composer does not paint gradient SVG layers, so the layered macOS 26
+# icon would show only the document fill. These rasters are what actool embeds.
+ICON_ASSETS="${REPO_DIR}/assets/AppIcon.icon/Assets"
+render_png "$ICON_ASSETS/mark.svg" 1024 "$ICON_ASSETS/mark.png" 0
+render_png "$ICON_ASSETS/background.svg" 1024 "$ICON_ASSETS/background.png" 0 0
 
 render_png "$MENU_BAR_SVG" 512 "${REPO_DIR}/assets/menu-bar.png"
 # tray-icon displays macOS tray icons at 18 pt. Keep a logical 18 px asset for

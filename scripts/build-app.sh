@@ -336,8 +336,95 @@ APPICON_CAR=""
 CFBUNDLE_ICON_NAME_ENTRIES=""
 if [ -d "$ICON_COMPOSER" ]; then
   python3 - "$ICON_COMPOSER" <<'PY'
-import json, sys
+import json, struct, sys, zlib
 from pathlib import Path
+
+def paeth(a, b, c):
+    estimate = a + b - c
+    da, db, dc = abs(estimate - a), abs(estimate - b), abs(estimate - c)
+    if da <= db and da <= dc:
+        return a
+    if db <= dc:
+        return b
+    return c
+
+def assert_mark_png(path: Path):
+    """The mark has to be real pixels. A blank or fully opaque stand-in
+    compiles, then macOS 26 shows only the background fill."""
+    data = path.read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        sys.exit(f"{path.name} is not a PNG")
+    pos = 8
+    width = height = color_type = interlace = None
+    chunks = []
+    while pos + 8 <= len(data):
+        length = struct.unpack(">I", data[pos : pos + 4])[0]
+        kind = data[pos + 4 : pos + 8]
+        chunk = data[pos + 8 : pos + 8 + length]
+        pos += 12 + length
+        if kind == b"IHDR":
+            width, height, depth, color_type, _comp, _filt, interlace = struct.unpack(">IIBBBBB", chunk)
+            if depth != 8 or color_type != 6 or interlace != 0:
+                sys.exit(f"{path.name} must be a non-interlaced 8-bit RGBA PNG")
+        elif kind == b"IDAT":
+            chunks.append(chunk)
+        elif kind == b"IEND":
+            break
+    if width != 1024 or height != 1024:
+        sys.exit(f"{path.name} must be 1024x1024 so Icon Composer does not leave it at native size")
+    raw = zlib.decompress(b"".join(chunks))
+    stride = width * 4
+    rows = []
+    index = 0
+    prev = bytearray(stride)
+    for _y in range(height):
+        filt = raw[index]
+        index += 1
+        row = bytearray(raw[index : index + stride])
+        index += stride
+        if filt == 1:
+            for x in range(stride):
+                left = row[x - 4] if x >= 4 else 0
+                row[x] = (row[x] + left) & 255
+        elif filt == 2:
+            for x in range(stride):
+                row[x] = (row[x] + prev[x]) & 255
+        elif filt == 3:
+            for x in range(stride):
+                left = row[x - 4] if x >= 4 else 0
+                row[x] = (row[x] + ((left + prev[x]) // 2)) & 255
+        elif filt == 4:
+            for x in range(stride):
+                left = row[x - 4] if x >= 4 else 0
+                up = prev[x]
+                up_left = prev[x - 4] if x >= 4 else 0
+                row[x] = (row[x] + paeth(left, up, up_left)) & 255
+        elif filt != 0:
+            sys.exit(f"{path.name} uses unsupported PNG filter {filt}")
+        prev = row
+        rows.append(row)
+
+    def pixel(x, y):
+        offset = x * 4
+        return tuple(rows[y][offset : offset + 4])
+
+    for corner in (pixel(0, 0), pixel(width - 1, 0), pixel(0, height - 1), pixel(width - 1, height - 1)):
+        if corner[3] != 0:
+            sys.exit(f"{path.name} corners must stay transparent so the mark does not cover the background")
+    painted = 0
+    light = 0
+    for row in rows:
+        for x in range(0, stride, 4):
+            red, green, blue, alpha = row[x : x + 4]
+            if alpha > 128:
+                painted += 1
+                if red > 200 and green > 170 and blue > 150:
+                    light += 1
+    total = width * height
+    if painted < total // 50 or painted > total // 2:
+        sys.exit(f"{path.name} does not look like the prompt-and-list mark ({painted} painted pixels)")
+    if light < 100:
+        sys.exit(f"{path.name} is missing the light prompt-and-list paint")
 
 root = Path(sys.argv[1])
 doc = json.loads((root / "icon.json").read_text())
@@ -349,16 +436,24 @@ if shadow.get("kind") not in ("neutral", "layer-color"):
     sys.exit("AppIcon.icon Mark group must set shadow.kind to neutral or layer-color")
 if not isinstance(shadow.get("opacity"), (int, float)):
     sys.exit("AppIcon.icon Mark group is missing shadow.opacity")
-# Liquid Glass replaces the SVG paint with a clear material. Finder, the
+# Liquid Glass replaces the layer paint with a clear material. Finder, the
 # drag image, and the Accessibility list then show only the gradient.
 for layer in mark.get("layers") or []:
     if layer.get("glass") is True:
         sys.exit(
             "AppIcon.icon Mark layer must keep glass off so the prompt-and-list mark stays visible"
         )
+    name = layer.get("image-name") or ""
+    if not name.endswith(".png"):
+        sys.exit(
+            "AppIcon.icon Mark layer must be a PNG; Icon Composer drops gradient SVG paint"
+        )
+    assert_mark_png(root / "Assets" / name)
 for group in doc.get("groups", []):
     for layer in group.get("layers", []):
         name = layer.get("image-name")
+        if name and not name.endswith(".png"):
+            sys.exit(f"AppIcon.icon layer {name} must be a PNG; Icon Composer drops gradient SVG paint")
         if name and not (root / "Assets" / name).is_file():
             sys.exit(f"AppIcon.icon is missing Assets/{name}")
 PY

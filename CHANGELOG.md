@@ -5,7 +5,8 @@
 ## v0.0.2
 
 - fix: completion kinds match the previous parser. Once a positional argument is consumed, or after `--`, subcommands leave the list, so fuzzy search no longer offers unrelated commands such as `merge` for `git check m`
-- fix: the app icon keeps the prompt-and-list mark. Liquid Glass was replacing that artwork, so Finder, drag images, and the Accessibility list showed only the gradient
+- fix: the app icon keeps the prompt-and-list mark. Icon Composer drops gradient SVG layers and was showing only the background fill, so that mark now ships as a PNG
+- fix: granting Accessibility no longer quits the app. The drag row's name label was released while the card was still showing it
 - fix: the Accessibility grant card centers the icon with its name and the title with the close button, and animates an arrow toward the list
 - fix: display-language chips use a static option id so the settings window compiles
 - change: app icon uses a Claude terracotta-to-peach gradient instead of a flat dark tile

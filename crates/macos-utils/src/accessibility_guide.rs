@@ -543,7 +543,10 @@ fn add_drag_row(parent: id, frame: NSRect) {
         let _: () = msg_send![label, setLineBreakMode: 4i64];
         let _: () = msg_send![label, setUsesSingleLineMode: YES];
         let _: () = msg_send![label, setMaximumNumberOfLines: 1i64];
-        adopt_subview(view, label);
+        // labelWithString: is already autoreleased. adopt_subview would release
+        // it again, and the card's pool then frees the label while it is still
+        // in the window. That aborts the process as soon as the grant card is built.
+        let _: () = msg_send![view, addSubview: label];
 
         pin_center_y(image_view, view);
         pin_center_y(label, view);
@@ -1089,6 +1092,9 @@ fn app_display_name() -> String {
 
 /// `addSubview:` retains. Drop the extra `alloc`/`new` retain so releasing
 /// the panel can actually `dealloc` the card.
+///
+/// Only call this with an owned (+1) object (`alloc`/`new`). An autoreleased
+/// object such as `labelWithString:` must be added with `addSubview:` alone.
 fn adopt_subview(parent: id, child: id) {
     if child.is_null() {
         return;
@@ -1532,7 +1538,11 @@ mod tests {
         let layer = mark.split("\"name\": \"Prompt and list\"").next().expect("mark layer");
         assert!(
             layer.contains("\"glass\": false"),
-            "glass replaces the SVG paint, so Finder and the drag image show only the gradient"
+            "glass replaces the artwork, so Finder and the drag image show only the gradient"
+        );
+        assert!(
+            layer.contains("\"image-name\": \"mark.png\""),
+            "Icon Composer drops gradient SVG paint and leaves only the background fill"
         );
         assert!(mark.contains("\"kind\": \"neutral\"") || mark.contains("\"kind\": \"layer-color\""));
     }
@@ -1561,6 +1571,11 @@ mod tests {
             .expect("add_drag_row");
         assert!(row.contains("pin_center_y(image_view, view)"));
         assert!(row.contains("pin_center_y(label, view)"));
+        assert!(
+            !row.contains("adopt_subview(view, label)"),
+            "labelWithString is autoreleased; an extra release frees it when the card pool drains"
+        );
+        assert!(row.contains("addSubview: label"));
         assert!(row.contains("setImageAlignment: NS_IMAGE_ALIGN_CENTER"));
         let copy = row.find("shared_icon, copy").expect("copy the shared icon");
         let resize = row.find("setSize:").expect("resize the copy");
