@@ -110,6 +110,15 @@ impl<T: Clone + Default> Row<T> {
 
 #[allow(clippy::len_without_is_empty)]
 impl<T> Row<T> {
+    /// Reclaim a former wide row only after reflow has finished. Keep some
+    /// headroom so ordinary resize oscillation does not reallocate each row.
+    pub(super) fn shrink_excess_capacity(&mut self) {
+        let len = self.inner.len();
+        if self.inner.capacity() > len.saturating_mul(2) {
+            self.inner.shrink_to(len.saturating_add(len / 4));
+        }
+    }
+
     #[inline]
     pub fn from_vec(vec: Vec<T>, occ: usize) -> Row<T> {
         Row { inner: vec, occ }

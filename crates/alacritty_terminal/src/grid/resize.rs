@@ -363,6 +363,9 @@ impl<T: GridCell + Default + PartialEq + Clone> Grid<T> {
         // Reverse iterator and use it as the new grid storage.
         let mut reversed: Vec<Row<T>> = new_raw.drain(..).rev().collect();
         reversed.truncate(self.max_scroll_limit + self.lines);
+        for row in &mut reversed {
+            row.shrink_excess_capacity();
+        }
         self.raw.replace_inner(reversed);
 
         // Reflow the primary cursor, or clamp it if reflow is disabled.
