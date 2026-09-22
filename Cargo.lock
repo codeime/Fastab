@@ -2263,6 +2263,137 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
+name = "fastab_cli"
+version = "0.0.2"
+dependencies = [
+ "anstream 1.0.0",
+ "appkit-nsworkspace-bindings",
+ "arboard",
+ "assert_cmd",
+ "async-trait",
+ "base64 0.23.1",
+ "bitflags 2.13.1",
+ "bytes",
+ "cfg-if",
+ "clap",
+ "clap_complete",
+ "clap_complete_fig",
+ "color-eyre",
+ "color-print",
+ "convert_case 0.11.0",
+ "criterion",
+ "crossterm",
+ "ctrlc",
+ "dialoguer",
+ "fastab_engine",
+ "eyre",
+ "fastab_diagnostic",
+ "fastab_install",
+ "fastab_integrations",
+ "fastab_ipc",
+ "fastab_log",
+ "fastab_os_shim",
+ "fastab_proto",
+ "fastab_remote_ipc",
+ "fastab_settings",
+ "fastab_telemetry",
+ "fastab_util",
+ "flume 0.12.0",
+ "futures",
+ "glob",
+ "globset",
+ "indicatif",
+ "indoc",
+ "insta",
+ "macos-utils",
+ "mimalloc",
+ "nix 0.31.3",
+ "objc2 0.5.2",
+ "objc2-app-kit 0.2.2",
+ "objc2-foundation 0.2.2",
+ "owo-colors",
+ "parking_lot",
+ "paste",
+ "predicates",
+ "rand 0.10.2",
+ "regex",
+ "semver",
+ "serde",
+ "serde_json",
+ "spinners",
+ "sysinfo 0.36.1",
+ "tempfile",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-width 0.2.2",
+ "url",
+ "uuid",
+ "walkdir",
+ "which 8.0.5",
+ "whoami",
+ "winapi",
+ "windows 0.58.0",
+]
+
+[[package]]
+name = "fastab_engine"
+version = "0.0.2"
+dependencies = [
+ "anyhow",
+ "fancy-regex 0.16.2",
+ "fastab_settings",
+ "futures",
+ "libc",
+ "nix 0.31.3",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "fastab_gpui"
+version = "0.0.2"
+dependencies = [
+ "anyhow",
+ "cocoa 0.26.0",
+ "dispatch",
+ "gpui",
+ "objc",
+ "objc2 0.5.2",
+ "objc2-app-kit 0.2.2",
+ "objc2-foundation 0.2.2",
+ "parking_lot",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "fastab_hitoolbox"
+version = "0.0.2"
+dependencies = [
+ "core-foundation 0.10.0",
+ "core-foundation-sys",
+]
+
+[[package]]
+name = "fastab_overlay_spike"
+version = "0.0.2"
+dependencies = [
+ "fastab_gpui",
+ "gpui",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2485,81 +2616,57 @@ dependencies = [
 ]
 
 [[package]]
-name = "fastab_cli"
-version = "0.0.2"
+name = "fastrand"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e51093e27b0797c359783294ca4f0a911c270184cb10f85783b118614a1501be"
 dependencies = [
- "anstream 1.0.0",
- "appkit-nsworkspace-bindings",
- "arboard",
- "assert_cmd",
- "async-trait",
- "base64 0.23.1",
- "bitflags 2.13.1",
- "bytes",
+ "instant",
+]
+
+[[package]]
+name = "fastrand"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
+dependencies = [
+ "getrandom 0.2.16",
+]
+
+[[package]]
+name = "fax"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "caf1079563223d5d59d83c85886a56e586cfd5c1a26292e971a0fa266531ac5a"
+
+[[package]]
+name = "fd-lock"
+version = "4.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
+dependencies = [
  "cfg-if",
- "clap",
- "clap_complete",
- "clap_complete_fig",
- "color-eyre",
- "color-print",
- "convert_case 0.11.0",
- "criterion",
- "crossterm",
- "ctrlc",
- "dialoguer",
- "eyre",
- "fastab_diagnostic",
- "fastab_engine",
- "fastab_install",
- "fastab_integrations",
- "fastab_ipc",
- "fastab_log",
- "fastab_os_shim",
- "fastab_proto",
- "fastab_remote_ipc",
- "fastab_settings",
- "fastab_telemetry",
- "fastab_util",
- "flume 0.12.0",
- "futures",
- "glob",
- "globset",
- "indicatif",
- "indoc",
- "insta",
- "macos-utils",
- "mimalloc",
- "nix 0.31.3",
- "objc2 0.5.2",
- "objc2-app-kit 0.2.2",
- "objc2-foundation 0.2.2",
- "owo-colors",
- "parking_lot",
- "paste",
- "predicates",
- "rand 0.10.2",
- "regex",
- "semver",
- "serde",
- "serde_json",
- "spinners",
- "sysinfo 0.36.1",
- "tempfile",
- "thiserror 2.0.20",
- "time",
- "tokio",
- "tokio-tungstenite",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "unicode-width 0.2.2",
- "url",
- "uuid",
- "walkdir",
- "which 8.0.5",
- "whoami",
- "winapi",
- "windows 0.58.0",
+ "rustix 1.1.2",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "fdeflate"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
+dependencies = [
+ "simd-adler32",
+]
+
+[[package]]
+name = "field-offset"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38e2275cc4e4fc009b0669731a1e5ab7ebf11f469eaede2bab9309a5b4d6057f"
+dependencies = [
+ "memoffset",
+ "rustc_version",
 ]
 
 [[package]]
@@ -2578,9 +2685,9 @@ dependencies = [
  "core-graphics 0.25.0",
  "dashmap",
  "dispatch",
- "fastab_desktop_api",
  "fastab_engine",
  "fastab_gpui",
+ "fastab_desktop_api",
  "fastab_install",
  "fastab_integrations",
  "fastab_ipc",
@@ -2671,51 +2778,6 @@ dependencies = [
  "tokio",
  "toml 1.1.4+spec-1.1.0",
  "whoami",
-]
-
-[[package]]
-name = "fastab_engine"
-version = "0.0.2"
-dependencies = [
- "anyhow",
- "fancy-regex 0.16.2",
- "fastab_settings",
- "futures",
- "libc",
- "nix 0.31.3",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "fastab_gpui"
-version = "0.0.2"
-dependencies = [
- "anyhow",
- "cocoa 0.26.0",
- "dispatch",
- "gpui",
- "objc",
- "objc2 0.5.2",
- "objc2-app-kit 0.2.2",
- "objc2-foundation 0.2.2",
- "parking_lot",
- "raw-window-handle",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "fastab_hitoolbox"
-version = "0.0.2"
-dependencies = [
- "core-foundation 0.10.0",
- "core-foundation-sys",
 ]
 
 [[package]]
@@ -2854,14 +2916,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fastab_overlay_spike"
-version = "0.0.2"
-dependencies = [
- "fastab_gpui",
- "gpui",
-]
-
-[[package]]
 name = "fastab_proto"
 version = "0.0.2"
 dependencies = [
@@ -2906,8 +2960,8 @@ dependencies = [
 name = "fastab_settings"
 version = "0.0.2"
 dependencies = [
- "fastab_util",
  "fd-lock",
+ "fastab_util",
  "parking_lot",
  "r2d2",
  "r2d2_sqlite",
@@ -2934,66 +2988,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "uuid",
-]
-
-[[package]]
-name = "fastab_term"
-version = "0.0.2"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "assert_cmd",
- "async-trait",
- "bitflags 2.13.1",
- "bstr",
- "bytes",
- "cfg-if",
- "clap",
- "dashmap",
- "fastab_ipc",
- "fastab_log",
- "fastab_os_shim",
- "fastab_proto",
- "fastab_settings",
- "fastab_util",
- "filedescriptor",
- "flume 0.12.0",
- "fnv",
- "lazy_static",
- "memmem",
- "mimalloc",
- "nix 0.31.3",
- "num-traits",
- "pin-project",
- "portable-pty",
- "predicates",
- "shared_library",
- "shell-color",
- "shlex 2.0.1",
- "tempfile",
- "tokio",
- "tracing",
- "uuid",
- "which 8.0.5",
- "winapi",
- "windows 0.58.0",
- "winreg 0.56.0",
-]
-
-[[package]]
-name = "fastab_term2"
-version = "0.0.2"
-dependencies = [
- "anyhow",
- "async-trait",
- "fastab_ipc",
- "fastab_proto",
- "fastab_remote_ipc",
- "fastab_util",
- "portable-pty",
- "tempfile",
- "tokio",
  "uuid",
 ]
 
@@ -3056,57 +3050,63 @@ dependencies = [
 ]
 
 [[package]]
-name = "fastrand"
-version = "1.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e51093e27b0797c359783294ca4f0a911c270184cb10f85783b118614a1501be"
+name = "fastab_term"
+version = "0.0.2"
 dependencies = [
- "instant",
-]
-
-[[package]]
-name = "fastrand"
-version = "2.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
-dependencies = [
- "getrandom 0.2.16",
-]
-
-[[package]]
-name = "fax"
-version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "caf1079563223d5d59d83c85886a56e586cfd5c1a26292e971a0fa266531ac5a"
-
-[[package]]
-name = "fd-lock"
-version = "4.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
-dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "assert_cmd",
+ "async-trait",
+ "bitflags 2.13.1",
+ "bstr",
+ "bytes",
  "cfg-if",
- "rustix 1.1.2",
- "windows-sys 0.59.0",
+ "clap",
+ "dashmap",
+ "fastab_ipc",
+ "fastab_log",
+ "fastab_os_shim",
+ "fastab_proto",
+ "fastab_settings",
+ "fastab_util",
+ "filedescriptor",
+ "flume 0.12.0",
+ "fnv",
+ "lazy_static",
+ "memmem",
+ "mimalloc",
+ "nix 0.31.3",
+ "num-traits",
+ "pin-project",
+ "portable-pty",
+ "predicates",
+ "shared_library",
+ "shell-color",
+ "shlex 2.0.1",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+ "which 8.0.5",
+ "winapi",
+ "windows 0.58.0",
+ "winreg 0.56.0",
 ]
 
 [[package]]
-name = "fdeflate"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
+name = "fastab_term2"
+version = "0.0.2"
 dependencies = [
- "simd-adler32",
-]
-
-[[package]]
-name = "field-offset"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38e2275cc4e4fc009b0669731a1e5ab7ebf11f469eaede2bab9309a5b4d6057f"
-dependencies = [
- "memoffset",
- "rustc_version",
+ "anyhow",
+ "async-trait",
+ "fastab_ipc",
+ "fastab_proto",
+ "fastab_remote_ipc",
+ "fastab_util",
+ "portable-pty",
+ "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
