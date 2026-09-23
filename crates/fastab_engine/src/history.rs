@@ -310,7 +310,11 @@ fn build_index(
         // The borrowed set dies before retain can move or drop any String.
         let keep = {
             let mut seen = HashSet::new();
-            values.iter().rev().map(|value| seen.insert(value.as_str())).collect::<Vec<_>>()
+            values
+                .iter()
+                .rev()
+                .map(|value| seen.insert(value.as_str()))
+                .collect::<Vec<_>>()
         };
         let mut keep = keep.into_iter().rev();
         values.retain(|_| keep.next().expect("one keep flag per history value"));

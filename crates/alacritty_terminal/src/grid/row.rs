@@ -320,10 +320,13 @@ mod tests {
             grid.saved_cursor.point = Point::new(Line(0), Column(3));
             let cursor = grid.cursor.clone();
             let saved_cursor = grid.saved_cursor.clone();
-            let before: Vec<_> = lines.iter().map(|line| {
-                let row = &grid[*line];
-                (row.inner[..140].to_vec(), row.occ, row.inner.capacity())
-            }).collect();
+            let before: Vec<_> = lines
+                .iter()
+                .map(|line| {
+                    let row = &grid[*line];
+                    (row.inner[..140].to_vec(), row.occ, row.inner.capacity())
+                })
+                .collect();
 
             grid.resize(reflow, 2, 140);
 

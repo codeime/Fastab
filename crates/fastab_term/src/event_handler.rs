@@ -34,10 +34,13 @@ impl EventHandler {
 
     fn send_full_context_hook(&self, message: Hostbound) {
         if let Some(sender) = self.socket_sender.current() {
-            let _ = sender.try_send_with_context(message, ContextAdmission {
-                full_context: true,
-                environment_epoch: Some(shell_context_epoch()),
-            });
+            let _ = sender.try_send_with_context(
+                message,
+                ContextAdmission {
+                    full_context: true,
+                    environment_epoch: Some(shell_context_epoch()),
+                },
+            );
         }
     }
 }

@@ -12,6 +12,7 @@ pub mod pty;
 pub mod term;
 pub mod update;
 
+use std::collections::VecDeque;
 use std::env;
 #[cfg(unix)]
 use std::ffi::{CString, OsStr};
@@ -57,8 +58,74 @@ use crate::message::{process_figterm_message, process_remote_message};
 use crate::pty::unix::open_pty;
 #[cfg(windows)]
 use crate::pty::win::open_pty;
-use crate::pty::{AsyncMasterPtyExt, CommandBuilder};
+use crate::pty::{AsyncMasterPty, AsyncMasterPtyExt, CommandBuilder};
 use crate::term::{SystemTerminal, Terminal};
+
+struct DeferredInsert {
+    insert: Vec<u8>,
+    unlock: bool,
+    bracketed: bool,
+    execute: bool,
+    origin: RequestOrigin,
+}
+
+/// Replay settled failed intercepted keys, then flush deferred ordinary PTY
+/// input and deferred Inserts once no intercepted key is still awaiting write
+/// settlement. Never blocks the main loop on in-flight key delivery.
+async fn flush_settled_pty_input(
+    remote_sender: &RemoteSender,
+    master: &mut (dyn AsyncMasterPty + Send),
+    deferred: &mut BytesMut,
+    deferred_inserts: &mut VecDeque<DeferredInsert>,
+    key_interceptor: &mut KeyInterceptor,
+    bracketed_paste: bool,
+) -> Result<()> {
+    for failed in remote_sender.take_failed_keys() {
+        master.write_all(&failed).await?;
+    }
+    if remote_sender.has_pending_keys() {
+        return Ok(());
+    }
+    if !deferred.is_empty() {
+        master.write_all(deferred).await?;
+        deferred.clear();
+    }
+    while let Some(item) = deferred_inserts.pop_front() {
+        if !item.origin.is_current(remote_sender.phase().ready_generation()) {
+            continue;
+        }
+        write_insert_bytes(master, &item, bracketed_paste).await?;
+        if item.unlock {
+            key_interceptor.reset();
+        }
+    }
+    Ok(())
+}
+
+async fn write_insert_bytes(
+    master: &mut (dyn AsyncMasterPty + Send),
+    item: &DeferredInsert,
+    bracketed_paste: bool,
+) -> Result<()> {
+    use bstr::ByteSlice;
+    if item.bracketed {
+        if bracketed_paste {
+            master.write_all(b"\x1b[200~").await?;
+            master.write_all(&item.insert.replace(b"\x1b", "")).await?;
+            master.write_all(b"\x1b[201~").await?;
+        } else {
+            master
+                .write_all(&item.insert.replace("\r\n", "\r").replace("\n", "\r"))
+                .await?;
+        }
+    } else {
+        master.write_all(&item.insert).await?;
+    }
+    if item.execute {
+        master.write_all(b"\r").await?;
+    }
+    Ok(())
+}
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -128,6 +195,8 @@ pub(crate) enum MainLoopEvent {
     },
     UnlockInterception,
     SetImmediateMode(bool),
+    // SSH remote-install prompt path is currently commented out at the match site.
+    #[allow(dead_code)]
     PromptSSH {
         uuid: String,
         remote_host: String,
@@ -203,7 +272,10 @@ fn reconcile_remote_state(sender: &RemoteSender, interceptor: &mut KeyIntercepto
     }
     drop(insertion);
     let mut pending = INSERT_ON_NEW_CMD.lock().unwrap();
-    if pending.as_ref().is_some_and(|pending| !pending.origin.is_current(ready)) {
+    if pending
+        .as_ref()
+        .is_some_and(|pending| !pending.origin.is_current(ready))
+    {
         pending.take();
     }
     ready
@@ -430,10 +502,13 @@ where
 
                 // Admission, generation validation and the context marker
                 // commit are one operation. A rejected frame synchronizes nothing.
-                let _ = bound.try_send_with_context(message, ContextAdmission {
-                    full_context,
-                    environment_epoch: include_environment.then_some(epoch),
-                });
+                let _ = bound.try_send_with_context(
+                    message,
+                    ContextAdmission {
+                        full_context,
+                        environment_epoch: include_environment.then_some(epoch),
+                    },
+                );
             }
             Ok(())
         },
@@ -634,6 +709,8 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
             parent_id,
         ).await?;
         let mut remote_state_changes = remote_sender.subscribe();
+        let mut deferred_pty_input = BytesMut::new();
+        let mut deferred_inserts = VecDeque::new();
 
         let mut stdout = io::stdout();
         let mut master = pty.master.get_async_master_pty()?;
@@ -695,43 +772,57 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                 biased;
                 _ = remote_state_changes.changed() => {
                     reconcile_remote_state(&remote_sender, &mut key_interceptor);
-                    Ok(())
+                    let bracketed_paste = term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+                    flush_settled_pty_input(
+                        &remote_sender,
+                        master.as_mut(),
+                        &mut deferred_pty_input,
+                        &mut deferred_inserts,
+                        &mut key_interceptor,
+                        bracketed_paste,
+                    )
+                    .await
                 }
                 _ = remote_sender.key_delivery_changed() => {
                     reconcile_remote_state(&remote_sender, &mut key_interceptor);
-                    for raw in remote_sender.take_failed_keys() {
-                        master.write_all(&raw).await?;
-                    }
-                    Ok(())
+                    let bracketed_paste = term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+                    flush_settled_pty_input(
+                        &remote_sender,
+                        master.as_mut(),
+                        &mut deferred_pty_input,
+                        &mut deferred_inserts,
+                        &mut key_interceptor,
+                        bracketed_paste,
+                    )
+                    .await
                 }
                 res = main_loop_rx.recv_async() => {
                     match res {
                         Ok(event) => {
                             match event {
                                 MainLoopEvent::Insert { insert, unlock, bracketed, execute, origin } => {
-                                    use bstr::ByteSlice;
                                     if !origin.is_current(remote_sender.phase().ready_generation()) {
                                         continue 'select_loop;
                                     }
-                                    if bracketed {
-                                        if term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE) {
-                                            master.write_all(b"\x1b[200~").await?;
-                                            master.write_all(&insert.replace(b"\x1b", "")).await?;
-                                            master.write_all(b"\x1b[201~").await?;
-                                        } else {
-                                            master.write_all(&insert.replace("\r\n", "\r").replace("\n", "\r")).await?;
-                                        }
-                                    } else {
-                                        master.write_all(&insert).await?;
-                                    }
-
-                                    if execute {
-                                        master.write_all(b"\r").await?; 
-                                    }
-
-                                    if unlock {
-                                        key_interceptor.reset();
-                                    }
+                                    // Queue behind any still-pending intercepted keys so Insert
+                                    // cannot overtake deferred ordinary input.
+                                    deferred_inserts.push_back(DeferredInsert {
+                                        insert,
+                                        unlock,
+                                        bracketed,
+                                        execute,
+                                        origin,
+                                    });
+                                    let bracketed_paste = term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+                                    flush_settled_pty_input(
+                                        &remote_sender,
+                                        master.as_mut(),
+                                        &mut deferred_pty_input,
+                                        &mut deferred_inserts,
+                                        &mut key_interceptor,
+                                        bracketed_paste,
+                                    )
+                                    .await?;
                                 },
                                 MainLoopEvent::UnlockInterception => {
                                     key_interceptor.reset();
@@ -820,31 +911,53 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
 
                                         let handled_action = if !preexec {
                                             if let Some(action) = key_interceptor.intercept_key(&event) {
-                                                // Place already buffered ordinary input before
-                                                // this key, without overtaking earlier unresolved
-                                                // intercepted keys from this or an older batch.
+                                                // Park ordinary bytes from this batch behind any
+                                                // still-pending intercepted keys without blocking.
+                                                // Insert / key_delivery flush paths drain deferred
+                                                // once settlement clears, so desktop Insert cannot
+                                                // overtake those bytes.
                                                 if !write_buffer.is_empty() {
-                                                    for failed in remote_sender.take_failed_keys_before_input().await {
-                                                        master.write_all(&failed).await?;
-                                                    }
-                                                    master.write_all(&write_buffer).await?;
+                                                    deferred_pty_input.extend_from_slice(&write_buffer);
                                                     write_buffer.clear();
                                                 }
+                                                flush_settled_pty_input(
+                                                    &remote_sender,
+                                                    master.as_mut(),
+                                                    &mut deferred_pty_input,
+                                                    &mut deferred_inserts,
+                                                    &mut key_interceptor,
+                                                    term.mode().contains(
+                                                        alacritty_terminal::term::TermMode::BRACKETED_PASTE,
+                                                    ),
+                                                )
+                                                .await?;
                                                 debug!(?action, "Intercepted action");
-                                                let s = raw.clone()
+                                                let s = raw
+                                                    .clone()
                                                     .and_then(|b| String::from_utf8(b.to_vec()).ok())
                                                     .unwrap_or_default();
-                                                let context = shell_state_to_context(term.shell_state());
-                                                let hook = fastab_proto::remote_hooks::new_intercepted_key_hook(context, action, s);
+                                                let context =
+                                                    shell_state_to_context(term.shell_state());
+                                                let hook = fastab_proto::remote_hooks::new_intercepted_key_hook(
+                                                    context, action, s,
+                                                );
                                                 // The desktop's InterceptedKey handler does not
                                                 // apply its context, so it must not advance the
                                                 // generation's context synchronization marker.
                                                 let admitted = key_generation.is_some_and(|generation| {
-                                                    remote_sender.for_generation(generation)
-                                                        .try_send_key(hook_to_message(hook), raw.clone().unwrap_or_default()).is_ok()
+                                                    remote_sender
+                                                        .for_generation(generation)
+                                                        .try_send_key(
+                                                            hook_to_message(hook),
+                                                            raw.clone().unwrap_or_default(),
+                                                        )
+                                                        .is_ok()
                                                 });
                                                 if !admitted {
-                                                    reconcile_remote_state(&remote_sender, &mut key_interceptor);
+                                                    reconcile_remote_state(
+                                                        &remote_sender,
+                                                        &mut key_interceptor,
+                                                    );
                                                 }
 
                                                 if event.key == KeyCode::Escape {
@@ -910,11 +1023,19 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                                 };
                             }
                             if !write_buffer.is_empty() {
-                                for failed in remote_sender.take_failed_keys_before_input().await {
-                                    master.write_all(&failed).await?;
-                                }
-                                master.write_all(&write_buffer).await?;
+                                deferred_pty_input.extend_from_slice(&write_buffer);
                             }
+                            flush_settled_pty_input(
+                                &remote_sender,
+                                master.as_mut(),
+                                &mut deferred_pty_input,
+                                &mut deferred_inserts,
+                                &mut key_interceptor,
+                                term.mode().contains(
+                                    alacritty_terminal::term::TermMode::BRACKETED_PASTE,
+                                ),
+                            )
+                            .await?;
                         }
                         Err(err) => {
                             warn!("Failed recv: {err}");
@@ -1122,13 +1243,19 @@ mod tests {
         note_shell_context_updated();
         let epoch = shell_context_epoch();
         assert!(progress.needs_environment(epoch));
-        progress.record(ContextAdmission { full_context: true, environment_epoch: Some(epoch) });
+        progress.record(ContextAdmission {
+            full_context: true,
+            environment_epoch: Some(epoch),
+        });
         assert!(!progress.needs_environment(epoch));
         note_shell_context_updated();
         let next = shell_context_epoch();
         assert_ne!(next, epoch);
         assert!(progress.needs_environment(next));
-        progress.record(ContextAdmission { full_context: false, environment_epoch: Some(next) });
+        progress.record(ContextAdmission {
+            full_context: false,
+            environment_epoch: Some(next),
+        });
         assert!(!progress.needs_environment(next));
         // A new connection must synchronize even when the shell epoch did not change.
         let reconnected = ContextProgress::default();

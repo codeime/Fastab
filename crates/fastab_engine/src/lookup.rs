@@ -2080,13 +2080,20 @@ pub(crate) fn complete_with_settings(
         Some(registry),
     );
     let public_ai_context = if context.active_arg.is_none()
-        && context.persistent_options.iter().all(|option| option.meta.js_get_query_term.is_none())
+        && context
+            .persistent_options
+            .iter()
+            .all(|option| option.meta.js_get_query_term.is_none())
     {
         crate::public_ai::context(registry, request, &root, context.spec.as_ref(), &tokens)
     } else {
         None
     };
-    let mut public_ai_budget = if public_ai_context.is_some() { crate::public_ai::MAX_CANDIDATES } else { 0 };
+    let mut public_ai_budget = if public_ai_context.is_some() {
+        crate::public_ai::MAX_CANDIDATES
+    } else {
+        0
+    };
     let fuzzy = effective_fuzzy(
         request.fuzzy,
         Some(context.spec.as_ref()),

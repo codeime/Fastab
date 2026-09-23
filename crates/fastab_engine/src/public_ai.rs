@@ -39,9 +39,10 @@ fn plain_node(spec: &Spec) -> bool {
         && spec.js_generate_spec.is_none()
         && spec.args.is_empty()
         && spec.additional_suggestions.is_empty()
-        && spec.parser_directives.as_ref().is_none_or(|directives| {
-            directives.alias.is_none() && directives.js_alias.is_none()
-        })
+        && spec
+            .parser_directives
+            .as_ref()
+            .is_none_or(|directives| directives.alias.is_none() && directives.js_alias.is_none())
 }
 
 /// Only the whole, unquoted buffer at its end is eligible. Completed tokens
@@ -59,22 +60,26 @@ pub(crate) fn context(
         || request.history_only
         || request.buffer.is_empty()
         || request.buffer.len() > MAX_INPUT_BYTES
-        || request.cursor.is_some_and(|cursor| cursor as usize != request.buffer.len())
+        || request
+            .cursor
+            .is_some_and(|cursor| cursor as usize != request.buffer.len())
         || !request.buffer.bytes().all(|byte| word_byte(byte) || byte == b' ')
     {
         return None;
     }
     let words: Vec<&str> = request.buffer.split_ascii_whitespace().collect();
-    if words.len() > MAX_PATH_TOKENS + 1
-        || !words.iter().copied().eq(resolved_tokens.iter().map(String::as_str))
-    {
+    if words.len() > MAX_PATH_TOKENS + 1 || !words.iter().copied().eq(resolved_tokens.iter().map(String::as_str)) {
         return None;
     }
     let command = *words.first()?;
     if !registry.is_public_ai_root(command, root) || !root.has_name(command) {
         return None;
     }
-    let finished = if request.buffer.ends_with(' ') { words.len() } else { words.len().checked_sub(1)? };
+    let finished = if request.buffer.ends_with(' ') {
+        words.len()
+    } else {
+        words.len().checked_sub(1)?
+    };
     if finished == 0 || finished > MAX_PATH_TOKENS {
         return None;
     }
@@ -91,8 +96,14 @@ pub(crate) fn context(
     // Check the node that the real parser actually selected, not just a
     // parallel name walk. A generated/replaced node cannot inherit trust.
     if node != current
-        || current.subcommands.iter().any(|child| child.meta.js_get_query_term.is_some())
-        || current.options.iter().chain(&current.persistent_options)
+        || current
+            .subcommands
+            .iter()
+            .any(|child| child.meta.js_get_query_term.is_some())
+        || current
+            .options
+            .iter()
+            .chain(&current.persistent_options)
             .any(|option| option.meta.js_get_query_term.is_some())
     {
         return None;
@@ -116,8 +127,14 @@ pub(crate) fn mark_candidate(suggestion: &mut Suggestion, meta: &SuggestionMeta,
         || suggestion.name.is_empty()
         || suggestion.name.len() > MAX_NAME_BYTES
         || !suggestion.name.bytes().all(word_byte)
-        || suggestion.insert_value.as_deref().is_some_and(|value| value != suggestion.name)
-        || suggestion.separator_to_add.as_deref().is_some_and(|separator| !matches!(separator, "" | " " | "=" | ":"))
+        || suggestion
+            .insert_value
+            .as_deref()
+            .is_some_and(|value| value != suggestion.name)
+        || suggestion
+            .separator_to_add
+            .as_deref()
+            .is_some_and(|separator| !matches!(separator, "" | " " | "=" | ":"))
         || suggestion.description.chars().any(char::is_control)
     {
         return;
@@ -159,9 +176,11 @@ pub(crate) fn finalize(result: &mut CompleteResult) {
             continue;
         }
         let eligible = candidate.name.starts_with(&context.token_prefix)
-            && !result.suggestions.iter().enumerate().any(|(other_index, other)| {
-                other_index != index && other.name == candidate.name
-            });
+            && !result
+                .suggestions
+                .iter()
+                .enumerate()
+                .any(|(other_index, other)| other_index != index && other.name == candidate.name);
         if eligible {
             accepted += 1;
         } else {

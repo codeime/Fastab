@@ -27,12 +27,21 @@ const PAIR_KIND: &str = "easy-complete-spec-pair";
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
 /// Maintainer-reviewed public artifact, not a trust assertion from a writable
-/// manifest. Source: @chen86860/autocomplete-specs 3.1.0, published in
-/// https://github.com/codeime/Fastab/tree/bd2887ca38ce646e5db4db55003897a356511db4/bundle/specs
-/// The public source manifest was independently compared with this release;
-/// the IR pin is the existing reviewed compiler output, not a claim that this
-/// change rebuilt/reproduced it. Updating any pin requires explicit review.
+/// manifest. Source: @chen86860/autocomplete-specs 3.1.0. Pins track the
+/// published source tree, its `.source-manifest.json` file digest, and the IR
+/// tree produced by `node scripts/compile-spec-ir.mjs` for that source.
+/// Updating any pin requires explicit review after a deliberate recompile.
 /// Registry has already verified the complete IR snapshot before calling us.
+const PUBLIC_AI_SOURCE_TREE_SHA256: &str = "69d4bdd9fa05ee698c4e72ea677dabb6db0623fccc89e844509cf55ca69501a7";
+const PUBLIC_AI_SOURCE_MANIFEST_SHA256: &str = "c0e22579987e58414c56f5e80e9c1d72f11081747e6eaf7aa774c860f118b866";
+const PUBLIC_AI_IR_TREE_SHA256: &str = "6872d27a71ecc760f4b7ff169c9f57e2ca37347740d13a7768d879f571781661";
+
+fn marker_matches_public_ai_pins(marker: &PairMarker) -> bool {
+    marker.source.tree_sha256 == PUBLIC_AI_SOURCE_TREE_SHA256
+        && marker.source.manifest_sha256.0.as_deref() == Some(PUBLIC_AI_SOURCE_MANIFEST_SHA256)
+        && marker.ir.tree_sha256 == PUBLIC_AI_IR_TREE_SHA256
+}
+
 pub(crate) fn matches_public_ai_baseline(snapshot: &DirectorySnapshot) -> bool {
     let relative = Path::new(PAIR_MARKER_NAME);
     let Ok(Some(bytes)) = snapshot.read_optional_file(relative) else {
@@ -41,10 +50,20 @@ pub(crate) fn matches_public_ai_baseline(snapshot: &DirectorySnapshot) -> bool {
     let Ok(marker) = read_marker_bytes(&bytes, &snapshot.display_path().join(relative)) else {
         return false;
     };
-    marker.source.tree_sha256 == "69d4bdd9fa05ee698c4e72ea677dabb6db0623fccc89e844509cf55ca69501a7"
-        && marker.source.manifest_sha256.0.as_deref()
-            == Some("efea68eddad4549ad1fd96a06ced085556efda70ff042ff63dcceca5c364d65f")
-        && marker.ir.tree_sha256 == "fec0a6a2ed769a1c47d8f2c63d8e60f08d5003b01822676fef0137bdc3df4ebb"
+    marker_matches_public_ai_pins(&marker)
+}
+
+/// Settings / enable-path check against the on-disk IR pair marker. Missing or
+/// mismatched pins fail closed so AI cannot silently send against an unreviewed tree.
+pub fn public_ai_baseline_ok(ir_root: &Path) -> bool {
+    let marker_path = ir_root.join(PAIR_MARKER_NAME);
+    let Ok(bytes) = std::fs::read(&marker_path) else {
+        return false;
+    };
+    let Ok(marker) = read_marker_bytes(&bytes, &marker_path) else {
+        return false;
+    };
+    marker_matches_public_ai_pins(&marker)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

@@ -55,17 +55,11 @@ pub(crate) fn read(service: &str, cx: &mut App) -> Task<Result<Option<Vec<u8>>, 
         Err(error) => return Task::ready(Err(error)),
     };
     let operation = cx.read_credentials(service);
-    let operation = cx.spawn(async move |_| {
-        operation.await.map(|value| value.map(|(_, secret)| secret))
-    });
+    let operation = cx.spawn(async move |_| operation.await.map(|value| value.map(|(_, secret)| secret)));
     finish(lease, operation, cx)
 }
 
-pub(crate) fn write(
-    service: &str,
-    secret: Vec<u8>,
-    cx: &mut App,
-) -> Task<Result<(), CredentialError>> {
+pub(crate) fn write(service: &str, secret: Vec<u8>, cx: &mut App) -> Task<Result<(), CredentialError>> {
     let lease = match acquire(service, cx) {
         Ok(lease) => lease,
         Err(error) => return Task::ready(Err(error)),
@@ -86,7 +80,10 @@ pub(crate) fn delete(service: &str, cx: &mut App) -> Task<Result<(), CredentialE
         // A missing item is safe to delete idempotently; cancellation and all
         // other failures still retain the profile for another explicit attempt.
         #[cfg(target_os = "macos")]
-        if result.as_ref().is_err_and(|error| error.to_string() == "delete password failed: -25300") {
+        if result
+            .as_ref()
+            .is_err_and(|error| error.to_string() == "delete password failed: -25300")
+        {
             return Ok(());
         }
         result

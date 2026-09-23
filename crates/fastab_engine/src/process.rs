@@ -156,7 +156,10 @@ fn wait_child_output(mut child: Child, timeout: Duration) -> Result<CommandOutpu
                 }
                 return Err(CommandError::Failed);
             }
-            if pollfds.iter().any(|fd| fd.revents & (libc::POLLNVAL | libc::POLLERR) != 0) {
+            if pollfds
+                .iter()
+                .any(|fd| fd.revents & (libc::POLLNVAL | libc::POLLERR) != 0)
+            {
                 return Err(CommandError::Failed);
             }
         }
@@ -165,19 +168,7 @@ fn wait_child_output(mut child: Child, timeout: Duration) -> Result<CommandOutpu
     // The closure has dropped both pipes before cleanup. No reader thread can
     // remain blocked on a descendant that escaped the original process group.
     if result.is_err() {
-        kill_process_group(pid);
-        // Also stop the leader if it moved out of the original process group.
-        let _ = child.kill();
-        // SIGKILL need not take effect immediately (for example during an
-        // uninterruptible kernel wait). Never turn a bounded command failure
-        // into an unbounded wait for reaping, including repeated EINTR.
-        let cleanup_started = Instant::now();
-        poll_exit_until(
-            Duration::from_secs(1),
-            || child.try_wait().map(|status| status.is_some()),
-            || cleanup_started.elapsed(),
-            std::thread::sleep,
-        );
+        kill_and_reap(&mut child, pid);
     }
     result
 }
@@ -504,13 +495,76 @@ fn wait_child_threaded(child: Child, timeout: Duration, require_success: bool) -
     }
 }
 
+#[cfg(not(unix))]
 fn reap(child: &mut Child) {
     let _ = child.wait();
 }
 
+#[cfg(unix)]
+fn reap_pid_in_background(pid: u32) {
+    // SIGKILL need not take effect immediately (for example during an
+    // uninterruptible kernel wait). Never turn a bounded command failure into
+    // an unbounded wait on the calling thread; collect the zombie off-thread.
+    let _ = std::thread::Builder::new().name("fastab-reap".into()).spawn(move || {
+        let mut status = 0;
+        loop {
+            // SAFETY: `pid` is a direct child this process spawned and failed
+            // to reap within the cleanup budget. Waiting here prevents a
+            // permanent zombie without blocking the generator thread.
+            let result = unsafe { libc::waitpid(pid as libc::pid_t, &mut status, 0) };
+            if result == pid as libc::pid_t {
+                return;
+            }
+            if result < 0 {
+                let err = std::io::Error::last_os_error();
+                if err.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                // ECHILD: already reaped elsewhere.
+                return;
+            }
+        }
+    });
+}
+
 fn kill_and_reap(child: &mut Child, pid: u32) {
     kill_process_group(pid);
-    reap(child);
+    let _ = child.kill();
+    #[cfg(unix)]
+    {
+        use std::cell::Cell;
+        use std::time::Instant;
+
+        // Bound the foreground wait. A hung kill must not stall generators.
+        // `try_wait` consumes the exit status, so track reaping explicitly —
+        // a second try_wait after success returns Ok(None).
+        let reaped = Cell::new(false);
+        let cleanup_started = Instant::now();
+        poll_exit_until(
+            Duration::from_secs(1),
+            || match child.try_wait() {
+                Ok(Some(_)) => {
+                    reaped.set(true);
+                    Ok(true)
+                },
+                Ok(None) => Ok(false),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => Ok(false),
+                Err(_) => Ok(true),
+            },
+            || cleanup_started.elapsed(),
+            std::thread::sleep,
+        );
+        if !reaped.get() {
+            match child.try_wait() {
+                Ok(Some(_)) => {},
+                Ok(None) | Err(_) => reap_pid_in_background(pid),
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        reap(child);
+    }
 }
 
 fn kill_process_group(pid: u32) {
@@ -667,7 +721,11 @@ mod tests {
         assert_eq!(output.status, 0);
         assert_eq!(output.stdout.len(), MAX_STDOUT);
         assert!(output.stdout.starts_with("stdout-prefix"));
-        assert!(output.stdout.as_bytes()["stdout-prefix".len()..].iter().all(|byte| *byte == 0));
+        assert!(
+            output.stdout.as_bytes()["stdout-prefix".len()..]
+                .iter()
+                .all(|byte| *byte == 0)
+        );
         assert_eq!(output.stderr, "done");
     }
 
@@ -696,7 +754,11 @@ mod tests {
             full_shell("exec sleep 30", Duration::from_millis(50)),
             Err(CommandError::TimedOut)
         );
-        assert!(started.elapsed() < Duration::from_secs(3), "cleanup took {:?}", started.elapsed());
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "cleanup took {:?}",
+            started.elapsed()
+        );
     }
 
     #[cfg(unix)]
@@ -713,8 +775,15 @@ mod tests {
             .spawn()
             .expect("spawn real child without capture pipes");
         let started = std::time::Instant::now();
-        assert_eq!(wait_child_output(child, Duration::from_secs(5)), Err(CommandError::Failed));
-        assert!(started.elapsed() < Duration::from_secs(3), "cleanup took {:?}", started.elapsed());
+        assert_eq!(
+            wait_child_output(child, Duration::from_secs(5)),
+            Err(CommandError::Failed)
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "cleanup took {:?}",
+            started.elapsed()
+        );
     }
 
     #[cfg(unix)]
@@ -758,11 +827,17 @@ mod tests {
 
     #[test]
     fn times_out_and_returns_empty() {
+        let started = std::time::Instant::now();
         let out = execute("sleep", &["2".into()], "/", Duration::from_millis(50));
         assert!(out.is_empty());
         assert_eq!(
             try_execute("sleep", &["2".into()], "/", Duration::from_millis(50)),
             None
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "ordinary execute cleanup must stay bounded, took {:?}",
+            started.elapsed()
         );
     }
 

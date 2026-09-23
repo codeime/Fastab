@@ -303,7 +303,9 @@ impl OverlayState {
 
     pub fn invalidate_ai(&mut self) {
         self.invalidate_ai_request();
-        let Some(from) = self.ai_promoted_from.take() else { return; };
+        let Some(from) = self.ai_promoted_from.take() else {
+            return;
+        };
         if let Some(prefix) = self.items.get_mut(..=from) {
             prefix.rotate_left(1);
             self.selected = if !self.has_changed_index {
@@ -343,8 +345,12 @@ impl OverlayState {
     }
 
     pub fn ai_height(&self) -> f32 {
-        if self.loading { 0. } else {
-            self.ai_preview.as_ref().map_or(0., |preview| preview.height(self.effective_row_height()))
+        if self.loading {
+            0.
+        } else {
+            self.ai_preview
+                .as_ref()
+                .map_or(0., |preview| preview.height(self.effective_row_height()))
         }
     }
 
