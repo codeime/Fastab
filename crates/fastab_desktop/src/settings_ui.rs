@@ -48,6 +48,7 @@ const WIN_H: f32 = 640.0;
 enum Section {
     Appearance,
     Behavior,
+    Ai,
     About,
 }
 
@@ -216,15 +217,11 @@ impl Render for SettingsWindow {
                             Section::Appearance => {
                                 appearance_page(zh, chrome, entity.clone(), theme_controls).into_any_element()
                             },
-                            Section::Behavior => behavior_page(
-                                zh,
-                                chrome,
-                                entity,
-                                self.gate.input_method,
-                                self.repairing,
-                                self.ai.clone(),
-                            )
-                            .into_any_element(),
+                            Section::Behavior => {
+                                behavior_page(zh, chrome, entity, self.gate.input_method, self.repairing)
+                                    .into_any_element()
+                            },
+                            Section::Ai => self.ai.clone().into_any_element(),
                             Section::About => about_page(zh, chrome, entity, self.copied_doctor).into_any_element(),
                         }),
                 ),
@@ -238,6 +235,8 @@ fn page_header(section: Section, zh: bool, chrome: Chrome) -> impl IntoElement {
         (Section::Appearance, false) => ("Appearance", "Personalize settings and your terminal completions"),
         (Section::Behavior, true) => ("行为", "调整启动方式、补全习惯与键盘操作"),
         (Section::Behavior, false) => ("Behavior", "Choose how Fastab starts and responds as you type"),
+        (Section::Ai, true) => ("AI", "配置 Jev 推荐、服务商和密钥"),
+        (Section::Ai, false) => ("AI", "Jev recommendations, providers, and API keys"),
         (Section::About, true) => ("关于", "版本、更新与支持"),
         (Section::About, false) => ("About", "Version, updates, and support"),
     };
@@ -263,6 +262,7 @@ fn sidebar(section: Section, zh: bool, chrome: Chrome, entity: Entity<SettingsWi
     let items = [
         (Section::Appearance, if zh { "外观" } else { "Appearance" }),
         (Section::Behavior, if zh { "行为" } else { "Behavior" }),
+        (Section::Ai, "AI"),
         (Section::About, if zh { "关于" } else { "About" }),
     ];
     let mut nav = div().flex().flex_col().mt(px(14.)).px(px(12.)).gap(px(5.));
@@ -301,6 +301,7 @@ fn sidebar(section: Section, zh: bool, chrome: Chrome, entity: Entity<SettingsWi
                         .child(match id {
                             Section::Appearance => "◐",
                             Section::Behavior => "⌘",
+                            Section::Ai => "✦",
                             Section::About => "ⓘ",
                         }),
                 )
@@ -1090,7 +1091,6 @@ fn behavior_page(
     entity: Entity<SettingsWindow>,
     ime: PermReady,
     repairing: Option<PermId>,
-    ai: Entity<ai::AiSettings>,
 ) -> impl IntoElement {
     let launch = fastab_settings::settings::get_bool_or("app.launchOnStartup", false);
     let silent = fastab_settings::settings::get_bool_or("app.silentLaunch", false);
@@ -1355,7 +1355,6 @@ fn behavior_page(
                     |this, value, cx| this.set_bool("beta.history.allShells", value, cx),
                 )),
         ))
-        .child(ai)
 }
 
 fn optional_input_method_card(
@@ -2390,6 +2389,8 @@ fn settings_section_from_path(path: &str) -> Section {
     // native pages that actually hold that content.
     if path.contains("behavior") || path.contains("autocomplete") {
         Section::Behavior
+    } else if path.contains("jev") || path.ends_with("/ai") || path == "ai" {
+        Section::Ai
     } else if path.contains("about") || path.contains("help") || path.contains("troubleshoot") {
         Section::About
     } else {
@@ -2453,6 +2454,8 @@ mod tests {
         assert_eq!(settings_section_from_path("/preferences"), Section::Appearance);
         assert_eq!(settings_section_from_path("/behavior"), Section::Behavior);
         assert_eq!(settings_section_from_path("/autocomplete"), Section::Behavior);
+        assert_eq!(settings_section_from_path("/ai"), Section::Ai);
+        assert_eq!(settings_section_from_path("/jev"), Section::Ai);
         assert_eq!(settings_section_from_path("/about"), Section::About);
         assert_eq!(settings_section_from_path("/help"), Section::About);
         assert_eq!(settings_section_from_path("/troubleshooting"), Section::About);

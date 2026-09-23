@@ -11,6 +11,8 @@
 - fix: CI `cargo fmt --check` passes across the workspace
 - change: terminal grid row-cache reclaim uses hysteresis so short-lived resizes do not thrash capacity
 - feat: opt-in Jev completion recommendations (settings + provider profiles), promoting one existing candidate when local results are ready
+- fix: typing an API key in Settings keeps the window responsive. The secure field answers the text system with a same-length mask
+- change: Jev settings are their own Settings page
 
 ## v0.0.2
 

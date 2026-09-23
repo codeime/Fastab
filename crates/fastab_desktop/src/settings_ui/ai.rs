@@ -42,9 +42,9 @@ impl AiSettings {
         let acknowledged_service = (profile.data_policy_version == DATA_POLICY_VERSION)
             .then(|| profile.credential_key().ok())
             .flatten();
-        let base = cx.new(|cx| Input::new(profile.base_url.clone(), false, 2048, cx));
-        let key = cx.new(|cx| Input::new(String::new(), true, 4096, cx));
-        let model = cx.new(|cx| Input::new(profile.model.clone(), false, 128, cx));
+        let base = cx.new(|cx| Input::new("jev-base", profile.base_url.clone(), false, 2048, cx));
+        let key = cx.new(|cx| Input::new("jev-key", String::new(), true, 4096, cx));
+        let model = cx.new(|cx| Input::new("jev-model", profile.model.clone(), false, 128, cx));
         let input_observations = [
             cx.observe(&key, |this, input, cx| {
                 let revision = input.read(cx).edit_revision();
@@ -168,10 +168,11 @@ impl AiSettings {
     }
 
     fn input_edited(&mut self, field: usize, revision: u64, cx: &mut Context<'_, Self>) {
-        if self.edit_revisions[field] != revision {
-            self.edit_revisions[field] = revision;
-            self.suspend_for_edit(cx);
+        if self.edit_revisions[field] == revision {
+            return;
         }
+        self.edit_revisions[field] = revision;
+        self.suspend_for_edit(cx);
         cx.notify();
     }
 

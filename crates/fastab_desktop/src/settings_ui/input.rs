@@ -12,6 +12,7 @@ use gpui::{
 use super::theme::Chrome;
 
 pub(super) struct Input {
+    id: SharedString,
     value: String,
     password: bool,
     limit: usize,
@@ -28,8 +29,15 @@ pub(super) struct Input {
 }
 
 impl Input {
-    pub(super) fn new(value: String, password: bool, limit: usize, cx: &mut Context<'_, Self>) -> Self {
+    pub(super) fn new(
+        id: impl Into<SharedString>,
+        value: String,
+        password: bool,
+        limit: usize,
+        cx: &mut Context<'_, Self>,
+    ) -> Self {
         Self {
+            id: id.into(),
             value: Self::bounded(value, limit),
             password,
             limit,
@@ -97,6 +105,15 @@ impl Input {
 
     fn utf16(&self, byte: usize) -> usize {
         self.value[..byte].encode_utf16().count()
+    }
+
+    fn exposed_text(value: &str, password: bool, range: Range<usize>) -> String {
+        let slice = &value[range];
+        if password {
+            "*".repeat(slice.encode_utf16().count())
+        } else {
+            slice.to_owned()
+        }
     }
 
     fn range(&self, range: Range<usize>) -> Range<usize> {
@@ -255,13 +272,13 @@ impl EntityInputHandler for Input {
         _: &mut Window,
         _: &mut Context<'_, Self>,
     ) -> Option<String> {
-        if self.password {
-            *adjusted = None;
-            return None;
-        }
+        // A missing string with a live selectedRange makes NSTextInputContext
+        // ask for the same range again on the main thread. The cursor spins
+        // and the window stops taking keys. The secure field still answers,
+        // with a mask of the same UTF-16 length, and never the secret.
         let range = self.range(range);
         *adjusted = Some(self.utf16(range.start)..self.utf16(range.end));
-        Some(self.value[range].to_owned())
+        Some(Self::exposed_text(&self.value, self.password, range))
     }
     fn selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut Context<'_, Self>) -> Option<UTF16Selection> {
         if !self.enabled {
@@ -279,8 +296,9 @@ impl EntityInputHandler for Input {
             .map(|range| self.utf16(range.start)..self.utf16(range.end))
     }
     fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) {
-        self.marked = None;
-        cx.notify();
+        if self.marked.take().is_some() {
+            cx.notify();
+        }
     }
     fn replace_text_in_range(
         &mut self,
@@ -352,7 +370,7 @@ impl Render for Input {
         let chrome = Chrome::current();
         let entity = cx.entity();
         div()
-            .id("jev-input")
+            .id(self.id.clone())
             .w_full()
             .min_w(px(0.))
             .h(px(34.))
@@ -460,5 +478,31 @@ impl Render for Input {
                 .w_full()
                 .h_full(),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Input;
+
+    #[test]
+    fn secure_field_reports_a_mask_with_the_same_utf16_length() {
+        let secret = "sk-测试-key";
+        let end = secret.encode_utf16().count();
+        let range = Input::utf8(secret, 0)..Input::utf8(secret, end);
+        let mask = Input::exposed_text(secret, true, range);
+        assert_eq!(mask.encode_utf16().count(), end);
+        assert!(mask.chars().all(|ch| ch == '*'));
+        assert!(!mask.contains('测'));
+        assert_eq!(Input::exposed_text(secret, false, range), secret);
+
+        let partial = Input::utf8(secret, 3)..Input::utf8(secret, 5);
+        let partial_mask = Input::exposed_text(secret, true, partial);
+        assert_eq!(
+            partial_mask.encode_utf16().count(),
+            secret[Input::utf8(secret, 3)..Input::utf8(secret, 5)]
+                .encode_utf16()
+                .count()
+        );
     }
 }
