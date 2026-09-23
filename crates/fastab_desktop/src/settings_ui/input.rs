@@ -490,7 +490,7 @@ mod tests {
         let secret = "sk-测试-key";
         let end = secret.encode_utf16().count();
         let range = Input::utf8(secret, 0)..Input::utf8(secret, end);
-        let mask = Input::exposed_text(secret, true, range);
+        let mask = Input::exposed_text(secret, true, range.clone());
         assert_eq!(mask.encode_utf16().count(), end);
         assert!(mask.chars().all(|ch| ch == '*'));
         assert!(!mask.contains('测'));
