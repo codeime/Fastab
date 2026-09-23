@@ -5,8 +5,8 @@ use std::ops::Range;
 use gpui::prelude::*;
 use gpui::{
     App, Bounds, ClipboardItem, Context, ElementInputHandler, EntityInputHandler, FocusHandle, Focusable, KeyDownEvent,
-    MouseButton, Pixels, Point, ShapedLine, SharedString, TextRun, UTF16Selection, Window, canvas, div, fill, point,
-    px, rgb, size,
+    Keystroke, MouseButton, Pixels, Point, ShapedLine, SharedString, TextRun, UTF16Selection, Window, canvas, div,
+    fill, point, px, rgb, size,
 };
 
 use super::theme::Chrome;
@@ -26,6 +26,7 @@ pub(super) struct Input {
     dragging: bool,
     edit_revision: u64,
     pub(super) enabled: bool,
+    pub(super) rejected: bool,
 }
 
 impl Input {
@@ -51,6 +52,7 @@ impl Input {
             dragging: false,
             edit_revision: 0,
             enabled: true,
+            rejected: false,
         }
     }
 
@@ -69,6 +71,7 @@ impl Input {
         self.marked = None;
         self.layout = None;
         self.scroll = px(0.);
+        self.rejected = false;
         cx.notify();
     }
 
@@ -151,19 +154,42 @@ impl Input {
     }
 
     fn replace(&mut self, range: Range<usize>, text: &str, cx: &mut Context<'_, Self>) -> bool {
-        if !self.enabled
-            || text.chars().any(char::is_control)
-            || self.value.len() - range.len() + text.len() > self.limit
-        {
+        if !self.enabled {
             return false;
         }
-        self.value.replace_range(range.clone(), text);
-        self.edit_revision = self.edit_revision.wrapping_add(1);
+        let Some(changed) = Self::replace_value(&mut self.value, range.clone(), text, self.password, self.limit) else {
+            self.rejected = true;
+            cx.notify();
+            return false;
+        };
+        self.rejected = false;
+        if changed {
+            self.edit_revision = self.edit_revision.wrapping_add(1);
+        }
         self.cursor = range.start + text.len();
         self.anchor = self.cursor;
         self.marked = None;
         cx.notify();
         true
+    }
+
+    /// None rejects the edit; Some reports whether the contents changed.
+    fn replace_value(
+        value: &mut String,
+        range: Range<usize>,
+        text: &str,
+        password: bool,
+        limit: usize,
+    ) -> Option<bool> {
+        if text.chars().any(char::is_control)
+            || (password && !text.bytes().all(|byte| byte.is_ascii_graphic()))
+            || value.len() - range.len() + text.len() > limit
+        {
+            return None;
+        }
+        let changed = &value[range.clone()] != text;
+        value.replace_range(range, text);
+        Some(changed)
     }
 
     fn key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<'_, Self>) {
@@ -189,7 +215,11 @@ impl Input {
                 },
                 "v" => {
                     if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                        self.replace(self.selection(), &text, cx);
+                        // Keys copied from a dashboard or a file often carry a
+                        // trailing newline. Do not silently reject the whole key.
+                        if let Some(text) = Self::paste_text(&text, self.password) {
+                            self.replace(self.selection(), text, cx);
+                        }
                     }
                 },
                 "left" => {
@@ -251,10 +281,38 @@ impl Input {
         } else {
             handled = false;
         }
+        if self.password && !handled {
+            // API keys are visible ASCII, not natural-language text. Consume
+            // printable keystrokes here instead of sending our masked document
+            // through NSTextInputContext / an IME's composition round trip.
+            if let Some(text) = Self::password_key_text(&event.keystroke) {
+                self.replace(self.selection(), text, cx);
+                handled = true;
+            }
+        }
         if handled {
             cx.stop_propagation();
             cx.notify();
         }
+    }
+
+    fn paste_text(text: &str, password: bool) -> Option<&str> {
+        let text = if password { text.trim() } else { text };
+        // An empty paste is not a deletion. In particular, trimming a copied
+        // blank line must not erase the selected key or count as a user edit.
+        (!text.is_empty()).then_some(text)
+    }
+
+    fn password_key_text(keystroke: &Keystroke) -> Option<&str> {
+        if keystroke.modifiers.platform || keystroke.modifiers.control {
+            return None;
+        }
+        // GPUI also assigns key_char to Tab/Enter. Leave focus navigation and
+        // other control keys to their handlers instead of swallowing them.
+        keystroke
+            .key_char
+            .as_deref()
+            .filter(|text| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_graphic()))
     }
 }
 
@@ -272,10 +330,8 @@ impl EntityInputHandler for Input {
         _: &mut Window,
         _: &mut Context<'_, Self>,
     ) -> Option<String> {
-        // A missing string with a live selectedRange makes NSTextInputContext
-        // ask for the same range again on the main thread. The cursor spins
-        // and the window stops taking keys. The secure field still answers,
-        // with a mask of the same UTF-16 length, and never the secret.
+        // Never expose the secret if this callback is queried. Password fields
+        // handle ASCII key events directly and do not register a text handler.
         let range = self.range(range);
         *adjusted = Some(self.utf16(range.start)..self.utf16(range.end));
         Some(Self::exposed_text(&self.value, self.password, range))
@@ -469,7 +525,9 @@ impl Render for Input {
                                 }
                             }
                             let _ = line.paint(origin, bounds.size.height, window, cx);
-                            window.handle_input(&input.focus, ElementInputHandler::new(bounds, entity.clone()), cx);
+                            if !input.password && input.enabled {
+                                window.handle_input(&input.focus, ElementInputHandler::new(bounds, entity.clone()), cx);
+                            }
                             input.origin = origin;
                             input.layout = Some(line);
                         });
@@ -504,5 +562,79 @@ mod tests {
                 .encode_utf16()
                 .count()
         );
+    }
+
+    #[test]
+    fn key_edits_accept_pasted_keys_and_preserve_selection_on_invalid_input() {
+        let mut value = String::from("old-key");
+        let text = Input::paste_text(" \r\nsk-test-key\r\n", true).unwrap();
+        assert_eq!(Input::replace_value(&mut value, 0..7, text, true, 16), Some(true));
+        assert_eq!(value, "sk-test-key");
+        for clipboard in ["sk-test\nkey", "sk-test key", "密钥", "12345678901234567"] {
+            let text = Input::paste_text(clipboard, true).unwrap();
+            let end = value.len();
+            assert_eq!(Input::replace_value(&mut value, 0..end, text, true, 16), None);
+            assert_eq!(value, "sk-test-key");
+        }
+        assert_eq!(Input::replace_value(&mut value, 3..7, "A_9-", true, 16), Some(true));
+        assert_eq!(value, "sk-A_9--key");
+        assert_eq!(Input::replace_value(&mut value, 3..7, "", true, 16), Some(true));
+        assert_eq!(value, "sk--key");
+    }
+
+    #[test]
+    fn ordinary_fields_still_accept_unicode_composition() {
+        let mut value = String::from("model");
+        assert_eq!(Input::replace_value(&mut value, 0..5, "模型", false, 128), Some(true));
+        assert_eq!(value, "模型");
+        assert_eq!(Input::paste_text(" model ", false), Some(" model "));
+    }
+
+    #[test]
+    fn empty_key_pastes_do_not_produce_a_replacement() {
+        for clipboard in ["", " ", "\r\n", " \t\r\n ", "\u{a0}\u{3000}"] {
+            assert_eq!(Input::paste_text(clipboard, true), None);
+        }
+        // Whitespace is meaningful in ordinary fields. Explicit deletion of
+        // a selected key must also remain possible via Backspace/Delete.
+        assert_eq!(Input::paste_text(" ", false), Some(" "));
+        let mut value = String::from("sk-test-key");
+        let end = value.len();
+        assert_eq!(Input::replace_value(&mut value, 0..end, "", true, 4096), Some(true));
+        assert!(value.is_empty());
+    }
+
+    #[test]
+    fn unchanged_edits_do_not_report_a_configuration_change() {
+        let mut value = String::new();
+        // Backspace/Delete in the empty key field must not suspend an enabled
+        // saved profile. Same-value replacements still move the caret normally.
+        assert_eq!(Input::replace_value(&mut value, 0..0, "", true, 4096), Some(false));
+        value.push_str("sk-test-key");
+        assert_eq!(Input::replace_value(&mut value, 3..7, "test", true, 4096), Some(false));
+        assert_eq!(value, "sk-test-key");
+        assert_eq!(Input::replace_value(&mut value, 3..7, "new", true, 4096), Some(true));
+        assert_eq!(value, "sk-new-key");
+    }
+
+    #[test]
+    fn password_keys_preserve_shortcuts_and_focus_navigation() {
+        let mut stroke = gpui::Keystroke {
+            modifiers: gpui::Modifiers::default(),
+            key: "a".into(),
+            key_char: Some("A".into()),
+        };
+        stroke.modifiers.shift = true;
+        assert_eq!(Input::password_key_text(&stroke), Some("A"));
+        stroke.modifiers.platform = true;
+        assert_eq!(Input::password_key_text(&stroke), None);
+        stroke.modifiers.platform = false;
+        stroke.modifiers.control = true;
+        assert_eq!(Input::password_key_text(&stroke), None);
+        stroke.modifiers.control = false;
+        for text in ["\t", "\n", "", " ", "密"] {
+            stroke.key_char = Some(text.into());
+            assert_eq!(Input::password_key_text(&stroke), None);
+        }
     }
 }

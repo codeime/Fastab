@@ -255,9 +255,12 @@ impl AiSettings {
         }
         self.observe_current_edits(cx);
         self.suspend_for_edit(cx);
-        let secret = self.key.update(cx, |input, cx| input.take(cx));
-        if !secret.bytes().all(|byte| byte.is_ascii_graphic()) {
-            self.status = Self::label("API Key 只能包含可见 ASCII 字符且不能含空白；草稿已清除，请重新粘贴。", "API keys must contain visible ASCII characters without whitespace. The draft was cleared; paste the key again.").into();
+        if !self.key.read(cx).value().bytes().all(|byte| byte.is_ascii_graphic()) {
+            self.status = Self::label(
+                "API Key 只能包含可见 ASCII 字符且不能含空白，请检查输入。",
+                "API keys must contain visible ASCII characters without whitespace. Check the input.",
+            )
+            .into();
             cx.notify();
             return;
         }
@@ -332,6 +335,10 @@ impl AiSettings {
         self.epoch = self.epoch.wrapping_add(1);
         let epoch = self.epoch;
         let saved_revision = runtime_revision();
+        // Keep the draft until both stores have succeeded so Busy, Keychain
+        // denial and config-write failures can be retried with the same key.
+        // Switching profiles or closing still clears it and invalidates epoch.
+        let secret = self.key.read(cx).value().as_bytes().to_vec();
         // Explicitly disabling with no replacement key does not require a
         // Keychain read (or an operating-system authorization prompt).
         if secret.is_empty() && !desired_enabled {
@@ -341,7 +348,7 @@ impl AiSettings {
         }
         let replacing = !secret.is_empty();
         let operation = if replacing {
-            let write = credentials::write(&service, secret.into_bytes(), cx);
+            let write = credentials::write(&service, secret, cx);
             cx.spawn(async move |_, _| write.await)
         } else {
             let read = credentials::read(&service, cx);
@@ -362,6 +369,12 @@ impl AiSettings {
                 }
                 if let Err(error) = result {
                     this.status = Self::credential_error(error).into();
+                    if replacing {
+                        this.status.push_str(Self::label(
+                            " 密钥草稿已保留，可直接重试保存。",
+                            " The key draft was kept; you can retry saving.",
+                        ));
+                    }
                     return;
                 }
                 if runtime_revision() != saved_revision || AiConfig::load().ok().as_ref() != Some(&disabled) {
@@ -387,6 +400,9 @@ impl AiSettings {
                 }
                 this.config = final_config;
                 this.enabled = desired_enabled;
+                this.key.update(cx, |input, cx| {
+                    input.take(cx);
+                });
                 this.changed();
                 this.status = if desired_enabled {
                     Self::label("已保存并开启自动推荐。", "Saved. Automatic recommendations are on.")
@@ -687,6 +703,7 @@ impl Render for AiSettings {
             .child(consent)
             .child(Self::label("API Key（遮蔽输入）", "API Key (masked input)"))
             .child(self.key.clone())
+            .when(self.key.read(cx).rejected, |body| body.child(Self::label("未接受此次输入：Key 最多 4096 个可见 ASCII 字符，不能含内部空白或换行；原内容已保留。", "Input rejected: keys must be at most 4096 visible ASCII characters without internal whitespace or line breaks. The previous value was kept.")))
             .child(div().text_size(px(12.)).text_color(rgb(chrome.muted)).child(Self::label("不回填已存密钥；留空保存时沿用当前地址的密钥。仅存入系统 Keychain，不写入普通设置。复制和剪切已禁用。", "Saved keys are never prefilled. Leave blank to use the key for this destination. Stored only in system Keychain, not ordinary settings. Copy and cut are disabled.")))
             .child(save)
             .child(div().text_color(rgb(chrome.muted)).child(self.status.clone()))
