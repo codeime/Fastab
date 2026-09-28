@@ -73,6 +73,7 @@ const BUNDLED_ICONS: &[(&str, &[u8])] = &[
 const HISTORY: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>"##;
 
 const AI: &str = include_str!("icons/ai.svg");
+const RECOMMENDATION_STAR: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M12 2.25 15.01 8.35 21.75 9.33 16.88 14.08 18.03 20.79 12 17.62 5.97 20.79 7.12 14.08 2.25 9.33 8.99 8.35Z" fill="#facc15"/></svg>"##;
 
 fn named_bytes(name: &str) -> Option<&'static [u8]> {
     match name {
@@ -332,6 +333,27 @@ pub fn ai_icon_image_element(size: f32, background_color: u32) -> gpui::Div {
         .flex_shrink_0()
         .rounded(px(size * 0.25))
         .bg(rgb(background_color))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(png_icon_element(image, size * 0.74))
+}
+
+/// A promoted recommendation uses the same rounded 15px tile as the other
+/// suggestion icons, with a solid yellow star on a contrasting dark background.
+pub fn recommendation_icon_image_element(size: f32) -> gpui::Div {
+    static STAR_IMAGE: OnceLock<Arc<Image>> = OnceLock::new();
+    let image = STAR_IMAGE
+        .get_or_init(|| Arc::new(Image::from_bytes(ImageFormat::Svg, RECOMMENDATION_STAR.to_vec())))
+        .clone();
+    div()
+        .w(px(size))
+        .h(px(size))
+        .min_w(px(size))
+        .min_h(px(size))
+        .flex_shrink_0()
+        .rounded(px(size * 0.25))
+        .bg(rgb(0x374151))
         .flex()
         .items_center()
         .justify_center()

@@ -2,6 +2,7 @@
 
 ## v0.0.3
 
+- change: mark AI-recommended rows with a solid yellow star on a matching icon tile; retain the fading footer icon while loading
 - feat: include current input, Git branch and bounded recent command history in Jev recommendations, with updated data-use notices
 - fix: preserve SQLite's cross-process locks while restricting database permissions, preventing intermittent SIGBUS crashes during shell initialization
 - change: store Jev API keys as plaintext in local SQLite with user-only file permissions and masked saved values; do not read or migrate old Keychain entries

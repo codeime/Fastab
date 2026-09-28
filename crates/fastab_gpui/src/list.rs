@@ -1225,7 +1225,7 @@ fn suggestion_row(
         .h(px(row_height))
         .when_some(bg, |this, bg| this.bg(bg))
         .child(if is_ai_promoted {
-            crate::icons::ai_icon_image_element(icon_size, theme.accent).into_any_element()
+            crate::icons::recommendation_icon_image_element(icon_size).into_any_element()
         } else {
             row_icon(&item.kind, icon, item.icon_identifier.as_deref(), icon_size).into_any_element()
         })
