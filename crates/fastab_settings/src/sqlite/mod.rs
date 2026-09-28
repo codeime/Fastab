@@ -184,16 +184,6 @@ impl Db {
         self.set_value(AUTH_TABLE_NAME, key, value.into())
     }
 
-    /// Import only if another process has not already saved or deleted this
-    /// credential while the caller was waiting on its previous storage.
-    pub fn set_auth_value_if_absent(&self, key: impl AsRef<str>, value: &str) -> Result<()> {
-        self.pool.get()?.execute(
-            &format!("INSERT INTO {AUTH_TABLE_NAME} (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO NOTHING"),
-            params![key.as_ref(), value],
-        )?;
-        Ok(())
-    }
-
     fn unset_value(&self, table: &'static str, key: impl AsRef<str>) -> Result<()> {
         self.pool
             .get()?

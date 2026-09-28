@@ -3,7 +3,7 @@
 ## v0.0.3
 
 - fix: preserve SQLite's cross-process locks while restricting database permissions, preventing intermittent SIGBUS crashes during shell initialization
-- change: store Jev API keys as plaintext in local SQLite with user-only file permissions; import existing keys once and keep saved values masked
+- change: store Jev API keys as plaintext in local SQLite with user-only file permissions and masked saved values; do not read or migrate old Keychain entries
 - feat: enable AI recommendations for more verified Git, Cargo and Homebrew subcommands and options
 - change: keep argument hints still and ellipsized; Ctrl-K shows full details while the normal footer stays on one line
 - fix: silently retain local suggestions when AI chooses not to reorder them
