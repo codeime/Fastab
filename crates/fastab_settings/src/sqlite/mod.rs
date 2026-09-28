@@ -303,41 +303,59 @@ impl Db {
 
 #[cfg(unix)]
 fn protect_database_files(path: &Path) -> std::io::Result<()> {
-    use std::fs::{OpenOptions, Permissions};
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    use std::ffi::CString;
+    use std::fs::OpenOptions;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    // Close a newly created file before another Db::open can start SQLite on
+    // it. Closing any descriptor for an existing SQLite file would release
+    // this process's POSIX locks, including the SHM deadman-switch lock.
+    static CREATE_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+    let _guard = CREATE_LOCK.lock();
 
     fn restrict(path: &Path, create: bool) -> std::io::Result<()> {
-        match std::fs::symlink_metadata(path) {
-            Ok(metadata) if !metadata.is_file() => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "SQLite storage must be a regular file",
-                ));
-            },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => return Ok(()),
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
-            _ => {},
-        }
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(create)
-            .truncate(false)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(path);
-        match file {
-            Ok(file) => {
-                if !file.metadata()?.is_file() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "SQLite storage must be a regular file",
-                    ));
+        let metadata = match std::fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && create => {
+                match OpenOptions::new().write(true).create_new(true).mode(0o600).open(path) {
+                    Ok(file) => drop(file),
+                    // Another process may have created the database. Never
+                    // open an existing file outside SQLite, even to chmod it.
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {},
+                    Err(error) => return Err(error),
                 }
-                file.set_permissions(Permissions::from_mode(0o600))
+                std::fs::symlink_metadata(path)?
             },
-            // Another SQLite connection may remove its sidecar after the
-            // metadata check. New sidecars inherit the restricted main mode.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        if !metadata.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "SQLite storage must be a regular file",
+            ));
+        }
+        let c_path = CString::new(path.as_os_str().as_bytes())?;
+        // SAFETY: c_path is NUL-terminated and lives through the call. A
+        // path-based chmod keeps SQLite's file descriptors and locks intact;
+        // NOFOLLOW prevents a replaced symlink from changing its target.
+        let result = unsafe { libc::fchmodat(libc::AT_FDCWD, c_path.as_ptr(), 0o600, libc::AT_SYMLINK_NOFOLLOW) };
+        if result != 0 {
+            let error = std::io::Error::last_os_error();
+            // SQLite may remove a sidecar concurrently. New sidecars inherit
+            // the restricted main mode.
+            if !create && error.kind() == std::io::ErrorKind::NotFound {
+                return Ok(());
+            }
+            return Err(error);
+        }
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.is_file() => Ok(()),
+            Ok(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "SQLite storage must be a regular file",
+            )),
             Err(error) if !create && error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error),
         }
@@ -426,6 +444,71 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn permission_repairs_preserve_cross_process_sqlite_locks() {
+        const CHILD_PATH: &str = "FASTAB_SQLITE_LOCK_TEST_PATH";
+        const TEST_NAME: &str = "sqlite::tests::permission_repairs_preserve_cross_process_sqlite_locks";
+
+        if let Some(path) = std::env::var_os(CHILD_PATH) {
+            let conn = Connection::open(path).unwrap();
+            conn.busy_timeout(std::time::Duration::ZERO).unwrap();
+            let result = conn.execute_batch("BEGIN IMMEDIATE");
+            assert!(
+                matches!(
+                    result,
+                    Err(Error::SqliteFailure(ref error, _))
+                        if error.code == rusqlite::ErrorCode::DatabaseBusy
+                ),
+                "another process acquired a write lock held by the parent: {result:?}"
+            );
+            return;
+        }
+
+        let assert_child_is_blocked = |path: &Path, phase: &str| {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST_NAME, "--nocapture"])
+                .env(CHILD_PATH, path)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{phase}: child status {}; stdout: {}; stderr: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+
+        for reopen in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("data.sqlite3");
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE probe(value); BEGIN IMMEDIATE")
+                .unwrap();
+            assert_child_is_blocked(&path, "before permission repair");
+
+            // A second connection in this process would only test SQLite's
+            // bookkeeping. A child observes whether the kernel lock survived.
+            let reopened = if reopen {
+                Some(Db::open(&path).unwrap())
+            } else {
+                protect_database_files(&path).unwrap();
+                None
+            };
+            assert_child_is_blocked(
+                &path,
+                if reopen {
+                    "after Db::open"
+                } else {
+                    "after permission repair"
+                },
+            );
+            conn.execute_batch("ROLLBACK").unwrap();
+            drop(reopened);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn database_and_live_sidecars_are_private_before_auth_writes() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -463,6 +546,29 @@ mod tests {
             std::fs::metadata(dir.path()).unwrap().permissions().mode(),
             directory_mode
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn permission_repairs_reject_symlinks_without_changing_their_targets() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("data.sqlite3");
+            let target = dir.path().join("unrelated-file");
+            std::fs::write(&target, "retained contents").unwrap();
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
+            if !suffix.is_empty() {
+                std::fs::write(&path, "").unwrap();
+            }
+            symlink(&target, dir.path().join(format!("data.sqlite3{suffix}"))).unwrap();
+
+            let error = protect_database_files(&path).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "retained contents");
+            assert_eq!(std::fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o644);
+        }
     }
 
     #[test]
