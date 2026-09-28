@@ -20,8 +20,17 @@ macro_rules! init_test {
                 let mut cmd = Command::cargo_bin(CLI_BINARY_NAME).unwrap();
                 cmd.arg("init").arg($shell).arg($stage).arg("--rcfile").arg($file);
                 cmd.env("Q_INIT_SNAPSHOT_TEST", "1");
-                let out = cmd.assert().success().get_output().stdout.clone();
-                Ok(String::from_utf8(out)?)
+                let output = cmd.output()?;
+                // assert_cmd renders every signal as `<interrupted>`. Keep
+                // the actual exit status so CI can identify the termination.
+                assert!(
+                    output.status.success(),
+                    "command {cmd:?} failed: {}\nstdout: {}\nstderr: {}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
+                );
+                Ok(String::from_utf8(output.stdout)?)
             }
 
             #[test]
