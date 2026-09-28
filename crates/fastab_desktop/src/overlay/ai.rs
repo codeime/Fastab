@@ -16,6 +16,7 @@ use super::{LastInput, OverlayController};
 use crate::event::Event;
 use crate::jev::client::{ClientError, ClientErrorKind, JevClient};
 use crate::jev::config::{self, AiConfig, ResolvedProfile};
+use crate::jev::context;
 use crate::jev::credentials::{self, CredentialError};
 use crate::jev::policy::{KEEP_LOCAL, MAX_CANDIDATES, MAX_DESCRIPTION_BYTES, REQUESTS_PER_MINUTE};
 use crate::jev::types::{Candidate, Recommendation, RecommendationInput};
@@ -329,6 +330,8 @@ impl OverlayController {
                 shell: stamp.shell.clone(),
                 command_path: context.command_path.clone(),
                 token_prefix: context.token_prefix.clone(),
+                current_input: stamp.input.buffer.clone(),
+                terminal_context: Default::default(),
                 candidates,
             },
             insertion,
@@ -427,7 +430,8 @@ impl OverlayController {
         let Some(key) = self.jev.key.clone() else {
             return;
         };
-        let input = snapshot.prepared.input.clone();
+        let mut input = snapshot.prepared.input.clone();
+        let cwd = snapshot.context.input.cwd.clone();
         self.jev.admitted.push_back(now);
         self.state.update(cx, |overlay, cx| {
             overlay.ai_preview = Some(AiPreview::Loading(overlay.ai_revision));
@@ -437,6 +441,7 @@ impl OverlayController {
         let proxy = self.proxy.clone();
         let revision = self.jev.config_revision;
         self.jev.flight = Some(tokio::spawn(async move {
+            input.terminal_context = context::collect(&cwd).await;
             let result = if config::runtime_revision() == revision {
                 client.recommend(&profile, key.as_slice(), &input).await
             } else {

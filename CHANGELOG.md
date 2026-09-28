@@ -2,6 +2,7 @@
 
 ## v0.0.3
 
+- feat: include current input, Git branch and bounded recent command history in Jev recommendations, with updated data-use notices
 - fix: preserve SQLite's cross-process locks while restricting database permissions, preventing intermittent SIGBUS crashes during shell initialization
 - change: store Jev API keys as plaintext in local SQLite with user-only file permissions and masked saved values; do not read or migrate old Keychain entries
 - feat: enable AI recommendations for more verified Git, Cargo and Homebrew subcommands and options

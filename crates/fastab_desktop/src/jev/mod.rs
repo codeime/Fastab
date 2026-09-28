@@ -2,6 +2,7 @@
 
 pub mod client;
 pub mod config;
+pub(crate) mod context;
 pub(crate) mod credentials;
 pub mod policy;
 pub mod types;

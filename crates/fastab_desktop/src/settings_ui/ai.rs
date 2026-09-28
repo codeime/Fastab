@@ -1262,8 +1262,8 @@ impl Render for AiSettings {
             .child(div().border_t_1().border_color(rgb(chrome.separator)).pt(px(12.)).child(enable))
             .child(hint(
                 Self::label(
-                    "启用即允许发送公开命令、前缀和候选；不发送完整输入、目录或历史。",
-                    "Enabling permits public commands, prefixes and candidates to be sent; never full input, directories or history.",
+                    "启用后会发送当前输入、Git 分支、近期命令和候选，用于推荐。",
+                    "When enabled, current input, Git branch, recent commands and candidates are sent for recommendations.",
                 )
                 .into(),
             ));
@@ -1291,7 +1291,7 @@ impl Render for AiSettings {
             }
             detail = detail.child(hint(format!("{} {destination}", Self::label("请求地址：", "Endpoint:"))))
                 .child(hint(Self::label("预设地址固定。需使用其他 System One 服务时选择自定义。", "Preset addresses are fixed. Choose Custom for another System One service.").into()))
-                .child(hint(Self::label("自动请求的完整范围：公开命令/子命令路径、已知 token 前缀、shell 类型、公开候选 ID、名称与说明。不发送环境变量、别名、动态资源或实际插入文本。", "Automatic requests include public command/subcommand paths, known token prefixes, shell type and public candidate IDs, names and descriptions. Environment variables, aliases, dynamic resources and actual insertion text are excluded.").into()))
+                .child(hint(Self::label("请求包含当前输入、Git 分支、当前目录最近最多 10 条命令，以及公开命令路径、前缀、shell 和候选说明。历史总长最多 2 KB，跳过含明显凭据的命令；不发送环境变量或目录字段。", "Requests include current input, Git branch, up to 10 recent commands from this directory, plus public command paths, prefixes, shell and candidate descriptions. History is capped at 2 KB; commands with obvious credentials are omitted. Environment variables and directory fields are excluded.").into()))
                 .child(hint(processors.into()));
             let mut policies = div().flex().flex_wrap().gap(px(6.));
             if !custom {

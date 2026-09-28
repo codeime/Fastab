@@ -178,6 +178,8 @@ fn probe_input() -> RecommendationInput {
         shell: "zsh".into(),
         command_path: vec!["git".into()],
         token_prefix: "ch".into(),
+        current_input: "git ch".into(),
+        terminal_context: Default::default(),
         candidates: vec![
             Candidate {
                 id: "checkout".into(),
@@ -243,7 +245,9 @@ mod tests {
             json!({
                 "shell": "zsh",
                 "command_path": ["git"],
-                "token_prefix": "ch"
+                "token_prefix": "ch",
+                "current_input": "git ch",
+                "recent_commands": []
             })
         );
         let top_level: BTreeSet<_> = request.as_object().unwrap().keys().map(String::as_str).collect();
@@ -276,6 +280,32 @@ mod tests {
         });
         let response = serde_json::to_vec(&response).unwrap();
         assert_eq!(decode_response(&response, &profile, &input).unwrap().choice, "checkout");
+    }
+
+    #[test]
+    fn recommendations_encode_terminal_context_with_bounded_history() {
+        let mut draft = Profile::typesafe();
+        draft.data_policy_version = DATA_POLICY_VERSION;
+        let profile = draft.validate().unwrap();
+        let mut input = probe_input();
+        input.terminal_context.current_branch = Some("feat/example".into());
+        input.terminal_context.recent_commands = vec!["git status".into(), "git diff".into()];
+
+        let body = encode_request(&profile, &input).unwrap();
+        let request: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(request["state"]["current_input"], "git ch");
+        assert_eq!(request["state"]["current_branch"], "feat/example");
+        assert_eq!(request["state"]["recent_commands"], json!(["git status", "git diff"]));
+        assert!(request["state"].get("cwd").is_none());
+        assert!(request["state"].get("environment").is_none());
+
+        input.terminal_context.recent_commands = vec!["x".repeat(super::super::context::MAX_COMMAND_BYTES + 1)];
+        assert!(encode_request(&profile, &input).is_err());
+        input.terminal_context.recent_commands =
+            vec!["git status".into(); super::super::context::MAX_HISTORY_COMMANDS + 1];
+        assert!(encode_request(&profile, &input).is_err());
+        input.terminal_context.recent_commands = vec!["x".repeat(512); 5];
+        assert!(encode_request(&profile, &input).is_err());
     }
 
     #[tokio::test]
