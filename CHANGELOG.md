@@ -2,13 +2,13 @@
 
 ## v0.0.3
 
-- change: mark AI-recommended rows with a solid yellow star on a matching icon tile; retain the fading footer icon while loading
+- change: mark AI-recommended rows with three compact, solid yellow sparkles on a matching icon tile; retain the fading footer icon while loading
 - feat: include current input, Git branch and bounded recent command history in Jev recommendations, with updated data-use notices
 - fix: preserve SQLite's cross-process locks while restricting database permissions, preventing intermittent SIGBUS crashes during shell initialization
 - change: store Jev API keys as plaintext in local SQLite with user-only file permissions and masked saved values; do not read or migrate old Keychain entries
 - feat: enable AI recommendations for more verified Git, Cargo and Homebrew subcommands and options
 - change: keep argument hints still and ellipsized; Ctrl-K shows full details while the normal footer stays on one line
-- fix: silently retain local suggestions when AI chooses not to reorder them
+- fix: silently retain local suggestions when AI chooses not to reorder them, times out or encounters a temporary failure
 - fix: native Edit menu actions now use GPUI's action table, preventing the Select All deadlock and preserving keyboard editing shortcuts
 - fix: restore a previously chosen input method on launch; serialize install and removal without blocking async workers or changing installation state during status checks
 - change: AI settings use colored connection results, an enable checkbox and clear provider selection; a short data-use notice replaces the separate consent toggle

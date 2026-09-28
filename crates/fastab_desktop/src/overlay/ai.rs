@@ -533,32 +533,28 @@ impl OverlayController {
                     ClientErrorKind::Authentication | ClientErrorKind::InvalidCredential => {
                         self.jev.blocked = true;
                         self.jev.key = None;
-                        text("Jev · 请在设置中更新密钥", "Jev · Update the key in Settings")
+                        Some(text("Jev · 请在设置中更新密钥", "Jev · Update the key in Settings"))
                     },
                     ClientErrorKind::PaymentRequired => {
                         self.jev.blocked = true;
-                        text("Jev · 请检查服务商账户额度", "Jev · Check provider account credit")
+                        Some(text(
+                            "Jev · 请检查服务商账户额度",
+                            "Jev · Check provider account credit",
+                        ))
                     },
-                    ClientErrorKind::RateLimited | ClientErrorKind::Overloaded => text(
-                        "Jev · 暂时不可用，继续使用本地建议",
-                        "Jev · Unavailable; local suggestions remain",
-                    ),
-                    ClientErrorKind::Timeout => text(
-                        "Jev · 请求超时，继续使用本地建议",
-                        "Jev · Timed out; local suggestions remain",
-                    ),
-                    _ => text(
-                        "Jev · 未能推荐，继续使用本地建议",
-                        "Jev · No recommendation; local suggestions remain",
-                    ),
+                    // Transient failures only retire the loading icon. Keep
+                    // the normal completion footer available for local hints.
+                    _ => None,
                 };
-                if error.cooldown.is_some() || self.jev.blocked {
+                if error.cooldown.is_some() || self.jev.blocked || (current && message.is_none()) {
                     self.cancel_jev(cx);
                 }
                 if !current {
                     return;
                 }
-                self.show_jev_status(message, cx);
+                if let Some(message) = message {
+                    self.show_jev_status(message, cx);
+                }
             },
         }
     }
