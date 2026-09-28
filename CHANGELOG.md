@@ -1,9 +1,14 @@
 # Changelog
 
-## Unreleased
-
 ## v0.0.3
 
+- feat: show a gently fading AI icon at the bottom left of the completion popup during requests, while local suggestions remain usable
+- fix: Jev settings pause requests immediately and save in the background, without blocking input on file locks; stale saves cannot replace newer settings
+- fix: failed AI saves remain retryable, and closing settings keeps in-flight saves disabled across restarts
+- fix: ignore delayed terminal focus events after switching apps and bound Accessibility queries; settings Keychain waits now time out without losing the key draft, while runtime reads retain late results
+- fix: Tab navigation now reaches AI inputs, actions and theme selectors, skipping disabled controls
+- change: simplify AI setup and move model, endpoint details and saved profiles into advanced settings
+- feat: test the current Jev key, model and endpoint with a fixed example and clear connection-error feedback
 - fix: remote IPC reconnect no longer stops permanently when an in-flight outbox frame still holds budget accounting (`Busy` vs `Stopped`)
 - fix: intercepted-key replay no longer blocks the PTY main loop for up to 5s; ordinary input and desktop Inserts stay ordered behind pending keys without a barrier wait
 - fix: generator subprocess cleanup stays bounded after kill; unfinished children are reaped in the background instead of hanging `wait` or leaving zombies

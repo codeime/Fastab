@@ -42,7 +42,7 @@ impl Input {
             value: Self::bounded(value, limit),
             password,
             limit,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             anchor: 0,
             cursor: 0,
             marked: None,
@@ -423,6 +423,7 @@ impl EntityInputHandler for Input {
 
 impl Render for Input {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        self.focus = self.focus.clone().tab_stop(self.enabled);
         let chrome = Chrome::current();
         let entity = cx.entity();
         div()
@@ -440,7 +441,6 @@ impl Render for Input {
             .text_color(rgb(chrome.text))
             .overflow_hidden()
             .track_focus(&self.focus)
-            .tab_stop(true)
             .cursor(gpui::CursorStyle::IBeam)
             .focus(|style| style.border_color(rgb(chrome.accent)))
             .when(!self.enabled, |style| style.opacity(0.55))
@@ -542,6 +542,142 @@ impl Render for Input {
 #[cfg(test)]
 mod tests {
     use super::Input;
+    use gpui::prelude::*;
+    use gpui::{App, ClipboardItem, Context, Entity, Modifiers, TestAppContext, VisualTestContext, Window, div, px};
+    use serde_json::json;
+
+    struct InputFields {
+        model: Entity<Input>,
+        base: Entity<Input>,
+        key: Entity<Input>,
+    }
+
+    impl Render for InputFields {
+        fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+            fn field(selector: &'static str, input: Entity<Input>) -> impl IntoElement {
+                div()
+                    .debug_selector(move || selector.to_owned())
+                    .w_full()
+                    .h(px(34.))
+                    .child(input)
+            }
+
+            div()
+                .w(px(460.))
+                .flex()
+                .flex_col()
+                .on_key_down(|event, window, cx| {
+                    if event.keystroke.key == "tab" {
+                        if event.keystroke.modifiers.shift {
+                            window.focus_prev();
+                        } else {
+                            window.focus_next();
+                        }
+                        cx.stop_propagation();
+                    }
+                })
+                .child(field("model", self.model.clone()))
+                .child(field("base", self.base.clone()))
+                .child(field("key", self.key.clone()))
+        }
+    }
+
+    fn snapshot(cx: &mut VisualTestContext, input: &Entity<Input>) -> (String, u64, bool, bool) {
+        cx.update(|window, app: &mut App| {
+            let input = input.read(app);
+            (
+                input.value.clone(),
+                input.edit_revision,
+                input.focus.is_focused(window),
+                input.dragging,
+            )
+        })
+    }
+
+    fn click(cx: &mut VisualTestContext, selector: &'static str) {
+        let bounds = cx.debug_bounds(selector).expect("rendered input bounds");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn rendered_fields_keep_accepting_mouse_keyboard_and_paste_events(cx: &mut TestAppContext) {
+        // Input::render resolves Chrome from settings; keep the headless test
+        // entirely on the in-memory settings backend.
+        let _settings = fastab_settings::settings::install_override(fastab_settings::Settings::from_slice(&[(
+            "dashboard.theme",
+            json!("light"),
+        )]));
+        let (fields, window) = cx.add_window_view(|_, cx| InputFields {
+            model: cx.new(|cx| Input::new("test-model", String::new(), false, 128, cx)),
+            base: cx.new(|cx| Input::new("test-base", String::new(), false, 2048, cx)),
+            key: cx.new(|cx| Input::new("test-key", String::new(), true, 4096, cx)),
+        });
+        let (model, base, key) = fields.read_with(window, |fields, _| {
+            (fields.model.clone(), fields.base.clone(), fields.key.clone())
+        });
+
+        click(window, "model");
+        assert_eq!(snapshot(window, &model), (String::new(), 0, true, false));
+        window.simulate_input("jev-1");
+        window.simulate_keystrokes("backspace");
+        window.simulate_input("2");
+        assert_eq!(snapshot(window, &model).0, "jev-2");
+
+        window.simulate_keystrokes("tab");
+        assert!(snapshot(window, &base).2);
+        window.simulate_input("https://example.test");
+        window.simulate_keystrokes("backspace");
+        window.simulate_input("t");
+        assert_eq!(snapshot(window, &base).0, "https://example.test");
+
+        window.simulate_keystrokes("tab");
+        assert!(snapshot(window, &key).2);
+        window.simulate_input("sk-demo");
+        window.simulate_keystrokes("backspace");
+        window.simulate_input("2");
+        let (before_paste, revision, _, _) = snapshot(window, &key);
+        assert_eq!(before_paste, "sk-dem2");
+        window.write_to_clipboard(ClipboardItem::new_string(" \r\n ".into()));
+        window.simulate_keystrokes("cmd-a cmd-v");
+        let (after_paste, after_revision, focused, _) = snapshot(window, &key);
+        assert_eq!(after_paste, before_paste);
+        assert_eq!(after_revision, revision);
+        assert!(focused);
+
+        click(window, "model");
+        assert!(snapshot(window, &model).2);
+        click(window, "key");
+        let (value, _, focused, dragging) = snapshot(window, &key);
+        assert_eq!(value, before_paste);
+        assert!(focused);
+        assert!(!dragging, "a single click must release the drag state");
+        click(window, "base");
+        assert!(snapshot(window, &base).2);
+
+        window.update(|_, app| {
+            base.update(app, |input, cx| {
+                input.enabled = false;
+                cx.notify();
+            });
+        });
+        window.run_until_parked();
+        click(window, "model");
+        window.simulate_keystrokes("tab");
+        assert!(snapshot(window, &key).2, "Tab skips a disabled base field");
+        assert!(!snapshot(window, &base).2);
+
+        window.update(|_, app| {
+            base.update(app, |input, cx| {
+                input.enabled = true;
+                cx.notify();
+            });
+        });
+        window.run_until_parked();
+        click(window, "model");
+        window.simulate_keystrokes("tab");
+        assert!(snapshot(window, &base).2, "re-enabled base returns to the Tab order");
+    }
 
     #[test]
     fn secure_field_reports_a_mask_with_the_same_utf16_length() {

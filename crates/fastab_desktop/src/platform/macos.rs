@@ -19,7 +19,7 @@ use fastab_proto::local::caret_position_hook::Origin;
 use fastab_util::Terminal;
 use macos_utils::accessibility::accessibility_is_enabled;
 use macos_utils::caret_position::{CaretPosition, get_caret_position};
-use macos_utils::window_server::{CGWindowLevelForKey, UIElement};
+use macos_utils::window_server::{AX_MESSAGING_TIMEOUT_SECONDS, CGWindowLevelForKey, UIElement};
 use macos_utils::{NotificationCenter, WindowServer, WindowServerEvent};
 use objc::runtime::{BOOL, Class};
 use objc::{msg_send, sel, sel_impl};
@@ -27,7 +27,7 @@ use objc2_foundation::{NSDictionary, NSOperationQueue, ns_string};
 use serde::Serialize;
 use tao::dpi::{LogicalPosition, LogicalSize, Position};
 use tao::platform::macos::ActivationPolicy;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, trace, warn};
 
 use super::{PlatformBoundEvent, PlatformWindow};
 use crate::event::{Event, WindowEvent, WindowPosition};
@@ -124,7 +124,7 @@ struct Unmanaged {
 fn set_global_ax_messaging_timeout() {
     unsafe {
         let system_wide = AXUIElement::wrap_under_create_rule(AXUIElementCreateSystemWide());
-        AXUIElementSetMessagingTimeout(system_wide.as_concrete_TypeRef(), 0.25);
+        AXUIElementSetMessagingTimeout(system_wide.as_concrete_TypeRef(), AX_MESSAGING_TIMEOUT_SECONDS);
     }
 }
 
@@ -214,16 +214,11 @@ impl PlatformWindowImpl {
         self.x_term_tree_cache = None;
     }
 
-    /// Keep a one-node cache when focus is still this window's xterm helper
-    /// textarea (same pane, or a new pane's caret). A helper in another
-    /// window of the same bundle must not steal the cache. Anything else in
-    /// this window drops it so the next keystroke walks from the window root.
-    pub fn refresh_x_term_cache_from(&mut self, element: &UIElement) {
-        let same_window = unsafe { element.get_window_id() }.ok().map(|id| id == self.window_id);
-        match x_term_cache_update_for_focused_element(element.is_xterm_helper_textarea(), same_window) {
-            XTermCacheUpdate::Retarget => {
-                self.x_term_tree_cache = Some(vec![element.clone()]);
-            },
+    /// Apply the AX-derived cache decision after its queries run outside the
+    /// focused-window mutex.
+    fn apply_x_term_cache_update(&mut self, element: Option<UIElement>, update: XTermCacheUpdate) {
+        match update {
+            XTermCacheUpdate::Retarget => self.x_term_tree_cache = element.map(|element| vec![element]),
             XTermCacheUpdate::Invalidate => self.invalidate_x_term_cache(),
             XTermCacheUpdate::Leave => {},
         }
@@ -297,7 +292,19 @@ impl PlatformStateImpl {
         window_map: &FigIdMap,
         notifications_state: &Arc<WebviewNotificationsState>,
     ) -> anyhow::Result<()> {
-        debug!("Handling platform event: {:?}", event);
+        match &event {
+            PlatformBoundEvent::FocusedElementChanged { app, .. } => {
+                // UIElement's Debug implementation asks AX for its role and frame. Keep
+                // this event's log metadata-only until after the frontmost-app filter.
+                debug!(pid = app.pid, bundle_id = %app.bundle_id, "Handling focused element event");
+            },
+            PlatformBoundEvent::ExternalWindowFocusChanged { window } => {
+                // PlatformWindowImpl derives Debug through UIElement, which would issue
+                // AX requests before the stale-activation check below.
+                debug!(pid = window.pid, bundle_id = %window.bundle_id, "Handling external window focus event");
+            },
+            _ => debug!("Handling platform event: {:?}", event),
+        }
         match event {
             PlatformBoundEvent::Initialize => {
                 if unsafe { AXIsProcessTrusted() } {
@@ -395,6 +402,15 @@ impl PlatformStateImpl {
                 Ok(())
             },
             PlatformBoundEvent::ExternalWindowFocusChanged { window } => {
+                let app = macos_utils::window_server::ApplicationSpecifier {
+                    pid: window.pid,
+                    bundle_id: window.bundle_id.clone(),
+                };
+                if !macos_utils::window_server::is_frontmost_application(&app) {
+                    trace!(pid = app.pid, bundle_id = %app.bundle_id, "Ignoring stale external app activation");
+                    return Ok(());
+                }
+
                 let current_terminal = Terminal::from_bundle_id(window.bundle_id.clone());
                 let level = window.get_level();
 
@@ -565,16 +581,42 @@ impl PlatformStateImpl {
                 Ok(())
             },
             PlatformBoundEvent::FocusedElementChanged { element, app } => {
-                let mut focused = self.focused_window.lock().unwrap();
-                let Some(focused_window) = focused.as_mut() else {
-                    return Ok(());
-                };
-
-                // Focus can move inside a window we are not following, e.g. a second VS Code
-                // window in the background.
-                if focused_window.bundle_id() != app.bundle_id {
+                if !macos_utils::window_server::is_frontmost_application(&app) {
+                    trace!(pid = app.pid, bundle_id = %app.bundle_id, "Ignoring stale focused-element event");
+                    let belongs_to_tracked_window = {
+                        let mut focused = self.focused_window.lock().unwrap();
+                        focused.as_mut().is_some_and(|focused_window| {
+                            if focused_window.pid == app.pid && focused_window.bundle_id() == app.bundle_id {
+                                focused_window.invalidate_x_term_cache();
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                    };
+                    if belongs_to_tracked_window && hide_overlay_on_element_change(&app.bundle_id) {
+                        self.proxy
+                            .send_event(Event::WindowEvent {
+                                window_id: AUTOCOMPLETE_ID,
+                                window_event: WindowEvent::Hide,
+                            })
+                            .ok();
+                    }
                     return Ok(());
                 }
+
+                // Snapshot identity under the lock, then make potentially blocking AX
+                // requests after releasing it.
+                let tracked_window = {
+                    let focused = self.focused_window.lock().unwrap();
+                    focused.as_ref().and_then(|focused_window| {
+                        (focused_window.pid == app.pid && focused_window.bundle_id() == app.bundle_id)
+                            .then_some((focused_window.window_id, should_refresh_x_term_cache(&app.bundle_id)))
+                    })
+                };
+                let Some((window_id, is_xterm)) = tracked_window else {
+                    return Ok(());
+                };
 
                 // The overlay is anchored to one pane. VS Code / Cursor /
                 // Windsurf: a focused helper textarea is that pane's caret —
@@ -582,17 +624,39 @@ impl PlatformStateImpl {
                 // on the next key. Anything else in that window still drops
                 // it. IME and other AX terminals never use this cache, so
                 // skip the extra AX queries and just clear it.
-                if should_refresh_x_term_cache(focused_window.bundle_id()) {
-                    focused_window.refresh_x_term_cache_from(&element);
+                let cache_update = if is_xterm {
+                    let same_window = unsafe { element.get_window_id() }
+                        .ok()
+                        .map(|element_window| element_window == window_id);
+                    let is_helper = matches!(same_window, Some(true)) && element.is_xterm_helper_textarea();
+                    x_term_cache_update_for_focused_element(is_helper, same_window)
                 } else {
-                    focused_window.invalidate_x_term_cache();
+                    XTermCacheUpdate::Invalidate
+                };
+                let cache_element = (cache_update == XTermCacheUpdate::Retarget).then(|| element.clone());
+
+                // AX calls may overlap with a newer window event; recheck before
+                // mutating the cache and keep this lock limited to local state.
+                let mut focused = self.focused_window.lock().unwrap();
+                if let Some(focused_window) = focused.as_mut() {
+                    if focused_window.pid == app.pid
+                        && focused_window.bundle_id() == app.bundle_id
+                        && focused_window.window_id == window_id
+                    {
+                        focused_window.apply_x_term_cache_update(cache_element, cache_update);
+                    } else {
+                        return Ok(());
+                    }
+                } else {
+                    return Ok(());
                 }
+                drop(focused);
                 // Otty / Ghostty / Kitty do not expose an AX caret. Their IME
                 // controller also fires element-changed noise (palette switch,
                 // IMK activate/deactivate). Hiding here parks the list, and
                 // without a subsequent IME hook it never comes back.
                 if hide_overlay_on_element_change(&app.bundle_id) {
-                    debug!(?element, "Focused element changed, hiding autocomplete");
+                    debug!(pid = app.pid, bundle_id = %app.bundle_id, "Focused element changed, hiding autocomplete");
                     self.proxy
                         .send_event(Event::WindowEvent {
                             window_id: AUTOCOMPLETE_ID,
@@ -600,7 +664,7 @@ impl PlatformStateImpl {
                         })
                         .ok();
                 } else {
-                    debug!(?element, "Focused element changed in IME terminal, keeping overlay");
+                    debug!(pid = app.pid, bundle_id = %app.bundle_id, "Focused element changed in IME terminal, keeping overlay");
                 }
 
                 Ok(())

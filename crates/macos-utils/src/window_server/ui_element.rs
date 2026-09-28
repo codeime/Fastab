@@ -4,11 +4,11 @@ use std::fmt;
 use accessibility::util::ax_call;
 use accessibility_sys::{
     _AXUIElementGetWindow, AXError, AXUIElement, AXUIElementCopyAttributeNames, AXUIElementCopyAttributeValue,
-    AXUIElementCreateApplication, AXUIElementRef, AXUIElementSetAttributeValue, AXValue, kAXApplicationRole,
-    kAXBrowserRole, kAXChildrenAttribute, kAXDOMClassListAttribute, kAXEnhancedUserInterfaceAttribute,
-    kAXErrorAttributeUnsupported, kAXFocusedAttribute, kAXFocusedWindowAttribute, kAXFrameAttribute,
-    kAXFullScreenAttribute, kAXGroupRole, kAXManualAccessibilityAttribute, kAXParentAttribute, kAXRoleAttribute,
-    kAXScrollAreaRole, kAXSubroleAttribute, kAXTextFieldRole, kAXWebAreaRole, pid_t,
+    AXUIElementCreateApplication, AXUIElementRef, AXUIElementSetAttributeValue, AXUIElementSetMessagingTimeout,
+    AXValue, kAXApplicationRole, kAXBrowserRole, kAXChildrenAttribute, kAXDOMClassListAttribute,
+    kAXEnhancedUserInterfaceAttribute, kAXErrorAttributeUnsupported, kAXFocusedAttribute, kAXFocusedWindowAttribute,
+    kAXFrameAttribute, kAXFullScreenAttribute, kAXGroupRole, kAXManualAccessibilityAttribute, kAXParentAttribute,
+    kAXRoleAttribute, kAXScrollAreaRole, kAXSubroleAttribute, kAXTextFieldRole, kAXWebAreaRole, pid_t,
 };
 use core_foundation::ConcreteCFType;
 use core_foundation::array::{CFArray, CFArrayRef};
@@ -26,6 +26,8 @@ use core_graphics::window::{
 use tracing::warn;
 
 use crate::util::NSStringRef;
+
+pub const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 0.25;
 
 pub struct UIElement(AXUIElement);
 
@@ -67,7 +69,9 @@ impl PartialEq for UIElement {
 
 impl From<AXUIElement> for UIElement {
     fn from(ax_ref: AXUIElement) -> Self {
-        UIElement(ax_ref)
+        let element = UIElement(ax_ref);
+        element.set_messaging_timeout();
+        element
     }
 }
 
@@ -80,7 +84,9 @@ impl From<AXUIElement> for UIElement {
 impl From<AXUIElementRef> for UIElement {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn from(ax_ref: AXUIElementRef) -> Self {
-        UIElement(unsafe { AXUIElement::wrap_under_get_rule(ax_ref) })
+        let element = UIElement(unsafe { AXUIElement::wrap_under_get_rule(ax_ref) });
+        element.set_messaging_timeout();
+        element
     }
 }
 
@@ -106,7 +112,16 @@ pub struct CGWindowInfo {
 impl UIElement {
     /// The application element for `pid`, owned by the wrapper.
     pub fn application(pid: pid_t) -> Self {
-        UIElement(unsafe { AXUIElement::wrap_under_create_rule(AXUIElementCreateApplication(pid)) })
+        Self::from(unsafe { AXUIElement::wrap_under_create_rule(AXUIElementCreateApplication(pid)) })
+    }
+
+    /// Bound AX requests against a slow or unresponsive observed application.
+    /// The timeout is set on each wrapper because AX does not inherit the
+    /// application element's messaging timeout for child elements.
+    fn set_messaging_timeout(&self) {
+        unsafe {
+            AXUIElementSetMessagingTimeout(self.get_ref(), AX_MESSAGING_TIMEOUT_SECONDS);
+        }
     }
 
     pub fn get_ref(&self) -> AXUIElementRef {

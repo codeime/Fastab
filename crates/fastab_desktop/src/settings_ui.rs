@@ -91,7 +91,7 @@ impl ThemeControls {
     fn new(cx: &mut App) -> Self {
         Self {
             menu: None,
-            focus: [cx.focus_handle(), cx.focus_handle()],
+            focus: [cx.focus_handle().tab_stop(true), cx.focus_handle().tab_stop(true)],
             scroll: ScrollHandle::new(),
         }
     }

@@ -1,12 +1,18 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use futures::FutureExt;
 use gpui::prelude::*;
 use gpui::{App, Context, Entity, FocusHandle, MouseButton, Window, div, px, rgb};
 
 use crate::EventLoopProxy;
 use crate::event::Event;
-use crate::jev::config::{AiConfig, Profile, Provider, normalize_base_url, runtime_revision};
+use crate::jev::client::{ClientErrorKind, JevClient};
+use crate::jev::config::{
+    AiConfig, ConfigChanged, Profile, Provider, normalize_base_url, pause_runtime, runtime_revision,
+};
 use crate::jev::credentials::{self, CredentialError};
 use crate::jev::policy::DATA_POLICY_VERSION;
 
@@ -27,6 +33,12 @@ pub(super) struct AiSettings {
     persistence_failed: bool,
     epoch: u64,
     status: String,
+    probe_status: String,
+    probe_task: Option<gpui::Task<()>>,
+    probe_abort: Option<tokio::task::AbortHandle>,
+    pause_write: Option<futures::future::Shared<gpui::Task<Result<u64, bool>>>>,
+    operation_cancel: Option<Arc<AtomicU64>>,
+    dismissal_revision: Option<u64>,
     buttons: BTreeMap<String, FocusHandle>,
     proxy: EventLoopProxy,
     edit_revisions: [u64; 3],
@@ -35,9 +47,7 @@ pub(super) struct AiSettings {
 
 impl AiSettings {
     pub(super) fn new(proxy: EventLoopProxy, cx: &mut Context<'_, Self>) -> Self {
-        let loaded = AiConfig::load();
-        let load_failed = loaded.is_err();
-        let config = loaded.unwrap_or_default();
+        let config = AiConfig::default();
         let profile = config.active_profile().cloned().unwrap_or_else(Profile::typesafe);
         let acknowledged_service = (profile.data_policy_version == DATA_POLICY_VERSION)
             .then(|| profile.credential_key().ok())
@@ -59,6 +69,43 @@ impl AiSettings {
                 this.input_edited(2, revision, cx);
             }),
         ];
+        for field in [&key, &model, &base] {
+            field.update(cx, |input, _| input.enabled = false);
+        }
+        let executor = cx.background_executor().clone();
+        let loading = executor.spawn(async { AiConfig::load_wait() });
+        cx.spawn(async move |this, cx| {
+            let timeout = executor.timer(std::time::Duration::from_secs(10));
+            futures::pin_mut!(loading, timeout);
+            let loaded = match futures::future::select(loading, timeout).await {
+                futures::future::Either::Left((result, _)) => result.ok(),
+                futures::future::Either::Right(_) => None,
+            };
+            let _ = this.update(cx, |this, cx| {
+                if let Some(config) = loaded {
+                    let profile = config.active_profile().cloned().unwrap_or_else(Profile::typesafe);
+                    this.acknowledged_service = (profile.data_policy_version == DATA_POLICY_VERSION)
+                        .then(|| profile.credential_key().ok())
+                        .flatten();
+                    this.model.update(cx, |input, cx| input.set(profile.model.clone(), cx));
+                    this.base
+                        .update(cx, |input, cx| input.set(profile.base_url.clone(), cx));
+                    this.profile = profile;
+                    this.enabled = config.enabled;
+                    this.config = config;
+                    this.load_failed = false;
+                    this.status.clear();
+                } else {
+                    this.status = Self::label(
+                        "无法读取 AI 配置；请关闭并重新打开设置。",
+                        "Could not read AI settings. Close and reopen settings.",
+                    )
+                    .into();
+                }
+                this.set_busy(false, cx);
+            });
+        })
+        .detach();
         Self {
             enabled: config.enabled,
             config,
@@ -69,19 +116,17 @@ impl AiSettings {
             acknowledged_service,
             advanced: false,
             busy: false,
-            load_failed,
+            load_failed: true,
             persistence_failed: false,
             epoch: 0,
-            status: if load_failed {
-                Self::label(
-                    "无法读取 AI 配置；请关闭并重新打开设置。",
-                    "Could not read AI settings. Close and reopen settings.",
-                )
-                .into()
-            } else {
-                String::new()
-            },
+            status: Self::label("正在读取配置…", "Loading settings…").into(),
             buttons: BTreeMap::new(),
+            probe_status: String::new(),
+            probe_task: None,
+            probe_abort: None,
+            pause_write: None,
+            operation_cancel: None,
+            dismissal_revision: None,
             proxy,
             edit_revisions: [0; 3],
             _input_observations: input_observations,
@@ -96,6 +141,28 @@ impl AiSettings {
     /// allowed to finish, retaining its global credential lease until then.
     pub(super) fn clear_draft(&mut self, cx: &mut Context<'_, Self>) {
         self.observe_current_edits(cx);
+        self.cancel_probe(cx);
+        if self.busy {
+            // A credential/save continuation must not enable requests after
+            // the draft was dismissed while it was awaiting background work.
+            // Closing the GPUI window calls clear_draft before removal and may
+            // call it again from the host's Close event. Keep one revision for
+            // all close repairs so they remain valid through Drop.
+            let revision = *self.dismissal_revision.get_or_insert_with(pause_runtime);
+            if let Some(cancel) = &self.operation_cancel {
+                cancel.store(revision, Ordering::Release);
+            }
+            self.config.enabled = false;
+            self.changed();
+            let disabled = self.config.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    // Also persist a close that happened before the pending write
+                    // even began. A newer save wins through the revision check.
+                    let _ = disabled.save_if_unchanged(&disabled, revision);
+                })
+                .detach();
+        }
         self.epoch = self.epoch.wrapping_add(1);
         self.key.update(cx, |input, cx| {
             input.take(cx);
@@ -118,6 +185,9 @@ impl AiSettings {
     }
 
     fn select(&mut self, profile: Profile, cx: &mut Context<'_, Self>) {
+        if self.busy {
+            return;
+        }
         self.status.clear();
         self.suspend_for_edit(cx);
         self.clear_draft(cx);
@@ -154,9 +224,16 @@ impl AiSettings {
 
     fn set_busy(&mut self, busy: bool, cx: &mut Context<'_, Self>) {
         self.busy = busy;
+        if busy {
+            self.dismissal_revision = None;
+        } else {
+            self.operation_cancel = None;
+            self.dismissal_revision = None;
+        }
+        let editable = !busy && !self.load_failed;
         for field in [&self.key, &self.model, &self.base] {
             field.update(cx, |input, cx| {
-                input.enabled = !busy;
+                input.enabled = editable;
                 cx.notify();
             });
         }
@@ -172,6 +249,7 @@ impl AiSettings {
             return;
         }
         self.edit_revisions[field] = revision;
+        self.probe_status.clear();
         self.suspend_for_edit(cx);
         cx.notify();
     }
@@ -184,60 +262,79 @@ impl AiSettings {
         ];
         if revisions != self.edit_revisions {
             self.edit_revisions = revisions;
+            self.probe_status.clear();
             self.suspend_for_edit(cx);
         }
     }
 
-    /// Only the first user edit of an enabled configuration writes the disabled
-    /// state. Subsequent characters stay in the draft, including its intended
-    /// enabled switch; programmatic field resets do not count as user edits.
+    /// Pause before any I/O. A blocked settings file must never block input or
+    /// leave terminal requests running with a configuration being edited.
     fn suspend_for_edit(&mut self, cx: &mut Context<'_, Self>) {
         if !self.config.enabled {
             return;
         }
-        let mut disabled = self.config.clone();
-        disabled.enabled = false;
-        self.epoch = self.epoch.wrapping_add(1);
-        let saved = self.persist(
-            &disabled,
-            Self::label("暂停旧配置时保存失败。", "Saving the paused configuration failed."),
-            cx,
-        );
-        self.config = disabled;
-        if saved {
-            self.changed();
-            self.status = Self::label(
-                "旧配置已暂停；完成编辑并明确保存后才重新启用。",
-                "The previous configuration is paused. Edit and explicitly save to enable again.",
-            )
-            .into();
-        }
+        let revision = pause_runtime();
+        let previous = self.config.clone();
+        self.config.enabled = false;
+        self.changed();
+        let disabled = self.config.clone();
+        let operation = cx
+            .background_executor()
+            .spawn(async move {
+                disabled
+                    .save_if_unchanged(&previous, revision)
+                    .map_err(|error| error.is::<ConfigChanged>())
+            })
+            .shared();
+        self.pause_write = Some(operation.clone());
+        self.status = Self::label("已暂停；保存后应用更改。", "Paused. Save to apply changes.").into();
+        let epoch = self.epoch;
+        cx.spawn(async move |this, cx| {
+            if let Err(changed) = operation.await {
+                let _ = this.update(cx, |this, cx| {
+                    if this.epoch == epoch {
+                        this.save_error(changed, cx);
+                    }
+                });
+            }
+        })
+        .detach();
         cx.notify();
     }
 
-    fn persist(&mut self, config: &AiConfig, failure: &str, cx: &mut Context<'_, Self>) -> bool {
-        if config.save().is_err() {
-            // Config::save latches the process off even when settings storage
-            // mutated its in-memory copy before returning an I/O error.
-            self.config.enabled = false;
-            self.persistence_failed = true;
-            self.changed();
-            self.status = format!(
-                "{failure} {}",
-                Self::label(
-                    "本次运行已停止 AI 请求；磁盘状态未确认，请重试保存。",
-                    "AI requests are stopped for this run. The disk state is unconfirmed; retry saving."
-                )
-            );
+    fn save_error(&mut self, changed: bool, cx: &mut Context<'_, Self>) {
+        if changed {
+            self.load_failed = true;
+            self.set_busy(false, cx);
+            self.status = Self::label(
+                "配置已在其他操作中更改；未覆盖新配置，请重新打开设置。",
+                "Settings changed during this operation. The newer configuration was kept. Reopen settings.",
+            )
+            .into();
             cx.notify();
-            return false;
+        } else {
+            self.persistence_error(cx);
         }
-        self.persistence_failed = false;
-        true
+    }
+
+    fn persistence_error(&mut self, cx: &mut Context<'_, Self>) {
+        self.config.enabled = false;
+        self.persistence_failed = true;
+        self.changed();
+        self.status = Self::label(
+            "配置保存失败，AI 已暂停；输入已保留，请重试保存。",
+            "Could not save settings. AI is paused; your input was kept. Retry saving.",
+        )
+        .into();
+        cx.notify();
     }
 
     fn credential_error(error: CredentialError) -> &'static str {
         match error {
+            CredentialError::TimedOut => Self::label(
+                "系统钥匙串未及时响应；输入已保留，操作结束后可重试。",
+                "System Keychain did not respond in time. Your input was kept; retry when it finishes.",
+            ),
             CredentialError::Busy => Self::label(
                 "凭据操作正在完成，请稍后重试；AI 保持关闭。",
                 "A credential operation is still finishing. Retry shortly; AI remains off.",
@@ -249,16 +346,144 @@ impl AiSettings {
         }
     }
 
+    fn cancel_probe(&mut self, cx: &mut Context<'_, Self>) {
+        if self.probe_task.take().is_some() {
+            if let Some(abort) = self.probe_abort.take() {
+                abort.abort();
+            }
+            self.set_busy(false, cx);
+        }
+        self.probe_status.clear();
+    }
+
+    fn probe_error(kind: ClientErrorKind) -> &'static str {
+        match kind {
+            ClientErrorKind::Authentication | ClientErrorKind::InvalidCredential => Self::label(
+                "Key 无效或已失效，请检查当前服务商的 Key。",
+                "The key is invalid or expired. Check the key for this provider.",
+            ),
+            ClientErrorKind::PaymentRequired => {
+                Self::label("账户额度不足（402）。", "Insufficient account credit (402).")
+            },
+            ClientErrorKind::RateLimited => Self::label(
+                "请求被限流（429），请稍后重试。",
+                "Rate limited (429). Try again shortly.",
+            ),
+            ClientErrorKind::Overloaded => {
+                Self::label("服务暂时繁忙，请稍后重试。", "The service is busy. Try again shortly.")
+            },
+            ClientErrorKind::Timeout => Self::label(
+                "连接超时，请检查网络或稍后重试。",
+                "Connection timed out. Check your network or retry.",
+            ),
+            ClientErrorKind::Transport => Self::label(
+                "无法连接，请检查网络、代理及 HTTPS 地址。",
+                "Could not connect. Check your network, proxy and HTTPS address.",
+            ),
+            ClientErrorKind::Rejected => Self::label(
+                "服务拒绝请求，请检查模型权限和接口地址。",
+                "The service rejected the request. Check model access and the endpoint.",
+            ),
+            ClientErrorKind::InvalidRequest => Self::label(
+                "配置无效，请检查地址和 Jev 模型。",
+                "Invalid settings. Check the address and Jev model.",
+            ),
+            ClientErrorKind::InvalidResponse | ClientErrorKind::ResponseTooLarge => Self::label(
+                "服务返回了不兼容的响应，请检查是否支持 System One 接口。",
+                "The response is incompatible. Check that the service supports System One.",
+            ),
+        }
+    }
+
+    fn test_connection(&mut self, cx: &mut Context<'_, Self>) {
+        if self.busy || self.load_failed {
+            return;
+        }
+        self.observe_current_edits(cx);
+        if self.key.read(cx).rejected {
+            self.probe_status =
+                Self::label("请先修正未接受的 Key 输入。", "Correct the rejected key input first.").into();
+            cx.notify();
+            return;
+        }
+        let mut profile = self.draft(cx);
+        // The explicit test sends only a fixed public example. This temporary
+        // consent never changes the user's permission for terminal requests.
+        profile.data_policy_version = DATA_POLICY_VERSION;
+        let profile = match profile.validate() {
+            Ok(profile) => profile,
+            Err(_) => {
+                self.probe_status = Self::probe_error(ClientErrorKind::InvalidRequest).into();
+                cx.notify();
+                return;
+            },
+        };
+        let secret = self.key.read(cx).value().as_bytes().to_vec();
+        let credential = if secret.is_empty() {
+            credentials::read(&profile.credential_service, cx)
+        } else {
+            gpui::Task::ready(Ok(Some(secret)))
+        };
+        self.epoch = self.epoch.wrapping_add(1);
+        let epoch = self.epoch;
+        self.set_busy(true, cx);
+        self.probe_status = Self::label("正在测试连接…", "Testing connection…").into();
+        self.probe_task = Some(cx.spawn(async move |this, cx| {
+            let result = match credential.await {
+                Ok(Some(secret)) if !secret.is_empty() => {
+                    // Only the Tokio worker polls reqwest. GPUI waits on a
+                    // budget-free channel and can keep processing input.
+                    let (tx, rx) = futures::channel::oneshot::channel();
+                    let worker = tokio::spawn(async move {
+                        let result = match JevClient::new() {
+                            Ok(client) => client.probe(&profile, &secret).await.map_err(|error| error.kind),
+                            Err(_) => Err(ClientErrorKind::Transport),
+                        };
+                        let _ = tx.send(result);
+                    });
+                    let abort = worker.abort_handle();
+                    if this
+                        .update(cx, |this, _| this.probe_abort = Some(abort.clone()))
+                        .is_err()
+                    {
+                        abort.abort();
+                        return;
+                    }
+                    rx.await
+                        .unwrap_or(Err(ClientErrorKind::Transport))
+                        .map_err(Self::probe_error)
+                },
+                Ok(_) => Err(Self::label(
+                    "尚未配置 Key，请先输入后再测试。",
+                    "No key is configured. Enter a key to test.",
+                )),
+                Err(error) => Err(Self::credential_error(error)),
+            };
+            let _ = this.update(cx, |this, cx| {
+                if this.epoch != epoch {
+                    return;
+                }
+                this.probe_abort = None;
+                this.probe_task = None;
+                this.set_busy(false, cx);
+                this.probe_status = match result {
+                    Ok(()) => Self::label("连接成功，Key 和模型可用。", "Connected. The key and model work.").into(),
+                    Err(message) => message.into(),
+                };
+            });
+        }));
+    }
+
     fn save(&mut self, cx: &mut Context<'_, Self>) {
         if self.busy || self.load_failed {
             return;
         }
         self.observe_current_edits(cx);
         self.suspend_for_edit(cx);
-        if !self.key.read(cx).value().bytes().all(|byte| byte.is_ascii_graphic()) {
+        if self.key.read(cx).rejected || !self.key.read(cx).value().bytes().all(|byte| byte.is_ascii_graphic()) {
             self.status = Self::label(
-                "API Key 只能包含可见 ASCII 字符且不能含空白，请检查输入。",
-                "API keys must contain visible ASCII characters without whitespace. Check the input.",
+                "请检查 Key：仅支持可见 ASCII 字符，不能含空白。",
+                "Check the key: only visible ASCII characters without whitespace are accepted.",
             )
             .into();
             cx.notify();
@@ -268,10 +493,10 @@ impl AiSettings {
         let desired_enabled = self.enabled;
         let service = match profile.credential_key() {
             Ok(service) => service,
-            Err(_invalid_address) => {
+            Err(_) => {
                 self.status = Self::label(
-                    "Base URL 无效：预设地址固定，自定义地址须为 HTTPS 基地址。",
-                    "Invalid Base URL: presets are fixed; custom profiles require an HTTPS base address.",
+                    "请输入有效的 HTTPS 基地址；预设地址不可修改。",
+                    "Enter a valid HTTPS base address. Preset addresses are fixed.",
                 )
                 .into();
                 cx.notify();
@@ -280,27 +505,13 @@ impl AiSettings {
         };
         if desired_enabled && profile.validate().is_err() {
             self.status = Self::label(
-                "启用前请确认数据范围，并使用已支持的 Jev 模型。",
-                "Confirm the data scope and select a supported Jev model before enabling.",
+                "启用前请确认数据范围，并使用支持的 Jev 模型。",
+                "Confirm the data scope and use a supported Jev model before enabling.",
             )
             .into();
             cx.notify();
             return;
         }
-        // Fail closed before Keychain work: a mismatched / missing IR pin means
-        // public-static provenance cannot be proven, so enabling would only produce
-        // silent no-ops at completion time.
-        if desired_enabled && !fastab_engine::public_ai_baseline_ok(&fastab_engine::default_specs_dir()) {
-            self.status = Self::label(
-                "当前补全规格基线未通过公开静态校验，无法启用 AI 推荐。请使用匹配的 bundled specs-ir，或更新已审查的基线 pin。",
-                "The completion specs baseline does not match the reviewed public pins, so AI recommendations cannot be enabled. Use a matching bundled specs-ir, or update the reviewed baseline pins.",
-            )
-            .into();
-            cx.notify();
-            return;
-        }
-        // Reuse an existing endpoint identity; changing the destination retains
-        // the old profile so its old key remains explicitly deletable.
         profile.id = self
             .config
             .profiles
@@ -310,8 +521,8 @@ impl AiSettings {
         let mut disabled = self.config.clone();
         if disabled.upsert_profile(profile.clone()).is_err() {
             self.status = Self::label(
-                "配置未保存：请检查模型、地址及配置数量（最多 16 个）。",
-                "Settings were not saved. Check the model, address and profile limit (16).",
+                "无法保存：请检查地址、模型或删除多余配置（最多 16 个）。",
+                "Cannot save: check the address/model or remove unused profiles (maximum 16).",
             )
             .into();
             cx.notify();
@@ -319,98 +530,157 @@ impl AiSettings {
         }
         disabled.active_profile_id = Some(profile.id.clone());
         disabled.enabled = false;
-        if !self.persist(
-            &disabled,
-            Self::label(
-                "无法保存配置；未修改密钥。",
-                "Could not save settings; the key was not changed.",
-            ),
-            cx,
-        ) {
-            return;
-        }
-        self.config = disabled.clone();
-        self.profile = disabled.active_profile().cloned().unwrap_or(profile);
-        self.changed();
+        // No main-thread file locks, writes, or specs hashing. Explicit saves
+        // follow the outstanding pause write so it cannot overwrite this save.
+        let pause = self.pause_write.take();
+        let expected = self.config.clone();
+        let expected_revision = runtime_revision();
+        let secret = self.key.read(cx).value().as_bytes().to_vec();
+        let replacing = !secret.is_empty();
         self.epoch = self.epoch.wrapping_add(1);
         let epoch = self.epoch;
-        let saved_revision = runtime_revision();
-        // Keep the draft until both stores have succeeded so Busy, Keychain
-        // denial and config-write failures can be retried with the same key.
-        // Switching profiles or closing still clears it and invalidates epoch.
-        let secret = self.key.read(cx).value().as_bytes().to_vec();
-        // Explicitly disabling with no replacement key does not require a
-        // Keychain read (or an operating-system authorization prompt).
-        if secret.is_empty() && !desired_enabled {
-            self.status = Self::label("已保存，AI 已关闭。", "Saved. AI is off.").into();
-            cx.notify();
-            return;
-        }
-        let replacing = !secret.is_empty();
-        let operation = if replacing {
-            let write = credentials::write(&service, secret, cx);
-            cx.spawn(async move |_, _| write.await)
-        } else {
-            let read = credentials::read(&service, cx);
-            cx.spawn(async move |_, _| match read.await {
-                Ok(Some(secret)) if !secret.is_empty() => Ok(()),
-                Ok(_) => Err(CredentialError::Unavailable),
-                Err(error) => Err(error),
-            })
-        };
         self.set_busy(true, cx);
-        self.status = Self::label("正在处理凭据…", "Updating credentials…").into();
+        self.status = Self::label("正在保存…", "Saving…").into();
+        let cancel = Arc::new(AtomicU64::new(0));
+        self.operation_cancel = Some(cancel.clone());
+        let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
-            let result = operation.await;
-            let _ = this.update(cx, |this, cx| {
-                this.set_busy(false, cx);
-                if this.epoch != epoch {
-                    return;
-                }
-                if let Err(error) = result {
-                    this.status = Self::credential_error(error).into();
-                    if replacing {
-                        this.status.push_str(Self::label(
-                            " 密钥草稿已保留，可直接重试保存。",
-                            " The key draft was kept; you can retry saving.",
-                        ));
+            let expected_revision = match pause {
+                Some(pause) => match pause.await {
+                    Ok(revision) => revision,
+                    Err(changed) => {
+                        let _ = this.update(cx, |this, cx| {
+                            this.set_busy(false, cx);
+                            this.save_error(changed, cx);
+                        });
+                        return;
+                    },
+                },
+                None => expected_revision,
+            };
+            let staged = disabled.clone();
+            let result = executor
+                .spawn(async move {
+                    if desired_enabled && !fastab_engine::public_ai_baseline_ok(&fastab_engine::default_specs_dir()) {
+                        return Err(None);
                     }
-                    return;
-                }
-                if runtime_revision() != saved_revision || AiConfig::load().ok().as_ref() != Some(&disabled) {
-                    this.status = Self::label(
-                        "配置已变化；密钥操作已完成，未启用 AI。请重新打开设置。",
-                        "Settings changed. The credential operation finished; AI was not enabled. Reopen settings.",
-                    )
+                    staged.save_if_unchanged(&expected, expected_revision).map_err(Some)
+                })
+                .await;
+            let operation = this
+                .update(cx, |this, cx| {
+                    if this.epoch != epoch {
+                        this.set_busy(false, cx);
+                        return None;
+                    }
+                    let revision = match result {
+                        Ok(revision) => revision,
+                        Err(error) => {
+                            this.set_busy(false, cx);
+                            if error.is_none() {
+                                this.status = Self::label(
+                                    "补全规格校验未通过，无法启用 AI；请重新安装完整应用。",
+                                    "Completion specs failed validation. Reinstall the complete app to enable AI.",
+                                )
+                                .into();
+                            } else {
+                                this.save_error(error.is_some_and(|error| error.is::<ConfigChanged>()), cx);
+                            }
+                            return None;
+                        },
+                    };
+                    this.config = disabled.clone();
+                    this.profile = profile;
+                    this.persistence_failed = false;
+                    this.changed();
+                    if !replacing && !desired_enabled {
+                        this.set_busy(false, cx);
+                        this.status = Self::label("已保存，AI 已关闭。", "Saved. AI is off.").into();
+                        return None;
+                    }
+                    this.status = Self::label("正在处理系统钥匙串…", "Updating system Keychain…").into();
+                    let credential = if replacing {
+                        credentials::write(&service, secret, cx)
+                    } else {
+                        let read = credentials::read(&service, cx);
+                        cx.spawn(async move |_, _| match read.await {
+                            Ok(Some(secret)) if !secret.is_empty() => Ok(()),
+                            Ok(_) => Err(CredentialError::Unavailable),
+                            Err(error) => Err(error),
+                        })
+                    };
+                    Some((credential, revision))
+                })
+                .ok()
+                .flatten();
+            let Some((operation, revision)) = operation else {
+                return;
+            };
+            let credential = operation.await;
+            let proceed = this
+                .update(cx, |this, cx| {
+                    if this.epoch != epoch {
+                        this.set_busy(false, cx);
+                        return false;
+                    }
+                    if let Err(error) = credential {
+                        this.set_busy(false, cx);
+                        this.status = Self::credential_error(error).into();
+                        return false;
+                    }
+                    true
+                })
+                .unwrap_or(false);
+            if !proceed {
+                return;
+            }
+            let mut final_config = disabled.clone();
+            final_config.enabled = desired_enabled;
+            let saving = final_config.clone();
+            let result = executor
+                .spawn(async move { saving.save_if_unchanged(&disabled, revision) })
+                .await;
+            let applied = this
+                .update(cx, |this, cx| {
+                    this.set_busy(false, cx);
+                    if this.epoch != epoch {
+                        return false;
+                    }
+                    if let Err(error) = result {
+                        this.save_error(error.is::<ConfigChanged>(), cx);
+                        return true;
+                    }
+                    this.config = final_config.clone();
+                    this.enabled = desired_enabled;
+                    this.persistence_failed = false;
+                    this.key.update(cx, |input, cx| {
+                        input.take(cx);
+                    });
+                    this.changed();
+                    this.status = if desired_enabled {
+                        Self::label("已保存并开启 AI 推荐。", "Saved. AI recommendations are on.")
+                    } else {
+                        Self::label("Key 已保存，AI 已关闭。", "Key saved. AI is off.")
+                    }
                     .into();
-                    this.load_failed = true;
-                    return;
+                    true
+                })
+                .unwrap_or(false);
+            if !applied {
+                // Closing can race the gap between a successful background
+                // write and its UI acknowledgement. Fence that write on disk
+                // too, without overwriting any newer window's saved profile.
+                let revision = cancel.load(Ordering::Acquire);
+                if revision != 0 {
+                    let mut paused = final_config.clone();
+                    paused.enabled = false;
+                    executor
+                        .spawn(async move {
+                            let _ = paused.save_if_unchanged(&final_config, revision);
+                        })
+                        .await;
                 }
-                let mut final_config = disabled;
-                final_config.enabled = desired_enabled;
-                if !this.persist(
-                    &final_config,
-                    Self::label(
-                        "凭据操作已完成，但配置保存失败。",
-                        "The credential operation finished, but saving settings failed.",
-                    ),
-                    cx,
-                ) {
-                    return;
-                }
-                this.config = final_config;
-                this.enabled = desired_enabled;
-                this.key.update(cx, |input, cx| {
-                    input.take(cx);
-                });
-                this.changed();
-                this.status = if desired_enabled {
-                    Self::label("已保存并开启自动推荐。", "Saved. Automatic recommendations are on.")
-                } else {
-                    Self::label("密钥已保存，AI 保持关闭。", "Key saved. AI remains off.")
-                }
-                .into();
-            });
+            }
         })
         .detach();
     }
@@ -422,62 +692,94 @@ impl AiSettings {
         let Ok(service) = profile.credential_key() else {
             return;
         };
-        // Disable before deleting. Failure leaves an honest, manageable profile
-        // instead of an enabled configuration or an orphaned secret.
-        let mut disabled = self.config.clone();
-        disabled.enabled = false;
-        if !self.persist(
-            &disabled,
-            Self::label(
-                "无法保存关闭状态；未删除密钥。",
-                "Could not persist the disabled state; the key was not deleted.",
-            ),
-            cx,
-        ) {
-            return;
-        }
-        self.config = disabled.clone();
+        self.suspend_for_edit(cx);
         self.enabled = false;
         self.clear_draft(cx);
-        self.changed();
+        let pause = self.pause_write.take();
+        let expected = self.config.clone();
+        let expected_revision = runtime_revision();
+        let mut disabled = self.config.clone();
+        disabled.enabled = false;
         let epoch = self.epoch;
-        let saved_revision = runtime_revision();
-        let operation = credentials::delete(&service, cx);
         self.set_busy(true, cx);
-        self.status = Self::label("正在删除凭据…", "Deleting credentials…").into();
+        self.status = Self::label("正在删除…", "Deleting…").into();
+        let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
+            let expected_revision = match pause {
+                Some(pause) => match pause.await {
+                    Ok(revision) => revision,
+                    Err(changed) => {
+                        let _ = this.update(cx, |this, cx| {
+                            this.set_busy(false, cx);
+                            this.save_error(changed, cx);
+                        });
+                        return;
+                    },
+                },
+                None => expected_revision,
+            };
+            let staged = disabled.clone();
+            let result = executor
+                .spawn(async move { staged.save_if_unchanged(&expected, expected_revision) })
+                .await;
+            let operation = this
+                .update(cx, |this, cx| {
+                    if this.epoch != epoch {
+                        this.set_busy(false, cx);
+                        return None;
+                    }
+                    let revision = match result {
+                        Ok(revision) => revision,
+                        Err(error) => {
+                            this.set_busy(false, cx);
+                            this.save_error(error.is::<ConfigChanged>(), cx);
+                            return None;
+                        },
+                    };
+                    this.config = disabled.clone();
+                    this.changed();
+                    Some((credentials::delete(&service, cx), revision))
+                })
+                .ok()
+                .flatten();
+            let Some((operation, revision)) = operation else {
+                return;
+            };
             let result = operation.await;
+            let proceed = this
+                .update(cx, |this, cx| {
+                    if this.epoch != epoch {
+                        this.set_busy(false, cx);
+                        return false;
+                    }
+                    if let Err(error) = result {
+                        this.set_busy(false, cx);
+                        this.status = Self::credential_error(error).into();
+                        return false;
+                    }
+                    true
+                })
+                .unwrap_or(false);
+            if !proceed {
+                return;
+            }
+            let mut updated = disabled.clone();
+            updated.remove_profile(&profile.id);
+            let saving = updated.clone();
+            let result = executor
+                .spawn(async move { saving.save_if_unchanged(&disabled, revision) })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 this.set_busy(false, cx);
                 if this.epoch != epoch {
                     return;
                 }
                 if let Err(error) = result {
-                    this.status = Self::credential_error(error).into();
-                    return;
-                }
-                if runtime_revision() != saved_revision || AiConfig::load().ok().as_ref() != Some(&disabled) {
-                    this.status = Self::label(
-                        "密钥已删除，但配置已变化；请重新打开设置。",
-                        "The key was deleted, but settings changed. Reopen settings.",
-                    )
-                    .into();
-                    this.load_failed = true;
-                    return;
-                }
-                let mut updated = disabled;
-                updated.remove_profile(&profile.id);
-                if !this.persist(
-                    &updated,
-                    Self::label(
-                        "密钥已删除；配置删除失败。",
-                        "Key deleted. Removing the profile failed.",
-                    ),
-                    cx,
-                ) {
+                    this.save_error(error.is::<ConfigChanged>(), cx);
                     return;
                 }
                 this.config = updated;
+                this.persistence_failed = false;
                 if this.profile.id == profile.id {
                     let next = this
                         .config
@@ -488,8 +790,7 @@ impl AiSettings {
                     this.select(next, cx);
                 }
                 this.changed();
-                this.status =
-                    Self::label("已删除密钥及配置，AI 已关闭。", "Key and profile deleted. AI is off.").into();
+                this.status = Self::label("已删除 Key 和配置。", "Key and profile deleted.").into();
             });
         })
         .detach();
@@ -503,11 +804,15 @@ impl AiSettings {
         action: impl Fn(&mut Self, &mut Context<'_, Self>) + 'static,
     ) -> gpui::AnyElement {
         let chrome = Chrome::current();
+        let disclosure = id == "jev-advanced";
+        let disabled = (self.busy || self.load_failed) && !disclosure;
         let focus = self
             .buttons
             .entry(id.clone())
             .or_insert_with(|| cx.focus_handle())
-            .clone();
+            .clone()
+            .tab_stop(!disabled);
+        let primary = id == "jev-save";
         let action = Rc::new(action);
         let click_action = action.clone();
         let click_entity = cx.entity();
@@ -516,30 +821,56 @@ impl AiSettings {
         div()
             .id(gpui::SharedString::from(id))
             .track_focus(&focus)
-            .tab_stop(true)
+            .tab_stop(!disabled)
+            .when(disabled, |button| button.opacity(0.45))
+            .when(primary, |button| button.bg(rgb(chrome.accent)))
             .px(px(10.))
             .py(px(6.))
             .rounded_md()
             .border_1()
             .border_color(rgb(chrome.separator))
             .text_size(px(12.))
-            .text_color(rgb(chrome.text))
-            .cursor_pointer()
+            .text_color(rgb(if primary { chrome.accent_text } else { chrome.text }))
+            .when(!disabled, |button| button.cursor_pointer())
             .hover(|style| style.bg(rgb(chrome.selection)))
             .focus(|style| style.border_color(rgb(chrome.accent)))
             .child(label)
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                click_focus.focus(window);
-                click_entity.update(cx, |this, cx| click_action(this, cx));
+                if !disabled {
+                    click_focus.focus(window);
+                    click_entity.update(cx, |this, cx| {
+                        if disclosure || (!this.busy && !this.load_failed) {
+                            click_action(this, cx);
+                        }
+                    });
+                }
                 cx.stop_propagation();
             })
             .on_key_down(move |event, _, cx| {
-                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    key_entity.update(cx, |this, cx| action(this, cx));
+                if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    key_entity.update(cx, |this, cx| {
+                        if disclosure || (!this.busy && !this.load_failed) {
+                            action(this, cx);
+                        }
+                    });
                     cx.stop_propagation();
                 }
             })
             .into_any_element()
+    }
+}
+
+impl Drop for AiSettings {
+    fn drop(&mut self) {
+        if self.dismissal_revision.is_none() {
+            if let Some(cancel) = self.operation_cancel.take() {
+                let revision = pause_runtime();
+                cancel.store(revision, Ordering::Release);
+            }
+        }
+        if let Some(abort) = self.probe_abort.take() {
+            abort.abort();
+        }
     }
 }
 
@@ -554,165 +885,214 @@ impl Render for AiSettings {
         let chrome = Chrome::current();
         let draft = self.draft(cx);
         let confirmed = draft.data_policy_version == DATA_POLICY_VERSION;
-        let destination = normalize_base_url(&draft.base_url).map_or_else(
-            |_| Self::label("尚无有效 HTTPS 地址", "No valid HTTPS destination").into(),
-            |(_, endpoint)| endpoint.to_string(),
-        );
+        let custom = self.profile.provider == Provider::CustomSystemOne;
         let mut providers = div().flex().flex_wrap().gap(px(6.));
-        for (id, label, provider) in [
+        for (id, name, provider) in [
             ("typesafe", "TypeSafe", Provider::TypeSafe),
             ("openrouter", "OpenRouter", Provider::OpenRouter),
-            ("custom", "Custom System One", Provider::CustomSystemOne),
+            ("custom", Self::label("自定义", "Custom"), Provider::CustomSystemOne),
         ] {
             let label = if self.profile.provider == provider {
-                format!("● {label}")
+                format!("● {name}")
             } else {
-                label.into()
+                name.into()
             };
             providers = providers.child(self.button(format!("jev-{id}"), label, cx, move |this, cx| {
                 this.provider(provider, cx);
             }));
         }
-        let enable_label = if self.enabled {
-            Self::label("自动推荐：开启", "Automatic recommendations: on")
-        } else {
-            Self::label("自动推荐：关闭", "Automatic recommendations: off")
-        };
-        let enable_label = if self.enabled != self.config.enabled {
-            format!("{enable_label}{}", Self::label("（待保存）", " (save to apply)"))
-        } else {
-            enable_label.into()
-        };
-        let enable = self.button("jev-enable".into(), enable_label, cx, |this, cx| {
-            if this.enabled {
-                this.enabled = false;
-                this.clear_draft(cx);
-                this.suspend_for_edit(cx);
-            } else if !this.busy {
-                this.enabled = true;
-            }
-            cx.notify();
-        });
-        let consent_label = if confirmed {
-            Self::label("☑ 已确认上述数据范围与处理方", "☑ Data scope and processors confirmed")
-        } else {
-            Self::label("☐ 确认上述数据范围与处理方", "☐ Confirm data scope and processors")
-        };
-        let consent = self.button("jev-consent".into(), consent_label.into(), cx, |this, cx| {
-            if this.busy {
-                return;
-            }
-            this.suspend_for_edit(cx);
-            let service = this.draft(cx).credential_key().ok();
-            this.acknowledged_service = if service == this.acknowledged_service {
-                None
-            } else {
-                service
-            };
-            cx.notify();
-        });
-        let advanced = self.button(
-            "jev-advanced".into(),
-            Self::label("高级：Base URL", "Advanced: Base URL").into(),
+        let test = self.button(
+            "jev-test".into(),
+            Self::label("测试连接", "Test connection").into(),
             cx,
-            |this, cx| {
-                this.advanced = !this.advanced;
-                cx.notify();
-            },
+            |this, cx| this.test_connection(cx),
         );
         let save = self.button(
             "jev-save".into(),
-            Self::label("保存配置 / 替换密钥", "Save settings / replace key").into(),
+            Self::label("保存", "Save").into(),
             cx,
             |this, cx| this.save(cx),
         );
-        let mut policies = div().flex().flex_wrap().gap(px(6.));
-        if self.profile.provider != Provider::CustomSystemOne {
-            policies = policies
-                .child(self.button(
-                    "jev-typesafe-privacy".into(),
-                    Self::label("TypeSafe 隐私政策", "TypeSafe Privacy Policy").into(),
-                    cx,
-                    |_, cx| cx.open_url("https://typesafe.ai/legal/privacy-policy"),
-                ))
-                .child(self.button(
-                    "jev-typesafe-terms".into(),
-                    Self::label("TypeSafe 服务条款", "TypeSafe Terms").into(),
-                    cx,
-                    |_, cx| cx.open_url("https://typesafe.ai/legal/mca"),
-                ));
-        }
-        if self.profile.provider == Provider::OpenRouter {
-            policies = policies.child(self.button(
-                "jev-openrouter-privacy".into(),
-                Self::label("OpenRouter 数据政策", "OpenRouter Data Policy").into(),
-                cx,
-                |_, cx| cx.open_url("https://openrouter.ai/docs/guides/privacy/data-collection"),
-            ));
-        }
-        let mut saved = div().flex().flex_col().gap(px(8.));
-        for profile in self.config.profiles.clone() {
-            let select_profile = profile.clone();
-            let provider = match profile.provider {
-                Provider::TypeSafe => "TypeSafe",
-                Provider::OpenRouter => "OpenRouter",
-                Provider::CustomSystemOne => "Custom System One",
-            };
-            let label = format!("{provider} · {}", profile.base_url);
-            let select = self.button(format!("jev-select-{}", profile.id), label, cx, move |this, cx| {
-                this.select(select_profile.clone(), cx);
-            });
-            let delete = self.button(
-                format!("jev-delete-{}", profile.id),
-                Self::label("删除密钥及配置", "Delete key and profile").into(),
-                cx,
-                move |this, cx| this.delete_profile(profile.clone(), cx),
-            );
-            saved = saved.child(div().flex().flex_wrap().gap(px(6.)).child(select).child(delete));
-        }
+        let enable_label = if self.enabled {
+            Self::label("● AI 推荐已选中", "● AI recommendations selected")
+        } else {
+            Self::label("○ 启用 AI 推荐", "○ Enable AI recommendations")
+        };
+        let enable = self.button("jev-enable".into(), enable_label.into(), cx, |this, cx| {
+            this.enabled = !this.enabled;
+            if !this.enabled {
+                this.suspend_for_edit(cx);
+            }
+            cx.notify();
+        });
+        let consent = self.button(
+            "jev-consent".into(),
+            if confirmed {
+                Self::label("☑ 同意发送上述公开数据", "☑ Allow sending the public data above")
+            } else {
+                Self::label("☐ 同意发送上述公开数据", "☐ Allow sending the public data above")
+            }
+            .into(),
+            cx,
+            |this, cx| {
+                this.suspend_for_edit(cx);
+                let service = this.draft(cx).credential_key().ok();
+                this.acknowledged_service = if service == this.acknowledged_service {
+                    None
+                } else {
+                    service
+                };
+                cx.notify();
+            },
+        );
+        let advanced_label = if self.advanced {
+            Self::label("▾ 收起高级设置", "▾ Hide advanced settings")
+        } else {
+            Self::label("▸ 高级设置与已存配置", "▸ Advanced settings and saved profiles")
+        };
+        let advanced = self.button("jev-advanced".into(), advanced_label.into(), cx, |this, cx| {
+            this.advanced = !this.advanced;
+            cx.notify();
+        });
         let processors = match self.profile.provider {
             Provider::TypeSafe => Self::label(
-                "处理方：TypeSafe（美国处理）；不承诺零保留。",
-                "Processor: TypeSafe (US processing); no zero-retention promise.",
+                "由 TypeSafe 在美国处理，不承诺零保留。",
+                "Processed by TypeSafe in the US; zero retention is not guaranteed.",
             ),
             Provider::OpenRouter => Self::label(
-                "处理方：OpenRouter 及 TypeSafe；数据经过两方，不承诺零保留。",
-                "Processors: OpenRouter and TypeSafe; data passes through both, with no zero-retention promise.",
+                "经 OpenRouter 与 TypeSafe 处理，不承诺零保留。",
+                "Processed by OpenRouter and TypeSafe; zero retention is not guaranteed.",
             ),
             Provider::CustomSystemOne => Self::label(
-                "处理方：下方自定义地址的运营方及其上游；请自行确认其数据政策。",
-                "Processors: the custom destination below and its upstream providers. Review their data policies.",
+                "由自定义地址及其上游处理，请确认其数据政策。",
+                "Processed by the custom service and its upstream providers. Review their data policies.",
             ),
         };
-        let body = div().p(px(16.)).flex().flex_col().gap(px(12.)).text_size(px(13.))
-            .child(Self::label("开启并保存后，输入停止约 250ms 且本地候选就绪时自动请求 Jev；继续输入会取消旧推荐，忙碌或冷却时跳过。推荐候选以 AI 图标置于列表首位，沿用现有按键或点击采纳；已开始选择时不再调整顺序。", "Once enabled and saved, Jev runs automatically after about 250ms without typing when local candidates are ready. Further typing cancels the previous recommendation; requests are skipped while busy or cooling down. Its choice appears first with an AI icon and uses the usual keys or click to accept. The order stays fixed once you start selecting."))
-            .child(if self.persistence_failed {
-                Self::label("本次运行已停止 AI；磁盘状态未确认，请重试保存。", "AI is stopped for this run. The disk state is unconfirmed; retry saving.")
-            } else if self.config.enabled {
-                Self::label("已保存状态：开启。编辑立即暂停旧配置；关闭立即生效。重新启用须明确保存。", "Saved state: on. Editing immediately pauses the old profile; switching off is immediate. Save explicitly to enable again.")
-            } else { Self::label("已保存状态：关闭。明确保存后才能重新启用。", "Saved state: off. Save explicitly to enable again.") })
-            .when(self.load_failed, |body| body.child(Self::label("配置不可用，保存已锁定；请重新打开设置。", "Settings are unavailable and saving is locked. Reopen settings.")))
-            .child(enable).child(providers)
-            .child(Self::label("模型", "Model")).child(self.model.clone())
-            .child(advanced)
-            .when(self.advanced, |body| body.child(Self::label("填写基地址，不含 /v1/systemone；预设地址固定，修改地址请选择 Custom。", "Enter the base address without /v1/systemone. Preset addresses are fixed; choose Custom to change the destination.")).child(self.base.clone()))
-            .child(format!("{} {destination}", Self::label("实际请求地址：", "Request destination:")))
-            .child(processors)
-            .child(policies)
-            .child(Self::label("外发范围：公共命令/子命令路径、已知 token 前缀、shell 类型，以及公共候选 ID、名称和说明。不发送完整输入、当前目录、环境变量、别名、历史、文件名、动态资源或实际插入文本。", "Sent: public command/subcommand paths, known token prefixes, shell type, and public candidate IDs, names and descriptions. Full input, working directory, environment, aliases, history, filenames, dynamic resources and actual insertion text are excluded."))
-            .child(consent)
-            .child(Self::label("API Key（遮蔽输入）", "API Key (masked input)"))
-            .child(self.key.clone())
-            .when(self.key.read(cx).rejected, |body| body.child(Self::label("未接受此次输入：Key 最多 4096 个可见 ASCII 字符，不能含内部空白或换行；原内容已保留。", "Input rejected: keys must be at most 4096 visible ASCII characters without internal whitespace or line breaks. The previous value was kept.")))
-            .child(div().text_size(px(12.)).text_color(rgb(chrome.muted)).child(Self::label("不回填已存密钥；留空保存时沿用当前地址的密钥。仅存入系统 Keychain，不写入普通设置。复制和剪切已禁用。", "Saved keys are never prefilled. Leave blank to use the key for this destination. Stored only in system Keychain, not ordinary settings. Copy and cut are disabled.")))
-            .child(save)
-            .child(div().text_color(rgb(chrome.muted)).child(self.status.clone()))
-            .child(Self::label("已保存的配置与密钥管理", "Saved profiles and key management"))
-            .child(saved);
-        super::card(
-            Self::label("AI 候选推荐 · Jev", "AI recommendations · Jev"),
-            chrome,
-            body,
-        )
+        let hint = |text: String| div().text_size(px(12.)).text_color(rgb(chrome.muted)).child(text);
+        let state = if self.persistence_failed {
+            Self::label("AI 已暂停 · 保存失败，请重试", "AI paused · save failed, please retry")
+        } else if self.config.enabled {
+            Self::label("AI 推荐运行中", "AI recommendations are on")
+        } else {
+            Self::label("AI 推荐未启用", "AI recommendations are off")
+        };
+        let mut body = div()
+            .p(px(16.))
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .text_size(px(13.))
+            .child(hint(
+                Self::label(
+                    "让 Jev 从本地候选中推荐一项，沿用原有按键采纳。",
+                    "Let Jev recommend a local completion. Accept it with your usual keys.",
+                )
+                .into(),
+            ))
+            .child(Self::label("服务商", "Provider"))
+            .child(providers);
+        if custom {
+            body = body
+                .child("Base URL")
+                .child(self.base.clone())
+                .child(hint(
+                    Self::label(
+                        "HTTPS 基地址，不含 /v1/systemone。",
+                        "HTTPS base address, without /v1/systemone.",
+                    )
+                    .into(),
+                ))
+                .child(Self::label("Jev 模型", "Jev model"))
+                .child(self.model.clone());
+        }
+        body = body.child("API Key").child(self.key.clone())
+            .child(hint(Self::label("保存在系统钥匙串。已有 Key 可留空；输入新 Key 可替换。", "Stored in system Keychain. Leave blank to use a saved key, or enter a replacement.").into()))
+            .when(self.key.read(cx).rejected, |body| body.child(hint(Self::label("此次输入未接受：Key 不能含空白或换行，最多 4096 字符。原内容已保留。", "Input rejected: keys cannot contain whitespace or line breaks (maximum 4096 characters). The previous value was kept.").into())))
+            .child(div().flex().items_center().flex_wrap().gap(px(10.)).child(test)
+                .child(hint(Self::label("仅发送固定示例；不会保存或启用配置。", "Sends a fixed example; does not save or enable settings.").into())))
+            .when(!self.probe_status.is_empty(), |body| body.child(self.probe_status.clone()))
+            .child(div().border_t_1().border_color(rgb(chrome.separator)).pt(px(12.)).child(enable));
+        if self.enabled {
+            body = body.child(hint(Self::label("自动请求只发送公开命令、已知前缀及公开候选；不发送完整输入、目录、历史或文件名。", "Automatic requests send public commands, known prefixes and public candidates only; no full input, directory, history or filenames.").into()))
+                .child(hint(processors.into())).child(consent);
+        }
+        body = body
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(save)
+                    .child(hint(state.into())),
+            )
+            .when(!self.status.is_empty(), |body| body.child(hint(self.status.clone())))
+            .child(advanced);
+        if self.advanced {
+            let destination = normalize_base_url(&draft.base_url).map_or_else(
+                |_| Self::label("地址无效", "Invalid address").into(),
+                |(_, endpoint)| endpoint.to_string(),
+            );
+            let mut detail = div().flex().flex_col().gap(px(10.)).pt(px(4.));
+            if !custom {
+                detail = detail
+                    .child(Self::label("Jev 模型", "Jev model"))
+                    .child(self.model.clone());
+            }
+            detail = detail.child(hint(format!("{} {destination}", Self::label("请求地址：", "Endpoint:"))))
+                .child(hint(Self::label("预设地址固定。需使用其他 System One 服务时选择自定义。", "Preset addresses are fixed. Choose Custom for another System One service.").into()))
+                .child(hint(Self::label("自动请求的完整范围：公开命令/子命令路径、已知 token 前缀、shell 类型、公开候选 ID、名称与说明。不发送环境变量、别名、动态资源或实际插入文本。", "Automatic requests include public command/subcommand paths, known token prefixes, shell type and public candidate IDs, names and descriptions. Environment variables, aliases, dynamic resources and actual insertion text are excluded.").into()));
+            let mut policies = div().flex().flex_wrap().gap(px(6.));
+            if !custom {
+                policies = policies
+                    .child(self.button(
+                        "jev-typesafe-privacy".into(),
+                        Self::label("TypeSafe 隐私政策", "TypeSafe privacy").into(),
+                        cx,
+                        |_, cx| cx.open_url("https://typesafe.ai/legal/privacy-policy"),
+                    ))
+                    .child(self.button(
+                        "jev-typesafe-terms".into(),
+                        Self::label("服务条款", "Terms").into(),
+                        cx,
+                        |_, cx| cx.open_url("https://typesafe.ai/legal/mca"),
+                    ));
+            }
+            if self.profile.provider == Provider::OpenRouter {
+                policies = policies.child(self.button(
+                    "jev-openrouter-privacy".into(),
+                    Self::label("OpenRouter 数据政策", "OpenRouter data policy").into(),
+                    cx,
+                    |_, cx| cx.open_url("https://openrouter.ai/docs/guides/privacy/data-collection"),
+                ));
+            }
+            detail = detail.child(policies);
+            if !self.config.profiles.is_empty() {
+                detail = detail.child(Self::label("配置与 Key 管理", "Profile and key management"));
+            }
+            for profile in self.config.profiles.clone() {
+                let select_profile = profile.clone();
+                let label = format!(
+                    "{} · {}",
+                    match profile.provider {
+                        Provider::TypeSafe => "TypeSafe",
+                        Provider::OpenRouter => "OpenRouter",
+                        Provider::CustomSystemOne => "Custom",
+                    },
+                    profile.base_url
+                );
+                let select = self.button(format!("jev-select-{}", profile.id), label, cx, move |this, cx| {
+                    this.select(select_profile.clone(), cx);
+                });
+                let delete = self.button(
+                    format!("jev-delete-{}", profile.id),
+                    Self::label("删除", "Delete").into(),
+                    cx,
+                    move |this, cx| this.delete_profile(profile.clone(), cx),
+                );
+                detail = detail.child(div().flex().flex_wrap().gap(px(6.)).child(select).child(delete));
+            }
+            body = body.child(detail);
+        }
+        super::card(Self::label("AI 候选推荐", "AI recommendations"), chrome, body)
     }
 }

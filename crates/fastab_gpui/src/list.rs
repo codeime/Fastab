@@ -900,6 +900,7 @@ impl Render for SuggestionList {
                     show_hint,
                     loading,
                     &overlay.description_hint,
+                    overlay.ai_preview.as_ref().filter(|preview| preview.is_loading()),
                 )
                 .into_any_element(),
             )
@@ -982,7 +983,11 @@ impl Render for SuggestionList {
         if let Some(footer) = footer {
             column = column.child(footer);
         }
-        if let Some(preview) = &overlay.ai_preview {
+        if let Some(preview) = overlay
+            .ai_preview
+            .as_ref()
+            .filter(|preview| !preview.is_loading() || popout)
+        {
             column = column.child(crate::ai::preview(preview, theme, row_height));
         }
         let list_column = div().when(shaking, |this| this.ml(px(3.))).child(column);
@@ -1417,6 +1422,7 @@ fn description_bar(
     show_hint: bool,
     loading: bool,
     hint: &str,
+    ai_loading: Option<&crate::AiPreview>,
 ) -> impl IntoElement {
     let selected_description = selected_description.trim();
     let current_arg_name = current_arg_name.trim();
@@ -1428,6 +1434,7 @@ fn description_bar(
         .flex()
         .flex_row()
         .flex_1()
+        .min_w(px(0.))
         .overflow_x_scroll()
         .overflow_y_hidden()
         .whitespace_nowrap();
@@ -1465,6 +1472,9 @@ fn description_bar(
         .italic()
         .text_color(rgb(if empty { 0x8c8c8c } else { theme.muted }))
         .overflow_hidden()
+        .when_some(ai_loading, |this, preview| {
+            this.child(crate::ai::loading_badge(preview, theme, height))
+        })
         .child(content)
         .when(loading, |this| this.child(loading_icon(theme, height)))
         .when(show_hint && !loading, |this| this.child(hint_chip(height, hint)))

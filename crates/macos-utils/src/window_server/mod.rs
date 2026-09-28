@@ -30,7 +30,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSBundle, NSNotification, NSObject};
 use tracing::{debug, error, info, trace, warn};
-pub use ui_element::{CGWindowLevelForKey, UIElement};
+pub use ui_element::{AX_MESSAGING_TIMEOUT_SECONDS, CGWindowLevelForKey, UIElement};
 
 use crate::util::NotificationCenter;
 use crate::util::notification_center::get_app_from_notification;
@@ -121,6 +121,20 @@ fn tracked_notifications(bundle_id: &str) -> Vec<&'static str> {
 pub struct ApplicationSpecifier {
     pub pid: pid_t,
     pub bundle_id: String,
+}
+
+fn frontmost_matches(pid: pid_t, bundle_id: Option<&str>, expected: &ApplicationSpecifier) -> bool {
+    pid == expected.pid && bundle_id == Some(expected.bundle_id.as_str())
+}
+
+/// Whether a delayed accessibility event still belongs to the frontmost app.
+/// Call before making any AX requests for an event from a previously active app.
+pub fn is_frontmost_application(expected: &ApplicationSpecifier) -> bool {
+    let Some(frontmost) = (unsafe { NSWorkspace::sharedWorkspace().frontmostApplication() }) else {
+        return false;
+    };
+    let bundle_id = unsafe { frontmost.bundleIdentifier() }.map(|id| id.to_string());
+    frontmost_matches(unsafe { frontmost.processIdentifier() }, bundle_id.as_deref(), expected)
 }
 
 pub enum WindowServerEvent {
@@ -553,16 +567,20 @@ unsafe extern "C" fn application_ax_callback(
             })
         },
         kAXApplicationActivatedNotification | kAXApplicationShownNotification => {
-            element
-                .focused_window()
-                .ok()
-                .map(|window| WindowServerEvent::FocusChanged {
-                    window,
-                    app: app.clone(),
-                })
+            if is_frontmost_application(&app) {
+                element
+                    .focused_window()
+                    .ok()
+                    .map(|window| WindowServerEvent::FocusChanged {
+                        window,
+                        app: app.clone(),
+                    })
+            } else {
+                None
+            }
         },
         kAXFocusedUIElementChangedNotification => {
-            if cb_data.last_focused_element.as_ref() == Some(&element) {
+            if is_frontmost_application(&app) && cb_data.last_focused_element.as_ref() == Some(&element) {
                 None
             } else {
                 cb_data.last_focused_element = Some(element.clone());
@@ -579,18 +597,22 @@ unsafe extern "C" fn application_ax_callback(
             // We check to see if there is a valid window for the app, if there is not then we know the final
             // window has been destroyed. This is done via getting an error when trying to get the focused
             // window.
-            match UIElement::application(app.pid).focused_window() {
-                Ok(_) => None,
-                Err(err) => {
-                    // Electron fires this for DOM nodes too, so a transient error here (a
-                    // busy renderer hitting the 250 ms messaging timeout) parks the overlay
-                    // until the next activation. Keep the code so that case can be told apart.
-                    debug!(
-                        ax_error = err,
-                        "no focused window after element destruction in {:?}", app.bundle_id
-                    );
-                    Some(WindowServerEvent::WindowDestroyed { app: app.clone() })
-                },
+            if is_frontmost_application(&app) {
+                match UIElement::application(app.pid).focused_window() {
+                    Ok(_) => None,
+                    Err(err) => {
+                        // Electron fires this for DOM nodes too, so a transient error here (a
+                        // busy renderer hitting the 250 ms messaging timeout) parks the overlay
+                        // until the next activation. Keep the code so that case can be told apart.
+                        debug!(
+                            ax_error = err,
+                            "no focused window after element destruction in {:?}", app.bundle_id
+                        );
+                        Some(WindowServerEvent::WindowDestroyed { app: app.clone() })
+                    },
+                }
+            } else {
+                None
             }
         },
 
@@ -630,5 +652,18 @@ mod tests {
                 assert!(tracked.contains(notification), "{bundle_id} is missing {notification}");
             }
         }
+    }
+
+    #[test]
+    fn frontmost_filter_matches_both_process_and_bundle_identity() {
+        let observed = ApplicationSpecifier {
+            pid: 42,
+            bundle_id: "com.microsoft.VSCode".into(),
+        };
+
+        assert!(frontmost_matches(42, Some("com.microsoft.VSCode"), &observed));
+        assert!(!frontmost_matches(43, Some("com.microsoft.VSCode"), &observed));
+        assert!(!frontmost_matches(42, Some("com.other.Editor"), &observed));
+        assert!(!frontmost_matches(42, None, &observed));
     }
 }

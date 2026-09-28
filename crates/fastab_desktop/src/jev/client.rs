@@ -1,11 +1,12 @@
 use std::fmt;
 use std::time::Duration;
 
-use reqwest::header::{ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, HeaderValue};
+use reqwest::StatusCode;
+use reqwest::header::{ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, HeaderMap, HeaderValue};
 
 use super::config::ResolvedProfile;
 use super::policy::{MAX_RESPONSE_BYTES, REQUEST_TIMEOUT, cooldown};
-use super::types::{Recommendation, RecommendationInput, decode_response, encode_request};
+use super::types::{Candidate, Recommendation, RecommendationInput, decode_response, encode_request};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientErrorKind {
@@ -54,7 +55,7 @@ pub struct JevClient {
 }
 
 impl JevClient {
-    /// Construct only when AI is enabled; no Tokio worker or network call is started.
+    /// Construction starts no Tokio worker or network call.
     pub fn new() -> anyhow::Result<Self> {
         Ok(Self {
             http: reqwest::Client::builder()
@@ -71,6 +72,16 @@ impl JevClient {
                 .no_zstd()
                 .build()?,
         })
+    }
+
+    /// Send one fixed, public example through the real System One request path.
+    /// This can validate a settings draft before AI is enabled. The caller must
+    /// supply a validated profile and the credential being tested; this method
+    /// does not load or persist either one. A successful HTTP status alone is
+    /// insufficient: the response must also satisfy the System One contract.
+    pub async fn probe(&self, profile: &ResolvedProfile, key: &[u8]) -> Result<(), ClientError> {
+        let input = probe_input();
+        self.recommend(profile, key, &input).await.map(|_| ())
     }
 
     /// Dropping this future cancels this attempt. The caller owns single-flight,
@@ -123,21 +134,8 @@ impl JevClient {
             .map_err(transport_error)?;
         let status = response.status();
         if !status.is_success() {
-            let kind = match status.as_u16() {
-                401 => ClientErrorKind::Authentication,
-                402 => ClientErrorKind::PaymentRequired,
-                429 => ClientErrorKind::RateLimited,
-                529 | 503 => ClientErrorKind::Overloaded,
-                _ => ClientErrorKind::Rejected,
-            };
-            let delay = matches!(kind, ClientErrorKind::RateLimited | ClientErrorKind::Overloaded)
-                .then(|| cooldown(response.headers()));
             // Do not read an error body: it can be huge or contain echoed secrets.
-            return Err(ClientError {
-                kind,
-                status: Some(status.as_u16()),
-                cooldown: delay,
-            });
+            return Err(status_error(status, response.headers()));
         }
         if response
             .headers()
@@ -175,10 +173,144 @@ impl JevClient {
     }
 }
 
+fn probe_input() -> RecommendationInput {
+    RecommendationInput {
+        shell: "zsh".into(),
+        command_path: vec!["git".into()],
+        token_prefix: "ch".into(),
+        candidates: vec![
+            Candidate {
+                id: "checkout".into(),
+                name: "checkout".into(),
+                description: "Switch to a branch in an example repository".into(),
+            },
+            Candidate {
+                id: "cherry_pick".into(),
+                name: "cherry-pick".into(),
+                description: "Apply an example commit to the current branch".into(),
+            },
+        ],
+    }
+}
+
+fn status_error(status: StatusCode, headers: &HeaderMap) -> ClientError {
+    let kind = match status.as_u16() {
+        401 => ClientErrorKind::Authentication,
+        402 => ClientErrorKind::PaymentRequired,
+        429 => ClientErrorKind::RateLimited,
+        529 | 503 => ClientErrorKind::Overloaded,
+        _ => ClientErrorKind::Rejected,
+    };
+    let delay = matches!(kind, ClientErrorKind::RateLimited | ClientErrorKind::Overloaded).then(|| cooldown(headers));
+    ClientError {
+        kind,
+        status: Some(status.as_u16()),
+        cooldown: delay,
+    }
+}
+
 fn transport_error(error: reqwest::Error) -> ClientError {
     ClientError::new(if error.is_timeout() {
         ClientErrorKind::Timeout
     } else {
         ClientErrorKind::Transport
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use serde_json::{Value, json};
+
+    use super::*;
+    use crate::jev::config::Profile;
+    use crate::jev::policy::{DATA_POLICY_VERSION, MAX_REQUEST_BYTES};
+
+    #[test]
+    fn probe_fixture_is_public_bounded_and_accepted_by_the_response_contract() {
+        let mut draft = Profile::typesafe();
+        draft.data_policy_version = DATA_POLICY_VERSION;
+        let profile = draft.validate().unwrap();
+        let input = probe_input();
+        let body = encode_request(&profile, &input).unwrap();
+        assert!(body.len() <= MAX_REQUEST_BYTES);
+
+        let request: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(request["model"], "jev-1.13.0");
+        assert_eq!(
+            request["state"],
+            json!({
+                "shell": "zsh",
+                "command_path": ["git"],
+                "token_prefix": "ch"
+            })
+        );
+        let top_level: BTreeSet<_> = request.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(top_level, BTreeSet::from(["model", "questions", "state"]));
+        let criteria = request["questions"]["recommendation"]["criteria"].as_object().unwrap();
+        let ids: BTreeSet<_> = criteria.keys().map(String::as_str).collect();
+        assert_eq!(ids, BTreeSet::from(["checkout", "cherry_pick", "keep_local"]));
+        assert_eq!(criteria["checkout"]["name"], "checkout");
+        assert_eq!(
+            criteria["checkout"]["description"],
+            "Switch to a branch in an example repository"
+        );
+        assert_eq!(criteria["cherry_pick"]["name"], "cherry-pick");
+        assert_eq!(
+            criteria["cherry_pick"]["description"],
+            "Apply an example commit to the current branch"
+        );
+
+        let response = json!({
+            "model": "jev-1.13.0",
+            "answers": {
+                "recommendation": {
+                    "type": "choice",
+                    "choice": "checkout",
+                    "probabilities": {"checkout": 0.7, "cherry_pick": 0.2, "keep_local": 0.1},
+                    "confidence": 0.7
+                }
+            },
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        });
+        let response = serde_json::to_vec(&response).unwrap();
+        assert_eq!(decode_response(&response, &profile, &input).unwrap().choice, "checkout");
+    }
+
+    #[tokio::test]
+    async fn probe_reuses_credential_and_endpoint_integrity_guards() {
+        let mut draft = Profile::typesafe();
+        draft.data_policy_version = DATA_POLICY_VERSION;
+        let profile = draft.validate().unwrap();
+        let client = JevClient::new().unwrap();
+
+        let error = client.probe(&profile, b"invalid key with spaces").await.unwrap_err();
+        assert_eq!(error.kind, ClientErrorKind::InvalidCredential);
+
+        let mut altered = profile.clone();
+        altered.endpoint.set_path("/v1/unreviewed");
+        let error = client.probe(&altered, b"synthetic-test-key").await.unwrap_err();
+        assert_eq!(error.kind, ClientErrorKind::InvalidRequest);
+    }
+
+    #[test]
+    fn status_errors_distinguish_key_billing_rate_limit_and_server_failures() {
+        let mut headers = HeaderMap::new();
+        headers.insert("retry-after-ms", HeaderValue::from_static("2500"));
+        for (status, kind, delay) in [
+            (401, ClientErrorKind::Authentication, None),
+            (402, ClientErrorKind::PaymentRequired, None),
+            (403, ClientErrorKind::Rejected, None),
+            (429, ClientErrorKind::RateLimited, Some(Duration::from_millis(2500))),
+            (503, ClientErrorKind::Overloaded, Some(Duration::from_millis(2500))),
+            (529, ClientErrorKind::Overloaded, Some(Duration::from_millis(2500))),
+            (302, ClientErrorKind::Rejected, None),
+        ] {
+            let error = status_error(StatusCode::from_u16(status).unwrap(), &headers);
+            assert_eq!(error.kind, kind, "status {status}");
+            assert_eq!(error.status, Some(status), "status {status}");
+            assert_eq!(error.cooldown, delay, "status {status}");
+        }
+    }
 }

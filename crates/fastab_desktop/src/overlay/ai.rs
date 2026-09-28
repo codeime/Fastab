@@ -142,7 +142,7 @@ impl OverlayController {
         let Ok(client) = JevClient::new() else {
             return;
         };
-        let task = credentials::read(&profile.credential_service, cx);
+        let task = credentials::read_runtime(&profile.credential_service, cx);
         self.jev.client = Some(client);
         self.jev.profile = Some(profile);
         let epoch = self.jev.epoch;
@@ -427,14 +427,25 @@ impl OverlayController {
         };
         let input = snapshot.prepared.input.clone();
         self.jev.admitted.push_back(now);
-        self.show_jev_status(text("Jev 正在推荐…", "Jev is recommending…"), cx);
+        self.state.update(cx, |overlay, cx| {
+            overlay.ai_preview = Some(AiPreview::Loading(overlay.ai_revision));
+            cx.notify();
+        });
+        self.relayout_and_sync(cx);
         let proxy = self.proxy.clone();
         let revision = self.jev.config_revision;
         self.jev.flight = Some(tokio::spawn(async move {
-            if config::runtime_revision() != revision {
-                return;
-            }
-            let result = client.recommend(&profile, key.as_slice(), &input).await;
+            let result = if config::runtime_revision() == revision {
+                client.recommend(&profile, key.as_slice(), &input).await
+            } else {
+                // Even a request stopped before sending must retire its loading
+                // marker. apply_jev discards the obsolete configuration below.
+                Err(ClientError {
+                    kind: ClientErrorKind::InvalidRequest,
+                    status: None,
+                    cooldown: None,
+                })
+            };
             let _ = proxy.send_event(Event::JevComplete { token, result });
         }));
     }
@@ -443,13 +454,24 @@ impl OverlayController {
         // A completed response may be queued just before typing invalidates
         // its snapshot. Its account/rate policy still governs this same
         // configuration, but must never affect a replacement configuration.
-        if token.settings_epoch != self.jev.epoch
-            || self.jev.config_revision != config::runtime_revision()
-            || AiConfig::load().ok() != self.jev.config
+        let same_settings = token.settings_epoch == self.jev.epoch
+            && self.jev.config_revision == config::runtime_revision()
+            && AiConfig::load().ok() == self.jev.config;
+        let current = same_settings && self.token_is_current(&token, cx);
+        if !current
+            && self
+                .jev
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.token == token)
         {
+            // Only the owner may clear pending status; a late response must
+            // never remove the loading marker of a newer request.
+            self.cancel_jev(cx);
+        }
+        if !same_settings {
             return;
         }
-        let current = self.token_is_current(&token, cx);
         match result {
             Ok(result) => {
                 if !current {
@@ -534,7 +556,7 @@ impl OverlayController {
 
     fn show_jev_status(&mut self, message: String, cx: &mut App) {
         self.state.update(cx, |overlay, cx| {
-            overlay.ai_preview = Some(AiPreview { message });
+            overlay.ai_preview = Some(AiPreview::Status(message));
             cx.notify();
         });
         self.relayout_and_sync(cx);

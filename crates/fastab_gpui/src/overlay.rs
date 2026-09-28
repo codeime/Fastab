@@ -350,6 +350,9 @@ impl OverlayState {
         } else {
             self.ai_preview
                 .as_ref()
+                // Pending AI shares the existing description footer. Popout
+                // descriptions need their own small footer below the list.
+                .filter(|preview| !preview.is_loading() || (self.description_popout && !self.items.is_empty()))
                 .map_or(0., |preview| preview.height(self.effective_row_height()))
         }
     }
@@ -494,6 +497,50 @@ mod tests {
             "c".into(),
         );
         overlay
+    }
+
+    #[test]
+    fn ai_loading_shares_the_footer_unless_descriptions_pop_out() {
+        let mut overlay = two_items();
+        overlay.ai_preview = Some(crate::AiPreview::Loading(overlay.ai_revision));
+        assert_eq!(overlay.ai_height(), 0.);
+
+        overlay.description_popout = true;
+        assert_eq!(overlay.ai_height(), overlay.effective_row_height());
+
+        overlay.loading = true;
+        assert_eq!(overlay.ai_height(), 0.);
+        overlay.loading = false;
+
+        overlay.ai_preview = Some(crate::AiPreview::Status("Request timed out".into()));
+        overlay.description_popout = false;
+        assert_eq!(overlay.ai_height(), overlay.effective_row_height());
+    }
+
+    #[test]
+    fn ai_loading_does_not_block_local_selection_and_clears_on_cancel() {
+        let mut overlay = two_items();
+        let revision = overlay.ai_revision;
+        overlay.ai_preview = Some(crate::AiPreview::Loading(overlay.ai_revision));
+        assert!(!overlay.loading);
+        assert!(overlay.move_selection_with_wrap(1, false));
+        assert_eq!(overlay.selected_item().unwrap().name, "commit");
+        overlay.invalidate_ai_request();
+        assert!(overlay.ai_preview.is_none());
+        assert!(overlay.ai_revision > revision);
+        assert_eq!(overlay.selected_item().unwrap().name, "commit");
+    }
+
+    #[test]
+    fn ai_promotion_retires_loading_without_changing_candidate_metadata() {
+        let mut overlay = two_items();
+        overlay.items[1].description = "Record changes".into();
+        overlay.ai_preview = Some(crate::AiPreview::Loading(overlay.ai_revision));
+        assert!(overlay.promote_ai_suggestion(1));
+        assert!(overlay.ai_preview.is_none());
+        let item = overlay.selected_item().unwrap();
+        assert_eq!(item.name, "commit");
+        assert_eq!(item.description, "Record changes");
     }
 
     #[test]
