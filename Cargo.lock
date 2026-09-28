@@ -2908,6 +2908,7 @@ version = "0.0.3"
 dependencies = [
  "fastab_util",
  "fd-lock",
+ "libc",
  "parking_lot",
  "r2d2",
  "r2d2_sqlite",

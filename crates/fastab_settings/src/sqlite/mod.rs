@@ -80,6 +80,11 @@ impl Db {
             }
         }
 
+        // Create/restrict the main file before SQLite opens it: WAL and SHM
+        // inherit its mode. Repair existing sidecars before any secret write.
+        #[cfg(unix)]
+        protect_database_files(path)?;
+
         let conn = SqliteConnectionManager::file(path).with_init(init_connection);
         // The default r2d2 checkout timeout is 30s. The completion engine's
         // supervisor thread reads this database between requests; if wedged
@@ -94,19 +99,20 @@ impl Db {
             .connection_timeout(std::time::Duration::from_secs(3))
             .build(conn)?;
 
-        // Check the unix permissions of the database file, set them to 0600 if they are not
+        // Also check sidecars created while the pool was initialized.
         #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let metadata = std::fs::metadata(path)?;
-            let mut permissions = metadata.permissions();
-            if permissions.mode() & 0o777 != 0o600 {
-                permissions.set_mode(0o600);
-                std::fs::set_permissions(path, permissions)?;
-            }
-        }
+        protect_database_files(path)?;
 
         Ok(Self { pool })
+    }
+
+    /// Isolated SQLite storage for downstream credential tests; never opens
+    /// the user's database or installs a process-wide override.
+    #[cfg(feature = "test-support")]
+    pub fn open_test(path: &Path) -> Result<Self> {
+        let db = Self::open(path)?;
+        db.migrate()?;
+        Ok(db)
     }
 
     pub(crate) fn mock() -> Self {
@@ -176,6 +182,16 @@ impl Db {
 
     pub fn set_auth_value(&self, key: impl AsRef<str>, value: impl Into<String>) -> Result<()> {
         self.set_value(AUTH_TABLE_NAME, key, value.into())
+    }
+
+    /// Import only if another process has not already saved or deleted this
+    /// credential while the caller was waiting on its previous storage.
+    pub fn set_auth_value_if_absent(&self, key: impl AsRef<str>, value: &str) -> Result<()> {
+        self.pool.get()?.execute(
+            &format!("INSERT INTO {AUTH_TABLE_NAME} (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO NOTHING"),
+            params![key.as_ref(), value],
+        )?;
+        Ok(())
     }
 
     fn unset_value(&self, table: &'static str, key: impl AsRef<str>) -> Result<()> {
@@ -285,9 +301,60 @@ impl Db {
     }
 }
 
+#[cfg(unix)]
+fn protect_database_files(path: &Path) -> std::io::Result<()> {
+    use std::fs::{OpenOptions, Permissions};
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    fn restrict(path: &Path, create: bool) -> std::io::Result<()> {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if !metadata.is_file() => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "SQLite storage must be a regular file",
+                ));
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => return Ok(()),
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {},
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(create)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(path);
+        match file {
+            Ok(file) => {
+                if !file.metadata()?.is_file() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "SQLite storage must be a regular file",
+                    ));
+                }
+                file.set_permissions(Permissions::from_mode(0o600))
+            },
+            // Another SQLite connection may remove its sidecar after the
+            // metadata check. New sidecars inherit the restricted main mode.
+            Err(error) if !create && error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    restrict(path, true)?;
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let mut sidecar = path.as_os_str().to_os_string();
+        sidecar.push(suffix);
+        restrict(Path::new(&sidecar), false)?;
+    }
+    Ok(())
+}
+
 /// Applied to every pooled connection of the on-disk database.
 ///
-/// figterm inserts history rows while the desktop reads them; without WAL a
+/// fastabterm inserts history rows while the desktop reads them; without WAL a
 /// writer blocks readers for the whole transaction, and without a busy
 /// timeout a contended statement fails immediately with `SQLITE_BUSY`. WAL
 /// lets the reader and writer proceed concurrently, and the busy timeout
@@ -355,6 +422,47 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         let db = Db::open(&tempdir.path().join("data.sqlite3")).unwrap();
         assert_eq!(db.pool.max_size(), POOL_MAX_SIZE);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn database_and_live_sidecars_are_private_before_auth_writes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.sqlite3");
+        let db = Db::open(&path).unwrap();
+        db.migrate().unwrap();
+        db.set_auth_value("test-key", "test-secret").unwrap();
+        for suffix in ["", "-wal", "-shm"] {
+            let file = dir.path().join(format!("data.sqlite3{suffix}"));
+            assert_eq!(std::fs::metadata(file).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repairs_existing_sidecars_without_changing_directory_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let directory_mode = std::fs::metadata(dir.path()).unwrap().permissions().mode();
+        let path = dir.path().join("data.sqlite3");
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let file = dir.path().join(format!("data.sqlite3{suffix}"));
+            std::fs::write(&file, "retained contents").unwrap();
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        protect_database_files(&path).unwrap();
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let file = dir.path().join(format!("data.sqlite3{suffix}"));
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), "retained contents");
+            assert_eq!(std::fs::metadata(file).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        assert_eq!(
+            std::fs::metadata(dir.path()).unwrap().permissions().mode(),
+            directory_mode
+        );
     }
 
     #[test]

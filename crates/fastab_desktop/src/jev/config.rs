@@ -494,7 +494,7 @@ impl AiConfig {
         Ok(())
     }
 
-    /// Callers delete the matching Keychain entry before removing a profile.
+    /// Callers delete the matching local credential before removing a profile.
     pub fn remove_profile(&mut self, id: &str) -> Option<Profile> {
         let index = self.profiles.iter().position(|profile| profile.id == id)?;
         if self.active_profile_id.as_deref() == Some(id) {

@@ -497,8 +497,8 @@ impl AiSettings {
     fn credential_error(error: CredentialError) -> &'static str {
         match error {
             CredentialError::TimedOut => Self::label(
-                "系统钥匙串未及时响应；输入已保留，操作结束后可重试。",
-                "System Keychain did not respond in time. Your input was kept; retry when it finishes.",
+                "密钥存储未及时响应；输入已保留，操作结束后可重试。",
+                "Key storage did not respond in time. Your input was kept; retry when it finishes.",
             ),
             CredentialError::Busy => Self::label(
                 "凭据操作正在完成，请稍后重试；AI 保持关闭。",
@@ -771,7 +771,7 @@ impl AiSettings {
                         this.status = Self::label("已保存，AI 已关闭。", "Saved. AI is off.").into();
                         return None;
                     }
-                    this.status = Self::label("正在处理系统钥匙串…", "Updating system Keychain…").into();
+                    this.status = Self::label("正在保存本地密钥…", "Saving the local key…").into();
                     let credential = if replacing {
                         this.invalidate_key_presence(&service, cx);
                         credentials::write(&service, secret, cx)
@@ -1241,12 +1241,13 @@ impl Render for AiSettings {
             ),
             Some(false) => Self::label("尚未保存 Key；请输入后保存。", "No key is saved. Enter one to save."),
             None => Self::label(
-                "Key 保存在系统钥匙串；留空可使用已有 Key。",
-                "Keys are stored in system Keychain. Leave blank to use an existing key.",
+                "正在检查已保存的 Key；留空可使用已有 Key。",
+                "Checking for a saved key. Leave blank to use an existing key.",
             ),
         };
         body = body.child("API Key").child(self.key.clone())
             .child(hint(key_hint.into()))
+            .child(hint(Self::label("Key 在本机数据库中明文保存，文件仅当前用户可读写。", "Keys are stored as plaintext locally; the database file is readable and writable only by your user account.").into()))
             .when(self.key.read(cx).rejected, |body| body.child(hint(Self::label("此次输入未接受：Key 不能含空白或换行，最多 4096 字符。原内容已保留。", "Input rejected: keys cannot contain whitespace or line breaks (maximum 4096 characters). The previous value was kept.").into())))
             .child(div().flex().items_center().flex_wrap().gap(px(10.)).child(test)
                 .child(hint(Self::label("仅发送固定示例；不会保存或启用配置。", "Sends a fixed example; does not save or enable settings.").into())))
