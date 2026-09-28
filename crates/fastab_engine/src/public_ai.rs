@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use crate::ir::{Registry, Spec, SuggestionMeta};
+use crate::lookup::ActiveArgSource;
 use crate::runtime::{CompleteRequest, CompleteResult, Suggestion};
 
 pub(crate) const MAX_CANDIDATES: usize = 20;
@@ -28,21 +29,28 @@ pub struct PublicAiCandidate {
     pub description: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct QueryState {
+    pub subcommands_allowed: bool,
+    pub options_allowed: bool,
+    pub end_of_options: bool,
+    pub active_arg_source: Option<ActiveArgSource>,
+    pub active_arg_only_suggest_args: bool,
+    /// Any parser transition through an argument loadSpec/isCommand-like
+    /// value leaves the literal public spec path, even if the loaded spec
+    /// happens to reuse the same names as a pinned node.
+    pub crossed_loaded_spec: bool,
+}
+
 fn word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
 }
 
-fn plain_node(spec: &Spec) -> bool {
+fn static_path_node(spec: &Spec) -> bool {
     !spec.meta.ai_resolved_reference
+        && !spec.meta.ai_generated
         && spec.load_spec.is_none()
         && spec.js_load_spec.is_none()
-        && spec.js_generate_spec.is_none()
-        && spec.args.is_empty()
-        && spec.additional_suggestions.is_empty()
-        && spec
-            .parser_directives
-            .as_ref()
-            .is_none_or(|directives| directives.alias.is_none() && directives.js_alias.is_none())
 }
 
 /// Only the whole, unquoted buffer at its end is eligible. Completed tokens
@@ -55,6 +63,7 @@ pub(crate) fn context(
     root: &Arc<Spec>,
     current: &Spec,
     resolved_tokens: &[String],
+    state: QueryState,
 ) -> Option<PublicAiContext> {
     if !request.include_public_ai
         || request.history_only
@@ -83,34 +92,47 @@ pub(crate) fn context(
     if finished == 0 || finished > MAX_PATH_TOKENS {
         return None;
     }
+    let token_prefix = words.get(finished).copied().unwrap_or_default();
+    if state.crossed_loaded_spec {
+        return None;
+    }
+    let may_suggest_subcommands =
+        state.subcommands_allowed && !state.end_of_options && !state.active_arg_only_suggest_args;
+    let may_suggest_options = state.options_allowed && !state.end_of_options && !state.active_arg_only_suggest_args;
+    if !may_suggest_subcommands && !may_suggest_options {
+        return None;
+    }
+    match state.active_arg_source {
+        Some(ActiveArgSource::OptionValue) => return None,
+        Some(ActiveArgSource::OptionName) if !token_prefix.starts_with('-') || !may_suggest_options => {
+            return None;
+        },
+        Some(ActiveArgSource::PositionalValue)
+            if finished != 1 && !(token_prefix.starts_with('-') && may_suggest_options) =>
+        {
+            return None;
+        },
+        _ => {},
+    }
     let mut node = root.as_ref();
-    if !plain_node(node) {
+    if !static_path_node(node) {
         return None;
     }
     for token in &words[1..finished] {
         node = node.find_subcommand(token)?;
-        if !plain_node(node) {
+        if !static_path_node(node) {
             return None;
         }
     }
-    // Check the node that the real parser actually selected, not just a
-    // parallel name walk. A generated/replaced node cannot inherit trust.
-    if node != current
-        || current
-            .subcommands
-            .iter()
-            .any(|child| child.meta.js_get_query_term.is_some())
-        || current
-            .options
-            .iter()
-            .chain(&current.persistent_options)
-            .any(|option| option.meta.js_get_query_term.is_some())
-    {
+    // `walk_spec` owns a cloned node and may have merged a generateSpec
+    // result into it. Trust only if it still represents this literal static
+    // path. Generated descendants are filtered at their collection sites.
+    if !static_path_node(current) || node.names != current.names {
         return None;
     }
     Some(PublicAiContext {
         command_path: words[..finished].iter().map(|word| (*word).to_owned()).collect(),
-        token_prefix: words.get(finished).copied().unwrap_or_default().to_owned(),
+        token_prefix: token_prefix.to_owned(),
     })
 }
 
@@ -119,6 +141,7 @@ pub(crate) fn context(
 pub(crate) fn mark_candidate(suggestion: &mut Suggestion, meta: &SuggestionMeta, remaining: &mut usize) {
     if *remaining == 0
         || meta.ai_resolved_reference
+        || meta.ai_generated
         || meta.js_get_query_term.is_some()
         || meta.get_query_term.is_some()
         || meta.suggestion_type.is_some()

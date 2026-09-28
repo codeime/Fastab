@@ -31,7 +31,7 @@ pub struct RequestToken {
     settings_epoch: u64,
 }
 
-/// Event itself derives Debug; keychain bytes must never inherit that logging.
+/// Event itself derives Debug; credential bytes must never inherit that logging.
 pub struct LoadedCredentials(Result<Option<Vec<u8>>, CredentialError>);
 
 impl fmt::Debug for LoadedCredentials {
@@ -116,7 +116,7 @@ impl OverlayController {
         let revision = config::runtime_revision();
         let config = AiConfig::load().ok();
         // Several settings notifications may describe the same saved state.
-        // Keep its pending Keychain operation instead of starting a Busy read.
+        // Keep its pending credential operation instead of starting a Busy read.
         if config == self.jev.config && revision == self.jev.config_revision {
             return;
         }
@@ -162,7 +162,7 @@ impl OverlayController {
             Ok(Some(key)) if !key.is_empty() && key.len() <= 4096 && key.iter().all(u8::is_ascii_graphic) => {
                 self.jev.key = Some(Arc::new(key));
                 // The next local completion will include AI provenance. Do not
-                // restart the current engine request just because Keychain is
+                // restart the current engine request just because the key is
                 // ready: that can discard its result and replace the visible
                 // suggestions with the engine's loading placeholder.
             },
@@ -480,7 +480,9 @@ impl OverlayController {
                     return;
                 }
                 if result.choice == KEEP_LOCAL {
-                    self.show_jev_status(text("Jev · 保留本地建议", "Jev · Keep local suggestions"), cx);
+                    // Keeping the existing order is a normal result. Retire
+                    // the loading badge without adding a status row.
+                    self.cancel_jev(cx);
                     return;
                 }
                 let Some(snapshot) = &self.jev.snapshot else {

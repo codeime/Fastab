@@ -1066,9 +1066,9 @@ fn appearance_page(
                 .child(stacked_row(
                     if zh { "超长文本" } else { "Long Text" },
                     Some(if zh {
-                        "去掉已输入目录后，最后一级仍然超出宽度时：用省略号，或只滚动当前选中行"
+                        "超长候选名称使用省略号，或只滚动选中的名称；参数提示始终静态省略，展开详情可查看完整内容"
                     } else {
-                        "After hiding the typed directory, overflowing last components use an ellipsis, or scroll the selected row"
+                        "Ellipsize long names or scroll the selected name. Argument hints stay still; expand details to see them in full"
                     }),
                     chrome,
                     true,

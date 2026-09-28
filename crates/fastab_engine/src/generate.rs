@@ -254,6 +254,7 @@ pub fn generate(spec: &Spec, tokens: &[String], query: &str, cwd: &str, fuzzy: b
             query: query.to_string(),
             search_term: query.to_string(),
             only_suggest_args: false,
+            source: crate::lookup::ActiveArgSource::PositionalValue,
         })
     });
     if let Some(active) = active {

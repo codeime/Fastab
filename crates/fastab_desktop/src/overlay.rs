@@ -1039,11 +1039,15 @@ impl OverlayController {
             other if other.starts_with("selectSuggestion") => {
                 if let Ok(n) = other.trim_start_matches("selectSuggestion").parse::<usize>() {
                     if let Some(index) = select_suggestion_index(n, self.state.read(cx).items.len()) {
+                        let previous_size = overlay_window_size_from(self.state.read(cx));
                         self.state.update(cx, |overlay, cx| {
                             overlay.selected = index;
                             overlay.has_changed_index = true;
                             cx.notify();
                         });
+                        if previous_size != overlay_window_size_from(self.state.read(cx)) {
+                            self.relayout_and_sync(cx);
+                        }
                     }
                 }
             },
@@ -1092,6 +1096,7 @@ impl OverlayController {
     fn move_selection(&mut self, delta: i32, up_from_top: bool, figterm_state: &FigtermState, cx: &mut App) {
         let wrap = self.state.read(cx).scroll_wrap_around;
         let at_top = self.state.read(cx).selected == 0;
+        let previous_size = overlay_window_size_from(self.state.read(cx));
         let still_visible = self.state.update(cx, |overlay, cx| {
             let visible = overlay.move_selection_with_wrap(delta, wrap);
             cx.notify();
@@ -1112,6 +1117,10 @@ impl OverlayController {
             // stronger Esc/onlyShowOnTab state and would keep the list hidden.
             self.hide(cx);
             self.sync_intercept(figterm_state, cx);
+        } else if previous_size != overlay_window_size_from(self.state.read(cx)) {
+            // Expanded argument details can change the popout height; keep
+            // the window anchored to the terminal caret.
+            self.relayout_and_sync(cx);
         }
     }
 
@@ -1461,6 +1470,7 @@ fn overlay_window_size_from(overlay: &OverlayState) -> LogicalSize<f64> {
         overlay.show_dev_banner,
         overlay.loading,
         overlay.current_arg_rows(),
+        overlay.selected_item().map_or("", |item| item.args_hint.as_str()),
     );
     LogicalSize::new(f64::from(width), f64::from(height + overlay.ai_height()))
 }

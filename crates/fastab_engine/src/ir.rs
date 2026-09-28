@@ -62,6 +62,11 @@ pub struct SuggestionMeta {
     /// Skipped by serde so input JSON cannot grant or erase provenance.
     #[serde(skip)]
     pub ai_resolved_reference: bool,
+    /// Runtime-only taint for rows that came from a generateSpec/loadSpec
+    /// hook result. Pinned static siblings remain eligible after a mixed
+    /// static/dynamic spec is merged.
+    #[serde(skip)]
+    pub ai_generated: bool,
     /// Explicit Fig suggestion type.  The surrounding collection supplies a
     /// default (`arg`, `subcommand`, or `option`), but static rows may override
     /// it with values such as `file`, `folder`, or `special`.
@@ -898,6 +903,11 @@ impl Registry {
         *self
             .public_ai_baseline
             .get_or_insert_with(|| crate::spec_pair::matches_public_ai_baseline(snapshot))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn trust_public_ai_fixture_for_test(&mut self) {
+        self.public_ai_baseline = Some(true);
     }
 
     fn insert_loaded(&mut self, mut spec: Spec, path: Option<&Path>) {

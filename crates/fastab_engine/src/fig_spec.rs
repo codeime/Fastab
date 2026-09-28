@@ -73,6 +73,9 @@ pub fn spec_from_fig_json(value: &JsonValue) -> Option<Spec> {
 }
 
 pub fn merge_generated_spec(wrapper: &Spec, generated: Spec) -> Spec {
+    let wrapper_was_generated = wrapper.meta.ai_generated;
+    let mut generated = generated;
+    mark_generated_spec(&mut generated);
     let mut merged = generated;
     merged.names = if wrapper.names.is_empty() {
         merged.names
@@ -94,7 +97,47 @@ pub fn merge_generated_spec(wrapper: &Spec, generated: Spec) -> Spec {
     if merged.description.is_empty() {
         merged.description = wrapper.description.clone();
     }
+    // The merged root still represents the source node that owns the hook.
+    // Only the hook's additions and replacements are tainted; static siblings
+    // retained from the wrapper remain provable against the pinned tree.
+    merged.meta.ai_generated = wrapper_was_generated;
     merged
+}
+
+fn mark_generated_spec(spec: &mut Spec) {
+    spec.meta.ai_generated = true;
+    for child in &mut spec.subcommands {
+        mark_generated_spec(child);
+    }
+    for option in spec.options.iter_mut().chain(&mut spec.persistent_options) {
+        let option = Arc::make_mut(option);
+        option.meta.ai_generated = true;
+        for arg in &mut option.args {
+            mark_generated_arg(arg);
+        }
+    }
+    for arg in &mut spec.args {
+        mark_generated_arg(arg);
+    }
+    for suggestion in &mut spec.additional_suggestions {
+        suggestion.meta.ai_generated = true;
+    }
+    if let Some(LoadSpec::Inline(spec)) = &mut spec.load_spec {
+        mark_generated_spec(spec);
+    }
+}
+
+fn mark_generated_arg(arg: &mut ArgSpec) {
+    arg.meta.ai_generated = true;
+    for suggestion in &mut arg.suggestions {
+        suggestion.meta.ai_generated = true;
+    }
+    if let Some(LoadSpec::Inline(spec)) = &mut arg.load_spec {
+        mark_generated_spec(spec);
+    }
+    if let Some(spec) = &mut arg.resolved_spec {
+        mark_generated_spec(spec);
+    }
 }
 
 fn merge_specs(mut dest: Vec<Spec>, incoming: Vec<Spec>) -> Vec<Spec> {
@@ -461,6 +504,7 @@ fn seed_from_fig_json(value: &JsonValue) -> Option<SuggestionSeed> {
 fn meta_from_fig(object: &serde_json::Map<String, JsonValue>) -> SuggestionMeta {
     SuggestionMeta {
         ai_resolved_reference: false,
+        ai_generated: false,
         suggestion_type: object.get("type").and_then(JsonValue::as_str).map(ToOwned::to_owned),
         original_type: object
             .get("originalType")

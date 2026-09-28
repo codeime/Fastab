@@ -5,6 +5,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, StyledText, UnderlineStyle, UniformListScrollHandle, Window, div, hsla, point,
     px, rgb, uniform_list,
 };
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,6 +20,7 @@ pub const ICON_SIZE: f32 = 15.0;
 pub const DEFAULT_WIDTH: f64 = 320.0;
 pub const DEFAULT_MAX_LIST_HEIGHT: f64 = 140.0;
 pub const POPOUT_WIDTH: f32 = 200.0;
+const MAX_ARGS_HINT_ROWS: usize = 3;
 /// The legacy overlay set `:root { font-size: var(--font-size, 12.8px) }`, so
 /// one CSS rem was the suggestion font size, not the usual 16px. Every Tailwind
 /// spacing on the overlay therefore came out 0.8x the value a 16px basis would
@@ -857,7 +859,9 @@ impl Render for SuggestionList {
         let common_prefix = common_prefix_for(selected, &overlay.items, &typed_path);
         // The bottom Description falls back to currentArg, but the old
         // popout deliberately describes only the selected suggestion.
-        let selected_description = selected_item_description(overlay.selected_item());
+        let selected_item = overlay.selected_item();
+        let selected_description = selected_item_description(selected_item);
+        let selected_args_hint = selected_item.map_or("", |item| item.args_hint.as_str());
         // The old WebView uses `size.itemSize * 0.75` for both dimensions. Do
         // not clamp this to the default 15px: custom row heights must keep the
         // same icon-to-row ratio as the old overlay.
@@ -942,7 +946,7 @@ impl Render for SuggestionList {
                             let state = state.clone();
                             let click = click.clone();
                             let suggestion_font_family = font_family.clone();
-                            move |range, _window, cx| {
+                            move |range, window, cx| {
                                 let overlay = state.read(cx);
                                 range
                                     .filter_map(|ix| {
@@ -951,6 +955,8 @@ impl Render for SuggestionList {
                                         let corners = row_corner_radii(ix, last_row, radius, has_footer);
                                         Some(suggestion_row(
                                             item,
+                                            window,
+                                            cx,
                                             ix == overlay.selected,
                                             ix == 0 && overlay.has_ai_promotion(),
                                             search_term,
@@ -1003,20 +1009,28 @@ impl Render for SuggestionList {
         if popout && on_left {
             body = body.child(description_popout(
                 &selected_description,
+                selected_args_hint,
                 theme,
                 max_list_height,
+                selected_args_popout_height(selected_args_hint, font_size, row_height, max_list_height),
                 show_hint,
                 &overlay.description_hint,
+                selected,
+                overlay.suggestions_revision,
             ));
         }
         body = body.child(list_column);
         if popout && !on_left {
             body = body.child(description_popout(
                 &selected_description,
+                selected_args_hint,
                 theme,
                 max_list_height,
+                selected_args_popout_height(selected_args_hint, font_size, row_height, max_list_height),
                 show_hint,
                 &overlay.description_hint,
+                selected,
+                overlay.suggestions_revision,
             ));
         }
 
@@ -1050,6 +1064,8 @@ impl Render for SuggestionList {
 #[allow(clippy::too_many_arguments)]
 fn suggestion_row(
     item: &SuggestionItem,
+    window: &Window,
+    cx: &gpui::App,
     is_selected: bool,
     is_ai_promoted: bool,
     search_term: &str,
@@ -1105,19 +1121,52 @@ fn suggestion_row(
     };
     let runs = name_runs(title_name, highlight, fuzzy, common_prefix);
     let insertion_search_term = insertion_search_term.to_string();
-    let (title_text, title_highlights) =
-        suggestion_title_highlights(&runs, &item.args_hint, text, match_text, match_bg);
+    let (title_text, title_highlights) = suggestion_title_highlights(&runs, text, match_text, match_bg);
     let available = (list_width - row_pad_left(font_size) - icon_size - 5.0).max(1.0);
     let extra = estimated_title_width(&title_text, font_size) - available;
     let marquee = is_selected && title_overflow == TitleOverflow::Scroll && extra > 4.0;
+    let title_style = gpui::TextStyle {
+        font_family: font_family.clone().into(),
+        ..Default::default()
+    };
+    let name_width = f32::from(
+        window
+            .text_system()
+            .layout_line(
+                &title_text,
+                px(font_size),
+                &[title_style.to_run(title_text.len())],
+                None,
+            )
+            .width,
+    )
+    .min(available);
+    // GPUI only applies text overflow when its text node receives a definite
+    // width. This nested row can still hand the node an unconstrained width,
+    // so use GPUI's own glyph-aware truncator before building the hint slot.
+    let hint_width = (available - name_width - 8.0).max(0.0);
+    let ellipsis_width = f32::from(
+        window
+            .text_system()
+            .layout_line("…", px(font_size), &[title_style.to_run("…".len())], None)
+            .width,
+    );
+    let hint_text = if !item.args_hint.is_empty() && hint_width > ellipsis_width {
+        let mut runs = vec![title_style.to_run(item.args_hint.len())];
+        let mut wrapper = cx.text_system().line_wrapper(title_style.font(), px(font_size));
+        wrapper.truncate_line(item.args_hint.clone().into(), px(hint_width), "…", &mut runs)
+    } else {
+        "".into()
+    };
     let styled = StyledText::new(title_text).with_highlights(title_highlights);
-    // One text node so ellipsis can apply. Scroll only the selected overflowing
-    // row; animating every row would keep the main thread painting.
+    // The name keeps the user's overflow setting. A long argument hint must
+    // never move the command name; it gets its own lower-priority clipped slot.
     let title = if marquee {
         let duration = marquee_duration(extra);
         div()
             .min_w(px(0.))
-            .flex_1()
+            .flex_none()
+            .max_w(px(available))
             .overflow_hidden()
             .font_family(font_family)
             .text_color(text)
@@ -1129,12 +1178,36 @@ fn suggestion_row(
     } else {
         div()
             .min_w(px(0.))
-            .flex_1()
+            .flex_none()
+            .max_w(px(available))
             .truncate()
             .font_family(font_family)
             .text_color(text)
             .child(styled)
     };
+    let mut hint_color = text;
+    hint_color.a *= 0.55;
+    let mut title_content = div()
+        .min_w(px(0.))
+        .w(px(available))
+        .flex_none()
+        .flex()
+        .flex_row()
+        .items_center()
+        .overflow_hidden()
+        .child(title);
+    if !hint_text.is_empty() {
+        title_content = title_content.child(
+            div()
+                .ml(px(5.))
+                .min_w(px(0.))
+                .w(px(hint_width))
+                .flex_none()
+                .truncate()
+                .text_color(hint_color)
+                .child(hint_text),
+        );
+    }
     let icon = item.icon_png.clone();
     div()
         .id(("ec-suggestion", ix))
@@ -1160,9 +1233,10 @@ fn suggestion_row(
             div()
                 .ml(px(5.))
                 .min_w(px(0.))
-                .flex_1()
+                .w(px(available))
+                .flex_none()
                 .overflow_hidden()
-                .child(title),
+                .child(title_content),
         )
         // React's Suggestion uses onClick (mouse-up), not mouse-down. Besides
         // matching the old acceptance timing this avoids accepting a row when
@@ -1201,7 +1275,6 @@ fn brightness(mut color: Rgba, factor: f32) -> Rgba {
 
 fn suggestion_title_highlights(
     runs: &[TextRun],
-    args_hint: &str,
     text: Rgba,
     match_text: Rgba,
     match_bg: Rgba,
@@ -1235,19 +1308,6 @@ fn suggestion_title_highlights(
             )),
             RunKind::Text => {},
         }
-    }
-    if !args_hint.is_empty() {
-        let start = title.len();
-        title.push(' ');
-        title.push_str(args_hint);
-        highlights.push((
-            start..title.len(),
-            HighlightStyle {
-                color: Some(text.into()),
-                fade_out: Some(0.5),
-                ..HighlightStyle::default()
-            },
-        ));
     }
     (title, highlights)
 }
@@ -1346,6 +1406,48 @@ fn selected_item_description(item: Option<&SuggestionItem>) -> String {
         return item.kind.clone();
     }
     String::new()
+}
+
+fn selected_args_hint_rows(
+    args_hint: &str,
+    available_width: f32,
+    font_size: f32,
+    row_height: f32,
+    max_list_height: f32,
+) -> usize {
+    if args_hint.trim().is_empty() {
+        return 0;
+    }
+    let max_rows = ((max_list_height / row_height).floor() as usize)
+        .saturating_sub(2)
+        .clamp(1, MAX_ARGS_HINT_ROWS);
+    let width = available_width.max(font_size);
+    let estimated_rows: usize = args_hint
+        .lines()
+        .map(|line| (estimated_title_width(line, font_size) / width).ceil().max(1.0) as usize)
+        .sum();
+    estimated_rows.clamp(1, max_rows)
+}
+
+fn selected_args_hint_height(
+    args_hint: &str,
+    available_width: f32,
+    font_size: f32,
+    row_height: f32,
+    max_list_height: f32,
+) -> f32 {
+    selected_args_hint_rows(args_hint, available_width, font_size, row_height, max_list_height) as f32 * row_height
+}
+
+fn selected_args_popout_height(args_hint: &str, font_size: f32, row_height: f32, max_list_height: f32) -> f32 {
+    let hint_height = selected_args_hint_height(args_hint, POPOUT_WIDTH - 10.0, font_size, row_height, max_list_height);
+    if hint_height > 0.0 {
+        // Keep room for the description and the existing action hint. The
+        // shared scroll area exposes text beyond the visible three hint rows.
+        row_height + hint_height + 28.0
+    } else {
+        0.0
+    }
 }
 
 fn suggestion_footer_height(item_count: usize, row_height: f32, popout: bool, loading: bool) -> f32 {
@@ -1480,12 +1582,17 @@ fn description_bar(
         .when(show_hint && !loading, |this| this.child(hint_chip(height, hint)))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn description_popout(
     description: &str,
+    args_hint: &str,
     theme: OverlayTheme,
     max_height: f32,
+    args_popout_height: f32,
     show_hint: bool,
     hint: &str,
+    selected: usize,
+    suggestions_revision: u64,
 ) -> impl IntoElement {
     let empty = description.is_empty();
     let text = if empty {
@@ -1493,13 +1600,16 @@ fn description_popout(
     } else {
         description.to_string()
     };
+    let mut scroll_key = std::collections::hash_map::DefaultHasher::new();
+    (selected, suggestions_revision, description, args_hint).hash(&mut scroll_key);
     div()
         .id("ec-description-popout")
         .flex()
         .flex_col()
         .flex_none()
         .w(px(POPOUT_WIDTH))
-        .max_h(px(max_height))
+        .max_h(px(max_height.max(args_popout_height)))
+        .when(args_popout_height > 0.0, |this| this.h(px(args_popout_height)))
         .pt(px(2.))
         .pb(px(4.))
         .rounded(px(POPOUT_RADIUS))
@@ -1510,14 +1620,18 @@ fn description_popout(
         .overflow_hidden()
         .child(
             div()
-                .id("ec-description-popout-scroll")
+                .id(("ec-description-popout-scroll", scroll_key.finish()))
                 .flex_1()
-                .max_h(px((max_height - 10.0).max(0.0)))
+                .min_h(px(0.))
+                .max_h(px((max_height.max(args_popout_height) - 10.0).max(0.0)))
                 .overflow_y_scroll()
                 .overflow_x_hidden()
                 .pl(px(6.))
                 .pr(px(4.))
-                .child(text),
+                .child(div().whitespace_normal().child(text))
+                .when(!args_hint.trim().is_empty(), |this| {
+                    this.child(div().mt(px(4.)).whitespace_normal().child(args_hint.to_string()))
+                }),
         )
         .when(show_hint, |this| {
             this.child(
@@ -1627,12 +1741,14 @@ pub fn overlay_content_size(
         show_dev_banner,
         loading,
         0,
+        "",
     )
 }
 
 /// Variant used by the desktop controller when the parser has a current
 /// argument but no completion rows. `description_rows` is normally 0; a
 /// description-only state uses one or two rows just like the WebView.
+/// `selected_args_hint` reserves the extra height only when the detail popout is open.
 #[allow(clippy::too_many_arguments)]
 pub fn overlay_content_size_with_context(
     item_count: usize,
@@ -1644,6 +1760,7 @@ pub fn overlay_content_size_with_context(
     show_dev_banner: bool,
     loading: bool,
     description_rows: usize,
+    selected_args_hint: &str,
 ) -> (f32, f32) {
     // The WebView replaced the entire autocomplete card with its compact
     // loading indicator, even when stale rows were still present in state.
@@ -1660,7 +1777,12 @@ pub fn overlay_content_size_with_context(
     let border = CARD_BORDER * 2.0;
     let column_h = list_h + footer + border;
     let popout_h = if popout {
-        max_list_height.min(column_h) + border
+        (max_list_height.min(column_h) + border).max(selected_args_popout_height(
+            selected_args_hint,
+            font_size,
+            row_height,
+            max_list_height,
+        ))
     } else {
         0.0
     };
@@ -1891,9 +2013,9 @@ mod tests {
     #[test]
     fn content_size_keeps_current_arg_description_visible_without_rows() {
         let (_, one_line) =
-            overlay_content_size_with_context(0, 20.0, DEFAULT_FONT_SIZE, 320.0, 140.0, false, false, false, 1);
+            overlay_content_size_with_context(0, 20.0, DEFAULT_FONT_SIZE, 320.0, 140.0, false, false, false, 1, "");
         let (_, two_lines) =
-            overlay_content_size_with_context(0, 20.0, DEFAULT_FONT_SIZE, 320.0, 140.0, false, false, false, 2);
+            overlay_content_size_with_context(0, 20.0, DEFAULT_FONT_SIZE, 320.0, 140.0, false, false, false, 2, "");
         assert_eq!(one_line, 20.0 + CARD_BORDER * 2.0 + layout_pad(DEFAULT_FONT_SIZE) * 2.0);
         assert_eq!(
             two_lines,
@@ -1901,7 +2023,7 @@ mod tests {
         );
 
         let loading =
-            overlay_content_size_with_context(0, 20.0, DEFAULT_FONT_SIZE, 320.0, 140.0, false, false, true, 2);
+            overlay_content_size_with_context(0, 20.0, DEFAULT_FONT_SIZE, 320.0, 140.0, false, false, true, 2, "");
         assert_eq!(loading, (40.0, 24.0));
     }
 
@@ -2082,16 +2204,37 @@ mod tests {
     }
 
     #[test]
-    fn title_highlights_keep_the_visible_text_in_one_string() {
+    fn title_highlights_only_include_the_name() {
         let runs = name_runs("main.rs", "m", false, "m");
-        let (title, highlights) =
-            suggestion_title_highlights(&runs, "<path>", rgb(0x111111), rgb(0x222222), rgb(0x333333));
-        assert_eq!(title, "main.rs <path>");
-        assert_eq!(highlights.len(), 2);
+        let (title, highlights) = suggestion_title_highlights(&runs, rgb(0x111111), rgb(0x222222), rgb(0x333333));
+        assert_eq!(title, "main.rs");
+        assert_eq!(highlights.len(), 1);
         assert_eq!(highlights[0].0, 0.."m".len());
         assert!(highlights[0].1.background_color.is_some());
-        assert_eq!(highlights[1].0, "main.rs".len()..title.len());
-        assert_eq!(highlights[1].1.fade_out, Some(0.5));
+    }
+
+    #[test]
+    fn selected_args_hint_does_not_change_the_inline_footer_height() {
+        let hint = "[branch-name] [remote-name] [path-to-long-file] [optional-revision]";
+        let (_, without_args) =
+            overlay_content_size_with_context(1, 20.0, DEFAULT_FONT_SIZE, 320.0, 140.0, false, false, false, 0, "");
+        let (_, with_args) =
+            overlay_content_size_with_context(1, 20.0, DEFAULT_FONT_SIZE, 320.0, 140.0, false, false, false, 0, hint);
+        assert_eq!(with_args, without_args);
+    }
+
+    #[test]
+    fn selected_args_hint_can_expand_a_short_popout() {
+        let hint = "[branch-name] [remote-name] [path-to-long-file] [optional-revision]";
+        let (_, base) =
+            overlay_content_size_with_context(1, 20.0, DEFAULT_FONT_SIZE, 320.0, 140.0, true, false, false, 0, "");
+        let (_, with_args) =
+            overlay_content_size_with_context(1, 20.0, DEFAULT_FONT_SIZE, 320.0, 140.0, true, false, false, 0, hint);
+        assert!(with_args > base);
+        assert_eq!(
+            with_args - layout_pad(DEFAULT_FONT_SIZE) * 2.0,
+            selected_args_popout_height(hint, DEFAULT_FONT_SIZE, 20.0, 140.0)
+        );
     }
 
     #[test]

@@ -688,6 +688,14 @@ pub(crate) struct ActiveArg {
     /// of that list. A separated value is not this case; the walker's
     /// `canConsume*` flags decide those.
     pub only_suggest_args: bool,
+    pub source: ActiveArgSource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActiveArgSource {
+    OptionName,
+    OptionValue,
+    PositionalValue,
 }
 
 #[derive(Debug)]
@@ -714,6 +722,10 @@ pub(crate) struct CompletionContext {
     /// Fig `isEndOfOptions`. Combined with [`ActiveArg::only_suggest_args`]
     /// this is `onlySuggestArgs`, which suppresses both subcommands and options.
     pub end_of_options: bool,
+    /// The parser entered a spec through an argument loadSpec, command, or
+    /// script transition. Public AI only accepts literal paths in the pinned
+    /// tree, so this remains set even if the loaded node reuses pinned names.
+    pub crossed_loaded_spec: bool,
     /// Argument slots the token being typed fills, for `template: history`.
     pub history_slots: Vec<crate::history::ArgSlot>,
 }
@@ -849,6 +861,7 @@ pub(crate) fn resolve_context(
         options_allowed: walked.options_allowed,
         subcommands_allowed: walked.subcommands_allowed,
         end_of_options: walked.end_of_options,
+        crossed_loaded_spec: walked.crossed_loaded_spec,
         history_slots: trace.current,
     }
 }
@@ -865,6 +878,7 @@ struct WalkedSpec {
     options_allowed: bool,
     subcommands_allowed: bool,
     end_of_options: bool,
+    crossed_loaded_spec: bool,
 }
 
 /// Parse a finished history command with the same walker the buffer uses,
@@ -900,6 +914,7 @@ fn walk_spec(
     let mut option_arg = None;
     let mut entered_args = false;
     let mut subcommand_variadic_count = 0usize;
+    let mut crossed_loaded_spec = false;
     let mut substituted_aliases = HashSet::new();
     while index < limit {
         let token = &tokens[index];
@@ -944,6 +959,7 @@ fn walk_spec(
                                 trace.enter_root(next.as_ref());
                             }
                             let restart_parser = load_restarts_parser(arg);
+                            crossed_loaded_spec = true;
                             enter_loaded_spec(
                                 &mut current,
                                 &mut parent,
@@ -988,6 +1004,7 @@ fn walk_spec(
                                 trace.enter_root(next.as_ref());
                             }
                             let restart_parser = load_restarts_parser(arg);
+                            crossed_loaded_spec = true;
                             enter_loaded_spec(
                                 &mut current,
                                 &mut parent,
@@ -1098,6 +1115,7 @@ fn walk_spec(
             }
             let restart_parser = next.is_some() && load_restarts_parser(arg);
             if let Some(next) = next {
+                crossed_loaded_spec = true;
                 enter_loaded_spec(
                     &mut current,
                     &mut parent,
@@ -1151,6 +1169,7 @@ fn walk_spec(
         options_allowed,
         subcommands_allowed,
         end_of_options: after_double_dash,
+        crossed_loaded_spec,
     }
 }
 
@@ -1390,6 +1409,7 @@ fn active_arg<'a>(
                             query: value.to_string(),
                             search_term: raw_value,
                             only_suggest_args: true,
+                            source: ActiveArgSource::OptionValue,
                         });
                     }
                     if let Some(arg) = option.args.first().filter(|arg| arg.is_variadic) {
@@ -1428,6 +1448,7 @@ fn active_arg<'a>(
                         query: query.to_string(),
                         search_term: raw_query.to_string(),
                         only_suggest_args: false,
+                        source: ActiveArgSource::OptionValue,
                     });
                 }
             }
@@ -1460,6 +1481,7 @@ fn active_arg<'a>(
             query: query.to_string(),
             search_term: raw_query.to_string(),
             only_suggest_args: false,
+            source: ActiveArgSource::OptionValue,
         });
     }
 
@@ -1491,6 +1513,7 @@ fn active_arg<'a>(
                                 query: value.to_string(),
                                 search_term: raw_value,
                                 only_suggest_args: true,
+                                source: ActiveArgSource::OptionValue,
                             });
                         }
                     }
@@ -1506,6 +1529,7 @@ fn active_arg<'a>(
                             query: String::new(),
                             search_term: String::new(),
                             only_suggest_args: false,
+                            source: ActiveArgSource::OptionName,
                         });
                     }
                 }
@@ -1524,6 +1548,7 @@ fn active_arg<'a>(
         query: query.to_string(),
         search_term: raw_query.to_string(),
         only_suggest_args: false,
+        source: ActiveArgSource::PositionalValue,
     })
 }
 
@@ -2079,16 +2104,26 @@ pub(crate) fn complete_with_settings(
         &raw_search_term,
         Some(registry),
     );
-    let public_ai_context = if context.active_arg.is_none()
-        && context
-            .persistent_options
-            .iter()
-            .all(|option| option.meta.js_get_query_term.is_none())
-    {
-        crate::public_ai::context(registry, request, &root, context.spec.as_ref(), &tokens)
-    } else {
-        None
-    };
+    let only_suggest_args = context.end_of_options
+        || context
+            .active_arg
+            .as_ref()
+            .is_some_and(|active| active.only_suggest_args);
+    let public_ai_context = crate::public_ai::context(
+        registry,
+        request,
+        &root,
+        context.spec.as_ref(),
+        &tokens,
+        crate::public_ai::QueryState {
+            subcommands_allowed: context.subcommands_allowed,
+            options_allowed: context.options_allowed,
+            end_of_options: context.end_of_options,
+            active_arg_source: context.active_arg.as_ref().map(|active| active.source),
+            active_arg_only_suggest_args: only_suggest_args,
+            crossed_loaded_spec: context.crossed_loaded_spec,
+        },
+    );
     let mut public_ai_budget = if public_ai_context.is_some() {
         crate::public_ai::MAX_CANDIDATES
     } else {
@@ -2127,11 +2162,6 @@ pub(crate) fn complete_with_settings(
     // or the caret inside `--opt=value` / `-ovalue`) suppresses both.
     // An open short-option chain is filtered down to options and args by
     // `getAllSuggestions`, which is the chain branch below.
-    let only_suggest_args = context.end_of_options
-        || context
-            .active_arg
-            .as_ref()
-            .is_some_and(|active| active.only_suggest_args);
     let suggest_subcommands = context.subcommands_allowed && !only_suggest_args && open_option_chain.is_none();
     let mut suggestions = if suggest_subcommands {
         let mut subcommands = current.subcommands.clone();
@@ -2154,7 +2184,13 @@ pub(crate) fn complete_with_settings(
             &search_term,
             fuzzy,
             prefer_verbose,
-            |spec| public_ai_context.is_some() && !spec.meta.ai_resolved_reference,
+            |spec| {
+                public_ai_context.is_some()
+                    && !spec.meta.ai_resolved_reference
+                    && !spec.meta.ai_generated
+                    && spec.load_spec.is_none()
+                    && spec.js_load_spec.is_none()
+            },
             &mut public_ai_budget,
         )
     } else {
@@ -2651,7 +2687,12 @@ fn collect_option_suggestions(
         search_term,
         fuzzy,
         prefer_verbose,
-        |option| public_source && option.load_spec.is_none(),
+        |option| {
+            public_source
+                && !option.meta.ai_resolved_reference
+                && !option.meta.ai_generated
+                && option.load_spec.is_none()
+        },
         public_ai_budget,
     )
 }
@@ -3177,6 +3218,223 @@ mod tests {
         .unwrap();
         let registry = Registry::load(dir.path()).unwrap();
         (dir, registry)
+    }
+
+    fn public_ai_request(buffer: &str, cwd: &str) -> CompleteRequest {
+        CompleteRequest {
+            buffer: buffer.to_string(),
+            cwd: cwd.to_string(),
+            include_history: false,
+            include_public_ai: true,
+            ..CompleteRequest::default()
+        }
+    }
+
+    fn trusted_fixture(registry: &mut Registry) {
+        // Fixture contents are synthetic, so test provenance at the actual
+        // lookup path without weakening the production snapshot-pin check.
+        registry.trust_public_ai_fixture_for_test();
+    }
+
+    #[test]
+    fn public_ai_keeps_the_production_pin_gate_closed_for_unpinned_fixture() {
+        let (dir, mut registry) = load_git();
+        let result = complete(
+            &mut registry,
+            &public_ai_request("git ch", &dir.path().display().to_string()),
+        );
+
+        assert!(result.public_ai_context.is_none());
+        assert!(
+            result
+                .suggestions
+                .iter()
+                .all(|suggestion| suggestion.public_ai_candidate.is_none())
+        );
+    }
+
+    #[test]
+    fn public_ai_marks_static_siblings_beside_generated_subcommands() {
+        let dir = tempfile::tempdir().unwrap();
+        let (hook_id, hook_entry) = crate::hook_backend::test_typed_entry(
+            "git#generate#0",
+            "generateSpec",
+            serde_json::json!({
+                "op": "spec-object",
+                "fields": [
+                    {"key": "name", "value": {"op": "string", "value": "git"}},
+                    {"key": "subcommands", "value": {"op": "array", "items": [{
+                        "op": "spec-object",
+                        "fields": [
+                            {"key": "name", "value": {"op": "string", "value": "changelog"}},
+                            {"key": "description", "value": {"op": "string", "value": "Generated entry"}}
+                        ]
+                    }]}},
+                    {"key": "options", "value": {"op": "array", "items": [{
+                        "op": "object",
+                        "fields": [{"key": "name", "value": {"op": "string", "value": "--generated"}}]
+                    }]}}
+                ]
+            }),
+        );
+        fs::write(
+            dir.path().join("git.json"),
+            r#"{
+              "names":["git"],
+              "jsGenerateSpec":"git#generate#0",
+              "args":[{"name":"target"}],
+              "options":[
+                {"names":["--color"],"args":[{"name":"when","isOptional":true}]},
+                {"names":["--config"],"args":[{"name":"file","isOptional":true}]}
+              ],
+              "subcommands":[
+                {"names":["checkout"],"description":"Switch branches"},
+                {"names":["cherry-pick"],"description":"Apply commits"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        trusted_fixture(&mut registry);
+        let native = crate::hook_backend::test_native_hooks(vec![(hook_id, hook_entry)]);
+        let _bound = crate::hook_backend::bind_native(Arc::new(native));
+        let cwd = dir.path().display().to_string();
+        let request = public_ai_request("git ch", &cwd);
+        let result = crate::hook_backend::enter_context(&cwd, &crate::hook_types::ShellContext::default(), || {
+            complete(&mut registry, &request)
+        });
+
+        assert!(result.public_ai_context.is_some(), "{result:?}");
+        for static_name in ["checkout", "cherry-pick"] {
+            assert!(
+                result
+                    .suggestions
+                    .iter()
+                    .find(|suggestion| suggestion.name == static_name)
+                    .is_some_and(|suggestion| suggestion.public_ai_candidate.is_some()),
+                "{static_name} was not marked as public: {:?}",
+                result.suggestions
+            );
+        }
+        assert!(
+            result
+                .suggestions
+                .iter()
+                .find(|suggestion| suggestion.name == "changelog")
+                .is_some_and(|suggestion| suggestion.public_ai_candidate.is_none()),
+            "generated-only suggestion was marked as public: {:?}",
+            result.suggestions
+        );
+
+        let option_request = public_ai_request("git --", &cwd);
+        let option_result =
+            crate::hook_backend::enter_context(&cwd, &crate::hook_types::ShellContext::default(), || {
+                complete(&mut registry, &option_request)
+            });
+        assert!(option_result.public_ai_context.is_some(), "{option_result:?}");
+        for static_name in ["--color", "--config"] {
+            assert!(
+                option_result
+                    .suggestions
+                    .iter()
+                    .find(|suggestion| suggestion.name == static_name)
+                    .is_some_and(|suggestion| suggestion.public_ai_candidate.is_some()),
+                "optional-argument option {static_name} was not marked: {:?}",
+                option_result.suggestions
+            );
+        }
+        assert!(
+            option_result
+                .suggestions
+                .iter()
+                .find(|suggestion| suggestion.name == "--generated")
+                .is_some_and(|suggestion| suggestion.public_ai_candidate.is_none()),
+            "generated-only option was marked as public: {:?}",
+            option_result.suggestions
+        );
+    }
+
+    #[test]
+    fn public_ai_rejects_a_loaded_argument_spec_that_reuses_a_pinned_path_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let (generate_id, generate_entry) = crate::hook_backend::test_typed_entry(
+            "git#generate#0",
+            "generateSpec",
+            serde_json::json!({
+                "op": "spec-object",
+                "fields": [
+                    {"key": "name", "value": {"op": "string", "value": "git"}},
+                    {"key": "subcommands", "value": {"op": "array", "items": [{
+                        "op": "spec-object",
+                        "fields": [
+                            {"key": "name", "value": {"op": "string", "value": "parent"}},
+                            {"key": "args", "value": {"op": "array", "items": [{
+                                "op": "object",
+                                "fields": [
+                                    {"key": "name", "value": {"op": "string", "value": "target"}},
+                                    {"key": "jsLoadSpec", "value": {"op": "string", "value": "git#load#0"}}
+                                ]
+                            }]}}
+                        ]
+                    }]}}
+                ]
+            }),
+        );
+        let (load_id, load_entry) = crate::hook_backend::test_typed_entry(
+            "git#load#0",
+            "loadSpec",
+            serde_json::json!({
+                "op": "spec-object",
+                "fields": [
+                    {"key": "name", "value": {"op": "string", "value": "child"}},
+                    {"key": "subcommands", "value": {"op": "array", "items": [
+                        {"op": "spec-object", "fields": [{"key": "name", "value": {"op": "string", "value": "private-one"}}]},
+                        {"op": "spec-object", "fields": [{"key": "name", "value": {"op": "string", "value": "private-two"}}]}
+                    ]}}
+                ]
+            }),
+        );
+        fs::write(
+            dir.path().join("git.json"),
+            r#"{
+              "names":["git"],
+              "jsGenerateSpec":"git#generate#0",
+              "subcommands":[{"names":["parent"],"subcommands":[{"names":["child"]}]}]
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        trusted_fixture(&mut registry);
+        let native = crate::hook_backend::test_native_hooks(vec![(generate_id, generate_entry), (load_id, load_entry)]);
+        let _bound = crate::hook_backend::bind_native(Arc::new(native));
+        let cwd = dir.path().display().to_string();
+        let request = public_ai_request("git parent child ", &cwd);
+        let result = crate::hook_backend::enter_context(&cwd, &crate::hook_types::ShellContext::default(), || {
+            complete(&mut registry, &request)
+        });
+
+        assert!(
+            result
+                .suggestions
+                .iter()
+                .any(|suggestion| suggestion.name == "private-one")
+        );
+        assert!(
+            result
+                .suggestions
+                .iter()
+                .any(|suggestion| suggestion.name == "private-two")
+        );
+        assert!(
+            result.public_ai_context.is_none(),
+            "loaded spec reused a pinned path: {result:?}"
+        );
+        assert!(
+            result
+                .suggestions
+                .iter()
+                .all(|suggestion| suggestion.public_ai_candidate.is_none())
+        );
     }
 
     #[test]
@@ -5005,6 +5263,7 @@ mod tests {
                 query: "value".into(),
                 search_term: "value".into(),
                 only_suggest_args: false,
+                source: ActiveArgSource::PositionalValue,
             }
         }
 
