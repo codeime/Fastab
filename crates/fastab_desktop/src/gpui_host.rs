@@ -5,9 +5,13 @@ use std::sync::Arc;
 use std::{cell::RefCell, rc::Rc};
 
 use fastab_engine::{EngineClient, default_specs_dir};
+#[cfg(target_os = "macos")]
+use fastab_integrations::input_method::InputMethod;
 use gpui::{App, Application, Entity};
 use muda::MenuEvent;
 use tao::event_loop::ControlFlow;
+#[cfg(target_os = "macos")]
+use tracing::warn;
 use tracing::{debug, error, info, trace};
 use tray_icon::TrayIcon;
 
@@ -46,7 +50,7 @@ impl DesktopHost {
         match event {
             Event::JevSettingsChanged => self.overlay.reload_jev(cx),
             Event::JevCredentialsLoaded { epoch, credentials } => {
-                self.overlay.jev_credentials_loaded(epoch, credentials, cx);
+                self.overlay.jev_credentials_loaded(epoch, credentials);
             },
             Event::JevDebounced(token) => self.overlay.start_jev_request(token, cx),
             Event::JevComplete { token, result } => self.overlay.apply_jev(token, result, cx),
@@ -88,7 +92,6 @@ impl DesktopHost {
             Event::MenuClicked(id) => {
                 info!(%id, "Menu Event");
                 let menu_event = MenuEvent { id: muda::MenuId(id) };
-                crate::webview::menu::handle_event(&menu_event, &self.proxy);
                 tray::handle_event(&menu_event, &self.proxy);
             },
             Event::PermissionSnapshot(snapshot) => {
@@ -325,7 +328,28 @@ pub fn start_application(
     application.run(move |cx: &mut App| match setup(cx) {
         Ok((host, event_rx)) => {
             *reopen_proxy.borrow_mut() = Some(host.read(cx).proxy.clone());
+            #[cfg(target_os = "macos")]
+            crate::webview::menu::install(cx, host.read(cx).proxy.clone());
             run(host.clone(), event_rx, cx);
+            #[cfg(target_os = "macos")]
+            {
+                let proxy = host.read(cx).proxy.clone();
+                // This foreground task runs after GPUI has entered its event
+                // loop. Only a previously chosen IME is restored, and its
+                // repair runs away from the UI thread.
+                cx.spawn(async move |_| {
+                    tokio::spawn(async move {
+                        let input_method = InputMethod::default();
+                        match input_method.restore_if_chosen().await {
+                            Ok(false) => return,
+                            Ok(true) => {},
+                            Err(err) => warn!(%err, "Failed to restore the previously installed input method"),
+                        }
+                        crate::permissions::spawn_check(&proxy);
+                    });
+                })
+                .detach();
+            }
             host.update(cx, |host, _cx| {
                 info!("{} has started", fastab_util::PRODUCT_NAME);
                 #[cfg(target_os = "macos")]

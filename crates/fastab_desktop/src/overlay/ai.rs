@@ -153,7 +153,7 @@ impl OverlayController {
         }));
     }
 
-    pub(crate) fn jev_credentials_loaded(&mut self, epoch: u64, credentials: LoadedCredentials, cx: &mut App) {
+    pub(crate) fn jev_credentials_loaded(&mut self, epoch: u64, credentials: LoadedCredentials) {
         if epoch != self.jev.epoch {
             return;
         }
@@ -161,8 +161,10 @@ impl OverlayController {
         match credentials.0 {
             Ok(Some(key)) if !key.is_empty() && key.len() <= 4096 && key.iter().all(u8::is_ascii_graphic) => {
                 self.jev.key = Some(Arc::new(key));
-                // Produce provenance for the current input only after enabling.
-                self.recomplete(cx);
+                // The next local completion will include AI provenance. Do not
+                // restart the current engine request just because Keychain is
+                // ready: that can discard its result and replace the visible
+                // suggestions with the engine's loading placeholder.
             },
             _ => {
                 self.jev.key = None;

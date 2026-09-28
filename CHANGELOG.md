@@ -2,6 +2,11 @@
 
 ## v0.0.3
 
+- fix: native Edit menu actions now use GPUI's action table, preventing the Select All deadlock and preserving keyboard editing shortcuts
+- fix: restore a previously chosen input method on launch; serialize install and removal without blocking async workers or changing installation state during status checks
+- change: AI settings use colored connection results, an enable checkbox and clear provider selection; a short data-use notice replaces the separate consent toggle
+- fix: saved API keys show a masked placeholder without loading the secret into the input; background presence checks discard stale results and wait for pending Keychain writes
+- fix: AI credential readiness no longer restarts local completion or replaces existing suggestions with the engine loading indicator
 - feat: show a gently fading AI icon at the bottom left of the completion popup during requests, while local suggestions remain usable
 - fix: Jev settings pause requests immediately and save in the background, without blocking input on file locks; stale saves cannot replace newer settings
 - fix: failed AI saves remain retryable, and closing settings keeps in-flight saves disabled across restarts

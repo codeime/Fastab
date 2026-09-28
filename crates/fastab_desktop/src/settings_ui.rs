@@ -19,6 +19,8 @@ use crate::event::{Event, WindowEvent};
 use crate::permissions::{self, PermId, PermReady, PermissionSnapshot};
 use crate::platform::PlatformBoundEvent;
 use crate::webview::DASHBOARD_ID;
+#[cfg(target_os = "macos")]
+use crate::webview::menu::{Minimize, Zoom};
 
 pub const SETTINGS_WINDOW_TITLE: &str = "Settings";
 
@@ -179,6 +181,10 @@ impl Render for SettingsWindow {
                     cx.stop_propagation();
                 }
             });
+        #[cfg(target_os = "macos")]
+        let root = root
+            .on_action(|_: &Minimize, window, _| window.minimize_window())
+            .on_action(|_: &Zoom, window, _| window.zoom_window());
 
         if self.gate.still_checking() {
             return root.child(permission_checking_page(zh, chrome, entity));
@@ -1414,7 +1420,7 @@ fn optional_input_method_card(
                     .child(if busy {
                         if zh { "处理中…" } else { "Working..." }.to_string()
                     } else if ime == PermReady::Ready {
-                        if zh { "已安装" } else { "Installed" }.to_string()
+                        if zh { "已启用" } else { "Enabled" }.to_string()
                     } else {
                         repair_label.to_string()
                     })
@@ -1716,13 +1722,13 @@ fn perm_label(id: PermId, zh: bool) -> (&'static str, &'static str, &'static str
         ),
         (PermId::InputMethod, true) => (
             "输入法集成",
-            "仅用于 Kitty、Alacritty、Zed、Ghostty、WezTerm 和 Otty 的光标跟踪，不是打开设置所必需的。",
-            "安装输入法",
+            "可选：用于 Kitty、Alacritty、Zed、Ghostty、WezTerm 和 Otty 的光标跟踪。启用后随 Fastab 启动自动恢复。",
+            "启用输入法",
         ),
         (PermId::InputMethod, false) => (
             "Input Method",
-            "Only for cursor tracking in Kitty, Alacritty, Zed, Ghostty, WezTerm, and Otty. Not required to open settings.",
-            "Install Input Method",
+            "Optional cursor tracking in Kitty, Alacritty, Zed, Ghostty, WezTerm, and Otty. Restored automatically when Fastab starts.",
+            "Enable Input Method",
         ),
     }
 }
@@ -1734,8 +1740,10 @@ fn perm_status_label(id: PermId, state: PermReady, zh: bool) -> &'static str {
             (PermReady::Checking, false) => "Checking",
             (PermReady::Ready, true) => "已就绪",
             (PermReady::Ready, false) => "Ready",
-            (_, true) => "未安装",
-            (_, false) => "Not installed",
+            (PermReady::Missing, true) => "未就绪",
+            (PermReady::Missing, false) => "Not ready",
+            (PermReady::Error, true) => "检查失败",
+            (PermReady::Error, false) => "Check failed",
         };
     }
     match (state, zh) {

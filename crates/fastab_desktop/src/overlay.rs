@@ -268,9 +268,10 @@ impl OverlayController {
     }
 
     pub fn apply_theme(&mut self, cx: &mut App) {
-        if let Err(err) = fastab_settings::settings::init_global() {
-            warn!(%err, "failed to reload settings from disk");
-        }
+        // Startup and the file watcher populate the shared settings cache;
+        // in-process writes also update it before dispatching this event.
+        // Reloading here would take a blocking file lock on the UI thread,
+        // including after an AI input edit triggers a background save.
         self.state.update(cx, |overlay, cx| {
             apply_settings(overlay);
             cx.notify();

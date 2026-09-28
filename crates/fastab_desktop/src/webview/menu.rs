@@ -1,193 +1,201 @@
-#[allow(unused_imports)]
-use fastab_util::consts::PRODUCT_NAME;
-use fastab_util::consts::url::{ISSUE_TRACKER, RELEASE_NOTES, USER_MANUAL};
-#[allow(unused_imports)]
-use muda::{Menu, MenuEvent, Submenu};
-use tao::event_loop::ControlFlow;
+//! The native menu bar belongs to GPUI's NSApplication. Muda is used only by
+//! the tray; installing a Muda main menu leaves GPUI with no menu action tags.
 
-use crate::event::{Event, WindowEvent};
-use crate::{DASHBOARD_ID, EventLoopProxy};
+use gpui::actions;
 
-const DASHBOARD_QUIT: &str = "dashboard-quit";
-const DASHBOARD_CLOSE: &str = "dashboard-close";
-const DASHBOARD_ABOUT: &str = "dashboard-about";
-const DASHBOARD_CHECK_FOR_UPDATES: &str = "dashboard-check-for-updates";
-const DASHBOARD_OPEN_GITHUB: &str = "dashboard-open-github";
-const DASHBOARD_OPEN_RELEASE_NOTES: &str = "dashboard-open-release-notes";
-const DASHBOARD_REPORT_ISSUE: &str = "dashboard-report-issue";
+actions!(fastab_edit, [Cut, Copy, Paste, SelectAll, Undo, Redo]);
 
 #[cfg(target_os = "macos")]
-pub fn menu_bar() -> Menu {
-    use muda::{MenuItemBuilder, PredefinedMenuItem, Submenu};
+mod macos {
+    use fastab_util::consts::PRODUCT_NAME;
+    use fastab_util::consts::url::{ISSUE_TRACKER, RELEASE_NOTES, USER_MANUAL};
+    use gpui::{App, KeyBinding, Menu, MenuItem, OsAction, actions};
 
-    let menu_bar = Menu::new();
+    use super::{Copy, Cut, Paste, Redo, SelectAll, Undo};
+    use crate::event::{Event, WindowEvent};
+    use crate::{DASHBOARD_ID, EventLoopProxy};
 
-    let app_submenu = Submenu::new(PRODUCT_NAME, true);
-    app_submenu
-        .append_items(&[
-            &MenuItemBuilder::new()
-                .text(format!("About {PRODUCT_NAME}"))
-                .id(DASHBOARD_ABOUT.into())
-                .enabled(true)
-                .build(),
-            &MenuItemBuilder::new()
-                .text("Check for Updates…")
-                .id(DASHBOARD_CHECK_FOR_UPDATES.into())
-                .enabled(true)
-                .build(),
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::services(None),
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::hide(None),
-            &PredefinedMenuItem::hide_others(None),
-            &PredefinedMenuItem::show_all(None),
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::quit(Some("Quit Fastab")),
-        ])
-        .unwrap();
+    actions!(
+        fastab_menu,
+        [
+            About,
+            CheckForUpdates,
+            OpenGithub,
+            OpenReleaseNotes,
+            ReportIssue,
+            CloseWindow,
+            Hide,
+            HideOthers,
+            ShowAll,
+            Quit,
+            Minimize,
+            Zoom,
+            BringAllToFront,
+        ]
+    );
 
-    menu_bar.append(&app_submenu).unwrap();
+    fn send_settings_event(proxy: &EventLoopProxy, window_event: WindowEvent) {
+        let _ = proxy.send_event(Event::WindowEvent {
+            window_id: DASHBOARD_ID,
+            window_event,
+        });
+    }
 
-    let file_submenu = Submenu::new("File", true);
-    file_submenu
-        .append_items(&[&MenuItemBuilder::new()
-            .text("Close Window")
-            .id(DASHBOARD_CLOSE.into())
-            .enabled(true)
-            .accelerator(Some("super+w"))
-            .unwrap()
-            .build()])
-        .unwrap();
+    fn open_link(url: &str) {
+        if let Err(err) = fastab_util::open_url(url) {
+            tracing::error!(%err, url, "Failed to open menu link");
+        }
+    }
 
-    menu_bar.append(&file_submenu).unwrap();
+    #[allow(unexpected_cfgs)]
+    fn bring_all_to_front(_: &BringAllToFront, _: &mut App) {
+        // AppKit's Window menu command preserves the order and visibility of
+        // GPUI's parked overlay window.
+        unsafe {
+            use objc::{class, msg_send, sel, sel_impl};
+            let app: cocoa::base::id = msg_send![class!(NSApplication), sharedApplication];
+            let _: () = msg_send![app, arrangeInFront: cocoa::base::nil];
+        }
+    }
 
-    let edit_submenu = Submenu::new("Edit", true);
-    edit_submenu
-        .append_items(&[
-            &PredefinedMenuItem::undo(None),
-            &PredefinedMenuItem::redo(None),
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::cut(None),
-            &PredefinedMenuItem::copy(None),
-            &PredefinedMenuItem::paste(None),
-            &PredefinedMenuItem::select_all(None),
-        ])
-        .unwrap();
+    #[allow(unexpected_cfgs)]
+    fn finish_native_menu() {
+        // GPUI 0.2.2 passes an NSMenuItem to setServicesMenu:, which expects
+        // its NSMenu submenu. Build it as an ordinary submenu, then attach
+        // the actual NSMenu here. Keep Undo/Redo native for system text fields;
+        // our GPUI inputs have no handlers and remain unavailable.
+        unsafe {
+            use cocoa::base::{id, nil};
+            use objc::{class, msg_send, sel, sel_impl};
 
-    menu_bar.append(&edit_submenu).unwrap();
+            let app: id = msg_send![class!(NSApplication), sharedApplication];
+            let main_menu: id = msg_send![app, mainMenu];
+            let app_item: id = msg_send![main_menu, itemAtIndex: 0isize];
+            let app_menu: id = msg_send![app_item, submenu];
+            let services_item: id = msg_send![app_menu, itemAtIndex: 3isize];
+            let services_menu: id = msg_send![services_item, submenu];
+            if services_menu != nil {
+                let _: () = msg_send![app, setServicesMenu: services_menu];
+            }
 
-    let window_submenu = Submenu::new("Window", true);
-    window_submenu
-        .append_items(&[
-            &PredefinedMenuItem::minimize(None),
-            &PredefinedMenuItem::maximize(Some("Zoom")),
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::bring_all_to_front(None),
-        ])
-        .unwrap();
+            let edit_item: id = msg_send![main_menu, itemAtIndex: 2isize];
+            let edit_menu: id = msg_send![edit_item, submenu];
+            let undo_item: id = msg_send![edit_menu, itemAtIndex: 0isize];
+            let redo_item: id = msg_send![edit_menu, itemAtIndex: 1isize];
+            let _: () = msg_send![undo_item, setAction: sel!(undo:)];
+            let _: () = msg_send![redo_item, setAction: sel!(redo:)];
 
-    menu_bar.append(&window_submenu).unwrap();
+            let window_item: id = msg_send![main_menu, itemAtIndex: 3isize];
+            let window_menu: id = msg_send![window_item, submenu];
+            let minimize_item: id = msg_send![window_menu, itemAtIndex: 0isize];
+            let zoom_item: id = msg_send![window_menu, itemAtIndex: 1isize];
+            let _: () = msg_send![minimize_item, setAction: sel!(performMiniaturize:)];
+            let _: () = msg_send![zoom_item, setAction: sel!(performZoom:)];
+        }
+    }
 
-    let help_submenu = Submenu::new("Help", true);
-    help_submenu
-        .append_items(&[
-            &MenuItemBuilder::new()
-                .text(format!("{PRODUCT_NAME} on GitHub"))
-                .id(DASHBOARD_OPEN_GITHUB.into())
-                .enabled(true)
-                .build(),
-            &MenuItemBuilder::new()
-                .text("Release Notes")
-                .id(DASHBOARD_OPEN_RELEASE_NOTES.into())
-                .enabled(true)
-                .build(),
-            &MenuItemBuilder::new()
-                .text("Report an Issue")
-                .id(DASHBOARD_REPORT_ISSUE.into())
-                .enabled(true)
-                .build(),
-        ])
-        .unwrap();
-
-    menu_bar.append(&help_submenu).unwrap();
-
-    menu_bar
-}
-
-// TODO(chay): add whatever is ergonomic for Windows
-#[cfg(target_os = "windows")]
-pub fn menu_bar() -> MenuBar {
-    let mut menu_bar = MenuBar::new();
-
-    let mut app_submenu = MenuBar::new();
-    app_submenu.add_native_item(MenuItem::Hide);
-    app_submenu.add_native_item(MenuItem::HideOthers);
-    app_submenu.add_native_item(MenuItem::ShowAll);
-    app_submenu.add_native_item(MenuItem::Separator);
-    app_submenu.add_native_item(MenuItem::CloseWindow);
-    app_submenu.add_native_item(MenuItem::Quit);
-
-    menu_bar.add_submenu(PRODUCT_NAME, true, app_submenu);
-
-    let mut edit_submenu = MenuBar::new();
-
-    edit_submenu.add_native_item(MenuItem::Undo);
-    edit_submenu.add_native_item(MenuItem::Redo);
-    edit_submenu.add_native_item(MenuItem::Separator);
-    edit_submenu.add_native_item(MenuItem::Cut);
-    edit_submenu.add_native_item(MenuItem::Copy);
-    edit_submenu.add_native_item(MenuItem::Paste);
-    edit_submenu.add_native_item(MenuItem::Paste);
-    edit_submenu.add_native_item(MenuItem::SelectAll);
-
-    menu_bar.add_submenu("Edit", true, edit_submenu);
-
-    menu_bar
-}
-
-#[cfg(target_os = "linux")]
-pub fn menu_bar() -> Menu {
-    Menu::new()
-}
-
-pub fn handle_event(menu_event: &MenuEvent, proxy: &EventLoopProxy) {
-    match &menu_event.id().0 {
-        menu_id if menu_id == DASHBOARD_QUIT => proxy.send_event(Event::ControlFlow(ControlFlow::Exit)).unwrap(),
-        menu_id if menu_id == DASHBOARD_CLOSE => proxy
-            .send_event(Event::WindowEvent {
-                window_id: DASHBOARD_ID,
-                window_event: WindowEvent::Close,
-            })
-            .unwrap(),
-        menu_id if menu_id == DASHBOARD_ABOUT => proxy
-            .send_event(Event::WindowEvent {
-                window_id: DASHBOARD_ID,
-                window_event: WindowEvent::Batch(vec![
+    pub(super) fn install(cx: &mut App, proxy: EventLoopProxy) {
+        let about_proxy = proxy.clone();
+        cx.on_action(move |_: &About, _| {
+            send_settings_event(
+                &about_proxy,
+                WindowEvent::Batch(vec![
                     WindowEvent::NavigateRelative { path: "/about".into() },
                     WindowEvent::Show,
                 ]),
-            })
-            .unwrap(),
-        menu_id if menu_id == DASHBOARD_CHECK_FOR_UPDATES => {
-            tokio::runtime::Handle::current().spawn(async move {
+            );
+        });
+        cx.on_action(|_: &CheckForUpdates, _| {
+            tokio::spawn(async {
                 let _ = crate::update::check_for_update(true, true).await;
             });
-        },
-        menu_id if menu_id == DASHBOARD_OPEN_GITHUB => {
-            if let Err(err) = fastab_util::open_url(USER_MANUAL) {
-                tracing::error!(%err, "Failed to open project url");
-            }
-        },
-        menu_id if menu_id == DASHBOARD_OPEN_RELEASE_NOTES => {
-            if let Err(err) = fastab_util::open_url(RELEASE_NOTES) {
-                tracing::error!(%err, "Failed to open release notes url");
-            }
-        },
-        menu_id if menu_id == DASHBOARD_REPORT_ISSUE => {
-            if let Err(err) = fastab_util::open_url(ISSUE_TRACKER) {
-                tracing::error!(%err, "Failed to open issue tracker url");
-            }
-        },
-        _ => (),
+        });
+        cx.on_action(|_: &OpenGithub, _| open_link(USER_MANUAL));
+        cx.on_action(|_: &OpenReleaseNotes, _| open_link(RELEASE_NOTES));
+        cx.on_action(|_: &ReportIssue, _| open_link(ISSUE_TRACKER));
+        cx.on_action(move |_: &CloseWindow, _| send_settings_event(&proxy, WindowEvent::Close));
+        cx.on_action(|_: &Hide, cx| cx.hide());
+        cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+        cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+        cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(bring_all_to_front);
+
+        cx.bind_keys([
+            KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("cmd-w", CloseWindow, None),
+            KeyBinding::new("cmd-h", Hide, None),
+            KeyBinding::new("cmd-alt-h", HideOthers, None),
+            KeyBinding::new("cmd-m", Minimize, None),
+            KeyBinding::new("cmd-a", SelectAll, Some("SettingsInput")),
+            KeyBinding::new("cmd-z", Undo, Some("SettingsInput")),
+            KeyBinding::new("cmd-shift-z", Redo, Some("SettingsInput")),
+            KeyBinding::new("cmd-x", Cut, Some("SettingsInput")),
+            KeyBinding::new("cmd-c", Copy, Some("SettingsInput")),
+            KeyBinding::new("cmd-v", Paste, Some("SettingsInput")),
+        ]);
+        cx.set_menus(vec![
+            Menu {
+                name: PRODUCT_NAME.into(),
+                items: vec![
+                    MenuItem::action(format!("About {PRODUCT_NAME}"), About),
+                    MenuItem::action("Check for Updates…", CheckForUpdates),
+                    MenuItem::separator(),
+                    MenuItem::submenu(Menu {
+                        name: "Services".into(),
+                        items: vec![],
+                    }),
+                    MenuItem::separator(),
+                    MenuItem::action(format!("Hide {PRODUCT_NAME}"), Hide),
+                    MenuItem::action("Hide Others", HideOthers),
+                    MenuItem::action("Show All", ShowAll),
+                    MenuItem::separator(),
+                    MenuItem::action(format!("Quit {PRODUCT_NAME}"), Quit),
+                ],
+            },
+            Menu {
+                name: "File".into(),
+                items: vec![MenuItem::action("Close Window", CloseWindow)],
+            },
+            Menu {
+                name: "Edit".into(),
+                items: vec![
+                    // No handlers or bindings exist for Undo/Redo yet, so GPUI
+                    // validates these menu items as unavailable.
+                    MenuItem::os_action("Undo", Undo, OsAction::Undo),
+                    MenuItem::os_action("Redo", Redo, OsAction::Redo),
+                    MenuItem::separator(),
+                    MenuItem::os_action("Cut", Cut, OsAction::Cut),
+                    MenuItem::os_action("Copy", Copy, OsAction::Copy),
+                    MenuItem::os_action("Paste", Paste, OsAction::Paste),
+                    MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
+                ],
+            },
+            Menu {
+                name: "Window".into(),
+                items: vec![
+                    MenuItem::action("Minimize", Minimize),
+                    MenuItem::action("Zoom", Zoom),
+                    MenuItem::separator(),
+                    MenuItem::action("Bring All to Front", BringAllToFront),
+                ],
+            },
+            Menu {
+                name: "Help".into(),
+                items: vec![
+                    MenuItem::action(format!("{PRODUCT_NAME} on GitHub"), OpenGithub),
+                    MenuItem::action("Release Notes", OpenReleaseNotes),
+                    MenuItem::action("Report an Issue", ReportIssue),
+                ],
+            },
+        ]);
+        finish_native_menu();
     }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) use macos::{Minimize, Zoom};
+
+#[cfg(target_os = "macos")]
+pub fn install(cx: &mut gpui::App, proxy: crate::EventLoopProxy) {
+    macos::install(cx, proxy);
 }

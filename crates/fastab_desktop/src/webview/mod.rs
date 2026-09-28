@@ -13,7 +13,6 @@ use tao::dpi::LogicalSize;
 use tao::window::Theme as TaoTheme;
 use tracing::{debug, error, warn};
 
-use self::menu::menu_bar;
 use self::notification::WebviewNotificationsState;
 use crate::event::{Event, WindowEvent};
 use crate::notification_bus::{JsonNotification, NOTIFICATION_BUS};
@@ -157,11 +156,6 @@ impl WebviewManager {
         if let Err(err) = tray.set_visible(tray_visible) {
             error!(%err, "Failed to set tray visible");
         }
-
-        #[allow(unused_variables)]
-        let menu_bar = menu_bar();
-        #[cfg(target_os = "macos")]
-        menu_bar.init_for_nsapp();
 
         self.proxy
             .send_event(Event::PlatformBoundEvent(PlatformBoundEvent::InitializePostRun))

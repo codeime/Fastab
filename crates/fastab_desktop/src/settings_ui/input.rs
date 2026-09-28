@@ -9,11 +9,14 @@ use gpui::{
     fill, point, px, rgb, size,
 };
 
+use crate::webview::menu::{Copy, Cut, Paste, SelectAll};
+
 use super::theme::Chrome;
 
 pub(super) struct Input {
     id: SharedString,
     value: String,
+    placeholder: Option<SharedString>,
     password: bool,
     limit: usize,
     focus: FocusHandle,
@@ -40,6 +43,7 @@ impl Input {
         Self {
             id: id.into(),
             value: Self::bounded(value, limit),
+            placeholder: None,
             password,
             limit,
             focus: cx.focus_handle().tab_stop(true),
@@ -58,6 +62,11 @@ impl Input {
 
     pub(super) fn value(&self) -> &str {
         &self.value
+    }
+
+    pub(super) fn set_placeholder(&mut self, placeholder: Option<SharedString>, cx: &mut Context<'_, Self>) {
+        self.placeholder = placeholder;
+        cx.notify();
     }
 
     pub(super) fn edit_revision(&self) -> u64 {
@@ -192,6 +201,63 @@ impl Input {
         Some(changed)
     }
 
+    fn select_all(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.enabled {
+            return;
+        }
+        self.anchor = 0;
+        self.cursor = self.value.len();
+        cx.notify();
+    }
+
+    fn copy(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.enabled || self.password {
+            return;
+        }
+        let selection = self.selection();
+        if !selection.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(self.value[selection].to_owned()));
+        }
+    }
+
+    fn cut(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.enabled || self.password {
+            return;
+        }
+        let selection = self.selection();
+        if !selection.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(self.value[selection.clone()].to_owned()));
+            self.replace(selection, "", cx);
+        }
+    }
+
+    fn paste(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.enabled {
+            return;
+        }
+        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text())
+            && let Some(text) = Self::paste_text(&text, self.password)
+        {
+            self.replace(self.selection(), text, cx);
+        }
+    }
+
+    fn select_all_action(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<'_, Self>) {
+        self.select_all(cx);
+    }
+
+    fn copy_action(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<'_, Self>) {
+        self.copy(cx);
+    }
+
+    fn cut_action(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<'_, Self>) {
+        self.cut(cx);
+    }
+
+    fn paste_action(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<'_, Self>) {
+        self.paste(cx);
+    }
+
     fn key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<'_, Self>) {
         if !self.enabled {
             return;
@@ -201,27 +267,10 @@ impl Input {
         let mut handled = true;
         if modifiers.platform {
             match key {
-                "a" => {
-                    self.anchor = 0;
-                    self.cursor = self.value.len();
-                },
-                "c" | "x" => {
-                    if !self.password && !self.selection().is_empty() {
-                        cx.write_to_clipboard(ClipboardItem::new_string(self.value[self.selection()].to_owned()));
-                        if key == "x" {
-                            self.replace(self.selection(), "", cx);
-                        }
-                    }
-                },
-                "v" => {
-                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                        // Keys copied from a dashboard or a file often carry a
-                        // trailing newline. Do not silently reject the whole key.
-                        if let Some(text) = Self::paste_text(&text, self.password) {
-                            self.replace(self.selection(), text, cx);
-                        }
-                    }
-                },
+                "a" => self.select_all(cx),
+                "c" => self.copy(cx),
+                "x" => self.cut(cx),
+                "v" => self.paste(cx),
                 "left" => {
                     self.cursor = 0;
                     if !modifiers.shift {
@@ -441,9 +490,23 @@ impl Render for Input {
             .text_color(rgb(chrome.text))
             .overflow_hidden()
             .track_focus(&self.focus)
+            .key_context("SettingsInput")
             .cursor(gpui::CursorStyle::IBeam)
             .focus(|style| style.border_color(rgb(chrome.accent)))
             .when(!self.enabled, |style| style.opacity(0.55))
+            .when(self.enabled, |input| {
+                input
+                    .on_action(cx.listener(Self::select_all_action))
+                    .on_action(cx.listener(Self::paste_action))
+            })
+            .when(
+                self.enabled && !self.password && !self.selection().is_empty(),
+                |input| {
+                    input
+                        .on_action(cx.listener(Self::copy_action))
+                        .on_action(cx.listener(Self::cut_action))
+                },
+            )
             .on_key_down(cx.listener(Self::key))
             .on_mouse_down(
                 MouseButton::Left,
@@ -475,7 +538,10 @@ impl Render for Input {
                     move |bounds, (), window, cx| {
                         entity.update(cx, |input, cx| {
                             let style = window.text_style();
-                            let display: SharedString = if input.password {
+                            let showing_placeholder = input.value.is_empty() && input.placeholder.is_some();
+                            let display: SharedString = if showing_placeholder {
+                                input.placeholder.clone().unwrap_or_default()
+                            } else if input.password {
                                 "*".repeat(input.value.chars().count()).into()
                             } else {
                                 input.value.clone().into()
@@ -483,7 +549,11 @@ impl Render for Input {
                             let run = TextRun {
                                 len: display.len(),
                                 font: style.font(),
-                                color: style.color,
+                                color: if showing_placeholder {
+                                    rgb(chrome.muted).into()
+                                } else {
+                                    style.color
+                                },
                                 background_color: None,
                                 underline: None,
                                 strikethrough: None,
@@ -542,6 +612,7 @@ impl Render for Input {
 #[cfg(test)]
 mod tests {
     use super::Input;
+    use crate::webview::menu::{Copy, Cut, Paste, SelectAll};
     use gpui::prelude::*;
     use gpui::{App, ClipboardItem, Context, Entity, Modifiers, TestAppContext, VisualTestContext, Window, div, px};
     use serde_json::json;
@@ -677,6 +748,111 @@ mod tests {
         click(window, "model");
         window.simulate_keystrokes("tab");
         assert!(snapshot(window, &base).2, "re-enabled base returns to the Tab order");
+    }
+
+    #[gpui::test]
+    fn saved_key_placeholder_never_becomes_password_text(cx: &mut TestAppContext) {
+        let _settings = fastab_settings::settings::install_override(fastab_settings::Settings::from_slice(&[(
+            "dashboard.theme",
+            json!("light"),
+        )]));
+        let (fields, window) = cx.add_window_view(|_, cx| InputFields {
+            model: cx.new(|cx| Input::new("placeholder-model", String::new(), false, 128, cx)),
+            base: cx.new(|cx| Input::new("placeholder-base", String::new(), false, 2048, cx)),
+            key: cx.new(|cx| Input::new("placeholder-key", String::new(), true, 4096, cx)),
+        });
+        let key = fields.read_with(window, |fields, _| fields.key.clone());
+        window.update(|_, app| {
+            key.update(app, |input, cx| input.set_placeholder(Some("********".into()), cx));
+        });
+        window.run_until_parked();
+        assert_eq!(snapshot(window, &key).0, "");
+        assert_eq!(snapshot(window, &key).1, 0);
+
+        click(window, "key");
+        window.simulate_input("sk-demo");
+        assert_eq!(snapshot(window, &key).0, "sk-demo");
+        window.simulate_keystrokes("cmd-a backspace");
+        assert_eq!(snapshot(window, &key).0, "");
+        assert!(window.update(|_, app| key.read(app).placeholder.is_some()));
+    }
+
+    #[gpui::test]
+    fn menu_actions_edit_only_the_focused_enabled_field(cx: &mut TestAppContext) {
+        let _settings = fastab_settings::settings::install_override(fastab_settings::Settings::from_slice(&[(
+            "dashboard.theme",
+            json!("light"),
+        )]));
+        let (fields, window) = cx.add_window_view(|_, cx| InputFields {
+            model: cx.new(|cx| Input::new("menu-model", String::new(), false, 128, cx)),
+            base: cx.new(|cx| Input::new("menu-base", String::new(), false, 2048, cx)),
+            key: cx.new(|cx| Input::new("menu-key", String::new(), true, 4096, cx)),
+        });
+        let (base, key) = fields.read_with(window, |fields, _| (fields.base.clone(), fields.key.clone()));
+
+        // Opening Edit immediately after launch must leave Select All disabled.
+        assert!(!window.update(|window, app| window.is_action_available(&SelectAll, app)));
+        window.dispatch_action(SelectAll);
+
+        click(window, "base");
+        window.simulate_input("original");
+        assert!(window.update(|window, app| window.is_action_available(&Paste, app)));
+        window.dispatch_action(SelectAll);
+        window.write_to_clipboard(ClipboardItem::new_string("replacement".into()));
+        window.dispatch_action(Paste);
+        assert_eq!(snapshot(window, &base).0, "replacement");
+        window.dispatch_action(SelectAll);
+        assert!(window.update(|window, app| window.is_action_available(&Copy, app)));
+        window.dispatch_action(Copy);
+        assert_eq!(
+            window.read_from_clipboard().and_then(|item| item.text()),
+            Some("replacement".into())
+        );
+        window.dispatch_action(Cut);
+        assert_eq!(snapshot(window, &base).0, "");
+
+        click(window, "key");
+        window.simulate_input("sk-original");
+        window.dispatch_action(SelectAll);
+        assert!(!window.update(|window, app| window.is_action_available(&Copy, app)));
+        assert!(!window.update(|window, app| window.is_action_available(&Cut, app)));
+        window.write_to_clipboard(ClipboardItem::new_string("sentinel".into()));
+        window.dispatch_action(Copy);
+        window.dispatch_action(Cut);
+        assert_eq!(snapshot(window, &key).0, "sk-original");
+        assert_eq!(
+            window.read_from_clipboard().and_then(|item| item.text()),
+            Some("sentinel".into())
+        );
+        window.write_to_clipboard(ClipboardItem::new_string(" \r\nsk-new\r\n ".into()));
+        window.dispatch_action(Paste);
+        assert_eq!(snapshot(window, &key).0, "sk-new");
+
+        click(window, "base");
+        window.update(|_, app| {
+            base.update(app, |input, cx| {
+                input.set("locked".into(), cx);
+            });
+        });
+        window.dispatch_action(SelectAll);
+        window.update(|_, app| {
+            base.update(app, |input, cx| {
+                input.enabled = false;
+                cx.notify();
+            });
+        });
+        window.run_until_parked();
+        assert!(!window.update(|window, app| window.is_action_available(&Paste, app)));
+        window.write_to_clipboard(ClipboardItem::new_string("sentinel".into()));
+        window.dispatch_action(Copy);
+        window.dispatch_action(Cut);
+        window.dispatch_action(Paste);
+        window.dispatch_action(SelectAll);
+        assert_eq!(snapshot(window, &base).0, "locked");
+        assert_eq!(
+            window.read_from_clipboard().and_then(|item| item.text()),
+            Some("sentinel".into())
+        );
     }
 
     #[test]

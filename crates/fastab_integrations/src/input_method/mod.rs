@@ -2,6 +2,7 @@
 #![allow(unexpected_cfgs)]
 
 use std::borrow::Cow;
+use std::fs::{File, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::ptr;
@@ -17,10 +18,10 @@ use core_foundation::string::{CFString, CFStringRef};
 use core_foundation::url::{CFURL, CFURLRef};
 use core_foundation::{declare_TCFType, impl_TCFType};
 use fastab_settings::state;
-use fastab_util::consts::CLI_BINARY_NAME;
-use fastab_util::directories::home_dir;
+use fastab_util::directories::{fig_data_dir, home_dir};
 use fastab_util::macos::BUNDLE_CONTENTS_HELPERS_PATH;
 use macos_utils::applications;
+use nix::fcntl::{Flock, FlockArg};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use objc::runtime::Object;
@@ -30,7 +31,7 @@ use tokio::fs;
 use tracing::{debug, info, trace};
 
 use crate::Integration;
-use crate::error::{ErrorExt, Result};
+use crate::error::{Error, ErrorExt, Result};
 
 pub enum __TISInputSource {}
 pub type TISInputSourceRef = *const __TISInputSource;
@@ -85,6 +86,60 @@ pub struct InputMethod {
 /// SHA-256 of the IME executable we last launched. Compared with the on-disk
 /// binary to decide whether an already-running process must be replaced.
 const LAUNCHED_BINARY_HASH_KEY: &str = "input-method.launched-binary-sha256";
+/// An explicit uninstall must override an old symlink or the legacy enabled
+/// bit. `None` means this preference predates the restore-on-launch behavior.
+const RESTORE_ON_LAUNCH_KEY: &str = "input-method.restore-on-launch";
+const INPUT_METHOD_LOCK_FILE: &str = "input-method.operation.lock";
+
+async fn lock_input_method_file(path: &Path) -> Result<Flock<File>> {
+    let path = path.to_path_buf();
+    let mut file = tokio::task::spawn_blocking(move || -> Result<File> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // Keep this file across runs so every process locks the same inode.
+        Ok(OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(path)?)
+    })
+    .await
+    .map_err(|error| Error::Custom(format!("Could not open input method operation lock: {error}").into()))??;
+
+    loop {
+        match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+            Ok(guard) => return Ok(guard),
+            Err((unlocked_file, nix::errno::Errno::EWOULDBLOCK)) => {
+                file = unlocked_file;
+                // Waiting is cancellable: dropping this future closes the file
+                // without leaving a blocking worker or an eventual lock owner.
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            },
+            Err((_, error)) => return Err(error.into()),
+        }
+    }
+}
+
+async fn operation_lock() -> Result<Flock<File>> {
+    let path = fig_data_dir()?.join(INPUT_METHOD_LOCK_FILE);
+    lock_input_method_file(&path).await
+}
+
+fn restore_on_launch(explicit: Option<bool>, legacy_enabled: Option<bool>, correct_symlink: bool) -> bool {
+    explicit.unwrap_or(legacy_enabled == Some(true) || correct_symlink)
+}
+
+fn running_and_enabled(running: bool, palette_enabled: bool) -> Result<(), InputMethodError> {
+    if !running {
+        return Err(InputMethodError::NotRunning);
+    }
+    if !palette_enabled {
+        return Err(InputMethodError::NotEnabled);
+    }
+    Ok(())
+}
 
 fn sha256_hex(path: &Path) -> Option<String> {
     use std::fmt::Write;
@@ -284,6 +339,33 @@ impl std::default::Default for InputMethod {
 }
 
 impl InputMethod {
+    /// Restore only a previously chosen integration. Older releases had no
+    /// separate preference, and a failed status probe could clear their
+    /// enabled bit, so an existing correct symlink is migration evidence too.
+    pub fn should_restore_on_launch(&self) -> Result<bool> {
+        let explicit = state::get_bool(RESTORE_ON_LAUNCH_KEY).map_err(|error| {
+            Error::Custom(format!("Could not read input method restore preference: {error}").into())
+        })?;
+        if let Some(enabled) = explicit {
+            return Ok(enabled);
+        }
+        // Only a genuinely absent preference permits legacy migration. A
+        // failed read must not turn an explicit uninstall into a fresh opt-in.
+        let legacy_enabled = state::get_bool(self.input_method_is_enabled_key())
+            .map_err(|error| Error::Custom(format!("Could not read legacy input method preference: {error}").into()))?;
+        let correct_symlink = match std::fs::read_link(self.target_bundle_path()?) {
+            Ok(target) => target == self.bundle_path,
+            Err(error) if error.kind() == ErrorKind::NotFound => false,
+            Err(error) => return Err(error.into()),
+        };
+        Ok(restore_on_launch(None, legacy_enabled, correct_symlink))
+    }
+
+    fn set_restore_on_launch(enabled: bool) -> Result<()> {
+        state::set_value(RESTORE_ON_LAUNCH_KEY, enabled)
+            .map_err(|error| Error::Custom(format!("Could not save input method restore preference: {error}").into()))
+    }
+
     pub fn input_method_directory() -> PathBuf {
         home_dir().unwrap().join("Library").join("Input Methods")
     }
@@ -511,92 +593,34 @@ impl InputMethod {
     }
 }
 
-fn str_to_nsstring(str: &str) -> &Object {
-    const UTF8_ENCODING: usize = 4;
-    unsafe {
-        let ns_string: &mut Object = msg_send![class!(NSString), alloc];
-        let ns_string: &mut Object = msg_send![
-            ns_string,
-            initWithBytes: str.as_ptr()
-            length: str.len()
-            encoding: UTF8_ENCODING
-        ];
-        let _: () = msg_send![ns_string, autorelease];
-        ns_string
-    }
-}
-
-#[async_trait]
-impl Integration for InputMethod {
-    async fn is_installed(&self) -> Result<()> {
-        // let attr = fs::metadata(&self.bundle_path)?;
-        let destination = self.target_bundle_path()?;
-
-        // check that symlink to input method exists in input_methods_directory
-        let symlink = fs::read_link(destination).await;
-
-        match symlink {
-            Ok(symlink) => {
-                // does it point to the correct location
-                if symlink != self.bundle_path {
-                    return Err(InputMethodError::InvalidBundle {
-                        inner: "Symbolic link is incorrect".into(),
-                    }
-                    .into());
-                }
-            },
-            Err(err) if err.kind() == ErrorKind::NotFound => return Err(InputMethodError::NotInstalled.into()),
-            Err(err) => return Err(err.into()),
+impl InputMethod {
+    /// Serialize startup recovery with a user-initiated install or uninstall.
+    /// Recheck intent after taking the lock so a concurrent uninstall wins.
+    pub async fn restore_if_chosen(&self) -> Result<bool> {
+        let _operation_guard = operation_lock().await?;
+        if !self.should_restore_on_launch()? {
+            return Ok(false);
         }
-
-        // check that the input method is running (NSRunning application)
-        if !self.is_running() {
-            return Err(InputMethodError::NotRunning.into());
-        }
-
-        // Can we load input source?
-
-        // todo: pull this into a function in fig_directories
-        let cli_path = fastab_util::app_bundle_path()
-            .join("Contents")
-            .join("MacOS")
-            .join(CLI_BINARY_NAME);
-
-        let out = tokio::process::Command::new(cli_path)
-            .args(["_", "attempt-to-finish-input-method-installation"])
-            .arg(&self.bundle_path)
-            .output()
-            .await
-            .with_context(|err| format!("Could not run {CLI_BINARY_NAME} cli: {err}"))?;
-
-        if out.status.code() == Some(0) {
-            self.set_is_enabled(true);
-            Ok(())
-        } else {
-            let err = String::from_utf8_lossy(&out.stdout);
-            let error = serde_json::from_str::<InputMethodError>(&err).unwrap_or(InputMethodError::UnknownError);
-
-            // TISEnableInputSource silently fails from a CLI process with no
-            // NSApplication, so install() writes HIToolbox. Selected-only is
-            // not enough: bounce left us in AppleSelectedInputSources and out
-            // of AppleEnabledInputSources, and new Otty windows then got no
-            // IMK connection.
-            if matches!(error, InputMethodError::NotEnabled | InputMethodError::NotSelected) {
-                if let Ok(bundle_id) = self.bundle_id() {
-                    if is_bundle_in_hitoolbox_enabled(&bundle_id) {
-                        info!("TIS reports not-enabled but bundle is in AppleEnabledInputSources; treating as enabled");
-                        self.set_is_enabled(true);
-                        return Ok(());
-                    }
-                }
+        self.install_locked().await?;
+        // The old installer can return Ok while TIS is still registering the
+        // helper. Check observable readiness, with a short bounded window for
+        // LaunchServices to expose the new process. Keep the restore intent on
+        // failure so a later launch can retry.
+        let mut status = self.is_installed().await;
+        for _ in 0..7 {
+            if status.is_ok() {
+                return Ok(true);
             }
-
-            self.set_is_enabled(false);
-            Err(error.into())
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            status = self.is_installed().await;
         }
+        status.map(|()| true)
     }
 
-    async fn install(&self) -> Result<()> {
+    async fn install_locked(&self) -> Result<()> {
+        // Persist the choice before changing native integration state. If the
+        // database is unavailable, report failure without a partial install.
+        Self::set_restore_on_launch(true)?;
         {
             let destination = self.target_bundle_path()?;
 
@@ -621,7 +645,7 @@ impl Integration for InputMethod {
                     .with_context(|_| format!("Could not create symlink {}", destination.display()))?;
 
                 // Register with TIS after creating a new symlink
-                InputMethod::register(&destination)?;
+                run_on_main(|| InputMethod::register(&destination))?;
             }
 
             // Restart only when the on-disk binary is not what we last launched.
@@ -706,8 +730,63 @@ impl Integration for InputMethod {
 
         Ok(())
     }
+}
+
+fn str_to_nsstring(str: &str) -> &Object {
+    const UTF8_ENCODING: usize = 4;
+    unsafe {
+        let ns_string: &mut Object = msg_send![class!(NSString), alloc];
+        let ns_string: &mut Object = msg_send![
+            ns_string,
+            initWithBytes: str.as_ptr()
+            length: str.len()
+            encoding: UTF8_ENCODING
+        ];
+        let _: () = msg_send![ns_string, autorelease];
+        ns_string
+    }
+}
+
+#[async_trait]
+impl Integration for InputMethod {
+    async fn is_installed(&self) -> Result<()> {
+        // let attr = fs::metadata(&self.bundle_path)?;
+        let destination = self.target_bundle_path()?;
+
+        // check that symlink to input method exists in input_methods_directory
+        let symlink = fs::read_link(destination).await;
+
+        match symlink {
+            Ok(symlink) => {
+                // does it point to the correct location
+                if symlink != self.bundle_path {
+                    return Err(InputMethodError::InvalidBundle {
+                        inner: "Symbolic link is incorrect".into(),
+                    }
+                    .into());
+                }
+            },
+            Err(err) if err.kind() == ErrorKind::NotFound => return Err(InputMethodError::NotInstalled.into()),
+            Err(err) => return Err(err.into()),
+        }
+
+        // A CLI process has no NSApplication and often cannot list TIS sources.
+        // The running helper registered itself on startup; the persisted
+        // enabled palette list tells us whether new terminals may attach.
+        // A status query must never rewrite the user's restore preference.
+        let bundle_id = self.bundle_id()?;
+        running_and_enabled(self.is_running(), is_bundle_in_hitoolbox_enabled(&bundle_id))?;
+        Ok(())
+    }
+
+    async fn install(&self) -> Result<()> {
+        let _operation_guard = operation_lock().await?;
+        self.install_locked().await
+    }
 
     async fn uninstall(&self) -> Result<()> {
+        let _operation_guard = operation_lock().await?;
+        Self::set_restore_on_launch(false)?;
         self.set_is_enabled(false);
 
         let destination = self.target_bundle_path()?;
@@ -1036,6 +1115,96 @@ mod tests {
         assert!(!process_is_stale(None, Some("aaa")));
         assert!(!process_is_stale(Some("aaa"), Some("aaa")));
         assert!(process_is_stale(Some("aaa"), Some("bbb")));
+    }
+
+    #[test]
+    fn restore_migrates_an_existing_link_but_respects_explicit_uninstall() {
+        assert!(!restore_on_launch(None, None, false));
+        assert!(restore_on_launch(None, Some(true), false));
+        // A failed legacy status probe may already have cleared this bit.
+        assert!(restore_on_launch(None, Some(false), true));
+        // An uninstall may fail after recording the decision but before the
+        // symlink is removed; that stale link must not reinstall the IME.
+        assert!(!restore_on_launch(Some(false), Some(true), true));
+        assert!(restore_on_launch(Some(true), Some(false), false));
+    }
+
+    #[test]
+    fn stopped_helper_is_distinct_from_disabled_palette() {
+        assert_eq!(running_and_enabled(false, true), Err(InputMethodError::NotRunning));
+        assert_eq!(running_and_enabled(true, false), Err(InputMethodError::NotEnabled));
+        assert_eq!(running_and_enabled(true, true), Ok(()));
+    }
+
+    #[tokio::test]
+    async fn operation_lock_serializes_separate_open_handles_and_releases() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INPUT_METHOD_LOCK_FILE);
+        let first = lock_input_method_file(&path).await.unwrap();
+        let other = OpenOptions::new().read(true).write(true).open(&path).unwrap();
+        let (other, _) = Flock::lock(other, FlockArg::LockExclusiveNonblock)
+            .expect_err("a separately opened handle must wait for the first operation");
+
+        drop(first);
+        let second =
+            Flock::lock(other, FlockArg::LockExclusiveNonblock).expect("the file lock is released with its guard");
+        drop(second);
+    }
+
+    #[test]
+    fn operation_lock_waiters_do_not_starve_fs_or_survive_cancellation() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .max_blocking_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(INPUT_METHOD_LOCK_FILE);
+            let first = lock_input_method_file(&path).await.unwrap();
+            let waiters: Vec<_> = (0..8)
+                .map(|_| {
+                    let path = path.clone();
+                    tokio::spawn(async move { lock_input_method_file(&path).await })
+                })
+                .collect();
+
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let all_waiting = waiters.iter().all(|waiter| !waiter.is_finished());
+            let probe = dir.path().join("fs-probe");
+            let probe_result = tokio::time::timeout(Duration::from_secs(2), async {
+                tokio::fs::write(&probe, b"ready").await?;
+                tokio::fs::read(&probe).await
+            })
+            .await;
+
+            for waiter in &waiters {
+                waiter.abort();
+            }
+            let mut all_cancelled = true;
+            for waiter in waiters {
+                all_cancelled &= waiter.await.is_err_and(|error| error.is_cancelled());
+            }
+            drop(first);
+            let second_result = tokio::time::timeout(Duration::from_secs(2), lock_input_method_file(&path)).await;
+
+            assert!(
+                all_waiting,
+                "all eight tasks should wait while the first guard holds the lock"
+            );
+            assert_eq!(
+                probe_result
+                    .expect("lock waiters must not occupy the blocking pool used by Tokio fs")
+                    .unwrap()
+                    .as_slice(),
+                b"ready"
+            );
+            assert!(all_cancelled, "each pending lock task must be cancellable");
+            let second = second_result
+                .expect("cancelled waiters must not acquire the lock later")
+                .unwrap();
+            drop(second);
+        });
     }
 
     #[test]

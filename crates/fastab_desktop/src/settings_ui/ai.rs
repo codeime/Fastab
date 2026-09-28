@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use futures::FutureExt;
 use gpui::prelude::*;
@@ -19,6 +20,38 @@ use crate::jev::policy::DATA_POLICY_VERSION;
 use super::input::Input;
 use super::theme::Chrome;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProbeKind {
+    Idle,
+    Testing,
+    Success,
+    Failure,
+}
+
+impl ProbeKind {
+    fn color(self, chrome: Chrome) -> u32 {
+        let dark = chrome.text > 0x808080;
+        match self {
+            Self::Idle => chrome.muted,
+            Self::Testing => chrome.accent,
+            Self::Success => {
+                if dark {
+                    0x32d583
+                } else {
+                    0x067647
+                }
+            },
+            Self::Failure => {
+                if dark {
+                    0xff6961
+                } else {
+                    0xb42318
+                }
+            },
+        }
+    }
+}
+
 pub(super) struct AiSettings {
     config: AiConfig,
     profile: Profile,
@@ -26,7 +59,6 @@ pub(super) struct AiSettings {
     model: Entity<Input>,
     base: Entity<Input>,
     enabled: bool,
-    acknowledged_service: Option<String>,
     advanced: bool,
     busy: bool,
     load_failed: bool,
@@ -34,6 +66,11 @@ pub(super) struct AiSettings {
     epoch: u64,
     status: String,
     probe_status: String,
+    probe_kind: ProbeKind,
+    key_presence_service: Option<String>,
+    key_present: Option<bool>,
+    key_presence_generation: u64,
+    key_presence_pending: bool,
     probe_task: Option<gpui::Task<()>>,
     probe_abort: Option<tokio::task::AbortHandle>,
     pause_write: Option<futures::future::Shared<gpui::Task<Result<u64, bool>>>>,
@@ -49,9 +86,6 @@ impl AiSettings {
     pub(super) fn new(proxy: EventLoopProxy, cx: &mut Context<'_, Self>) -> Self {
         let config = AiConfig::default();
         let profile = config.active_profile().cloned().unwrap_or_else(Profile::typesafe);
-        let acknowledged_service = (profile.data_policy_version == DATA_POLICY_VERSION)
-            .then(|| profile.credential_key().ok())
-            .flatten();
         let base = cx.new(|cx| Input::new("jev-base", profile.base_url.clone(), false, 2048, cx));
         let key = cx.new(|cx| Input::new("jev-key", String::new(), true, 4096, cx));
         let model = cx.new(|cx| Input::new("jev-model", profile.model.clone(), false, 128, cx));
@@ -84,9 +118,6 @@ impl AiSettings {
             let _ = this.update(cx, |this, cx| {
                 if let Some(config) = loaded {
                     let profile = config.active_profile().cloned().unwrap_or_else(Profile::typesafe);
-                    this.acknowledged_service = (profile.data_policy_version == DATA_POLICY_VERSION)
-                        .then(|| profile.credential_key().ok())
-                        .flatten();
                     this.model.update(cx, |input, cx| input.set(profile.model.clone(), cx));
                     this.base
                         .update(cx, |input, cx| input.set(profile.base_url.clone(), cx));
@@ -103,6 +134,9 @@ impl AiSettings {
                     .into();
                 }
                 this.set_busy(false, cx);
+                if !this.load_failed {
+                    this.refresh_key_presence(cx);
+                }
             });
         })
         .detach();
@@ -113,7 +147,6 @@ impl AiSettings {
             key,
             model,
             base,
-            acknowledged_service,
             advanced: false,
             busy: false,
             load_failed: true,
@@ -122,6 +155,11 @@ impl AiSettings {
             status: Self::label("正在读取配置…", "Loading settings…").into(),
             buttons: BTreeMap::new(),
             probe_status: String::new(),
+            probe_kind: ProbeKind::Idle,
+            key_presence_service: None,
+            key_present: None,
+            key_presence_generation: 0,
+            key_presence_pending: false,
             probe_task: None,
             probe_abort: None,
             pause_write: None,
@@ -174,13 +212,9 @@ impl AiSettings {
         let mut profile = self.profile.clone();
         profile.base_url = self.base.read(cx).value().to_owned();
         profile.model = self.model.read(cx).value().to_owned();
-        profile.data_policy_version = if profile.credential_key().ok().as_ref() == self.acknowledged_service.as_ref()
-            && self.acknowledged_service.is_some()
-        {
-            DATA_POLICY_VERSION
-        } else {
-            0
-        };
+        // The explicit Enable/Save action accepts the disclosed data scope for
+        // this draft. Existing persisted profiles are not rewritten on load.
+        profile.data_policy_version = DATA_POLICY_VERSION;
         profile
     }
 
@@ -191,13 +225,11 @@ impl AiSettings {
         self.status.clear();
         self.suspend_for_edit(cx);
         self.clear_draft(cx);
-        self.acknowledged_service = (profile.data_policy_version == DATA_POLICY_VERSION)
-            .then(|| profile.credential_key().ok())
-            .flatten();
         self.model.update(cx, |input, cx| input.set(profile.model.clone(), cx));
         self.base
             .update(cx, |input, cx| input.set(profile.base_url.clone(), cx));
         self.profile = profile;
+        self.refresh_key_presence(cx);
         cx.notify();
     }
 
@@ -237,7 +269,131 @@ impl AiSettings {
                 cx.notify();
             });
         }
+        if !busy {
+            self.schedule_key_presence(cx);
+        }
         cx.notify();
+    }
+
+    fn update_key_placeholder(&mut self, cx: &mut Context<'_, Self>) {
+        let placeholder = self.key_present.filter(|present| *present).map(|_| "********".into());
+        self.key.update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+    }
+
+    fn refresh_key_presence(&mut self, cx: &mut Context<'_, Self>) {
+        self.key_presence_generation = self.key_presence_generation.wrapping_add(1);
+        self.key_presence_service = self.draft(cx).credential_key().ok();
+        self.key_present = None;
+        self.update_key_placeholder(cx);
+        self.schedule_key_presence(cx);
+    }
+
+    fn record_key_presence(&mut self, service: &str, present: bool, cx: &mut Context<'_, Self>) {
+        if self.key_presence_service.as_deref() != Some(service) {
+            return;
+        }
+        self.key_presence_generation = self.key_presence_generation.wrapping_add(1);
+        self.key_present = Some(present);
+        self.update_key_placeholder(cx);
+    }
+
+    fn invalidate_key_presence(&mut self, service: &str, cx: &mut Context<'_, Self>) {
+        if self.key_presence_service.as_deref() == Some(service) {
+            self.key_presence_generation = self.key_presence_generation.wrapping_add(1);
+            self.key_present = None;
+            self.update_key_placeholder(cx);
+        }
+    }
+
+    fn schedule_key_presence(&mut self, cx: &mut Context<'_, Self>) {
+        if self.key_presence_pending
+            || self.key_presence_service.is_none()
+            || self.key_present.is_some()
+            || self.busy
+            || self.load_failed
+        {
+            return;
+        }
+        self.key_presence_pending = true;
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let mut delay = Duration::from_millis(350);
+            let mut busy_retries = 0u8;
+            loop {
+                let Ok(wait_generation) = this.update(cx, |this, _| this.key_presence_generation) else {
+                    return;
+                };
+                executor.timer(delay).await;
+                let mut edited_while_waiting = false;
+                let query = this
+                    .update(cx, |this, cx| {
+                        if this.busy || this.load_failed || this.key_present.is_some() {
+                            this.key_presence_pending = false;
+                            return None;
+                        }
+                        if this.key_presence_generation != wait_generation {
+                            edited_while_waiting = true;
+                            return None;
+                        }
+                        let Some(service) = this.key_presence_service.clone() else {
+                            this.key_presence_pending = false;
+                            return None;
+                        };
+                        let generation = this.key_presence_generation;
+                        Some((service.clone(), generation, credentials::contains(&service, cx)))
+                    })
+                    .ok()
+                    .flatten();
+                if edited_while_waiting {
+                    delay = Duration::from_millis(350);
+                    busy_retries = 0;
+                    continue;
+                }
+                let Some((service, generation, task)) = query else {
+                    return;
+                };
+                let result = task.await;
+                let retry_delay = this
+                    .update(cx, |this, cx| {
+                        if this.busy || this.load_failed || this.key_present.is_some() {
+                            this.key_presence_pending = false;
+                            return None;
+                        }
+                        if this.key_presence_generation != generation
+                            || this.key_presence_service.as_deref() != Some(service.as_str())
+                        {
+                            // A changed service waits for the old OS operation to
+                            // finish before querying the current one.
+                            busy_retries = 0;
+                            return Some(Duration::from_millis(350));
+                        }
+                        match result {
+                            Ok(present) => {
+                                this.key_present = Some(present);
+                                this.key_presence_pending = false;
+                                this.update_key_placeholder(cx);
+                                None
+                            },
+                            Err(CredentialError::Busy) if busy_retries < 11 => {
+                                busy_retries += 1;
+                                Some(Duration::from_millis((350u64 << busy_retries.min(4)).min(4000)))
+                            },
+                            Err(_) => {
+                                // Unknown is distinct from a confirmed missing key.
+                                this.key_presence_pending = false;
+                                None
+                            },
+                        }
+                    })
+                    .ok()
+                    .flatten();
+                let Some(next_delay) = retry_delay else {
+                    return;
+                };
+                delay = next_delay;
+            }
+        })
+        .detach();
     }
 
     fn changed(&self) {
@@ -250,7 +406,11 @@ impl AiSettings {
         }
         self.edit_revisions[field] = revision;
         self.probe_status.clear();
+        self.probe_kind = ProbeKind::Idle;
         self.suspend_for_edit(cx);
+        if field == 2 {
+            self.refresh_key_presence(cx);
+        }
         cx.notify();
     }
 
@@ -261,9 +421,14 @@ impl AiSettings {
             self.base.read(cx).edit_revision(),
         ];
         if revisions != self.edit_revisions {
+            let base_changed = revisions[2] != self.edit_revisions[2];
             self.edit_revisions = revisions;
             self.probe_status.clear();
+            self.probe_kind = ProbeKind::Idle;
             self.suspend_for_edit(cx);
+            if base_changed {
+                self.refresh_key_presence(cx);
+            }
         }
     }
 
@@ -354,6 +519,7 @@ impl AiSettings {
             self.set_busy(false, cx);
         }
         self.probe_status.clear();
+        self.probe_kind = ProbeKind::Idle;
     }
 
     fn probe_error(kind: ClientErrorKind) -> &'static str {
@@ -403,17 +569,18 @@ impl AiSettings {
         if self.key.read(cx).rejected {
             self.probe_status =
                 Self::label("请先修正未接受的 Key 输入。", "Correct the rejected key input first.").into();
+            self.probe_kind = ProbeKind::Failure;
             cx.notify();
             return;
         }
-        let mut profile = self.draft(cx);
-        // The explicit test sends only a fixed public example. This temporary
-        // consent never changes the user's permission for terminal requests.
-        profile.data_policy_version = DATA_POLICY_VERSION;
+        let profile = self.draft(cx);
+        // The explicit test sends only a fixed public example and never
+        // persists this draft or enables automatic requests.
         let profile = match profile.validate() {
             Ok(profile) => profile,
             Err(_) => {
                 self.probe_status = Self::probe_error(ClientErrorKind::InvalidRequest).into();
+                self.probe_kind = ProbeKind::Failure;
                 cx.notify();
                 return;
             },
@@ -428,6 +595,7 @@ impl AiSettings {
         let epoch = self.epoch;
         self.set_busy(true, cx);
         self.probe_status = Self::label("正在测试连接…", "Testing connection…").into();
+        self.probe_kind = ProbeKind::Testing;
         self.probe_task = Some(cx.spawn(async move |this, cx| {
             let result = match credential.await {
                 Ok(Some(secret)) if !secret.is_empty() => {
@@ -466,10 +634,15 @@ impl AiSettings {
                 this.probe_abort = None;
                 this.probe_task = None;
                 this.set_busy(false, cx);
-                this.probe_status = match result {
-                    Ok(()) => Self::label("连接成功，Key 和模型可用。", "Connected. The key and model work.").into(),
-                    Err(message) => message.into(),
+                let (kind, message) = match result {
+                    Ok(()) => (
+                        ProbeKind::Success,
+                        Self::label("连接成功，Key 和模型可用。", "Connected. The key and model work."),
+                    ),
+                    Err(message) => (ProbeKind::Failure, message),
                 };
+                this.probe_kind = kind;
+                this.probe_status = message.into();
             });
         }));
     }
@@ -505,8 +678,8 @@ impl AiSettings {
         };
         if desired_enabled && profile.validate().is_err() {
             self.status = Self::label(
-                "启用前请确认数据范围，并使用支持的 Jev 模型。",
-                "Confirm the data scope and use a supported Jev model before enabling.",
+                "启用前请检查地址和 Jev 模型。",
+                "Check the address and Jev model before enabling.",
             )
             .into();
             cx.notify();
@@ -600,6 +773,7 @@ impl AiSettings {
                     }
                     this.status = Self::label("正在处理系统钥匙串…", "Updating system Keychain…").into();
                     let credential = if replacing {
+                        this.invalidate_key_presence(&service, cx);
                         credentials::write(&service, secret, cx)
                     } else {
                         let read = credentials::read(&service, cx);
@@ -628,6 +802,7 @@ impl AiSettings {
                         this.status = Self::credential_error(error).into();
                         return false;
                     }
+                    this.record_key_presence(&service, true, cx);
                     true
                 })
                 .unwrap_or(false);
@@ -738,6 +913,7 @@ impl AiSettings {
                     };
                     this.config = disabled.clone();
                     this.changed();
+                    this.invalidate_key_presence(&service, cx);
                     Some((credentials::delete(&service, cx), revision))
                 })
                 .ok()
@@ -757,6 +933,7 @@ impl AiSettings {
                         this.status = Self::credential_error(error).into();
                         return false;
                     }
+                    this.record_key_presence(&service, false, cx);
                     true
                 })
                 .unwrap_or(false);
@@ -788,6 +965,7 @@ impl AiSettings {
                         .or_else(|| this.config.profiles.first().cloned())
                         .unwrap_or_else(Profile::typesafe);
                     this.select(next, cx);
+                    this.record_key_presence(&service, false, cx);
                 }
                 this.changed();
                 this.status = Self::label("已删除 Key 和配置。", "Key and profile deleted.").into();
@@ -806,6 +984,12 @@ impl AiSettings {
         let chrome = Chrome::current();
         let disclosure = id == "jev-advanced";
         let disabled = (self.busy || self.load_failed) && !disclosure;
+        let selected = matches!(
+            (id.as_str(), self.profile.provider),
+            ("jev-typesafe", Provider::TypeSafe)
+                | ("jev-openrouter", Provider::OpenRouter)
+                | ("jev-custom", Provider::CustomSystemOne)
+        );
         let focus = self
             .buttons
             .entry(id.clone())
@@ -831,6 +1015,12 @@ impl AiSettings {
             .border_color(rgb(chrome.separator))
             .text_size(px(12.))
             .text_color(rgb(if primary { chrome.accent_text } else { chrome.text }))
+            .when(selected, |button| {
+                button
+                    .bg(rgb(chrome.selection))
+                    .border_color(rgb(chrome.accent))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+            })
             .when(!disabled, |button| button.cursor_pointer())
             .hover(|style| style.bg(rgb(chrome.selection)))
             .focus(|style| style.border_color(rgb(chrome.accent)))
@@ -858,6 +1048,77 @@ impl AiSettings {
             })
             .into_any_element()
     }
+
+    fn enable_checkbox(&mut self, cx: &mut Context<'_, Self>) -> gpui::AnyElement {
+        let chrome = Chrome::current();
+        let disabled = self.busy || self.load_failed;
+        let checked = self.enabled;
+        let focus = self
+            .buttons
+            .entry("jev-enable".into())
+            .or_insert_with(|| cx.focus_handle())
+            .clone()
+            .tab_stop(!disabled);
+        let click_focus = focus.clone();
+        let click_entity = cx.entity();
+        let key_entity = cx.entity();
+        let box_color = if checked { chrome.accent } else { chrome.card };
+        div()
+            .id("jev-enable")
+            .track_focus(&focus)
+            .tab_stop(!disabled)
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .px(px(4.))
+            .py(px(4.))
+            .border_1()
+            .rounded(px(5.))
+            .border_color(rgb(chrome.card))
+            .cursor_pointer()
+            .when(disabled, |checkbox| checkbox.opacity(0.45))
+            .focus(|style| style.border_color(rgb(chrome.accent)).bg(rgb(chrome.selection)))
+            .child(
+                div()
+                    .w(px(18.))
+                    .h(px(18.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .border_1()
+                    .rounded(px(4.))
+                    .border_color(rgb(if checked { chrome.accent } else { chrome.separator }))
+                    .bg(rgb(box_color))
+                    .text_color(rgb(chrome.accent_text))
+                    .child(if checked { "✓" } else { "" }),
+            )
+            .child(Self::label("启用 AI 推荐", "Enable AI recommendations"))
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                if !disabled {
+                    click_focus.focus(window);
+                    click_entity.update(cx, |this, cx| this.toggle_enabled(cx));
+                }
+                cx.stop_propagation();
+            })
+            .on_key_down(move |event, _, cx| {
+                if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    key_entity.update(cx, |this, cx| this.toggle_enabled(cx));
+                    cx.stop_propagation();
+                }
+            })
+            .into_any_element()
+    }
+
+    fn toggle_enabled(&mut self, cx: &mut Context<'_, Self>) {
+        if self.busy || self.load_failed {
+            return;
+        }
+        self.enabled = !self.enabled;
+        if !self.enabled {
+            self.suspend_for_edit(cx);
+        }
+        cx.notify();
+    }
 }
 
 impl Drop for AiSettings {
@@ -884,7 +1145,6 @@ impl Render for AiSettings {
         });
         let chrome = Chrome::current();
         let draft = self.draft(cx);
-        let confirmed = draft.data_policy_version == DATA_POLICY_VERSION;
         let custom = self.profile.provider == Provider::CustomSystemOne;
         let mut providers = div().flex().flex_wrap().gap(px(6.));
         for (id, name, provider) in [
@@ -893,7 +1153,7 @@ impl Render for AiSettings {
             ("custom", Self::label("自定义", "Custom"), Provider::CustomSystemOne),
         ] {
             let label = if self.profile.provider == provider {
-                format!("● {name}")
+                format!("✓ {name}")
             } else {
                 name.into()
             };
@@ -913,38 +1173,7 @@ impl Render for AiSettings {
             cx,
             |this, cx| this.save(cx),
         );
-        let enable_label = if self.enabled {
-            Self::label("● AI 推荐已选中", "● AI recommendations selected")
-        } else {
-            Self::label("○ 启用 AI 推荐", "○ Enable AI recommendations")
-        };
-        let enable = self.button("jev-enable".into(), enable_label.into(), cx, |this, cx| {
-            this.enabled = !this.enabled;
-            if !this.enabled {
-                this.suspend_for_edit(cx);
-            }
-            cx.notify();
-        });
-        let consent = self.button(
-            "jev-consent".into(),
-            if confirmed {
-                Self::label("☑ 同意发送上述公开数据", "☑ Allow sending the public data above")
-            } else {
-                Self::label("☐ 同意发送上述公开数据", "☐ Allow sending the public data above")
-            }
-            .into(),
-            cx,
-            |this, cx| {
-                this.suspend_for_edit(cx);
-                let service = this.draft(cx).credential_key().ok();
-                this.acknowledged_service = if service == this.acknowledged_service {
-                    None
-                } else {
-                    service
-                };
-                cx.notify();
-            },
-        );
+        let enable = self.enable_checkbox(cx);
         let advanced_label = if self.advanced {
             Self::label("▾ 收起高级设置", "▾ Hide advanced settings")
         } else {
@@ -1005,17 +1234,38 @@ impl Render for AiSettings {
                 .child(Self::label("Jev 模型", "Jev model"))
                 .child(self.model.clone());
         }
+        let key_hint = match self.key_present {
+            Some(true) => Self::label(
+                "已保存 Key；留空继续使用，输入新 Key 可替换。",
+                "A key is saved. Leave blank to keep using it, or enter a replacement.",
+            ),
+            Some(false) => Self::label("尚未保存 Key；请输入后保存。", "No key is saved. Enter one to save."),
+            None => Self::label(
+                "Key 保存在系统钥匙串；留空可使用已有 Key。",
+                "Keys are stored in system Keychain. Leave blank to use an existing key.",
+            ),
+        };
         body = body.child("API Key").child(self.key.clone())
-            .child(hint(Self::label("保存在系统钥匙串。已有 Key 可留空；输入新 Key 可替换。", "Stored in system Keychain. Leave blank to use a saved key, or enter a replacement.").into()))
+            .child(hint(key_hint.into()))
             .when(self.key.read(cx).rejected, |body| body.child(hint(Self::label("此次输入未接受：Key 不能含空白或换行，最多 4096 字符。原内容已保留。", "Input rejected: keys cannot contain whitespace or line breaks (maximum 4096 characters). The previous value was kept.").into())))
             .child(div().flex().items_center().flex_wrap().gap(px(10.)).child(test)
                 .child(hint(Self::label("仅发送固定示例；不会保存或启用配置。", "Sends a fixed example; does not save or enable settings.").into())))
-            .when(!self.probe_status.is_empty(), |body| body.child(self.probe_status.clone()))
-            .child(div().border_t_1().border_color(rgb(chrome.separator)).pt(px(12.)).child(enable));
-        if self.enabled {
-            body = body.child(hint(Self::label("自动请求只发送公开命令、已知前缀及公开候选；不发送完整输入、目录、历史或文件名。", "Automatic requests send public commands, known prefixes and public candidates only; no full input, directory, history or filenames.").into()))
-                .child(hint(processors.into())).child(consent);
-        }
+            .when(!self.probe_status.is_empty(), |body| {
+                body.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(rgb(self.probe_kind.color(chrome)))
+                        .child(self.probe_status.clone()),
+                )
+            })
+            .child(div().border_t_1().border_color(rgb(chrome.separator)).pt(px(12.)).child(enable))
+            .child(hint(
+                Self::label(
+                    "启用即允许发送公开命令、前缀和候选；不发送完整输入、目录或历史。",
+                    "Enabling permits public commands, prefixes and candidates to be sent; never full input, directories or history.",
+                )
+                .into(),
+            ));
         body = body
             .child(
                 div()
@@ -1040,7 +1290,8 @@ impl Render for AiSettings {
             }
             detail = detail.child(hint(format!("{} {destination}", Self::label("请求地址：", "Endpoint:"))))
                 .child(hint(Self::label("预设地址固定。需使用其他 System One 服务时选择自定义。", "Preset addresses are fixed. Choose Custom for another System One service.").into()))
-                .child(hint(Self::label("自动请求的完整范围：公开命令/子命令路径、已知 token 前缀、shell 类型、公开候选 ID、名称与说明。不发送环境变量、别名、动态资源或实际插入文本。", "Automatic requests include public command/subcommand paths, known token prefixes, shell type and public candidate IDs, names and descriptions. Environment variables, aliases, dynamic resources and actual insertion text are excluded.").into()));
+                .child(hint(Self::label("自动请求的完整范围：公开命令/子命令路径、已知 token 前缀、shell 类型、公开候选 ID、名称与说明。不发送环境变量、别名、动态资源或实际插入文本。", "Automatic requests include public command/subcommand paths, known token prefixes, shell type and public candidate IDs, names and descriptions. Environment variables, aliases, dynamic resources and actual insertion text are excluded.").into()))
+                .child(hint(processors.into()));
             let mut policies = div().flex().flex_wrap().gap(px(6.));
             if !custom {
                 policies = policies
