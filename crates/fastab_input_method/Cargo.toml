@@ -41,6 +41,8 @@ objc2.workspace = true
 objc2-app-kit = { workspace = true, features = [
     "NSApplication",
     "NSResponder",
+    "NSRunningApplication",
+    "NSWorkspace",
 ] }
 objc2-foundation = { workspace = true, features = [
     "NSBundle",
