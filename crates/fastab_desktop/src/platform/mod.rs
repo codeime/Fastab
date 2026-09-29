@@ -120,7 +120,9 @@ pub enum PlatformBoundEvent {
         app: ApplicationSpecifier,
     },
     ExternalWindowFocusChanged {
-        window: PlatformWindowImpl,
+        #[cfg(target_os = "macos")]
+        app: ApplicationSpecifier,
+        window: Option<PlatformWindowImpl>,
     },
     /// Re-applies the autocomplete overlay's window level from the currently focused terminal.
     ///

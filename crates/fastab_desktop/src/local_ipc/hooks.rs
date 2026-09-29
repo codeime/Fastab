@@ -32,17 +32,11 @@ pub async fn caret_position(
     proxy
         .send_event(Event::WindowEvent {
             window_id: AUTOCOMPLETE_ID,
-            window_event: WindowEvent::UpdateWindowGeometry {
-                position: Some(WindowPosition::RelativeToCaret {
-                    caret_position: LogicalPosition::new(x, y).into(),
-                    caret_size: LogicalSize::new(width, height).into(),
-                    origin: hook.origin(),
-                }),
-                size: None,
-                anchor: None,
-                tx: None,
-                dry_run: false,
-            },
+            window_event: WindowEvent::CaretPositionHook(WindowPosition::RelativeToCaret {
+                caret_position: LogicalPosition::new(x, y).into(),
+                caret_size: LogicalSize::new(width, height).into(),
+                origin: hook.origin(),
+            }),
         })
         .ok();
 

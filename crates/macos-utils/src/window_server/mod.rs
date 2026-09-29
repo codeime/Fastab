@@ -10,9 +10,9 @@ use std::sync::OnceLock;
 
 use accessibility_sys::{
     AXError, AXIsProcessTrusted, AXObserverRef, AXUIElementRef, kAXApplicationActivatedNotification,
-    kAXApplicationShownNotification, kAXFocusedUIElementChangedNotification, kAXFocusedWindowChangedNotification,
-    kAXMainWindowChangedNotification, kAXUIElementDestroyedNotification, kAXWindowCreatedNotification,
-    kAXWindowMovedNotification, kAXWindowResizedNotification, pid_t,
+    kAXApplicationShownNotification, kAXErrorNoValue, kAXFocusedUIElementChangedNotification,
+    kAXFocusedWindowChangedNotification, kAXMainWindowChangedNotification, kAXUIElementDestroyedNotification,
+    kAXWindowCreatedNotification, kAXWindowMovedNotification, kAXWindowResizedNotification, pid_t,
 };
 use ax_observer::AXObserver;
 use core_foundation::base::TCFType;
@@ -101,14 +101,14 @@ const TRACKED_NOTIFICATIONS: &[&str] = &[
 /// Electron terminals put the terminal, the editor and the sidebar in one window, so moving
 /// between them changes neither the focused window nor the active app and fires none of
 /// [`TRACKED_NOTIFICATIONS`] — the overlay would sit there until something else happened to hide
-/// it. Only these apps need element-level focus tracking, and restricting it to them keeps the
-/// notification (which is chatty in web content) away from native terminals that do not need it.
+/// it. Otty's native terminal text area also needs this when Find or another pane takes focus.
+/// Keep other IME-only native terminals off this chatty notification.
 const XTERM_TRACKED_NOTIFICATIONS: &[&str] = &[kAXFocusedUIElementChangedNotification];
 
 /// Which AX notifications to subscribe for an app. Kept separate from the subscribe loop so the
 /// element-level notification cannot quietly grow to every tracked app.
 fn tracked_notifications(bundle_id: &str) -> Vec<&'static str> {
-    let extra: &[&str] = if XTERM_BUNDLE_IDS.contains(&bundle_id) {
+    let extra: &[&str] = if XTERM_BUNDLE_IDS.contains(&bundle_id) || bundle_id == "io.appmakes.otty" {
         XTERM_TRACKED_NOTIFICATIONS
     } else {
         &[]
@@ -130,11 +130,30 @@ fn frontmost_matches(pid: pid_t, bundle_id: Option<&str>, expected: &Application
 /// Whether a delayed accessibility event still belongs to the frontmost app.
 /// Call before making any AX requests for an event from a previously active app.
 pub fn is_frontmost_application(expected: &ApplicationSpecifier) -> bool {
-    let Some(frontmost) = (unsafe { NSWorkspace::sharedWorkspace().frontmostApplication() }) else {
+    let Some(frontmost) = frontmost_application() else {
         return false;
     };
-    let bundle_id = unsafe { frontmost.bundleIdentifier() }.map(|id| id.to_string());
-    frontmost_matches(unsafe { frontmost.processIdentifier() }, bundle_id.as_deref(), expected)
+    frontmost_matches(frontmost.pid, Some(&frontmost.bundle_id), expected)
+}
+
+/// Read the current app identity without querying its accessibility tree.
+pub fn frontmost_application() -> Option<ApplicationSpecifier> {
+    let frontmost = unsafe { NSWorkspace::sharedWorkspace().frontmostApplication() }?;
+    Some(ApplicationSpecifier {
+        pid: unsafe { frontmost.processIdentifier() },
+        bundle_id: unsafe { frontmost.bundleIdentifier() }?.to_string(),
+    })
+}
+
+fn window_destroyed_after_focus_error(app: ApplicationSpecifier, error: AXError) -> Option<WindowServerEvent> {
+    // NoValue explicitly says the application has no focused window. A timeout,
+    // disabled AX access, or a stale element says nothing about window lifetime.
+    if error == kAXErrorNoValue {
+        Some(WindowServerEvent::WindowDestroyed { app })
+    } else {
+        debug!(ax_error = error, bundle_id = %app.bundle_id, "Keeping focused window after failed AX query");
+        None
+    }
 }
 
 pub enum WindowServerEvent {
@@ -594,22 +613,12 @@ unsafe extern "C" fn application_ax_callback(
             Some(WindowServerEvent::RequestCaretPositionUpdate)
         },
         kAXUIElementDestroyedNotification => {
-            // We check to see if there is a valid window for the app, if there is not then we know the final
-            // window has been destroyed. This is done via getting an error when trying to get the focused
-            // window.
+            // Destruction notifications also describe child elements. Clear the
+            // tracked window only when AX explicitly reports no focused window.
             if is_frontmost_application(&app) {
                 match UIElement::application(app.pid).focused_window() {
                     Ok(_) => None,
-                    Err(err) => {
-                        // Electron fires this for DOM nodes too, so a transient error here (a
-                        // busy renderer hitting the 250 ms messaging timeout) parks the overlay
-                        // until the next activation. Keep the code so that case can be told apart.
-                        debug!(
-                            ax_error = err,
-                            "no focused window after element destruction in {:?}", app.bundle_id
-                        );
-                        Some(WindowServerEvent::WindowDestroyed { app: app.clone() })
-                    },
+                    Err(err) => window_destroyed_after_focus_error(app.clone(), err),
                 }
             } else {
                 None
@@ -634,9 +643,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn element_focus_is_tracked_only_for_electron_terminals() {
+    fn failed_ax_queries_do_not_destroy_the_focused_window() {
+        let app = ApplicationSpecifier {
+            pid: 42,
+            bundle_id: "io.appmakes.otty".into(),
+        };
+        for error in [
+            accessibility_sys::kAXErrorCannotComplete,
+            accessibility_sys::kAXErrorInvalidUIElement,
+            accessibility_sys::kAXErrorAPIDisabled,
+            accessibility_sys::kAXErrorFailure,
+        ] {
+            assert!(window_destroyed_after_focus_error(app.clone(), error).is_none());
+        }
+        assert!(matches!(
+            window_destroyed_after_focus_error(app.clone(), kAXErrorNoValue),
+            Some(WindowServerEvent::WindowDestroyed { app: destroyed }) if destroyed == app
+        ));
+    }
+
+    #[test]
+    fn element_focus_tracks_electron_and_native_ax_terminals_but_not_ime_only_terminals() {
         let vscode = tracked_notifications("com.microsoft.VSCode");
         assert!(vscode.contains(&kAXFocusedUIElementChangedNotification));
+        // Otty exposes a native terminal text area; opening Find or switching
+        // panes must invalidate its caret even without a shell-buffer update.
+        assert!(tracked_notifications("io.appmakes.otty").contains(&kAXFocusedUIElementChangedNotification));
 
         // Native terminals switch windows, not panes, and the notification is noisy enough that
         // subscribing it everywhere risks hiding the overlay mid-keystroke.

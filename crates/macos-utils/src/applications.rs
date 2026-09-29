@@ -1,5 +1,10 @@
+use std::sync::{Mutex, OnceLock};
+
+use objc2::rc::Retained;
+use objc2::runtime::Bool;
+use objc2::{ClassType, msg_send};
 use objc2_app_kit::{NSRunningApplication, NSWorkspace};
-use objc2_foundation::{NSString, NSURL};
+use objc2_foundation::{NSBundle, NSString, NSURL};
 
 #[derive(Debug)]
 pub struct MacOSApplication {
@@ -40,6 +45,47 @@ pub fn running_application_pids(bundle_identifier: &str) -> Vec<libc::pid_t> {
     let identifier = NSString::from_str(bundle_identifier);
     let apps = unsafe { NSRunningApplication::runningApplicationsWithBundleIdentifier(&identifier) };
     apps.iter().map(|app| unsafe { app.processIdentifier() }).collect()
+}
+
+/// Read the bundle of the actual running process, not a LaunchServices match
+/// that might name another installed version or a mounted disk image.
+pub fn running_application_version(pid: libc::pid_t) -> Option<String> {
+    type CachedVersion = (libc::pid_t, u64, Option<String>);
+    static CACHE: OnceLock<Mutex<Option<CachedVersion>>> = OnceLock::new();
+    let app = unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) }?;
+    let launched_at = unsafe { app.launchDate()?.timeIntervalSince1970() }.to_bits();
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    if let Some((cached_pid, cached_launch, version)) = cache.as_ref() {
+        if *cached_pid == pid && *cached_launch == launched_at {
+            return version.clone();
+        }
+    }
+    let version = (|| unsafe {
+        let bundle_url = app.bundleURL()?;
+        let bundle = NSBundle::bundleWithURL(&bundle_url)?;
+        let value = bundle.objectForInfoDictionaryKey(&NSString::from_str("CFBundleShortVersionString"))?;
+        let is_string: Bool = msg_send![&*value, isKindOfClass: NSString::class()];
+        if !is_string.as_bool() {
+            return None;
+        }
+        let version: Retained<NSString> = Retained::cast(value);
+        Some(version.to_string())
+    })();
+    *cache = Some((pid, launched_at, version.clone()));
+    version
+}
+
+/// CLI callers know a terminal bundle rather than its GUI PID. Ambiguous
+/// multiple instances remain unknown so capability selection stays conservative.
+pub fn unique_running_application_version(bundle_identifier: &str) -> Option<String> {
+    let pids = running_application_pids(bundle_identifier);
+    match pids.as_slice() {
+        [pid] => running_application_version(*pid),
+        _ => None,
+    }
 }
 
 pub fn launch_application(bundle_path: &str) {

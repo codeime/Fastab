@@ -165,6 +165,22 @@ pub enum WindowEvent {
     SetEnabled(bool),
     /// Sets the theme of the window (light, dark, or system if None)
     SetTheme(Option<Theme>),
+    /// A local caret hook, kept distinct from native AX geometry until consumed.
+    CaretPositionHook(WindowPosition),
+    #[cfg(target_os = "macos")]
+    TerminalEnabled {
+        app: macos_utils::window_server::ApplicationSpecifier,
+        cache_identity: Option<(i32, u32)>,
+        epoch: u64,
+        enabled: bool,
+    },
+    #[cfg(target_os = "macos")]
+    TerminalCaret {
+        app: macos_utils::window_server::ApplicationSpecifier,
+        cache_identity: Option<(i32, u32)>,
+        epoch: u64,
+        position: Option<WindowPosition>,
+    },
     UpdateWindowGeometry {
         position: Option<WindowPosition>,
         size: Option<LogicalSize<f64>>,

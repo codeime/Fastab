@@ -1506,8 +1506,19 @@ impl DoctorCheck<SupportedTerminalCheckContext> for ImeStatusCheck {
     }
 
     async fn get_type(&self, context: &SupportedTerminalCheckContext, _platform: Platform) -> DoctorCheckType {
+        let running_version = context
+            .terminal
+            .as_ref()
+            .filter(|terminal| **terminal == Terminal::Otty)
+            .and_then(|terminal| terminal.to_bundle_id())
+            .and_then(|bundle| macos_utils::applications::unique_running_application_version(&bundle));
         match &context.terminal {
-            Some(current_terminal) if current_terminal.supports_macos_input_method() => DoctorCheckType::NormalCheck,
+            Some(current_terminal)
+                if current_terminal.supports_macos_input_method()
+                    && !current_terminal.prefers_macos_accessibility(running_version.as_deref()) =>
+            {
+                DoctorCheckType::NormalCheck
+            },
             _ => DoctorCheckType::NoCheck,
         }
     }

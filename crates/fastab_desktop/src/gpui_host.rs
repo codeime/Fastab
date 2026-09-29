@@ -25,6 +25,18 @@ use crate::{EventLoopProxy, EventLoopWindowTarget};
 use fastab_os_shim::Context;
 use fastab_remote_ipc::figterm::FigtermState;
 
+#[cfg(target_os = "macos")]
+fn accept_local_caret_position(position: crate::event::WindowPosition, prefers_ax: bool) -> bool {
+    !prefers_ax
+        || !matches!(
+            position,
+            crate::event::WindowPosition::RelativeToCaret {
+                origin: fastab_proto::local::caret_position_hook::Origin::BottomLeft,
+                ..
+            }
+        )
+}
+
 pub struct DesktopHost {
     pub fig_id_map: FigIdMap,
     pub figterm_state: Arc<FigtermState>,
@@ -105,6 +117,45 @@ impl DesktopHost {
                 }
             },
             Event::PlatformBoundEvent(native_event) => {
+                #[cfg(target_os = "macos")]
+                if let crate::platform::PlatformBoundEvent::ExternalWindowFocusChanged { app, window } = &native_event {
+                    // AX discovery may have blocked since this event was produced.
+                    // Reject a superseded app/window before clearing its caret.
+                    if !macos_utils::window_server::is_frontmost_application(app) {
+                        return;
+                    }
+                    if window.is_none() && self.platform_state.inner().cached_window_is_current(app) {
+                        return;
+                    }
+                    if window
+                        .as_ref()
+                        .is_some_and(|window| window.is_current_focused_window() == Ok(false))
+                        || !macos_utils::window_server::is_frontmost_application(app)
+                    {
+                        return;
+                    }
+                    self.overlay.clear_caret_position(cx);
+                }
+                #[cfg(target_os = "macos")]
+                if let crate::platform::PlatformBoundEvent::FocusedElementChanged { app, element } = &native_event {
+                    if crate::platform::prefers_ax_caret_for_app(app)
+                        && macos_utils::window_server::is_frontmost_application(app)
+                    {
+                        // A same-process notification can outlive its window or
+                        // pane. Only the element that is still focused may clear
+                        // the current terminal's caret and completion request.
+                        if macos_utils::window_server::UIElement::application(app.pid)
+                            .focused_element()
+                            .as_ref()
+                            .ok()
+                            != Some(element)
+                            || !macos_utils::window_server::is_frontmost_application(app)
+                        {
+                            return;
+                        }
+                        self.overlay.clear_caret_position(cx);
+                    }
+                }
                 if let Err(err) = self.platform_state.handle(
                     native_event,
                     &self.window_target,
@@ -191,6 +242,53 @@ impl DesktopHost {
             id if id == crate::webview::AUTOCOMPLETE_ID => match window_event {
                 WindowEvent::Hide | WindowEvent::Close => self.overlay.hide(cx),
                 WindowEvent::SetEnabled(enabled) => self.overlay.set_enabled(enabled, cx),
+                #[cfg(target_os = "macos")]
+                WindowEvent::TerminalEnabled {
+                    app,
+                    cache_identity,
+                    epoch,
+                    enabled,
+                } => {
+                    if macos_utils::window_server::is_frontmost_application(&app)
+                        && self.platform_state.inner().caret_cache_identity() == cache_identity
+                        && self.platform_state.inner().enabled_epoch() == epoch
+                    {
+                        self.overlay.set_enabled(enabled, cx);
+                    }
+                },
+                WindowEvent::CaretPositionHook(position) => {
+                    #[cfg(target_os = "macos")]
+                    {
+                        let prefers_ax = macos_utils::window_server::frontmost_application()
+                            .is_some_and(|app| crate::platform::prefers_ax_caret_for_app(&app));
+                        // The IME wire contract always uses BottomLeft. Keep the
+                        // local hook distinct so native AX geometry is unaffected,
+                        // including a late IME reply queued before focus changed.
+                        if !accept_local_caret_position(position, prefers_ax) {
+                            return;
+                        }
+                    }
+                    self.overlay.apply_position(position, &self.platform_state, cx);
+                },
+                #[cfg(target_os = "macos")]
+                WindowEvent::TerminalCaret {
+                    app,
+                    cache_identity,
+                    epoch,
+                    position,
+                } => {
+                    if !macos_utils::window_server::is_frontmost_application(&app)
+                        || self.platform_state.inner().caret_cache_identity() != cache_identity
+                        || self.platform_state.inner().caret_epoch() != epoch
+                    {
+                        return;
+                    }
+                    if let Some(position) = position {
+                        self.overlay.apply_position(position, &self.platform_state, cx);
+                    } else {
+                        self.overlay.clear_caret_position(cx);
+                    }
+                },
                 WindowEvent::UpdateWindowGeometry { position, .. } => {
                     if let Some(position) = position {
                         self.overlay.apply_position(position, &self.platform_state, cx);
@@ -397,6 +495,21 @@ pub fn spawn_engine() -> anyhow::Result<EngineClient> {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::should_show_settings_after_launch;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ax_terminal_rejects_queued_ime_carets_but_preserves_top_left_hooks() {
+        use fastab_proto::local::caret_position_hook::Origin;
+        use tao::dpi::{LogicalPosition, LogicalSize};
+        let position = |origin| crate::event::WindowPosition::RelativeToCaret {
+            caret_position: LogicalPosition::new(100.0, 200.0).into(),
+            caret_size: LogicalSize::new(0.0, 18.0).into(),
+            origin,
+        };
+        assert!(!super::accept_local_caret_position(position(Origin::BottomLeft), true));
+        assert!(super::accept_local_caret_position(position(Origin::TopLeft), true));
+        assert!(super::accept_local_caret_position(position(Origin::BottomLeft), false));
+    }
 
     #[test]
     fn accessibility_gate_overrides_silent_or_no_dashboard_launch() {

@@ -6,9 +6,10 @@ use accessibility_sys::{
     _AXUIElementGetWindow, AXError, AXUIElement, AXUIElementCopyAttributeNames, AXUIElementCopyAttributeValue,
     AXUIElementCreateApplication, AXUIElementRef, AXUIElementSetAttributeValue, AXUIElementSetMessagingTimeout,
     AXValue, kAXApplicationRole, kAXBrowserRole, kAXChildrenAttribute, kAXDOMClassListAttribute,
-    kAXEnhancedUserInterfaceAttribute, kAXErrorAttributeUnsupported, kAXFocusedAttribute, kAXFocusedWindowAttribute,
-    kAXFrameAttribute, kAXFullScreenAttribute, kAXGroupRole, kAXManualAccessibilityAttribute, kAXParentAttribute,
-    kAXRoleAttribute, kAXScrollAreaRole, kAXSubroleAttribute, kAXTextFieldRole, kAXWebAreaRole, pid_t,
+    kAXEnhancedUserInterfaceAttribute, kAXErrorAttributeUnsupported, kAXFocusedAttribute, kAXFocusedUIElementAttribute,
+    kAXFocusedWindowAttribute, kAXFrameAttribute, kAXFullScreenAttribute, kAXGroupRole,
+    kAXManualAccessibilityAttribute, kAXParentAttribute, kAXRoleAttribute, kAXScrollAreaRole, kAXSubroleAttribute,
+    kAXTextFieldRole, kAXWebAreaRole, pid_t,
 };
 use core_foundation::ConcreteCFType;
 use core_foundation::array::{CFArray, CFArrayRef};
@@ -178,6 +179,11 @@ impl UIElement {
     pub fn is_focused(&self) -> Result<bool> {
         let focused = self.get_attr::<CFBoolean>(kAXFocusedAttribute)?;
         Ok(focused.into())
+    }
+
+    pub fn focused_element(&self) -> Result<Self> {
+        self.get_attr::<AXUIElement>(kAXFocusedUIElementAttribute)
+            .map(Self::from)
     }
 
     pub fn role(&self) -> Result<CFString> {

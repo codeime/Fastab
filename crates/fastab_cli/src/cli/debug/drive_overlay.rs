@@ -272,7 +272,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn loads_t3_session_keystroke_frames() {
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/session-replay/sessions/git.jsonl");

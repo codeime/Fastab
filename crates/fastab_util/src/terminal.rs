@@ -487,7 +487,28 @@ impl Terminal {
                 | Terminal::VSCodium
                 | Terminal::Hyper
                 | Terminal::Tabby
+                | Terminal::Otty
         ) || self.as_custom().is_some_and(|c| c.macos.accessibility)
+    }
+
+    /// Otty 1.2+ exposes the terminal insertion point through Accessibility.
+    /// Older or unknown versions keep using their existing IMK integration.
+    /// The caller supplies the running app's version; this crate must not link AppKit.
+    pub fn prefers_macos_accessibility(&self, running_version: Option<&str>) -> bool {
+        if !matches!(self, Terminal::Otty) {
+            return false;
+        }
+        let Some(version) = running_version else {
+            return false;
+        };
+        let mut components = version.split('.');
+        let (Some(major), Some(minor)) = (
+            components.next().and_then(|part| part.parse::<u64>().ok()),
+            components.next().and_then(|part| part.parse::<u64>().ok()),
+        ) else {
+            return false;
+        };
+        components.all(|part| part.parse::<u64>().is_ok()) && (major > 1 || major == 1 && minor >= 2)
     }
 
     pub fn is_xterm(&self) -> bool {
@@ -885,6 +906,13 @@ mod tests {
         assert_eq!(Terminal::Otty.to_bundle_id().as_deref(), Some("io.appmakes.otty"));
         assert_eq!(Terminal::Otty.internal_id(), "otty");
         assert!(Terminal::Otty.supports_macos_input_method());
+        assert!(Terminal::Otty.supports_macos_accessibility());
+        assert!(Terminal::Otty.prefers_macos_accessibility(Some("1.2.0")));
+        assert!(Terminal::Otty.prefers_macos_accessibility(Some("1.5.4")));
+        assert!(!Terminal::Otty.prefers_macos_accessibility(Some("1.1.9")));
+        assert!(!Terminal::Otty.prefers_macos_accessibility(None));
+        assert!(!Terminal::Otty.prefers_macos_accessibility(Some("unknown")));
+        assert!(!Terminal::Ghostty.prefers_macos_accessibility(Some("1.5.4")));
         assert!(Terminal::Otty.executable_names().contains(&"Otty"));
         assert!(MACOS_TERMINALS.contains(&Terminal::Otty));
     }

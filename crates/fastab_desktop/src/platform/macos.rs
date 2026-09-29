@@ -2,8 +2,9 @@
 #![allow(unexpected_cfgs)]
 #![allow(deprecated)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use accessibility_sys::{
     AXError, AXIsProcessTrusted, AXUIElement, AXUIElementCreateSystemWide, AXUIElementSetMessagingTimeout, pid_t,
@@ -18,8 +19,8 @@ use fastab_proto::fig::{AccessibilityChangeNotification, Notification, Notificat
 use fastab_proto::local::caret_position_hook::Origin;
 use fastab_util::Terminal;
 use macos_utils::accessibility::accessibility_is_enabled;
-use macos_utils::caret_position::{CaretPosition, get_caret_position};
-use macos_utils::window_server::{AX_MESSAGING_TIMEOUT_SECONDS, CGWindowLevelForKey, UIElement};
+use macos_utils::caret_position::{CaretPosition, get_caret_position, get_terminal_caret_position};
+use macos_utils::window_server::{AX_MESSAGING_TIMEOUT_SECONDS, ApplicationSpecifier, CGWindowLevelForKey, UIElement};
 use macos_utils::{NotificationCenter, WindowServer, WindowServerEvent};
 use objc::runtime::{BOOL, Class};
 use objc::{msg_send, sel, sel_impl};
@@ -38,11 +39,18 @@ use crate::{AUTOCOMPLETE_ID, AUTOCOMPLETE_WINDOW_TITLE, DASHBOARD_ID, EventLoopP
 
 pub const DEFAULT_CARET_WIDTH: f64 = 10.0;
 
+pub(crate) fn prefers_ax_caret_for_app(app: &ApplicationSpecifier) -> bool {
+    let Some(terminal @ Terminal::Otty) = Terminal::from_bundle_id(&app.bundle_id) else {
+        return false;
+    };
+    terminal.prefers_macos_accessibility(macos_utils::applications::running_application_version(app.pid).as_deref())
+}
+
 fn should_refresh_x_term_cache(bundle_id: &str) -> bool {
     Terminal::from_bundle_id(bundle_id).is_some_and(|terminal| terminal.is_xterm())
 }
 
-/// IME-only terminals (Otty, Ghostty, Kitty, …) report the caret through IMK,
+/// IME-only terminals (Ghostty, Kitty, …) report the caret through IMK,
 /// not AX, so an in-window focused-element change is noise we cannot follow
 /// rather than a pane switch we should park the list for. No built-in terminal
 /// is both IME and xterm; that guard is for a custom terminal declaring both,
@@ -52,6 +60,36 @@ fn hide_overlay_on_element_change(bundle_id: &str) -> bool {
         Terminal::from_bundle_id(bundle_id),
         Some(terminal) if terminal.supports_macos_input_method() && !terminal.is_xterm()
     )
+}
+
+fn window_focus_events(
+    is_frontmost: bool,
+    app: ApplicationSpecifier,
+    make_window: impl FnOnce() -> Result<PlatformWindowImpl, AXError>,
+) -> Vec<Event> {
+    // Activation discovery is delayed; reject an old app before either AX work
+    // or Hide can cancel the currently focused terminal's completion request.
+    if !is_frontmost {
+        return Vec::new();
+    }
+    vec![Event::PlatformBoundEvent(
+        PlatformBoundEvent::ExternalWindowFocusChanged {
+            app,
+            window: make_window().ok(),
+        },
+    )]
+}
+
+const WINDOW_RECOVERY_BACKOFF: Duration = Duration::from_millis(750);
+
+fn recovery_is_throttled(
+    failure: Option<&(ApplicationSpecifier, Instant)>,
+    app: &ApplicationSpecifier,
+    now: Instant,
+) -> bool {
+    failure.is_some_and(|(failed_app, failed_at)| {
+        failed_app == app && now.duration_since(*failed_at) < WINDOW_RECOVERY_BACKOFF
+    })
 }
 
 // See for other window level keys
@@ -134,6 +172,14 @@ pub struct PlatformStateImpl {
     proxy: EventLoopProxy,
     #[serde(skip)]
     focused_window: Mutex<Option<PlatformWindowImpl>>,
+    #[serde(skip)]
+    last_window_recovery_failure: Mutex<Option<(ApplicationSpecifier, Instant)>>,
+    #[serde(skip)]
+    last_ax_caret_failure: Mutex<Option<(ApplicationSpecifier, Instant)>>,
+    #[serde(skip)]
+    caret_epoch: AtomicU64,
+    #[serde(skip)]
+    enabled_epoch: AtomicU64,
 }
 
 #[derive(Debug, Clone)]
@@ -156,6 +202,12 @@ impl From<CGRect> for Rect {
 }
 
 impl PlatformWindowImpl {
+    pub(crate) fn is_current_focused_window(&self) -> Result<bool, AXError> {
+        UIElement::application(self.pid)
+            .focused_window()
+            .map(|window| window == self.ui_element)
+    }
+
     pub fn new(bundle_id: String, pid: pid_t, ui_element: UIElement) -> Result<Self, AXError> {
         let window_id = unsafe { ui_element.get_window_id()? };
         Ok(Self {
@@ -282,6 +334,10 @@ impl PlatformStateImpl {
         Self {
             proxy,
             focused_window: Mutex::new(focused_window),
+            last_window_recovery_failure: Mutex::new(None),
+            last_ax_caret_failure: Mutex::new(None),
+            caret_epoch: AtomicU64::new(0),
+            enabled_epoch: AtomicU64::new(0),
         }
     }
 
@@ -298,10 +354,10 @@ impl PlatformStateImpl {
                 // this event's log metadata-only until after the frontmost-app filter.
                 debug!(pid = app.pid, bundle_id = %app.bundle_id, "Handling focused element event");
             },
-            PlatformBoundEvent::ExternalWindowFocusChanged { window } => {
+            PlatformBoundEvent::ExternalWindowFocusChanged { app, .. } => {
                 // PlatformWindowImpl derives Debug through UIElement, which would issue
                 // AX requests before the stale-activation check below.
-                debug!(pid = window.pid, bundle_id = %window.bundle_id, "Handling external window focus event");
+                debug!(pid = app.pid, bundle_id = %app.bundle_id, "Handling external window focus event");
             },
             _ => debug!("Handling platform event: {:?}", event),
         }
@@ -340,16 +396,11 @@ impl PlatformStateImpl {
 
                         match result {
                             WindowServerEvent::FocusChanged { window, app } => {
-                                events.push(Event::WindowEvent {
-                                    window_id: AUTOCOMPLETE_ID,
-                                    window_event: WindowEvent::Hide,
-                                });
-
-                                if let Ok(window) = PlatformWindowImpl::new(app.bundle_id, app.pid, window) {
-                                    events.push(Event::PlatformBoundEvent(
-                                        PlatformBoundEvent::ExternalWindowFocusChanged { window },
-                                    ));
-                                }
+                                events.extend(window_focus_events(
+                                    macos_utils::window_server::is_frontmost_application(&app),
+                                    app.clone(),
+                                    || PlatformWindowImpl::new(app.bundle_id, app.pid, window),
+                                ));
                             },
                             WindowServerEvent::FocusedElementChanged { element, app } => {
                                 events.push(Event::PlatformBoundEvent(PlatformBoundEvent::FocusedElementChanged {
@@ -401,58 +452,34 @@ impl PlatformStateImpl {
                 }
                 Ok(())
             },
-            PlatformBoundEvent::ExternalWindowFocusChanged { window } => {
-                let app = macos_utils::window_server::ApplicationSpecifier {
-                    pid: window.pid,
-                    bundle_id: window.bundle_id.clone(),
-                };
+            PlatformBoundEvent::ExternalWindowFocusChanged { app, window } => {
                 if !macos_utils::window_server::is_frontmost_application(&app) {
                     trace!(pid = app.pid, bundle_id = %app.bundle_id, "Ignoring stale external app activation");
                     return Ok(());
                 }
+                self.caret_epoch.fetch_add(1, Ordering::Relaxed);
 
-                let current_terminal = Terminal::from_bundle_id(window.bundle_id.clone());
+                // A same-process window switch whose AX lookup failed must not
+                // leave the previous window eligible for the app-level fast path.
+                self.focused_window.lock().unwrap().take();
+                self.last_window_recovery_failure.lock().unwrap().take();
+                self.last_ax_caret_failure.lock().unwrap().take();
+                let Some(window) = window else {
+                    *self.last_window_recovery_failure.lock().unwrap() = Some((app, Instant::now()));
+                    return Ok(());
+                };
                 let level = window.get_level();
+                if !macos_utils::window_server::is_frontmost_application(&app) {
+                    return Ok(());
+                }
 
                 if level == Some(0) {
-                    // Checking if IME is installed is async :(
-                    let enabled_proxy = self.proxy.clone();
-                    tokio::spawn(async move {
-                        let is_terminal_disabled = current_terminal.as_ref().is_some_and(|terminal| {
-                            fastab_settings::settings::get_bool_or(
-                                format!("integrations.{}.disabled", terminal.internal_id()),
-                                false,
-                            )
-                        });
-
-                        // Only the integration's own enabled flag gates here. A
-                        // per-process "needs restart" stamp used to gate it too,
-                        // which silently disabled autocomplete in every terminal
-                        // that was already open when the IME was installed.
-                        let terminal_cursor_backing_installed = match current_terminal {
-                            Some(terminal) => {
-                                !terminal.supports_macos_input_method()
-                                    || InputMethod::default().is_enabled().unwrap_or(false)
-                            },
-                            None => false,
-                        };
-
-                        let is_enabled = !is_terminal_disabled
-                            && terminal_cursor_backing_installed
-                            && !fastab_settings::settings::get_bool_or("autocomplete.disable", false)
-                            && accessibility_is_enabled();
-                        // && fig_request::fig_auth::is_logged_in();
-
-                        enabled_proxy
-                            .send_event(Event::WindowEvent {
-                                window_id: AUTOCOMPLETE_ID,
-                                window_event: WindowEvent::SetEnabled(is_enabled),
-                            })
-                            .unwrap();
-                    });
-
                     let mut focused = self.focused_window.lock().unwrap();
                     focused.replace(window);
+                    drop(focused);
+                    self.refresh_autocomplete_enabled(&app.bundle_id);
+                } else {
+                    *self.last_window_recovery_failure.lock().unwrap() = Some((app, Instant::now()));
                 }
 
                 apply_autocomplete_window_level(window_map, level);
@@ -581,6 +608,16 @@ impl PlatformStateImpl {
                 Ok(())
             },
             PlatformBoundEvent::FocusedElementChanged { element, app } => {
+                if prefers_ax_caret_for_app(&app) {
+                    // The host clears the position synchronously when accepting
+                    // this event. Invalidate queued results from another pane or
+                    // the terminal before a Find/command-palette field took focus.
+                    if macos_utils::window_server::is_frontmost_application(&app) {
+                        self.caret_epoch.fetch_add(1, Ordering::Relaxed);
+                        self.last_ax_caret_failure.lock().unwrap().take();
+                    }
+                    return Ok(());
+                }
                 if !macos_utils::window_server::is_frontmost_application(&app) {
                     trace!(pid = app.pid, bundle_id = %app.bundle_id, "Ignoring stale focused-element event");
                     let belongs_to_tracked_window = {
@@ -651,7 +688,7 @@ impl PlatformStateImpl {
                     return Ok(());
                 }
                 drop(focused);
-                // Otty / Ghostty / Kitty do not expose an AX caret. Their IME
+                // Ghostty / Kitty do not expose an AX caret. Their IME
                 // controller also fires element-changed noise (palette switch,
                 // IMK activate/deactivate). Hiding here parks the list, and
                 // without a subsequent IME hook it never comes back.
@@ -670,24 +707,241 @@ impl PlatformStateImpl {
                 Ok(())
             },
             PlatformBoundEvent::WindowDestroyed { app } => {
+                let tracked_window_id = self.focused_window.lock().unwrap().as_ref().and_then(|window| {
+                    (window.pid == app.pid && window.bundle_id == app.bundle_id).then_some(window.window_id)
+                });
+                let Some(tracked_window_id) = tracked_window_id else {
+                    return Ok(());
+                };
+                // The event has no window ID and may predate a newly focused
+                // window. Recheck absence (with the normal AX timeout) before
+                // clearing, even if this app has since moved to the background.
+                if !matches!(
+                    UIElement::application(app.pid).focused_window(),
+                    Err(accessibility_sys::kAXErrorNoValue)
+                ) {
+                    return Ok(());
+                }
+                let is_frontmost = macos_utils::window_server::is_frontmost_application(&app);
                 let mut focused = self.focused_window.lock().unwrap();
+                let mut cleared = false;
                 if let Some(focused_window) = focused.as_ref() {
-                    if focused_window.bundle_id() == app.bundle_id {
+                    if focused_window.pid == app.pid
+                        && focused_window.bundle_id() == app.bundle_id
+                        && focused_window.window_id == tracked_window_id
+                    {
                         focused.take();
-                        self.proxy
-                            .send_event(Event::WindowEvent {
-                                window_id: AUTOCOMPLETE_ID,
-                                window_event: WindowEvent::Hide,
-                            })
-                            .ok();
+                        self.caret_epoch.fetch_add(1, Ordering::Relaxed);
+                        cleared = true;
                     }
+                }
+                drop(focused);
+                if cleared && is_frontmost {
+                    self.send_terminal_caret(app, None);
                 }
                 Ok(())
             },
         }
     }
 
+    fn refresh_autocomplete_enabled(&self, bundle_id: &str) {
+        let cache_identity = self.caret_cache_identity();
+        let Some((pid, _)) = cache_identity else {
+            return;
+        };
+        let app = ApplicationSpecifier {
+            pid,
+            bundle_id: bundle_id.to_owned(),
+        };
+        let epoch = self.enabled_epoch.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        let proxy = self.proxy.clone();
+        // IME state reads acquire SQLite connections and can wait for seconds.
+        // Keep them off the UI thread; bind the reply to this accepted focus.
+        tokio::task::spawn_blocking(move || {
+            if !macos_utils::window_server::is_frontmost_application(&app) {
+                return;
+            }
+            let terminal = Terminal::from_bundle_id(&app.bundle_id);
+            let enabled = terminal.as_ref().is_some_and(|terminal| {
+                !fastab_settings::settings::get_bool_or(
+                    format!("integrations.{}.disabled", terminal.internal_id()),
+                    false,
+                ) && (prefers_ax_caret_for_app(&app)
+                    || !terminal.supports_macos_input_method()
+                    || InputMethod::default().is_enabled().unwrap_or(false))
+            }) && !fastab_settings::settings::get_bool_or("autocomplete.disable", false)
+                && accessibility_is_enabled();
+            proxy
+                .send_event(Event::WindowEvent {
+                    window_id: AUTOCOMPLETE_ID,
+                    window_event: WindowEvent::TerminalEnabled {
+                        app,
+                        cache_identity,
+                        epoch,
+                        enabled,
+                    },
+                })
+                .ok();
+        });
+    }
+
+    fn recover_focused_terminal_window(&self) -> bool {
+        let Some(app) = macos_utils::window_server::frontmost_application() else {
+            return false;
+        };
+        // Hooks can arrive after focus moved away from a terminal. This is a
+        // normal skip, not an AX failure or a reason to query the background app.
+        if Terminal::from_bundle_id(&app.bundle_id).is_none() {
+            return false;
+        }
+        let already_tracked = self
+            .focused_window
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|window| window.pid == app.pid && window.bundle_id == app.bundle_id);
+        if already_tracked {
+            return true;
+        }
+        if recovery_is_throttled(
+            self.last_window_recovery_failure.lock().unwrap().as_ref(),
+            &app,
+            Instant::now(),
+        ) {
+            return false;
+        }
+
+        // Only cache loss/app mismatch queries AX. Back off after a failure so
+        // an unresponsive terminal cannot consume a 250 ms AX timeout per key.
+        let recovered = (|| -> anyhow::Result<PlatformWindowImpl> {
+            let element = UIElement::application(app.pid)
+                .focused_window()
+                .map_err(|err| anyhow::anyhow!("Failed to recover focused terminal window: AX error {err}"))?;
+            let window = PlatformWindowImpl::new(app.bundle_id.clone(), app.pid, element)
+                .map_err(|err| anyhow::anyhow!("Failed to identify focused terminal window: AX error {err}"))?;
+            anyhow::ensure!(
+                window.get_level() == Some(0),
+                "Focused terminal window is not at the normal level"
+            );
+            anyhow::ensure!(
+                macos_utils::window_server::is_frontmost_application(&app),
+                "Frontmost terminal changed during window recovery"
+            );
+            Ok(window)
+        })();
+        match recovered {
+            Ok(window) => {
+                self.last_window_recovery_failure.lock().unwrap().take();
+                self.caret_epoch.fetch_add(1, Ordering::Relaxed);
+                self.focused_window.lock().unwrap().replace(window);
+                self.refresh_autocomplete_enabled(&app.bundle_id);
+                debug!(pid = app.pid, bundle_id = %app.bundle_id, "Recovered focused terminal window");
+                true
+            },
+            Err(err) => {
+                debug!(%err, pid = app.pid, bundle_id = %app.bundle_id, "Backing off focused terminal window recovery");
+                *self.last_window_recovery_failure.lock().unwrap() = Some((app, Instant::now()));
+                false
+            },
+        }
+    }
+
+    pub(crate) fn caret_cache_identity(&self) -> Option<(i32, u32)> {
+        self.focused_window
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|window| (window.pid, window.window_id))
+    }
+
+    pub(crate) fn cached_window_is_current(&self, app: &ApplicationSpecifier) -> bool {
+        let cached = self
+            .focused_window
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|window| window.pid == app.pid && window.bundle_id == app.bundle_id)
+            .cloned();
+        // A failed old discovery need not invalidate a newer cache that AX can
+        // positively identify now. Do not hold the cache mutex across AX.
+        cached.is_some_and(|window| window.is_current_focused_window() == Ok(true))
+    }
+
+    pub(crate) fn caret_epoch(&self) -> u64 {
+        self.caret_epoch.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn enabled_epoch(&self) -> u64 {
+        self.enabled_epoch.load(Ordering::Relaxed)
+    }
+
+    fn send_terminal_caret(&self, app: ApplicationSpecifier, position: Option<WindowPosition>) {
+        self.proxy
+            .send_event(Event::WindowEvent {
+                window_id: AUTOCOMPLETE_ID,
+                window_event: WindowEvent::TerminalCaret {
+                    app,
+                    cache_identity: self.caret_cache_identity(),
+                    epoch: self.caret_epoch(),
+                    position,
+                },
+            })
+            .ok();
+    }
+
+    fn refresh_ax_terminal_caret(&self, app: ApplicationSpecifier) {
+        let Some((pid, window_id)) = self.caret_cache_identity().filter(|(pid, _)| *pid == app.pid) else {
+            self.send_terminal_caret(app, None);
+            return;
+        };
+        if recovery_is_throttled(
+            self.last_ax_caret_failure.lock().unwrap().as_ref(),
+            &app,
+            Instant::now(),
+        ) {
+            self.send_terminal_caret(app, None);
+            return;
+        }
+        // The strict reader shares one 250 ms budget across all AX attributes,
+        // validates the text area's window, and rejects nonempty selections.
+        let caret = unsafe { get_terminal_caret_position(pid, window_id) };
+        if !macos_utils::window_server::is_frontmost_application(&app)
+            || self.caret_cache_identity() != Some((pid, window_id))
+        {
+            return;
+        }
+        if caret.valid {
+            self.last_ax_caret_failure.lock().unwrap().take();
+            self.send_terminal_caret(
+                app,
+                Some(WindowPosition::RelativeToCaret {
+                    caret_position: LogicalPosition::new(caret.x, caret.y).into(),
+                    caret_size: LogicalSize::new(DEFAULT_CARET_WIDTH, caret.height).into(),
+                    origin: Origin::TopLeft,
+                }),
+            );
+        } else {
+            *self.last_ax_caret_failure.lock().unwrap() = Some((app.clone(), Instant::now()));
+            // A missed same-app window change is recoverable at the next key.
+            // Never let the old coordinates reappear while AX is unavailable.
+            self.focused_window.lock().unwrap().take();
+            self.caret_epoch.fetch_add(1, Ordering::Relaxed);
+            self.send_terminal_caret(app, None);
+        }
+    }
+
     fn refresh_window_position(&self) -> anyhow::Result<()> {
+        let ax_app = macos_utils::window_server::frontmost_application().filter(prefers_ax_caret_for_app);
+        if !self.recover_focused_terminal_window() {
+            if let Some(app) = ax_app {
+                self.send_terminal_caret(app, None);
+            }
+            return Ok(());
+        }
+        if let Some(app) = ax_app {
+            self.refresh_ax_terminal_caret(app);
+            return Ok(());
+        }
         let mut guard = self.focused_window.lock().unwrap();
         let active_window = guard.as_mut().context("No active window")?;
         let current_terminal = Terminal::from_bundle_id(active_window.bundle_id());
@@ -790,9 +1044,57 @@ pub const fn autocomplete_active() -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        XTermCacheUpdate, hide_overlay_on_element_change, should_refresh_x_term_cache,
+        ApplicationSpecifier, Instant, WINDOW_RECOVERY_BACKOFF, XTermCacheUpdate, hide_overlay_on_element_change,
+        recovery_is_throttled, should_refresh_x_term_cache, window_focus_events,
         x_term_cache_update_for_focused_element,
     };
+
+    fn test_app() -> ApplicationSpecifier {
+        ApplicationSpecifier {
+            pid: 42,
+            bundle_id: "io.appmakes.otty".into(),
+        }
+    }
+
+    #[test]
+    fn stale_activation_neither_hides_overlay_nor_queries_ax() {
+        let events = window_focus_events(false, test_app(), || panic!("stale activation must not query AX"));
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn failed_window_discovery_preserves_identity_for_consumer_invalidation() {
+        let expected = test_app();
+        let events = window_focus_events(true, expected.clone(), || {
+            Err(accessibility_sys::kAXErrorCannotComplete)
+        });
+        assert!(matches!(
+            events.as_slice(),
+            [crate::event::Event::PlatformBoundEvent(
+                crate::platform::PlatformBoundEvent::ExternalWindowFocusChanged { app, window: None }
+            )] if app == &expected
+        ));
+    }
+
+    #[test]
+    fn window_recovery_backoff_expires_and_does_not_block_another_app() {
+        let app = test_app();
+        let failed_at = Instant::now();
+        let failure = (app.clone(), failed_at);
+        assert!(recovery_is_throttled(Some(&failure), &app, failed_at));
+        assert!(!recovery_is_throttled(
+            Some(&failure),
+            &app,
+            failed_at + WINDOW_RECOVERY_BACKOFF
+        ));
+        assert!(!recovery_is_throttled(None, &app, failed_at));
+        let mut other = app.clone();
+        other.pid += 1;
+        assert!(!recovery_is_throttled(Some(&failure), &other, failed_at));
+        other.pid = app.pid;
+        other.bundle_id = "com.mitchellh.ghostty".into();
+        assert!(!recovery_is_throttled(Some(&failure), &other, failed_at));
+    }
 
     #[test]
     fn xterm_helper_textarea_keeps_the_caret_cache() {
@@ -829,13 +1131,14 @@ mod tests {
 
     #[test]
     fn ime_terminals_keep_the_overlay_on_element_change() {
-        assert!(!hide_overlay_on_element_change("io.appmakes.otty"));
         assert!(!hide_overlay_on_element_change("com.mitchellh.ghostty"));
         assert!(!hide_overlay_on_element_change("net.kovidgoyal.kitty"));
     }
 
     #[test]
     fn ax_terminals_still_hide_on_element_change() {
+        // Version-aware Otty AX focus handling runs before this legacy helper.
+        assert!(!hide_overlay_on_element_change("io.appmakes.otty"));
         assert!(hide_overlay_on_element_change("com.googlecode.iterm2"));
         assert!(hide_overlay_on_element_change("com.apple.Terminal"));
         assert!(hide_overlay_on_element_change("com.microsoft.VSCode"));

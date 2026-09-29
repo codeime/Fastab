@@ -358,6 +358,11 @@ impl OverlayController {
         self.show_kept_items(cx);
     }
 
+    pub fn clear_caret_position(&mut self, cx: &mut App) {
+        *self.last_position.lock().unwrap_or_else(|err| err.into_inner()) = None;
+        self.hide(cx);
+    }
+
     pub fn apply_position(&mut self, position: WindowPosition, platform_state: &PlatformState, cx: &mut App) {
         *self.last_position.lock().unwrap_or_else(|err| err.into_inner()) = Some(position);
         let needs_window = {
