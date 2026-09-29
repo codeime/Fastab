@@ -15,7 +15,6 @@ use crate::jev::config::{
     AiConfig, ConfigChanged, Profile, Provider, normalize_base_url, pause_runtime, runtime_revision,
 };
 use crate::jev::credentials::{self, CredentialError};
-use crate::jev::diagnostics::{self, Metric, Snapshot};
 use crate::jev::policy::DATA_POLICY_VERSION;
 
 use super::input::{Commit, Input};
@@ -141,8 +140,6 @@ pub(super) struct AiSettings {
     model: Entity<Input>,
     base: Entity<Input>,
     enabled: bool,
-    share_git_status: bool,
-    diagnostics: Snapshot,
     busy: bool,
     load_failed: bool,
     persistence_failed: bool,
@@ -222,7 +219,6 @@ impl AiSettings {
                         .update(cx, |input, cx| input.set(profile.base_url.clone(), cx));
                     this.profile = profile;
                     this.enabled = config.enabled;
-                    this.share_git_status = config.share_git_status;
                     this.config = config;
                     this.load_failed = false;
                     this.status.clear();
@@ -242,8 +238,6 @@ impl AiSettings {
         .detach();
         Self {
             enabled: config.enabled,
-            share_git_status: config.share_git_status,
-            diagnostics: diagnostics::snapshot(),
             config,
             profile: profile.clone(),
             key,
@@ -943,7 +937,6 @@ impl AiSettings {
         }
         self.bind_fresh_key_to_current_service(cx);
         let desired_enabled = self.enabled;
-        let share_git_status = self.share_git_status;
         let draft = self.draft(cx);
         let key = self.key.read(cx);
         let draft_service = draft.credential_key().ok();
@@ -1049,9 +1042,6 @@ impl AiSettings {
                 let revision = runtime_revision();
                 let mut staged = baseline.clone();
                 staged.enabled = false;
-                if recognized {
-                    staged.share_git_status = share_git_status;
-                }
                 if !desired_enabled
                     && recognized
                     && baseline.profiles.iter().any(|profile| profile.id == draft.id)
@@ -1514,9 +1504,7 @@ impl AiSettings {
     ) -> gpui::AnyElement {
         let chrome = Chrome::current();
         let deleting = id.starts_with("jev-delete-");
-        let local_only = id.starts_with("jev-diagnostics-");
-        let disabled =
-            !local_only && (self.busy || self.load_failed || (deleting && (self.save_running || self.save_pending)));
+        let disabled = self.busy || self.load_failed || (deleting && (self.save_running || self.save_pending));
         let selected = matches!(
             (id.as_str(), self.profile.provider),
             ("jev-typesafe", Provider::TypeSafe)
@@ -1560,10 +1548,7 @@ impl AiSettings {
                 if !disabled {
                     click_focus.focus(window);
                     click_entity.update(cx, |this, cx| {
-                        if local_only
-                            || (!this.busy
-                                && !this.load_failed
-                                && (!deleting || (!this.save_running && !this.save_pending)))
+                        if !this.busy && !this.load_failed && (!deleting || (!this.save_running && !this.save_pending))
                         {
                             click_action(this, cx);
                         }
@@ -1574,10 +1559,7 @@ impl AiSettings {
             .on_key_down(move |event, _, cx| {
                 if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
                     key_entity.update(cx, |this, cx| {
-                        if local_only
-                            || (!this.busy
-                                && !this.load_failed
-                                && (!deleting || (!this.save_running && !this.save_pending)))
+                        if !this.busy && !this.load_failed && (!deleting || (!this.save_running && !this.save_pending))
                         {
                             action(this, cx);
                         }
@@ -1627,58 +1609,6 @@ impl AiSettings {
             .into_any_element()
     }
 
-    fn git_status_toggle(&mut self, cx: &mut Context<'_, Self>) -> gpui::AnyElement {
-        let chrome = Chrome::current();
-        let disabled = self.busy || self.load_failed;
-        let checked = self.share_git_status;
-        let focus = self
-            .buttons
-            .entry("jev-share-git-status".into())
-            .or_insert_with(|| cx.focus_handle())
-            .clone()
-            .tab_stop(!disabled);
-        let click_focus = focus.clone();
-        let key_entity = cx.entity();
-        let click_entity = cx.entity();
-        div()
-            .id("jev-share-git-status")
-            .track_focus(&focus)
-            .tab_stop(!disabled)
-            .border_1()
-            .rounded(px(11.))
-            .border_color(rgb(chrome.card))
-            .when(disabled, |toggle| toggle.opacity(0.45))
-            .focus(|style| style.border_color(rgb(chrome.accent)))
-            .child(super::toggle(
-                "jev-share-git-status-switch".into(),
-                checked,
-                chrome,
-                move |cx| {
-                    click_entity.update(cx, |this, cx| this.toggle_git_status(cx));
-                },
-            ))
-            .on_mouse_down(MouseButton::Left, move |_, window, _| {
-                if !disabled {
-                    click_focus.focus(window);
-                }
-            })
-            .on_key_down(move |event, _, cx| {
-                if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    key_entity.update(cx, |this, cx| this.toggle_git_status(cx));
-                    cx.stop_propagation();
-                }
-            })
-            .into_any_element()
-    }
-
-    fn toggle_git_status(&mut self, cx: &mut Context<'_, Self>) {
-        if self.busy || self.load_failed {
-            return;
-        }
-        self.share_git_status = !self.share_git_status;
-        self.queue_save(true, cx);
-    }
-
     fn toggle_enabled(&mut self, cx: &mut Context<'_, Self>) {
         if self.busy || self.load_failed {
             return;
@@ -1703,127 +1633,6 @@ impl Drop for AiSettings {
             abort.abort();
         }
     }
-}
-
-fn diagnostics_card(
-    stats: Snapshot,
-    zh: bool,
-    chrome: Chrome,
-    refresh: gpui::AnyElement,
-    clear: gpui::AnyElement,
-) -> impl IntoElement {
-    let label = |zh_text: &'static str, en_text: &'static str| if zh { zh_text } else { en_text };
-    let hint = |text: String| div().text_size(px(12.)).text_color(rgb(chrome.muted)).child(text);
-    let mut body = div()
-        .min_w(px(0.))
-        .p(px(16.))
-        .flex()
-        .flex_col()
-        .gap(px(8.))
-        .text_size(px(13.))
-        .whitespace_normal()
-        .child(hint(
-            label(
-                "仅统计本次启动，保存在本机进程内；不记录命令、候选、路径或密钥。",
-                "This launch only, in local process memory; no commands, candidates, paths, or keys are recorded.",
-            )
-            .into(),
-        ))
-        .child(format!(
-            "{} {}",
-            label("最近状态：", "Latest status:"),
-            stats.last_status.label(zh)
-        ))
-        .child(format!(
-            "{} {} · {} {} · {} {}",
-            label("评估", "Evaluated"),
-            stats.evaluated,
-            label("可参与", "Eligible"),
-            stats.count(Metric::Eligible),
-            label("跳过", "Skipped"),
-            stats.skipped,
-        ))
-        .child(format!(
-            "{} {} · {} {} · {} {}",
-            label("实际请求", "HTTP requests"),
-            stats.count(Metric::Request),
-            label("缓存命中", "Cache hits"),
-            stats.count(Metric::CacheHit),
-            label("服务返回", "Responses"),
-            stats.count(Metric::Response),
-        ))
-        .child(format!(
-            "{} {} · {} {} · {} {}",
-            label("保持本地", "Kept local"),
-            stats.count(Metric::KeptLocal),
-            label("首项改变", "First item changed"),
-            stats.count(Metric::Promoted),
-            label("接受动作已发送", "Acceptance sent"),
-            stats.count(Metric::Accepted),
-        ))
-        .child(format!(
-            "{} {} · {} {} · {} {}",
-            label("未采用", "Not accepted"),
-            stats.count(Metric::NotAccepted),
-            label("取消", "Cancelled"),
-            stats.count(Metric::Cancelled),
-            label("失败", "Failed"),
-            stats.count(Metric::Failed),
-        ));
-    let latency = if let (Some(average), Some(p95)) = (stats.average_latency_ms, stats.p95_latency_ms) {
-        format!(
-            "{} {} · {} {} ms · P95 {} ms",
-            label("HTTP 耗时样本", "HTTP latency samples"),
-            stats.latency_samples,
-            label("平均", "Average"),
-            average,
-            p95,
-        )
-    } else {
-        label("暂无 HTTP 耗时样本", "No HTTP latency samples yet").into()
-    };
-    body = body.child(latency).child(hint(
-        label(
-            "耗时包含失败请求，不包含缓存；接受动作已发送不代表 shell 已落地或执行。",
-            "Latency includes failed HTTP requests, not cache hits. Acceptance sent does not confirm shell insertion or execution.",
-        )
-        .into(),
-    ));
-    let mut reasons = stats.skip_reasons;
-    reasons.sort_by(|a, b| b.1.cmp(&a.1));
-    if !reasons.is_empty() {
-        body = body.child(label("跳过原因", "Skip reasons"));
-        for (reason, count) in reasons.iter().take(6) {
-            body = body.child(hint(format!("{} · {}", reason.label(zh), count)));
-        }
-        if reasons.len() > 6 {
-            let remaining: u64 = reasons[6..].iter().map(|(_, count)| count).sum();
-            body = body.child(hint(format!("{} · {}", label("其他原因", "Other reasons"), remaining,)));
-        }
-    }
-    let controls = div()
-        .flex()
-        .gap(px(6.))
-        .child(
-            div()
-                .debug_selector(|| "jev-diagnostics-refresh-button".into())
-                .child(refresh),
-        )
-        .child(
-            div()
-                .debug_selector(|| "jev-diagnostics-clear-button".into())
-                .child(clear),
-        );
-    body = body.child(controls);
-    div()
-        .w_full()
-        .min_w(px(0.))
-        .debug_selector(|| "jev-diagnostics-card".into())
-        .child(super::card(
-            label("本机会话诊断", "This-session diagnostics"),
-            chrome,
-            body,
-        ))
 }
 
 impl Render for AiSettings {
@@ -1870,57 +1679,6 @@ impl Render for AiSettings {
             chrome,
             enable_body,
         ));
-        let git_toggle = self.git_status_toggle(cx);
-        let git_body = div()
-            .w_full()
-            .min_w(px(0.))
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .child(super::row(
-                Self::label("发送结构化 Git 状态", "Share structured Git status"),
-                Some(Self::label(
-                    "单独开启后，只增加已暂存、未暂存、冲突、未跟踪这四个布尔值。",
-                    "When enabled, adds only four booleans: staged, unstaged, conflicts, and untracked.",
-                )),
-                chrome,
-                true,
-                git_toggle,
-            ))
-            .child(
-                div().px(px(16.)).pb(px(14.)).child(hint(Self::label(
-                    "不发送文件路径、名称、差异或内容。关闭时新增状态不外发；本机仍读取状态以核对短时缓存。",
-                    "No file paths, names, diffs, or contents are sent. When off, these fields stay local; status is still read to validate the short-lived cache.",
-                ).into())),
-            );
-        cards = cards.child(super::card(Self::label("Git 上下文", "Git context"), chrome, git_body));
-
-        let refresh = self.button(
-            "jev-diagnostics-refresh".into(),
-            Self::label("刷新", "Refresh").into(),
-            cx,
-            |this, cx| {
-                this.diagnostics = diagnostics::snapshot();
-                cx.notify();
-            },
-        );
-        let clear = self.button(
-            "jev-diagnostics-clear".into(),
-            Self::label("清零", "Clear").into(),
-            cx,
-            |this, cx| {
-                diagnostics::reset();
-                this.diagnostics = diagnostics::snapshot();
-                cx.notify();
-            },
-        );
-        cards = cards.child(diagnostics_card(
-            self.diagnostics.clone(),
-            super::locale_is_zh(),
-            chrome,
-            refresh,
-            clear,
-        ));
         if self.enabled {
             let draft = self.draft(cx);
             let custom = self.profile.provider == Provider::CustomSystemOne;
@@ -1965,10 +1723,17 @@ impl Render for AiSettings {
                 .flex_col()
                 .gap(px(10.))
                 .text_size(px(13.))
-                .child(hint(Self::label(
-                    "启用后会发送当前输入、Git 分支、近期命令和候选，用于推荐。",
-                    "When enabled, current input, Git branch, recent commands and candidates are sent for recommendations.",
-                ).into()))
+                .child(hint(if self.config.share_git_status {
+                    Self::label(
+                        "启用后会发送当前输入、Git 分支、近期命令和候选；当前配置还会发送已暂存、未暂存、冲突、未跟踪四项 Git 布尔状态，用于推荐。",
+                        "When enabled, current input, Git branch, recent commands and candidates are sent for recommendations. This configuration also sends four Git status booleans: staged, unstaged, conflicts and untracked.",
+                    )
+                } else {
+                    Self::label(
+                        "启用后会发送当前输入、Git 分支、近期命令和候选，用于推荐。",
+                        "When enabled, current input, Git branch, recent commands and candidates are sent for recommendations.",
+                    )
+                }.into()))
                 .child(Self::label("服务商", "Provider"))
                 .child(providers);
             if custom {
@@ -2021,7 +1786,17 @@ impl Render for AiSettings {
                 .child(self.model.clone());
             detail = detail.child(hint(format!("{} {destination}", Self::label("请求地址：", "Endpoint:"))))
                 .child(hint(Self::label("预设地址固定。需使用其他 System One 服务时选择自定义。", "Preset addresses are fixed. Choose Custom for another System One service.").into()))
-                .child(hint(Self::label("请求包含当前输入、Git 分支、当前目录最近最多 10 条命令，以及公开命令路径、前缀、shell 和候选说明。历史总长最多 2 KB，跳过含明显凭据的命令；不发送环境变量或目录字段。", "Requests include current input, Git branch, up to 10 recent commands from this directory, plus public command paths, prefixes, shell and candidate descriptions. History is capped at 2 KB; commands with obvious credentials are omitted. Environment variables and directory fields are excluded.").into()))
+                .child(hint(if self.config.share_git_status {
+                    Self::label(
+                        "请求包含当前输入、Git 分支、当前目录最近最多 10 条命令，以及公开命令路径、前缀、shell 和候选说明。当前配置还发送已暂存、未暂存、冲突、未跟踪四项 Git 布尔状态；Git 状态不含文件路径、名称、差异或内容。历史总长最多 2 KB，跳过含明显凭据的命令；不发送环境变量或目录字段。",
+                        "Requests include current input, Git branch, up to 10 recent commands from this directory, plus public command paths, prefixes, shell and candidate descriptions. This configuration also sends four Git status booleans: staged, unstaged, conflicts and untracked; Git status contains no file paths, names, diffs or contents. History is capped at 2 KB; commands with obvious credentials are omitted. Environment variables and directory fields are excluded.",
+                    )
+                } else {
+                    Self::label(
+                        "请求包含当前输入、Git 分支、当前目录最近最多 10 条命令，以及公开命令路径、前缀、shell 和候选说明。历史总长最多 2 KB，跳过含明显凭据的命令；不发送环境变量或目录字段。",
+                        "Requests include current input, Git branch, up to 10 recent commands from this directory, plus public command paths, prefixes, shell and candidate descriptions. History is capped at 2 KB; commands with obvious credentials are omitted. Environment variables and directory fields are excluded.",
+                    )
+                }.into()))
                 .child(hint(processors.into()));
             let mut policies = div().flex().flex_wrap().gap(px(6.));
             if !custom {
@@ -2101,109 +1876,6 @@ impl Render for AiSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{Modifiers, TestAppContext, point, size};
-
-    struct DiagnosticsCardHarness {
-        stats: Snapshot,
-        zh: bool,
-        refresh_clicks: usize,
-        clear_clicks: usize,
-    }
-
-    impl Render for DiagnosticsCardHarness {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-            let owner = cx.entity();
-            let refresh = div()
-                .px(px(10.))
-                .py(px(6.))
-                .border_1()
-                .text_size(px(12.))
-                .child(if self.zh { "刷新" } else { "Refresh" })
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    owner.update(cx, |this, _| this.refresh_clicks += 1);
-                    cx.stop_propagation();
-                })
-                .into_any_element();
-            let owner = cx.entity();
-            let clear = div()
-                .px(px(10.))
-                .py(px(6.))
-                .border_1()
-                .text_size(px(12.))
-                .child(if self.zh { "清零" } else { "Clear" })
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    owner.update(cx, |this, _| this.clear_clicks += 1);
-                    cx.stop_propagation();
-                })
-                .into_any_element();
-            diagnostics_card(self.stats.clone(), self.zh, Chrome::current(), refresh, clear)
-        }
-    }
-
-    #[gpui::test]
-    fn diagnostics_card_wraps_at_narrow_width_and_both_buttons_receive_clicks(cx: &mut TestAppContext) {
-        let _settings = fastab_settings::settings::install_override(fastab_settings::Settings::from_slice(&[(
-            "dashboard.theme",
-            serde_json::json!("light"),
-        )]));
-        for zh in [true, false] {
-            let mut wide_height = None;
-            for width in [320., 240.] {
-                let mut stats = Snapshot::default();
-                stats.evaluated = 12_345;
-                stats.skipped = 6_789;
-                stats.last_status = diagnostics::Status::Unsupported;
-                stats.skip_reasons = vec![
-                    (diagnostics::Status::Unsupported, 38),
-                    (diagnostics::Status::ChangedContext, 29),
-                    (diagnostics::Status::NotReady, 17),
-                    (diagnostics::Status::PendingLocal, 13),
-                    (diagnostics::Status::TooFewCandidates, 11),
-                    (diagnostics::Status::Navigating, 7),
-                    (diagnostics::Status::Cooldown, 5),
-                ];
-                stats.latency_samples = 25;
-                stats.average_latency_ms = Some(283);
-                stats.p95_latency_ms = Some(1_834);
-                let view = cx.new(|_| DiagnosticsCardHarness {
-                    stats,
-                    zh,
-                    refresh_clicks: 0,
-                    clear_clicks: 0,
-                });
-                let window = cx.add_empty_window();
-                window.draw(point(px(0.), px(0.)), size(px(width), px(1_800.)), |_, _| view.clone());
-                let card = window
-                    .debug_bounds("jev-diagnostics-card")
-                    .expect("card rendered by GPUI");
-                assert!(card.size.height > px(0.));
-                assert!(card.size.height < px(1_800.));
-                assert!(card.origin.x >= px(0.));
-                assert!(card.origin.x + card.size.width <= px(width));
-                if let Some(wide_height) = wide_height {
-                    assert!(
-                        card.size.height > wide_height,
-                        "the narrower card should wrap more text"
-                    );
-                } else {
-                    wide_height = Some(card.size.height);
-                }
-                for selector in ["jev-diagnostics-refresh-button", "jev-diagnostics-clear-button"] {
-                    let button = window
-                        .debug_bounds(selector)
-                        .expect("diagnostics button rendered by GPUI");
-                    assert!(button.size.width > px(0.) && button.size.height > px(0.));
-                    assert!(button.origin.x >= card.origin.x);
-                    assert!(button.origin.x + button.size.width <= card.origin.x + card.size.width);
-                    assert!(button.origin.y >= card.origin.y);
-                    assert!(button.origin.y + button.size.height <= card.origin.y + card.size.height);
-                    window.simulate_click(button.center(), Modifiers::none());
-                }
-                let clicks = view.read_with(window, |view, _| (view.refresh_clicks, view.clear_clicks));
-                assert_eq!(clicks, (1, 1));
-            }
-        }
-    }
 
     #[test]
     fn key_draft_tracks_normalized_credential_service() {

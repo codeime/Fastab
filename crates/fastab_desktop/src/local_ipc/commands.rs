@@ -12,10 +12,11 @@ use fastab_remote_ipc::figterm::FigtermState;
 use fastab_settings::StateProvider;
 use fastab_settings::settings::SettingsProvider;
 use tao::event_loop::ControlFlow;
-use tracing::error;
+use tracing::{debug, error};
 
 use super::{LocalResponse, LocalResult};
 use crate::event::{Event, WindowEvent};
+use crate::jev::diagnostics::{self, Metric};
 use crate::platform::PlatformState;
 use crate::webview::DASHBOARD_SIZE;
 use crate::webview::notification::WebviewNotificationsState;
@@ -60,6 +61,27 @@ pub async fn quit(_: QuitCommand, proxy: &EventLoopProxy) -> LocalResult {
 }
 
 pub async fn diagnostic(_: DiagnosticsCommand, figterm_state: &FigtermState) -> LocalResult {
+    let ai = diagnostics::snapshot();
+    debug!(
+        evaluated = ai.evaluated,
+        skipped = ai.skipped,
+        skip_reasons = ?ai.skip_reasons,
+        last_status = ?ai.last_status,
+        eligible = ai.count(Metric::Eligible),
+        requests = ai.count(Metric::Request),
+        cache_hits = ai.count(Metric::CacheHit),
+        responses = ai.count(Metric::Response),
+        kept_local = ai.count(Metric::KeptLocal),
+        promoted = ai.count(Metric::Promoted),
+        accepted = ai.count(Metric::Accepted),
+        not_accepted = ai.count(Metric::NotAccepted),
+        cancelled = ai.count(Metric::Cancelled),
+        failed = ai.count(Metric::Failed),
+        latency_samples = ai.latency_samples,
+        average_latency_ms = ?ai.average_latency_ms,
+        p95_latency_ms = ?ai.p95_latency_ms,
+        "AI aggregate diagnostics"
+    );
     let (edit_buffer_string, edit_buffer_cursor, shell_context, intercept_enabled, intercept_global_enabled) = {
         match figterm_state.most_recent() {
             Some(session) => (
