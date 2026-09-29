@@ -2,6 +2,9 @@
 
 ## v0.0.3
 
+- fix: reply to repeated input-method caret requests even when the cursor has not moved, restoring caret state after session changes or desktop restarts while ignoring background terminal windows
+- fix: allow horizontal trackpad scrolling through long completion names and argument hints; manual scrolling pauses the row's marquee and rejects late AI recommendations without changing the current selection or order
+- fix: Up from the first suggestion wraps to the last by default, while respecting explicit wrap and shell-history navigation preferences
 - change: organize AI settings into enable, basic and always-expanded advanced cards; automatically save completed edits, including when leaving or closing settings
 - fix: keep API key drafts bound to their service address and finish queued connection tests with clear feedback when settings cannot be saved
 - fix: restore the Fastab input-method palette on startup without automatically opening macOS Keyboard settings
@@ -10,7 +13,7 @@
 - fix: preserve SQLite's cross-process locks while restricting database permissions, preventing intermittent SIGBUS crashes during shell initialization
 - change: store Jev API keys as plaintext in local SQLite with user-only file permissions and masked saved values; do not read or migrate old Keychain entries
 - feat: enable AI recommendations for more verified Git, Cargo and Homebrew subcommands and options
-- change: keep argument hints still and ellipsized; Ctrl-K shows full details while the normal footer stays on one line
+- change: Ctrl-K shows full argument details while the normal footer stays on one line
 - fix: silently retain local suggestions when AI chooses not to reorder them, times out or encounters a temporary failure
 - fix: native Edit menu actions now use GPUI's action table, preventing the Select All deadlock and preserving keyboard editing shortcuts
 - fix: restore a previously chosen input method on launch; serialize install and removal without blocking async workers or changing installation state during status checks
