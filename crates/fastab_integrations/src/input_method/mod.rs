@@ -654,6 +654,14 @@ impl InputMethod {
             // pkill a healthy IME on every `ftab integrations install`.
             self.ensure_current_binary_running(&destination);
 
+            // TISEnableInputSource opens macOS Keyboard settings for a
+            // third-party source. Persist the palette directly during install
+            // and launch recovery instead of invoking that UI-opening API.
+            let bundle_id = self.bundle_id()?;
+            if !force_enable_in_hitoolbox(&bundle_id) {
+                return Err(InputMethodError::NotEnabled.into());
+            }
+
             // The IME self-registers ~500 ms after NSApplication starts. Poll
             // briefly; do not sit for 13 s when the source is already there.
             let mut tis_ready = false;
@@ -672,35 +680,6 @@ impl InputMethod {
             }
 
             if tis_ready {
-                // Try TIS API enable first (may silently fail without a UI run loop).
-                let _ = run_on_main(|| -> Result<(), InputMethodError> {
-                    let source = self.input_source()?;
-                    if !source.is_enabled().unwrap_or(false) {
-                        source.enable()?;
-                    }
-                    Ok(())
-                });
-
-                // TIS from a CLI process often does not stick. Also patch when
-                // the palette is selected but missing from AppleEnabledInputSources
-                // — that is the bounce leftover that hid Otty's list.
-                if let Ok(bundle_id) = self.bundle_id() {
-                    let still_disabled = run_on_main(|| {
-                        self.input_source()
-                            .map(|s| !s.is_enabled().unwrap_or(false))
-                            .unwrap_or(true)
-                    });
-                    let missing_enabled = !is_bundle_in_hitoolbox_enabled(&bundle_id);
-                    if still_disabled || missing_enabled {
-                        info!(
-                            still_disabled,
-                            missing_enabled, "patching HIToolbox enabled+selected lists for {bundle_id}"
-                        );
-                        force_enable_in_hitoolbox(&bundle_id);
-                        self.set_is_enabled(true);
-                    }
-                }
-
                 // select() never triggers a dialog, but it does steal the
                 // current Non Keyboard IM. Dual-install: leave Easy Complete
                 // (or Sogou, Amazon Q, …) selected when it already is.
@@ -905,20 +884,22 @@ fn is_bundle_in_hitoolbox_enabled(bundle_id: &str) -> bool {
     fastab_hitoolbox::is_palette_enabled(bundle_id)
 }
 
-/// Writes `bundle_id` into both HIToolbox palette lists. `TISEnableInputSource`
-/// from a CLI process has no run loop and does not stick; writing only
-/// `AppleSelectedInputSources` is what left Otty without a caret after bounce.
+/// Writes `bundle_id` into both HIToolbox palette lists. The public
+/// `TISEnableInputSource` API opens Keyboard settings for third-party sources;
+/// writing only `AppleSelectedInputSources` left Otty without a caret.
 ///
 /// Key-scoped, and shared with the IME through `fastab_hitoolbox`. `install.sh`
 /// runs this and an IME launch in the same pass, and the whole-domain
 /// `defaults export`/`import` this replaced was a read-modify-write over every
 /// key in the domain: whichever of the two finished second dropped the other's
 /// entry.
-fn force_enable_in_hitoolbox(bundle_id: &str) {
+fn force_enable_in_hitoolbox(bundle_id: &str) -> bool {
     if fastab_hitoolbox::ensure_palette_enabled(bundle_id) {
-        info!("HIToolbox patched successfully for {bundle_id}");
+        info!("HIToolbox enabled+selected lists confirmed for {bundle_id}");
+        true
     } else {
-        info!("HIToolbox patch failed for {bundle_id}");
+        info!("Could not persist HIToolbox enabled+selected lists for {bundle_id}");
+        false
     }
 }
 

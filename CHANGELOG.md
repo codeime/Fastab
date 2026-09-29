@@ -2,6 +2,7 @@
 
 ## v0.0.3
 
+- fix: restore the Fastab input-method palette on startup without automatically opening macOS Keyboard settings
 - change: mark AI-recommended rows with three compact, solid yellow sparkles on a matching icon tile; retain the fading footer icon while loading
 - feat: include current input, Git branch and bounded recent command history in Jev recommendations, with updated data-use notices
 - fix: preserve SQLite's cross-process locks while restricting database permissions, preventing intermittent SIGBUS crashes during shell initialization
