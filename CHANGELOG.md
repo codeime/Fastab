@@ -2,6 +2,12 @@
 
 ## v0.0.3
 
+- change: simplify the gold AI icon to one primary sparkle and one accent, and use the same shape for recommendations and loading/status indicators
+- fix: allocate the AI candidate budget after local ranking while retaining provenance checks before deduplication
+- feat: learn argument preferences within the current directory and parser argument slot, independently of global command preferences
+- feat: show session-only AI participation, outcomes and latency diagnostics in Settings, with refresh and reset controls
+- feat: optionally share four Git status flags; validate bounded local Git and history context before reusing recommendations
+- feat: cache validated recommendation IDs in memory for 15 seconds, with a 64-entry limit and context, settings and navigation invalidation
 - fix: reply to repeated input-method caret requests even when the cursor has not moved, restoring caret state after session changes or desktop restarts while ignoring background terminal windows
 - fix: allow horizontal trackpad scrolling through long completion names and argument hints; manual scrolling pauses the row's marquee and rejects late AI recommendations without changing the current selection or order
 - fix: Up from the first suggestion wraps to the last by default, while respecting explicit wrap and shell-history navigation preferences

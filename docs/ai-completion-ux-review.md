@@ -1,6 +1,6 @@
 # AI 补全体验评估
 
-2026-09-29；依据当前源码与已安装 Fastab 的真实 `specs-ir`，未调用外部 AI API。
+2026-09-29；初次评估依据 `eb6ee0f9` 基线源码与已安装 Fastab 的真实 `specs-ir`，未调用外部 AI API。下述限制和样例保留为改进前的记录；后续实现、复核与验证见 [详细实施计划](ai-completion-improvement-plan.md)。
 
 ## 结论
 
@@ -31,7 +31,7 @@
 | `kubectl get ` | 21 | 0 | 资源参数场景不参与 |
 | `echo hello \| git ch` | 2 | 0 | 复合命令不参与 |
 
-另一个验证注意点：本机工作区生成的 `bundle/specs-ir` 与当前 AI 固定基线不一致，而 `/Applications/Fastab.app/Contents/Resources/specs-ir` 的三个基线摘要均匹配。因此上述样例使用安装包数据。后续打包应检查基线；不能为了让 AI 工作而直接信任任意生成目录或修改摘要。
+初次评估时，本机工作区生成的 `bundle/specs-ir` 与 AI 固定基线不一致，而 `/Applications/Fastab.app/Contents/Resources/specs-ir` 的三个摘要均匹配，所以上述样例使用安装包数据。后续实施已用当前编译器离线重建工作区 IR：源码树、源码清单、IR 树三个摘要均与原有固定值一致；未修改 pins。后续打包仍需保留该检查，不能直接信任任意生成目录。
 
 ## 建议实施顺序
 
@@ -58,6 +58,6 @@
 
 先建立有明确意图的固定场景集，比较“现有本地排序 / 改善后的本地排序 / AI 推荐”，记录命中位置、到目标项的按键数、有效覆盖率、可见延迟和额外请求数。再在用户同意的真实使用中收集本机汇总，区分 AI 已返回、确实改变排序、用户采用三个事件。暂不宣称任何方案已经提高准确率。
 
-优先级：候选截取与可诊断性 → 项目上下文与缓存 → 动态参数 → 独立自然语言模式。本轮只交付探索结论，前三个交互问题另行修复。
+优先级：候选截取与可诊断性 → 项目上下文与缓存 → 动态参数 → 独立自然语言模式。初次评估只交付探索结论；后续用户已授权前几项实现，独立自然语言模式按用户选择只完成 [完整设计](ai-command-generation-design.md)。离线验证不等于真实模型准确率提升。
 
 源码依据：`crates/fastab_engine/src/{lookup,public_ai,rank,spec_pair}.rs`、`crates/fastab_desktop/src/overlay/ai.rs`、`crates/fastab_desktop/src/jev/{context,policy,types,client}.rs`。
