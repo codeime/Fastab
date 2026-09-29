@@ -2,19 +2,20 @@
 
 ## v0.0.3
 
+- change: keep AI Settings focused on enablement, provider configuration and connection testing; removing the session diagnostics card and Git status control does not itself change saved consent or Git-sharing values. Anonymous, bounded AI aggregates remain available through the existing diagnostics command at DEBUG level.
+- fix: use the actual Accessibility insertion point in Otty 1.2+, retain IME support for older or unknown versions, and discard stale focus/caret updates. Clear old coordinates and key interception when the caret is unavailable, and keep IME state reads off the UI thread; installed-app verification is pending.
+
 - change: simplify the gold AI icon to one primary sparkle and one accent, and use the same shape for recommendations and loading/status indicators
 - fix: allocate the AI candidate budget after local ranking while retaining provenance checks before deduplication
 - feat: learn argument preferences within the current directory and parser argument slot, independently of global command preferences
-- feat: show session-only AI participation, outcomes and latency diagnostics in Settings, with refresh and reset controls
-- feat: optionally share four Git status flags; validate bounded local Git and history context before reusing recommendations
+- fix: validate bounded local Git and history context before reusing recommendations while preserving existing Git-sharing consent
 - feat: cache validated recommendation IDs in memory for 15 seconds, with a 64-entry limit and context, settings and navigation invalidation
 - fix: reply to repeated input-method caret requests even when the cursor has not moved, restoring caret state after session changes or desktop restarts while ignoring background terminal windows
 - fix: allow horizontal trackpad scrolling through long completion names and argument hints; manual scrolling pauses the row's marquee and rejects late AI recommendations without changing the current selection or order
 - fix: Up from the first suggestion wraps to the last by default, while respecting explicit wrap and shell-history navigation preferences
 - change: organize AI settings into enable, basic and always-expanded advanced cards; automatically save completed edits, including when leaving or closing settings
 - fix: keep API key drafts bound to their service address and finish queued connection tests with clear feedback when settings cannot be saved
-- fix: restore the Fastab input-method palette on startup without automatically opening macOS Keyboard settings
-- change: mark AI-recommended rows with three compact, solid yellow sparkles on a matching icon tile; retain the fading footer icon while loading
+- fix: persist Fastab input-method palette registration on startup without automatically opening macOS Keyboard settings
 - feat: include current input, Git branch and bounded recent command history in Jev recommendations, with updated data-use notices
 - fix: preserve SQLite's cross-process locks while restricting database permissions, preventing intermittent SIGBUS crashes during shell initialization
 - change: store Jev API keys as plaintext in local SQLite with user-only file permissions and masked saved values; do not read or migrate old Keychain entries
