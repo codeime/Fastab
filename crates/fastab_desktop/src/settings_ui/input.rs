@@ -30,7 +30,11 @@ pub(super) struct Input {
     edit_revision: u64,
     pub(super) enabled: bool,
     pub(super) rejected: bool,
+    blur_subscription: Option<gpui::Subscription>,
 }
+
+pub(super) struct Commit;
+impl gpui::EventEmitter<Commit> for Input {}
 
 impl Input {
     pub(super) fn new(
@@ -57,6 +61,7 @@ impl Input {
             edit_revision: 0,
             enabled: true,
             rejected: false,
+            blur_subscription: None,
         }
     }
 
@@ -324,7 +329,11 @@ impl Input {
                     }
                     self.marked = None;
                 },
-                "enter" => {},
+                "enter" => {
+                    if self.marked.is_none() {
+                        cx.emit(Commit);
+                    }
+                },
                 _ => handled = false,
             }
         } else {
@@ -471,8 +480,14 @@ impl EntityInputHandler for Input {
 }
 
 impl Render for Input {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.focus = self.focus.clone().tab_stop(self.enabled);
+        if self.blur_subscription.is_none() {
+            let focus = self.focus.clone();
+            self.blur_subscription = Some(cx.on_blur(&focus, window, |_, _, cx| {
+                cx.emit(Commit);
+            }));
+        }
         let chrome = Chrome::current();
         let entity = cx.entity();
         div()

@@ -17,7 +17,7 @@ use crate::jev::config::{
 use crate::jev::credentials::{self, CredentialError};
 use crate::jev::policy::DATA_POLICY_VERSION;
 
-use super::input::Input;
+use super::input::{Commit, Input};
 use super::theme::Chrome;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -52,6 +52,87 @@ impl ProbeKind {
     }
 }
 
+enum AutoSaveOutcome {
+    Disabled(AiConfig, bool),
+    Enabled {
+        config: AiConfig,
+        profile: Profile,
+        service: String,
+        key_revision: u64,
+        secret: Vec<u8>,
+    },
+    NeedsKey(AiConfig, String),
+    Invalid(&'static str),
+    Failed {
+        staged: Option<AiConfig>,
+        message: &'static str,
+        conflict: bool,
+    },
+    Stale,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum KeyDraftTransition {
+    Keep,
+    Clear,
+}
+
+fn key_draft_transition(
+    bound_service: Option<&str>,
+    current_service: Option<&str>,
+    has_key: bool,
+) -> KeyDraftTransition {
+    if !has_key {
+        return if bound_service.is_some() {
+            KeyDraftTransition::Clear
+        } else {
+            KeyDraftTransition::Keep
+        };
+    }
+    match (bound_service, current_service) {
+        (Some(bound), Some(current)) if bound != current => KeyDraftTransition::Clear,
+        _ => KeyDraftTransition::Keep,
+    }
+}
+
+fn key_draft_binding_after_edit(
+    bound_service: Option<&str>,
+    current_service: Option<&str>,
+    has_key: bool,
+) -> Option<String> {
+    if has_key {
+        // Keep an existing binding even while the URL is temporarily invalid.
+        // Only an entirely new key can await a destination to be committed.
+        bound_service.or(current_service).map(str::to_owned)
+    } else {
+        None
+    }
+}
+
+fn key_draft_matches(bound_service: Option<&str>, requested_service: &str) -> bool {
+    bound_service == Some(requested_service)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum QueuedProbeDisposition {
+    None,
+    Wait,
+    Run,
+    Fail,
+}
+
+fn queued_probe_disposition(queued: bool, settled: bool, can_test: bool) -> QueuedProbeDisposition {
+    if !queued {
+        QueuedProbeDisposition::None
+    } else if !settled {
+        QueuedProbeDisposition::Wait
+    } else if can_test {
+        QueuedProbeDisposition::Run
+    } else {
+        QueuedProbeDisposition::Fail
+    }
+}
+
 pub(super) struct AiSettings {
     config: AiConfig,
     profile: Profile,
@@ -59,11 +140,17 @@ pub(super) struct AiSettings {
     model: Entity<Input>,
     base: Entity<Input>,
     enabled: bool,
-    advanced: bool,
     busy: bool,
     load_failed: bool,
     persistence_failed: bool,
     epoch: u64,
+    save_generation: u64,
+    save_pending: bool,
+    save_ready: bool,
+    save_running: bool,
+    dismissed: bool,
+    own_writes: Vec<AiConfig>,
+    test_after_save: bool,
     status: String,
     probe_status: String,
     probe_kind: ProbeKind,
@@ -79,7 +166,11 @@ pub(super) struct AiSettings {
     buttons: BTreeMap<String, FocusHandle>,
     proxy: EventLoopProxy,
     edit_revisions: [u64; 3],
+    saved_key_revision: Option<u64>,
+    saved_key_service: Option<String>,
+    key_draft_service: Option<String>,
     _input_observations: [gpui::Subscription; 3],
+    _input_commits: [gpui::Subscription; 3],
 }
 
 impl AiSettings {
@@ -102,6 +193,11 @@ impl AiSettings {
                 let revision = input.read(cx).edit_revision();
                 this.input_edited(2, revision, cx);
             }),
+        ];
+        let input_commits = [
+            cx.subscribe(&key, |this, _, _: &Commit, cx| this.commit_edit(cx)),
+            cx.subscribe(&model, |this, _, _: &Commit, cx| this.commit_edit(cx)),
+            cx.subscribe(&base, |this, _, _: &Commit, cx| this.commit_edit(cx)),
         ];
         for field in [&key, &model, &base] {
             field.update(cx, |input, _| input.enabled = false);
@@ -147,11 +243,17 @@ impl AiSettings {
             key,
             model,
             base,
-            advanced: false,
             busy: false,
             load_failed: true,
             persistence_failed: false,
             epoch: 0,
+            save_generation: 0,
+            save_pending: false,
+            save_ready: false,
+            save_running: false,
+            dismissed: false,
+            own_writes: Vec::new(),
+            test_after_save: false,
             status: Self::label("正在读取配置…", "Loading settings…").into(),
             buttons: BTreeMap::new(),
             probe_status: String::new(),
@@ -167,7 +269,11 @@ impl AiSettings {
             dismissal_revision: None,
             proxy,
             edit_revisions: [0; 3],
+            saved_key_revision: None,
+            saved_key_service: None,
+            key_draft_service: None,
             _input_observations: input_observations,
+            _input_commits: input_commits,
         }
     }
 
@@ -175,12 +281,35 @@ impl AiSettings {
         if super::locale_is_zh() { zh } else { en }
     }
 
-    /// Also invalidates every pending apply. The OS operation is deliberately
-    /// allowed to finish, retaining its global credential lease until then.
+    /// Finish the current edit when the user leaves the page or closes Settings.
+    /// The detached save keeps this entity alive until the write completes.
     pub(super) fn clear_draft(&mut self, cx: &mut Context<'_, Self>) {
         self.observe_current_edits(cx);
         self.cancel_probe(cx);
         if self.busy {
+            self.discard_draft(cx);
+            return;
+        }
+        self.dismissed = true;
+        if self.save_pending {
+            self.save_ready = true;
+            self.start_auto_save(cx);
+        }
+        if !self.save_running && !self.save_pending {
+            self.clear_saved_key_draft(cx);
+        }
+        cx.notify();
+    }
+
+    /// Abort an in-progress destructive operation such as profile deletion.
+    fn discard_draft(&mut self, cx: &mut Context<'_, Self>) {
+        self.cancel_probe(cx);
+        let operation_pending = self.busy || self.save_running || self.save_pending;
+        self.save_generation = self.save_generation.wrapping_add(1);
+        self.save_pending = false;
+        self.save_ready = false;
+        self.test_after_save = false;
+        if operation_pending {
             // A credential/save continuation must not enable requests after
             // the draft was dismissed while it was awaiting background work.
             // Closing the GPUI window calls clear_draft before removal and may
@@ -205,14 +334,32 @@ impl AiSettings {
         self.key.update(cx, |input, cx| {
             input.take(cx);
         });
+        self.saved_key_revision = None;
+        self.saved_key_service = None;
+        self.key_draft_service = None;
         cx.notify();
+    }
+
+    fn clear_saved_key_draft(&mut self, cx: &mut Context<'_, Self>) {
+        let key = self.key.read(cx);
+        let clear = key.value().is_empty()
+            || (self.saved_key_revision == Some(key.edit_revision())
+                && self.saved_key_service.as_deref() == self.key_presence_service.as_deref());
+        if clear {
+            self.key.update(cx, |input, cx| {
+                input.take(cx);
+            });
+            self.saved_key_revision = None;
+            self.saved_key_service = None;
+            self.key_draft_service = None;
+        }
     }
 
     fn draft(&self, cx: &App) -> Profile {
         let mut profile = self.profile.clone();
         profile.base_url = self.base.read(cx).value().to_owned();
         profile.model = self.model.read(cx).value().to_owned();
-        // The explicit Enable/Save action accepts the disclosed data scope for
+        // Enabling or finishing an edit accepts the disclosed data scope for
         // this draft. Existing persisted profiles are not rewritten on load.
         profile.data_policy_version = DATA_POLICY_VERSION;
         profile
@@ -222,15 +369,19 @@ impl AiSettings {
         if self.busy {
             return;
         }
-        self.status.clear();
-        self.suspend_for_edit(cx);
-        self.clear_draft(cx);
+        self.cancel_probe(cx);
+        self.key.update(cx, |input, cx| {
+            input.take(cx);
+        });
+        self.saved_key_revision = None;
+        self.saved_key_service = None;
+        self.key_draft_service = None;
         self.model.update(cx, |input, cx| input.set(profile.model.clone(), cx));
         self.base
             .update(cx, |input, cx| input.set(profile.base_url.clone(), cx));
         self.profile = profile;
         self.refresh_key_presence(cx);
-        cx.notify();
+        self.queue_save(true, cx);
     }
 
     fn provider(&mut self, provider: Provider, cx: &mut Context<'_, Self>) {
@@ -258,7 +409,7 @@ impl AiSettings {
         self.busy = busy;
         if busy {
             self.dismissal_revision = None;
-        } else {
+        } else if !self.save_running {
             self.operation_cancel = None;
             self.dismissal_revision = None;
         }
@@ -271,6 +422,9 @@ impl AiSettings {
         }
         if !busy {
             self.schedule_key_presence(cx);
+            if self.save_pending && self.save_ready {
+                self.start_auto_save(cx);
+            }
         }
         cx.notify();
     }
@@ -282,7 +436,24 @@ impl AiSettings {
 
     fn refresh_key_presence(&mut self, cx: &mut Context<'_, Self>) {
         self.key_presence_generation = self.key_presence_generation.wrapping_add(1);
-        self.key_presence_service = self.draft(cx).credential_key().ok();
+        let service = self.draft(cx).credential_key().ok();
+        let transition = key_draft_transition(
+            self.key_draft_service.as_deref(),
+            service.as_deref(),
+            !self.key.read(cx).value().is_empty(),
+        );
+        match transition {
+            KeyDraftTransition::Keep => {},
+            KeyDraftTransition::Clear => {
+                self.key.update(cx, |input, cx| {
+                    input.take(cx);
+                });
+                self.key_draft_service = None;
+                self.saved_key_revision = None;
+                self.saved_key_service = None;
+            },
+        }
+        self.key_presence_service = service;
         self.key_present = None;
         self.update_key_placeholder(cx);
         self.schedule_key_presence(cx);
@@ -400,18 +571,48 @@ impl AiSettings {
         let _ = self.proxy.send_event(Event::JevSettingsChanged);
     }
 
+    fn recognizes_baseline(&self, baseline: &AiConfig) -> bool {
+        std::iter::once(&self.config)
+            .chain(self.own_writes.iter())
+            .any(|known| {
+                if known == baseline {
+                    return true;
+                }
+                let mut paused = known.clone();
+                paused.enabled = false;
+                &paused == baseline
+            })
+    }
+
+    fn remember_write(&mut self, config: &AiConfig) {
+        if self.own_writes.last() != Some(config) {
+            self.own_writes.push(config.clone());
+            if self.own_writes.len() > 8 {
+                self.own_writes.remove(0);
+            }
+        }
+    }
+
     fn input_edited(&mut self, field: usize, revision: u64, cx: &mut Context<'_, Self>) {
         if self.edit_revisions[field] == revision {
             return;
         }
         self.edit_revisions[field] = revision;
+        self.test_after_save = false;
         self.probe_status.clear();
         self.probe_kind = ProbeKind::Idle;
-        self.suspend_for_edit(cx);
-        if field == 2 {
+        if field == 0 {
+            self.key_draft_service = key_draft_binding_after_edit(
+                self.key_draft_service.as_deref(),
+                self.draft(cx).credential_key().ok().as_deref(),
+                !self.key.read(cx).value().is_empty(),
+            );
+            self.saved_key_revision = None;
+            self.saved_key_service = None;
+        } else if field == 2 {
             self.refresh_key_presence(cx);
         }
-        cx.notify();
+        self.queue_save(false, cx);
     }
 
     fn observe_current_edits(&mut self, cx: &mut Context<'_, Self>) {
@@ -421,15 +622,74 @@ impl AiSettings {
             self.base.read(cx).edit_revision(),
         ];
         if revisions != self.edit_revisions {
+            let key_changed = revisions[0] != self.edit_revisions[0];
             let base_changed = revisions[2] != self.edit_revisions[2];
             self.edit_revisions = revisions;
+            self.test_after_save = false;
             self.probe_status.clear();
             self.probe_kind = ProbeKind::Idle;
-            self.suspend_for_edit(cx);
+            if key_changed {
+                self.key_draft_service = key_draft_binding_after_edit(
+                    self.key_draft_service.as_deref(),
+                    self.draft(cx).credential_key().ok().as_deref(),
+                    !self.key.read(cx).value().is_empty(),
+                );
+                self.saved_key_revision = None;
+                self.saved_key_service = None;
+            }
             if base_changed {
                 self.refresh_key_presence(cx);
             }
+            self.queue_save(false, cx);
         }
+    }
+
+    fn commit_edit(&mut self, cx: &mut Context<'_, Self>) {
+        self.observe_current_edits(cx);
+        self.bind_fresh_key_to_current_service(cx);
+        if self.save_pending && !self.save_ready {
+            self.save_ready = true;
+            self.status = Self::label("正在自动保存…", "Saving automatically…").into();
+            self.start_auto_save(cx);
+            cx.notify();
+        }
+    }
+
+    fn bind_fresh_key_to_current_service(&mut self, cx: &App) {
+        self.key_draft_service = key_draft_binding_after_edit(
+            self.key_draft_service.as_deref(),
+            self.draft(cx).credential_key().ok().as_deref(),
+            !self.key.read(cx).value().is_empty(),
+        );
+    }
+
+    fn queue_save(&mut self, immediate: bool, cx: &mut Context<'_, Self>) {
+        if self.load_failed || self.busy {
+            return;
+        }
+        self.dismissed = false;
+        let was_enabled = self.config.enabled;
+        self.suspend_for_edit(cx);
+        if !was_enabled {
+            let revision = pause_runtime();
+            if let Some(cancel) = &self.operation_cancel {
+                cancel.store(revision, Ordering::Release);
+            }
+        }
+        self.epoch = self.epoch.wrapping_add(1);
+        self.save_generation = self.save_generation.wrapping_add(1);
+        self.save_pending = true;
+        self.save_ready = immediate;
+        self.status = if immediate {
+            Self::label("正在自动保存…", "Saving automatically…")
+        } else {
+            Self::label("完成编辑后自动保存…", "Saving when editing is finished…")
+        }
+        .into();
+        if immediate {
+            self.start_auto_save(cx);
+        }
+        cx.notify();
     }
 
     /// Pause before any I/O. A blocked settings file must never block input or
@@ -452,7 +712,7 @@ impl AiSettings {
             })
             .shared();
         self.pause_write = Some(operation.clone());
-        self.status = Self::label("已暂停；保存后应用更改。", "Paused. Save to apply changes.").into();
+        self.status = Self::label("AI 已暂停，正在应用更改…", "AI is paused while changes are applied…").into();
         let epoch = self.epoch;
         cx.spawn(async move |this, cx| {
             if let Err(changed) = operation.await {
@@ -487,8 +747,8 @@ impl AiSettings {
         self.persistence_failed = true;
         self.changed();
         self.status = Self::label(
-            "配置保存失败，AI 已暂停；输入已保留，请重试保存。",
-            "Could not save settings. AI is paused; your input was kept. Retry saving.",
+            "配置保存失败，AI 已暂停；输入已保留。继续编辑会再次尝试。",
+            "Could not save settings. AI is paused and your input was kept. Editing will try again.",
         )
         .into();
         cx.notify();
@@ -505,13 +765,14 @@ impl AiSettings {
                 "A credential operation is still finishing. Retry shortly; AI remains off.",
             ),
             CredentialError::Unavailable | CredentialError::InvalidService => Self::label(
-                "当前凭据不可用；AI 保持关闭。可重新保存密钥。",
-                "Credentials are currently unavailable; AI remains off. You can save a new key.",
+                "当前凭据不可用；AI 保持关闭。可重新输入密钥。",
+                "Credentials are currently unavailable; AI remains off. You can enter the key again.",
             ),
         }
     }
 
     fn cancel_probe(&mut self, cx: &mut Context<'_, Self>) {
+        self.test_after_save = false;
         if self.probe_task.take().is_some() {
             if let Some(abort) = self.probe_abort.take() {
                 abort.abort();
@@ -565,7 +826,18 @@ impl AiSettings {
         if self.busy || self.load_failed {
             return;
         }
-        self.observe_current_edits(cx);
+        self.commit_edit(cx);
+        if self.save_running || self.save_pending {
+            self.test_after_save = true;
+            self.probe_status = Self::label(
+                "配置应用后测试连接…",
+                "Testing the connection after settings are applied…",
+            )
+            .into();
+            self.probe_kind = ProbeKind::Testing;
+            cx.notify();
+            return;
+        }
         if self.key.read(cx).rejected {
             self.probe_status =
                 Self::label("请先修正未接受的 Key 输入。", "Correct the rejected key input first.").into();
@@ -585,7 +857,11 @@ impl AiSettings {
                 return;
             },
         };
-        let secret = self.key.read(cx).value().as_bytes().to_vec();
+        let secret = if key_draft_matches(self.key_draft_service.as_deref(), &profile.credential_service) {
+            self.key.read(cx).value().as_bytes().to_vec()
+        } else {
+            Vec::new()
+        };
         let credential = if secret.is_empty() {
             credentials::read(&profile.credential_service, cx)
         } else {
@@ -647,221 +923,466 @@ impl AiSettings {
         }));
     }
 
-    fn save(&mut self, cx: &mut Context<'_, Self>) {
-        if self.busy || self.load_failed {
+    fn fail_queued_test(&mut self, message: &'static str) {
+        if self.test_after_save {
+            self.test_after_save = false;
+            self.probe_kind = ProbeKind::Failure;
+            self.probe_status = message.into();
+        }
+    }
+
+    fn start_auto_save(&mut self, cx: &mut Context<'_, Self>) {
+        if self.save_running || !self.save_pending || !self.save_ready || self.load_failed || self.busy {
             return;
         }
-        self.observe_current_edits(cx);
-        self.suspend_for_edit(cx);
-        if self.key.read(cx).rejected || !self.key.read(cx).value().bytes().all(|byte| byte.is_ascii_graphic()) {
-            self.status = Self::label(
-                "请检查 Key：仅支持可见 ASCII 字符，不能含空白。",
-                "Check the key: only visible ASCII characters without whitespace are accepted.",
-            )
-            .into();
-            cx.notify();
-            return;
-        }
-        let mut profile = self.draft(cx);
+        self.bind_fresh_key_to_current_service(cx);
         let desired_enabled = self.enabled;
-        let service = match profile.credential_key() {
-            Ok(service) => service,
-            Err(_) => {
-                self.status = Self::label(
-                    "请输入有效的 HTTPS 基地址；预设地址不可修改。",
-                    "Enter a valid HTTPS base address. Preset addresses are fixed.",
-                )
-                .into();
+        let draft = self.draft(cx);
+        let key = self.key.read(cx);
+        let draft_service = draft.credential_key().ok();
+        let secret = if draft_service
+            .as_deref()
+            .is_some_and(|service| key_draft_matches(self.key_draft_service.as_deref(), service))
+        {
+            key.value().as_bytes().to_vec()
+        } else {
+            Vec::new()
+        };
+        let key_revision = key.edit_revision();
+        let saved_key_revision = self.saved_key_revision;
+        let saved_key_service = self.saved_key_service.clone();
+        if desired_enabled {
+            if key.rejected || !secret.iter().all(u8::is_ascii_graphic) {
+                self.save_pending = false;
+                self.save_ready = false;
+                let message = Self::label(
+                    "请检查 Key：仅支持可见 ASCII 字符，不能含空白。",
+                    "Check the key: use visible ASCII characters without whitespace.",
+                );
+                self.status = message.into();
+                self.fail_queued_test(message);
                 cx.notify();
                 return;
-            },
-        };
-        if desired_enabled && profile.validate().is_err() {
-            self.status = Self::label(
-                "启用前请检查地址和 Jev 模型。",
-                "Check the address and Jev model before enabling.",
-            )
-            .into();
-            cx.notify();
-            return;
-        }
-        profile.id = self
-            .config
-            .profiles
-            .iter()
-            .find(|old| old.credential_key().ok().as_deref() == Some(service.as_str()))
-            .map_or_else(|| uuid::Uuid::new_v4().to_string(), |old| old.id.clone());
-        let mut disabled = self.config.clone();
-        if disabled.upsert_profile(profile.clone()).is_err() {
-            self.status = Self::label(
-                "无法保存：请检查地址、模型或删除多余配置（最多 16 个）。",
-                "Cannot save: check the address/model or remove unused profiles (maximum 16).",
-            )
-            .into();
-            cx.notify();
-            return;
-        }
-        disabled.active_profile_id = Some(profile.id.clone());
-        disabled.enabled = false;
-        // No main-thread file locks, writes, or specs hashing. Explicit saves
-        // follow the outstanding pause write so it cannot overwrite this save.
-        let pause = self.pause_write.take();
-        let expected = self.config.clone();
-        let expected_revision = runtime_revision();
-        let secret = self.key.read(cx).value().as_bytes().to_vec();
-        let replacing = !secret.is_empty();
-        self.epoch = self.epoch.wrapping_add(1);
-        let epoch = self.epoch;
-        self.set_busy(true, cx);
-        self.status = Self::label("正在保存…", "Saving…").into();
-        let cancel = Arc::new(AtomicU64::new(0));
-        self.operation_cancel = Some(cancel.clone());
-        let executor = cx.background_executor().clone();
-        cx.spawn(async move |this, cx| {
-            let expected_revision = match pause {
-                Some(pause) => match pause.await {
-                    Ok(revision) => revision,
-                    Err(changed) => {
-                        let _ = this.update(cx, |this, cx| {
-                            this.set_busy(false, cx);
-                            this.save_error(changed, cx);
-                        });
-                        return;
-                    },
-                },
-                None => expected_revision,
-            };
-            let staged = disabled.clone();
-            let result = executor
-                .spawn(async move {
-                    if desired_enabled && !fastab_engine::public_ai_baseline_ok(&fastab_engine::default_specs_dir()) {
-                        return Err(None);
-                    }
-                    staged.save_if_unchanged(&expected, expected_revision).map_err(Some)
-                })
-                .await;
-            let operation = this
-                .update(cx, |this, cx| {
-                    if this.epoch != epoch {
-                        this.set_busy(false, cx);
-                        return None;
-                    }
-                    let revision = match result {
-                        Ok(revision) => revision,
-                        Err(error) => {
-                            this.set_busy(false, cx);
-                            if error.is_none() {
-                                this.status = Self::label(
-                                    "补全规格校验未通过，无法启用 AI；请重新安装完整应用。",
-                                    "Completion specs failed validation. Reinstall the complete app to enable AI.",
-                                )
-                                .into();
-                            } else {
-                                this.save_error(error.is_some_and(|error| error.is::<ConfigChanged>()), cx);
-                            }
-                            return None;
-                        },
-                    };
-                    this.config = disabled.clone();
-                    this.profile = profile;
-                    this.persistence_failed = false;
-                    this.changed();
-                    if !replacing && !desired_enabled {
-                        this.set_busy(false, cx);
-                        this.status = Self::label("已保存，AI 已关闭。", "Saved. AI is off.").into();
-                        return None;
-                    }
-                    this.status = Self::label("正在保存本地密钥…", "Saving the local key…").into();
-                    let credential = if replacing {
-                        this.invalidate_key_presence(&service, cx);
-                        credentials::write(&service, secret, cx)
-                    } else {
-                        let read = credentials::read(&service, cx);
-                        cx.spawn(async move |_, _| match read.await {
-                            Ok(Some(secret)) if !secret.is_empty() => Ok(()),
-                            Ok(_) => Err(CredentialError::Unavailable),
-                            Err(error) => Err(error),
-                        })
-                    };
-                    Some((credential, revision))
-                })
-                .ok()
-                .flatten();
-            let Some((operation, revision)) = operation else {
-                return;
-            };
-            let credential = operation.await;
-            let proceed = this
-                .update(cx, |this, cx| {
-                    if this.epoch != epoch {
-                        this.set_busy(false, cx);
-                        return false;
-                    }
-                    if let Err(error) = credential {
-                        this.set_busy(false, cx);
-                        this.status = Self::credential_error(error).into();
-                        return false;
-                    }
-                    this.record_key_presence(&service, true, cx);
-                    true
-                })
-                .unwrap_or(false);
-            if !proceed {
+            }
+            if draft.validate().is_err() {
+                self.save_pending = false;
+                self.save_ready = false;
+                let message = Self::label(
+                    "请填写有效的 HTTPS 地址和 Jev 模型；AI 暂未启用。",
+                    "Enter a valid HTTPS address and Jev model; AI is not yet enabled.",
+                );
+                self.status = message.into();
+                self.fail_queued_test(message);
+                cx.notify();
                 return;
             }
-            let mut final_config = disabled.clone();
-            final_config.enabled = desired_enabled;
-            let saving = final_config.clone();
-            let result = executor
-                .spawn(async move { saving.save_if_unchanged(&disabled, revision) })
-                .await;
-            let applied = this
-                .update(cx, |this, cx| {
-                    this.set_busy(false, cx);
-                    if this.epoch != epoch {
-                        return false;
+        }
+        self.save_running = true;
+        self.save_pending = false;
+        self.save_ready = false;
+        let generation = self.save_generation;
+        let pause = self.pause_write.take();
+        let cancel = Arc::new(AtomicU64::new(0));
+        self.operation_cancel = Some(cancel.clone());
+        self.status = Self::label("正在自动保存…", "Saving automatically…").into();
+        cx.notify();
+        let executor = cx.background_executor().clone();
+        let keep_alive = cx.entity();
+        cx.spawn(async move |this, cx| {
+            let _keep_alive = keep_alive;
+            let outcome = async {
+                if let Some(pause) = pause {
+                    // Even a superseded pause must finish before we read its
+                    // result from the settings store.
+                    if let Err(changed) = pause.await
+                        && !changed
+                    {
+                        return AutoSaveOutcome::Failed {
+                            staged: None,
+                            message: Self::label(
+                                "暂停 AI 时无法保存配置；输入已保留。继续编辑会再次尝试。",
+                                "Could not persist the AI pause; your input was kept. Editing will try again.",
+                            ),
+                            conflict: false,
+                        };
                     }
-                    if let Err(error) = result {
-                        this.save_error(error.is::<ConfigChanged>(), cx);
-                        return true;
+                }
+                let baseline = match executor.spawn(async { AiConfig::load_wait() }).await {
+                    Ok(config) => config,
+                    Err(_) => {
+                        return AutoSaveOutcome::Failed {
+                            staged: None,
+                            message: Self::label(
+                                "无法读取当前配置；AI 已暂停。请重新打开设置。",
+                                "Could not read current settings; AI is paused. Reopen settings.",
+                            ),
+                            conflict: true,
+                        };
+                    },
+                };
+                let current = this
+                    .update(cx, |this, _| this.save_generation == generation)
+                    .unwrap_or(false);
+                if !current {
+                    return AutoSaveOutcome::Stale;
+                }
+                let recognized = this
+                    .update(cx, |this, _| this.recognizes_baseline(&baseline))
+                    .unwrap_or(false);
+                if !recognized && desired_enabled {
+                    return AutoSaveOutcome::Failed {
+                        staged: None,
+                        message: Self::label(
+                            "配置已在其他操作中更改；AI 已暂停。请重新打开设置。",
+                            "Settings changed elsewhere; AI is paused. Reopen settings.",
+                        ),
+                        conflict: true,
+                    };
+                }
+                let revision = runtime_revision();
+                let mut staged = baseline.clone();
+                staged.enabled = false;
+                if !desired_enabled
+                    && recognized
+                    && baseline.profiles.iter().any(|profile| profile.id == draft.id)
+                {
+                    staged.active_profile_id = Some(draft.id.clone());
+                }
+                let (profile, service) = if desired_enabled {
+                    let service = match draft.credential_key() {
+                        Ok(service) => service,
+                        Err(_) => return AutoSaveOutcome::Stale,
+                    };
+                    let mut profile = draft.clone();
+                    profile.id = baseline
+                        .profiles
+                        .iter()
+                        .find(|old| old.credential_key().ok().as_deref() == Some(service.as_str()))
+                        .map_or_else(|| uuid::Uuid::new_v4().to_string(), |old| old.id.clone());
+                    if staged.upsert_profile(profile.clone()).is_err() {
+                        return AutoSaveOutcome::Invalid(Self::label(
+                                "配置无效或已达 16 个配置上限；AI 暂未启用。",
+                                "Invalid settings or the 16-profile limit was reached; AI is not yet enabled.",
+                            ));
                     }
-                    this.config = final_config.clone();
-                    this.enabled = desired_enabled;
-                    this.persistence_failed = false;
-                    this.key.update(cx, |input, cx| {
-                        input.take(cx);
-                    });
-                    this.changed();
-                    this.status = if desired_enabled {
-                        Self::label("已保存并开启 AI 推荐。", "Saved. AI recommendations are on.")
-                    } else {
-                        Self::label("Key 已保存，AI 已关闭。", "Key saved. AI is off.")
+                    staged.active_profile_id = Some(profile.id.clone());
+                    (Some(profile), Some(service))
+                } else {
+                    (None, None)
+                };
+                if desired_enabled {
+                    let valid = executor
+                        .spawn(async { fastab_engine::public_ai_baseline_ok(&fastab_engine::default_specs_dir()) })
+                        .await;
+                    if !valid {
+                        return AutoSaveOutcome::Invalid(Self::label(
+                                "补全规格校验未通过，无法启用 AI；请重新安装完整应用。",
+                                "Completion specs failed validation. Reinstall the complete app to enable AI.",
+                            ));
                     }
-                    .into();
-                    true
-                })
-                .unwrap_or(false);
-            if !applied {
-                // Closing can race the gap between a successful background
-                // write and its UI acknowledgement. Fence that write on disk
-                // too, without overwriting any newer window's saved profile.
+                }
+                if !this
+                    .update(cx, |this, _| {
+                        if this.save_generation != generation {
+                            return false;
+                        }
+                        this.remember_write(&staged);
+                        true
+                    })
+                    .unwrap_or(false)
+                {
+                    return AutoSaveOutcome::Stale;
+                }
+                let writing = staged.clone();
+                let expected = baseline.clone();
+                let staged_revision = match executor
+                    .spawn(async move { writing.save_if_unchanged(&expected, revision) })
+                    .await
+                {
+                    Ok(revision) => revision,
+                    Err(error) => {
+                        return AutoSaveOutcome::Failed {
+                            staged: None,
+                            message: Self::label(
+                                "配置保存失败，AI 已暂停；输入已保留。继续编辑会再次尝试。",
+                                "Could not save settings; AI is paused and your input was kept. Editing will try again.",
+                            ),
+                            conflict: error.is::<ConfigChanged>(),
+                        };
+                    },
+                };
+                if !desired_enabled {
+                    return AutoSaveOutcome::Disabled(staged, !recognized);
+                }
+                if !this
+                    .update(cx, |this, _| this.save_generation == generation)
+                    .unwrap_or(false)
+                {
+                    return AutoSaveOutcome::Stale;
+                }
+                let service = service.expect("enabled profile has a credential service");
+                let profile = profile.expect("enabled profile exists");
+                let key_is_saved = saved_key_revision == Some(key_revision)
+                    && saved_key_service.as_deref() == Some(service.as_str());
+                let replacing = !secret.is_empty() && !key_is_saved;
+                let mut attempt = 0u8;
+                let credential = loop {
+                    let task = this
+                        .update(cx, |this, cx| {
+                            if this.save_generation != generation {
+                                return None;
+                            }
+                            if replacing {
+                                let write = credentials::write(&service, secret.clone(), cx);
+                                Some(cx.spawn(async move |_, _| write.await.map(|_| true)))
+                            } else {
+                                let read = credentials::read(&service, cx);
+                                Some(cx.spawn(async move |_, _| {
+                                    read.await.map(|value| value.is_some_and(|value| !value.is_empty()))
+                                }))
+                            }
+                        })
+                        .ok()
+                        .flatten();
+                    let Some(task) = task else {
+                        return AutoSaveOutcome::Stale;
+                    };
+                    match task.await {
+                        Err(CredentialError::Busy) if attempt < 4 => {
+                            attempt += 1;
+                            executor.timer(Duration::from_millis(350 * u64::from(attempt))).await;
+                        },
+                        result => break result,
+                    }
+                };
+                match credential {
+                    Ok(true) => {},
+                    Ok(false) => return AutoSaveOutcome::NeedsKey(staged, service),
+                    Err(error) => {
+                        return AutoSaveOutcome::Failed {
+                            staged: Some(staged),
+                            message: Self::credential_error(error),
+                            conflict: false,
+                        };
+                    },
+                }
+                if !this
+                    .update(cx, |this, _| this.save_generation == generation)
+                    .unwrap_or(false)
+                {
+                    return AutoSaveOutcome::Stale;
+                }
+                let mut enabled = staged.clone();
+                enabled.enabled = true;
+                if !this
+                    .update(cx, |this, _| {
+                        if this.save_generation != generation {
+                            return false;
+                        }
+                        this.remember_write(&enabled);
+                        true
+                    })
+                    .unwrap_or(false)
+                {
+                    return AutoSaveOutcome::Stale;
+                }
+                let writing = enabled.clone();
+                let expected = staged.clone();
+                match executor
+                    .spawn(async move { writing.save_if_unchanged(&expected, staged_revision) })
+                    .await
+                {
+                    Ok(_) => AutoSaveOutcome::Enabled {
+                        config: enabled,
+                        profile,
+                        service,
+                        key_revision,
+                        secret,
+                    },
+                    Err(error) => AutoSaveOutcome::Failed {
+                        staged: Some(staged),
+                        message: Self::label(
+                            "配置保存失败，AI 已暂停；输入已保留。继续编辑会再次尝试。",
+                            "Could not save settings; AI is paused and your input was kept. Editing will try again.",
+                        ),
+                        conflict: error.is::<ConfigChanged>(),
+                    },
+                }
+            }
+            .await;
+            if let AutoSaveOutcome::Enabled { config, .. } = &outcome {
                 let revision = cancel.load(Ordering::Acquire);
                 if revision != 0 {
-                    let mut paused = final_config.clone();
-                    paused.enabled = false;
+                    let expected = config.clone();
+                    let mut disabled = expected.clone();
+                    disabled.enabled = false;
                     executor
                         .spawn(async move {
-                            let _ = paused.save_if_unchanged(&final_config, revision);
+                            let _ = disabled.save_if_unchanged(&expected, revision);
                         })
                         .await;
                 }
             }
+            let _ = this.update(cx, |this, cx| this.finish_auto_save(generation, outcome, cx));
         })
         .detach();
     }
 
+    fn finish_auto_save(&mut self, generation: u64, outcome: AutoSaveOutcome, cx: &mut Context<'_, Self>) {
+        let current = self.save_generation == generation;
+        let completed_enabled = current && matches!(&outcome, AutoSaveOutcome::Enabled { .. });
+        let queued_test_failure = match &outcome {
+            AutoSaveOutcome::NeedsKey(..) => Self::label(
+                "尚未配置 Key，连接测试未开始。",
+                "No key is configured; the connection test did not start.",
+            ),
+            AutoSaveOutcome::Invalid(message) => *message,
+            AutoSaveOutcome::Failed { message, conflict, .. } => {
+                if *conflict {
+                    Self::label(
+                        "配置已在其他操作中更改，连接测试未开始。",
+                        "Settings changed elsewhere; the connection test did not start.",
+                    )
+                } else {
+                    *message
+                }
+            },
+            AutoSaveOutcome::Disabled(..) => Self::label(
+                "AI 已关闭，连接测试未开始。",
+                "AI is off; the connection test did not start.",
+            ),
+            AutoSaveOutcome::Enabled { .. } | AutoSaveOutcome::Stale => Self::label(
+                "配置未能应用，连接测试未开始。",
+                "Settings were not applied; the connection test did not start.",
+            ),
+        };
+        let completed = self.save_generation == generation
+            && matches!(
+                &outcome,
+                AutoSaveOutcome::Disabled(..) | AutoSaveOutcome::Enabled { .. } | AutoSaveOutcome::NeedsKey(..)
+            );
+        self.save_running = false;
+        self.operation_cancel = None;
+        if self.save_generation == generation {
+            match outcome {
+                AutoSaveOutcome::Disabled(config, drifted) => {
+                    self.config = config;
+                    self.own_writes.clear();
+                    self.persistence_failed = false;
+                    self.load_failed = drifted;
+                    self.status = if drifted {
+                        Self::label(
+                            "AI 已关闭，但配置曾在其他操作中更改；请重新打开设置。",
+                            "AI is off, but settings changed elsewhere. Reopen settings.",
+                        )
+                        .into()
+                    } else {
+                        String::new()
+                    };
+                    self.changed();
+                    if drifted {
+                        self.set_busy(false, cx);
+                    }
+                },
+                AutoSaveOutcome::Enabled {
+                    config,
+                    profile,
+                    service,
+                    key_revision,
+                    secret,
+                } => {
+                    self.config = config;
+                    self.own_writes.clear();
+                    self.profile = profile;
+                    self.persistence_failed = false;
+                    if !secret.is_empty()
+                        && self.key.read(cx).edit_revision() == key_revision
+                        && self.key.read(cx).value().as_bytes() == secret
+                        && key_draft_matches(self.key_draft_service.as_deref(), &service)
+                    {
+                        // Keep the masked draft while this field may still have
+                        // focus: clearing it mid-typing would turn the next
+                        // characters into a new replacement key. Navigation
+                        // clears it to the stored-key placeholder instead.
+                        self.saved_key_revision = Some(key_revision);
+                        self.saved_key_service = Some(service.clone());
+                    }
+                    self.record_key_presence(&service, true, cx);
+                    self.status.clear();
+                    self.changed();
+                },
+                AutoSaveOutcome::NeedsKey(config, service) => {
+                    self.config = config;
+                    self.own_writes.clear();
+                    self.persistence_failed = false;
+                    self.record_key_presence(&service, false, cx);
+                    self.status = Self::label(
+                        "请输入 API Key；填写后会自动启用 AI。",
+                        "Enter an API key; AI will turn on automatically afterward.",
+                    )
+                    .into();
+                    self.changed();
+                },
+                AutoSaveOutcome::Invalid(message) => {
+                    self.status = message.into();
+                },
+                AutoSaveOutcome::Failed {
+                    staged,
+                    message,
+                    conflict,
+                } => {
+                    if let Some(config) = staged {
+                        self.config = config;
+                    }
+                    self.config.enabled = false;
+                    self.persistence_failed = true;
+                    self.status = if conflict {
+                        Self::label(
+                            "配置已在其他操作中更改；AI 已暂停。请重新打开设置。",
+                            "Settings changed elsewhere; AI is paused. Reopen settings.",
+                        )
+                    } else {
+                        message
+                    }
+                    .into();
+                    if conflict {
+                        self.load_failed = true;
+                        self.set_busy(false, cx);
+                    }
+                    self.changed();
+                },
+                AutoSaveOutcome::Stale => {},
+            }
+        }
+        if self.save_pending && self.save_ready {
+            self.start_auto_save(cx);
+        }
+        if self.dismissed && completed && !self.save_running && !self.save_pending {
+            self.clear_saved_key_draft(cx);
+        }
+        let config_usable = self.config.enabled
+            && !self.load_failed
+            && self
+                .config
+                .active_profile()
+                .is_some_and(|profile| profile.validate().is_ok());
+        match queued_probe_disposition(
+            self.test_after_save,
+            !self.save_running && !self.save_pending && !self.busy,
+            completed_enabled && config_usable,
+        ) {
+            QueuedProbeDisposition::Run => {
+                self.test_after_save = false;
+                self.test_connection(cx);
+            },
+            QueuedProbeDisposition::Fail => self.fail_queued_test(queued_test_failure),
+            QueuedProbeDisposition::None | QueuedProbeDisposition::Wait => {},
+        }
+        cx.notify();
+    }
+
     fn delete_profile(&mut self, profile: Profile, cx: &mut Context<'_, Self>) {
-        if self.busy || self.load_failed {
+        if self.busy || self.load_failed || self.save_running || self.save_pending {
             return;
         }
         let Ok(service) = profile.credential_key() else {
@@ -869,7 +1390,7 @@ impl AiSettings {
         };
         self.suspend_for_edit(cx);
         self.enabled = false;
-        self.clear_draft(cx);
+        self.discard_draft(cx);
         let pause = self.pause_write.take();
         let expected = self.config.clone();
         let expected_revision = runtime_revision();
@@ -982,8 +1503,8 @@ impl AiSettings {
         action: impl Fn(&mut Self, &mut Context<'_, Self>) + 'static,
     ) -> gpui::AnyElement {
         let chrome = Chrome::current();
-        let disclosure = id == "jev-advanced";
-        let disabled = (self.busy || self.load_failed) && !disclosure;
+        let deleting = id.starts_with("jev-delete-");
+        let disabled = self.busy || self.load_failed || (deleting && (self.save_running || self.save_pending));
         let selected = matches!(
             (id.as_str(), self.profile.provider),
             ("jev-typesafe", Provider::TypeSafe)
@@ -996,7 +1517,6 @@ impl AiSettings {
             .or_insert_with(|| cx.focus_handle())
             .clone()
             .tab_stop(!disabled);
-        let primary = id == "jev-save";
         let action = Rc::new(action);
         let click_action = action.clone();
         let click_entity = cx.entity();
@@ -1007,14 +1527,13 @@ impl AiSettings {
             .track_focus(&focus)
             .tab_stop(!disabled)
             .when(disabled, |button| button.opacity(0.45))
-            .when(primary, |button| button.bg(rgb(chrome.accent)))
             .px(px(10.))
             .py(px(6.))
             .rounded_md()
             .border_1()
             .border_color(rgb(chrome.separator))
             .text_size(px(12.))
-            .text_color(rgb(if primary { chrome.accent_text } else { chrome.text }))
+            .text_color(rgb(chrome.text))
             .when(selected, |button| {
                 button
                     .bg(rgb(chrome.selection))
@@ -1029,7 +1548,8 @@ impl AiSettings {
                 if !disabled {
                     click_focus.focus(window);
                     click_entity.update(cx, |this, cx| {
-                        if disclosure || (!this.busy && !this.load_failed) {
+                        if !this.busy && !this.load_failed && (!deleting || (!this.save_running && !this.save_pending))
+                        {
                             click_action(this, cx);
                         }
                     });
@@ -1039,7 +1559,8 @@ impl AiSettings {
             .on_key_down(move |event, _, cx| {
                 if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
                     key_entity.update(cx, |this, cx| {
-                        if disclosure || (!this.busy && !this.load_failed) {
+                        if !this.busy && !this.load_failed && (!deleting || (!this.save_running && !this.save_pending))
+                        {
                             action(this, cx);
                         }
                     });
@@ -1049,7 +1570,7 @@ impl AiSettings {
             .into_any_element()
     }
 
-    fn enable_checkbox(&mut self, cx: &mut Context<'_, Self>) -> gpui::AnyElement {
+    fn enable_toggle(&mut self, cx: &mut Context<'_, Self>) -> gpui::AnyElement {
         let chrome = Chrome::current();
         let disabled = self.busy || self.load_failed;
         let checked = self.enabled;
@@ -1060,45 +1581,24 @@ impl AiSettings {
             .clone()
             .tab_stop(!disabled);
         let click_focus = focus.clone();
-        let click_entity = cx.entity();
         let key_entity = cx.entity();
-        let box_color = if checked { chrome.accent } else { chrome.card };
+        let click_entity = cx.entity();
         div()
             .id("jev-enable")
             .track_focus(&focus)
             .tab_stop(!disabled)
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .px(px(4.))
-            .py(px(4.))
             .border_1()
-            .rounded(px(5.))
+            .rounded(px(11.))
             .border_color(rgb(chrome.card))
-            .cursor_pointer()
-            .when(disabled, |checkbox| checkbox.opacity(0.45))
-            .focus(|style| style.border_color(rgb(chrome.accent)).bg(rgb(chrome.selection)))
-            .child(
-                div()
-                    .w(px(18.))
-                    .h(px(18.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .border_1()
-                    .rounded(px(4.))
-                    .border_color(rgb(if checked { chrome.accent } else { chrome.separator }))
-                    .bg(rgb(box_color))
-                    .text_color(rgb(chrome.accent_text))
-                    .child(if checked { "✓" } else { "" }),
-            )
-            .child(Self::label("启用 AI 推荐", "Enable AI recommendations"))
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            .when(disabled, |toggle| toggle.opacity(0.45))
+            .focus(|style| style.border_color(rgb(chrome.accent)))
+            .child(super::toggle("jev-enable-switch".into(), checked, chrome, move |cx| {
+                click_entity.update(cx, |this, cx| this.toggle_enabled(cx));
+            }))
+            .on_mouse_down(MouseButton::Left, move |_, window, _| {
                 if !disabled {
                     click_focus.focus(window);
-                    click_entity.update(cx, |this, cx| this.toggle_enabled(cx));
                 }
-                cx.stop_propagation();
             })
             .on_key_down(move |event, _, cx| {
                 if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
@@ -1114,10 +1614,10 @@ impl AiSettings {
             return;
         }
         self.enabled = !self.enabled;
-        if !self.enabled {
-            self.suspend_for_edit(cx);
-        }
-        cx.notify();
+        self.test_after_save = false;
+        self.probe_status.clear();
+        self.probe_kind = ProbeKind::Idle;
+        self.queue_save(true, cx);
     }
 }
 
@@ -1137,6 +1637,7 @@ impl Drop for AiSettings {
 
 impl Render for AiSettings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        self.dismissed = false;
         self.buttons.retain(|id, _| {
             let profile_id = id
                 .strip_prefix("jev-select-")
@@ -1144,151 +1645,138 @@ impl Render for AiSettings {
             profile_id.is_none_or(|id| self.config.profiles.iter().any(|profile| profile.id == id))
         });
         let chrome = Chrome::current();
-        let draft = self.draft(cx);
-        let custom = self.profile.provider == Provider::CustomSystemOne;
-        let mut providers = div().flex().flex_wrap().gap(px(6.));
-        for (id, name, provider) in [
-            ("typesafe", "TypeSafe", Provider::TypeSafe),
-            ("openrouter", "OpenRouter", Provider::OpenRouter),
-            ("custom", Self::label("自定义", "Custom"), Provider::CustomSystemOne),
-        ] {
-            let label = if self.profile.provider == provider {
-                format!("✓ {name}")
-            } else {
-                name.into()
-            };
-            providers = providers.child(self.button(format!("jev-{id}"), label, cx, move |this, cx| {
-                this.provider(provider, cx);
-            }));
-        }
-        let test = self.button(
-            "jev-test".into(),
-            Self::label("测试连接", "Test connection").into(),
-            cx,
-            |this, cx| this.test_connection(cx),
-        );
-        let save = self.button(
-            "jev-save".into(),
-            Self::label("保存", "Save").into(),
-            cx,
-            |this, cx| this.save(cx),
-        );
-        let enable = self.enable_checkbox(cx);
-        let advanced_label = if self.advanced {
-            Self::label("▾ 收起高级设置", "▾ Hide advanced settings")
-        } else {
-            Self::label("▸ 高级设置与已存配置", "▸ Advanced settings and saved profiles")
-        };
-        let advanced = self.button("jev-advanced".into(), advanced_label.into(), cx, |this, cx| {
-            this.advanced = !this.advanced;
-            cx.notify();
-        });
-        let processors = match self.profile.provider {
-            Provider::TypeSafe => Self::label(
-                "由 TypeSafe 在美国处理，不承诺零保留。",
-                "Processed by TypeSafe in the US; zero retention is not guaranteed.",
-            ),
-            Provider::OpenRouter => Self::label(
-                "经 OpenRouter 与 TypeSafe 处理，不承诺零保留。",
-                "Processed by OpenRouter and TypeSafe; zero retention is not guaranteed.",
-            ),
-            Provider::CustomSystemOne => Self::label(
-                "由自定义地址及其上游处理，请确认其数据政策。",
-                "Processed by the custom service and its upstream providers. Review their data policies.",
-            ),
-        };
         let hint = |text: String| div().text_size(px(12.)).text_color(rgb(chrome.muted)).child(text);
         let state = if self.persistence_failed {
-            Self::label("AI 已暂停 · 保存失败，请重试", "AI paused · save failed, please retry")
+            Self::label("AI 已暂停 · 自动保存失败", "AI paused · automatic save failed")
+        } else if self.save_pending || self.save_running {
+            Self::label("正在自动保存", "Saving automatically")
         } else if self.config.enabled {
             Self::label("AI 推荐运行中", "AI recommendations are on")
+        } else if self.enabled {
+            Self::label("AI 尚未启用", "AI is not yet enabled")
         } else {
             Self::label("AI 推荐未启用", "AI recommendations are off")
         };
-        let mut body = div()
-            .p(px(16.))
+        let enable = self.enable_toggle(cx);
+        let enable_body = div()
+            .w_full()
+            .min_w(px(0.))
             .flex()
             .flex_col()
-            .gap(px(12.))
             .text_size(px(13.))
-            .child(hint(
-                Self::label(
+            .child(super::row(
+                Self::label("启用 AI 推荐", "Enable AI recommendations"),
+                Some(Self::label(
                     "让 Jev 从本地候选中推荐一项，沿用原有按键采纳。",
                     "Let Jev recommend a local completion. Accept it with your usual keys.",
-                )
-                .into(),
-            ))
-            .child(Self::label("服务商", "Provider"))
-            .child(providers);
-        if custom {
-            body = body
-                .child("Base URL")
-                .child(self.base.clone())
-                .child(hint(
+                )),
+                chrome,
+                true,
+                enable,
+            ));
+        let mut cards = div().w_full().min_w(px(0.)).flex().flex_col().child(super::card(
+            Self::label("启用 AI", "Enable AI"),
+            chrome,
+            enable_body,
+        ));
+        if self.enabled {
+            let draft = self.draft(cx);
+            let custom = self.profile.provider == Provider::CustomSystemOne;
+            let mut providers = div().flex().flex_wrap().gap(px(6.));
+            for (id, name, provider) in [
+                ("typesafe", "TypeSafe", Provider::TypeSafe),
+                ("openrouter", "OpenRouter", Provider::OpenRouter),
+                ("custom", Self::label("自定义", "Custom"), Provider::CustomSystemOne),
+            ] {
+                let label = if self.profile.provider == provider {
+                    format!("✓ {name}")
+                } else {
+                    name.into()
+                };
+                providers = providers.child(self.button(format!("jev-{id}"), label, cx, move |this, cx| {
+                    this.provider(provider, cx);
+                }));
+            }
+            let test = self.button(
+                "jev-test".into(),
+                Self::label("测试连接", "Test connection").into(),
+                cx,
+                |this, cx| this.test_connection(cx),
+            );
+            let key_hint = match self.key_present {
+                Some(true) => Self::label(
+                    "已存 Key；留空继续使用，输入新 Key 后会自动替换。",
+                    "A key is stored. Leave blank to keep it, or enter a replacement for automatic saving.",
+                ),
+                Some(false) => Self::label(
+                    "尚未配置 Key；输入后会自动保存。",
+                    "No key is configured. Enter one to save it automatically.",
+                ),
+                None => Self::label(
+                    "正在检查已保存的 Key；留空可使用已有 Key。",
+                    "Checking for a saved key. Leave blank to use an existing key.",
+                ),
+            };
+            let mut basic = div()
+                .p(px(16.))
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .text_size(px(13.))
+                .child(hint(Self::label(
+                    "启用后会发送当前输入、Git 分支、近期命令和候选，用于推荐。",
+                    "When enabled, current input, Git branch, recent commands and candidates are sent for recommendations.",
+                ).into()))
+                .child(Self::label("服务商", "Provider"))
+                .child(providers);
+            if custom {
+                basic = basic.child("Base URL").child(self.base.clone()).child(hint(
                     Self::label(
                         "HTTPS 基地址，不含 /v1/systemone。",
                         "HTTPS base address, without /v1/systemone.",
                     )
                     .into(),
-                ))
-                .child(Self::label("Jev 模型", "Jev model"))
-                .child(self.model.clone());
-        }
-        let key_hint = match self.key_present {
-            Some(true) => Self::label(
-                "已保存 Key；留空继续使用，输入新 Key 可替换。",
-                "A key is saved. Leave blank to keep using it, or enter a replacement.",
-            ),
-            Some(false) => Self::label("尚未保存 Key；请输入后保存。", "No key is saved. Enter one to save."),
-            None => Self::label(
-                "正在检查已保存的 Key；留空可使用已有 Key。",
-                "Checking for a saved key. Leave blank to use an existing key.",
-            ),
-        };
-        body = body.child("API Key").child(self.key.clone())
-            .child(hint(key_hint.into()))
-            .child(hint(Self::label("Key 在本机数据库中明文保存，文件仅当前用户可读写。", "Keys are stored as plaintext locally; the database file is readable and writable only by your user account.").into()))
-            .when(self.key.read(cx).rejected, |body| body.child(hint(Self::label("此次输入未接受：Key 不能含空白或换行，最多 4096 字符。原内容已保留。", "Input rejected: keys cannot contain whitespace or line breaks (maximum 4096 characters). The previous value was kept.").into())))
-            .child(div().flex().items_center().flex_wrap().gap(px(10.)).child(test)
-                .child(hint(Self::label("仅发送固定示例；不会保存或启用配置。", "Sends a fixed example; does not save or enable settings.").into())))
-            .when(!self.probe_status.is_empty(), |body| {
-                body.child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(rgb(self.probe_kind.color(chrome)))
-                        .child(self.probe_status.clone()),
-                )
-            })
-            .child(div().border_t_1().border_color(rgb(chrome.separator)).pt(px(12.)).child(enable))
-            .child(hint(
-                Self::label(
-                    "启用后会发送当前输入、Git 分支、近期命令和候选，用于推荐。",
-                    "When enabled, current input, Git branch, recent commands and candidates are sent for recommendations.",
-                )
-                .into(),
-            ));
-        body = body
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .child(save)
-                    .child(hint(state.into())),
-            )
-            .when(!self.status.is_empty(), |body| body.child(hint(self.status.clone())))
-            .child(advanced);
-        if self.advanced {
+                ));
+            }
+            basic = basic
+                .child("API Key")
+                .child(self.key.clone())
+                .child(hint(key_hint.into()))
+                .child(hint(Self::label("Key 在本机数据库中明文保存，文件仅当前用户可读写。", "Keys are stored as plaintext locally; the database file is readable and writable only by your user account.").into()))
+                .when(self.key.read(cx).rejected, |basic| basic.child(hint(Self::label("此次输入未接受：Key 不能含空白或换行，最多 4096 字符。原内容已保留。", "Input rejected: keys cannot contain whitespace or line breaks (maximum 4096 characters). The previous value was kept.").into())))
+                .child(div().flex().items_center().flex_wrap().gap(px(10.)).child(test)
+                    .child(hint(Self::label("仅发送固定示例。", "Sends only a fixed example.").into())))
+                .when(!self.probe_status.is_empty(), |basic| {
+                    basic.child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(self.probe_kind.color(chrome)))
+                            .child(self.probe_status.clone()),
+                    )
+                });
+            cards = cards.child(super::card(Self::label("基本设置", "Basic settings"), chrome, basic));
+            let processors = match self.profile.provider {
+                Provider::TypeSafe => Self::label(
+                    "由 TypeSafe 在美国处理，不承诺零保留。",
+                    "Processed by TypeSafe in the US; zero retention is not guaranteed.",
+                ),
+                Provider::OpenRouter => Self::label(
+                    "经 OpenRouter 与 TypeSafe 处理，不承诺零保留。",
+                    "Processed by OpenRouter and TypeSafe; zero retention is not guaranteed.",
+                ),
+                Provider::CustomSystemOne => Self::label(
+                    "由自定义地址及其上游处理，请确认其数据政策。",
+                    "Processed by the custom service and its upstream providers. Review their data policies.",
+                ),
+            };
             let destination = normalize_base_url(&draft.base_url).map_or_else(
                 |_| Self::label("地址无效", "Invalid address").into(),
                 |(_, endpoint)| endpoint.to_string(),
             );
-            let mut detail = div().flex().flex_col().gap(px(10.)).pt(px(4.));
-            if !custom {
-                detail = detail
-                    .child(Self::label("Jev 模型", "Jev model"))
-                    .child(self.model.clone());
-            }
+            let mut detail = div().flex().flex_col().gap(px(10.)).p(px(16.));
+            detail = detail
+                .child(Self::label("Jev 模型", "Jev model"))
+                .child(self.model.clone());
             detail = detail.child(hint(format!("{} {destination}", Self::label("请求地址：", "Endpoint:"))))
                 .child(hint(Self::label("预设地址固定。需使用其他 System One 服务时选择自定义。", "Preset addresses are fixed. Choose Custom for another System One service.").into()))
                 .child(hint(Self::label("请求包含当前输入、Git 分支、当前目录最近最多 10 条命令，以及公开命令路径、前缀、shell 和候选说明。历史总长最多 2 KB，跳过含明显凭据的命令；不发送环境变量或目录字段。", "Requests include current input, Git branch, up to 10 recent commands from this directory, plus public command paths, prefixes, shell and candidate descriptions. History is capped at 2 KB; commands with obvious credentials are omitted. Environment variables and directory fields are excluded.").into()))
@@ -1343,8 +1831,103 @@ impl Render for AiSettings {
                 );
                 detail = detail.child(div().flex().flex_wrap().gap(px(6.)).child(select).child(delete));
             }
-            body = body.child(detail);
+            let advanced_body = div().flex().flex_col().text_size(px(13.)).child(detail);
+            cards = cards.child(super::card(
+                Self::label("高级设置", "Advanced settings"),
+                chrome,
+                advanced_body,
+            ));
         }
-        super::card(Self::label("AI 候选推荐", "AI recommendations"), chrome, body)
+        cards = cards.child(
+            div()
+                .w_full()
+                .min_w(px(0.))
+                .px(px(16.))
+                .pb(px(16.))
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(hint(state.into()))
+                .when(!self.status.is_empty(), |footer| {
+                    footer.child(hint(self.status.clone()))
+                }),
+        );
+        cards
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_draft_tracks_normalized_credential_service() {
+        let mut profile = Profile {
+            id: "custom-test".into(),
+            provider: Provider::CustomSystemOne,
+            base_url: "https://example.com/one".into(),
+            model: "jev-1.13.0".into(),
+            data_policy_version: DATA_POLICY_VERSION,
+        };
+        let old_service = profile.credential_key().unwrap();
+        profile.base_url = "https://example.com/one/".into();
+        let equivalent_service = profile.credential_key().unwrap();
+        assert_eq!(old_service, equivalent_service);
+        assert_eq!(
+            key_draft_transition(Some(&old_service), Some(&equivalent_service), true),
+            KeyDraftTransition::Keep
+        );
+
+        profile.base_url = "https://example.com/two".into();
+        let new_service = profile.credential_key().unwrap();
+        assert_ne!(old_service, new_service);
+        assert_eq!(
+            key_draft_transition(Some(&old_service), None, true),
+            KeyDraftTransition::Keep
+        );
+        assert_eq!(
+            key_draft_transition(Some(&old_service), Some(&new_service), true),
+            KeyDraftTransition::Clear
+        );
+        assert!(!key_draft_matches(Some(&old_service), &new_service));
+        assert!(!key_draft_matches(None, &new_service));
+        assert_eq!(
+            key_draft_transition(None, Some(&new_service), true),
+            KeyDraftTransition::Keep
+        );
+        assert_eq!(key_draft_binding_after_edit(None, None, true), None);
+        assert_eq!(
+            key_draft_binding_after_edit(None, Some(&new_service), true),
+            Some(new_service.clone())
+        );
+        assert_eq!(
+            key_draft_binding_after_edit(Some(&old_service), None, true),
+            Some(old_service.clone())
+        );
+        assert_eq!(
+            key_draft_binding_after_edit(Some(&old_service), Some(&new_service), true),
+            Some(old_service.clone())
+        );
+        assert_eq!(key_draft_binding_after_edit(Some(&old_service), None, false), None);
+        assert!(key_draft_matches(Some(&new_service), &new_service));
+    }
+
+    #[test]
+    fn queued_probe_runs_only_after_current_usable_enabled_save() {
+        assert_eq!(
+            queued_probe_disposition(true, false, false),
+            QueuedProbeDisposition::Wait
+        );
+        assert_eq!(queued_probe_disposition(true, true, true), QueuedProbeDisposition::Run);
+        for (enabled_save, usable_config) in [(false, true), (true, false), (false, false)] {
+            assert_eq!(
+                queued_probe_disposition(true, true, enabled_save && usable_config),
+                QueuedProbeDisposition::Fail
+            );
+        }
+        assert_eq!(
+            queued_probe_disposition(false, true, true),
+            QueuedProbeDisposition::None
+        );
     }
 }

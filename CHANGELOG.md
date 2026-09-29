@@ -2,6 +2,8 @@
 
 ## v0.0.3
 
+- change: organize AI settings into enable, basic and always-expanded advanced cards; automatically save completed edits, including when leaving or closing settings
+- fix: keep API key drafts bound to their service address and finish queued connection tests with clear feedback when settings cannot be saved
 - fix: restore the Fastab input-method palette on startup without automatically opening macOS Keyboard settings
 - change: mark AI-recommended rows with three compact, solid yellow sparkles on a matching icon tile; retain the fading footer icon while loading
 - feat: include current input, Git branch and bounded recent command history in Jev recommendations, with updated data-use notices
@@ -12,12 +14,12 @@
 - fix: silently retain local suggestions when AI chooses not to reorder them, times out or encounters a temporary failure
 - fix: native Edit menu actions now use GPUI's action table, preventing the Select All deadlock and preserving keyboard editing shortcuts
 - fix: restore a previously chosen input method on launch; serialize install and removal without blocking async workers or changing installation state during status checks
-- change: AI settings use colored connection results, an enable checkbox and clear provider selection; a short data-use notice replaces the separate consent toggle
+- change: AI settings use colored connection results, the standard settings switch and clear provider selection; a short data-use notice replaces the separate consent toggle
 - fix: saved API keys show a masked placeholder without loading the secret into the input; background presence checks discard stale results and wait for pending credential writes
 - fix: AI credential readiness no longer restarts local completion or replaces existing suggestions with the engine loading indicator
 - feat: show a gently fading AI icon at the bottom left of the completion popup during requests, while local suggestions remain usable
 - fix: Jev settings pause requests immediately and save in the background, without blocking input on file locks; stale saves cannot replace newer settings
-- fix: failed AI saves remain retryable, and closing settings keeps in-flight saves disabled across restarts
+- fix: failed AI saves remain retryable while AI stays paused; newer edits always take precedence over pending saves
 - fix: ignore delayed terminal focus events after switching apps and bound Accessibility queries; settings credential waits now time out without losing the key draft, while runtime reads retain late results
 - fix: Tab navigation now reaches AI inputs, actions and theme selectors, skipping disabled controls
 - change: simplify AI setup and move model, endpoint details and saved profiles into advanced settings
