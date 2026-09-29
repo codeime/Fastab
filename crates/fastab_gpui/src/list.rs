@@ -1,7 +1,7 @@
 use gpui::prelude::*;
 use gpui::{
     Animation, AnimationExt as _, AnyElement, BoxShadow, Context, Entity, FontWeight, HighlightStyle, Image,
-    InteractiveElement, IntoElement, ListSizingBehavior, ParentElement, Render, Rgba, ScrollStrategy,
+    InteractiveElement, IntoElement, ListSizingBehavior, ParentElement, Render, Rgba, ScrollHandle, ScrollStrategy,
     StatefulInteractiveElement, Styled, StyledText, UnderlineStyle, UniformListScrollHandle, Window, div, hsla, point,
     px, rgb, uniform_list,
 };
@@ -814,6 +814,12 @@ pub struct SuggestionList {
     pub(crate) last_requested_size: Option<(f32, f32)>,
 }
 
+#[derive(Default)]
+struct RowScrollState {
+    manual: bool,
+    handle: ScrollHandle,
+}
+
 impl SuggestionList {
     pub fn new(state: Entity<OverlayState>) -> Self {
         Self {
@@ -947,9 +953,27 @@ impl Render for SuggestionList {
                             let click = click.clone();
                             let suggestion_font_family = font_family.clone();
                             move |range, window, cx| {
-                                let overlay = state.read(cx);
                                 range
                                     .filter_map(|ix| {
+                                        let mut content_key = std::collections::hash_map::DefaultHasher::new();
+                                        {
+                                            let overlay = state.read(cx);
+                                            let item = overlay.items.get(ix)?;
+                                            (
+                                                ix,
+                                                &item.name,
+                                                &item.display_name,
+                                                &item.args_hint,
+                                                overlay.suggestions_revision,
+                                            )
+                                                .hash(&mut content_key);
+                                        }
+                                        let content_key = content_key.finish();
+                                        let row_scroll =
+                                            window.use_keyed_state(("ec-row-scroll-state", content_key), cx, |_, _| {
+                                                RowScrollState::default()
+                                            });
+                                        let overlay = state.read(cx);
                                         let item = overlay.items.get(ix)?;
                                         let search_term = item.query_term.as_deref().unwrap_or(&overlay.match_term);
                                         let corners = row_corner_radii(ix, last_row, radius, has_footer);
@@ -957,6 +981,8 @@ impl Render for SuggestionList {
                                             item,
                                             window,
                                             cx,
+                                            row_scroll,
+                                            content_key,
                                             ix == overlay.selected,
                                             ix == 0 && overlay.has_ai_promotion(),
                                             search_term,
@@ -979,6 +1005,10 @@ impl Render for SuggestionList {
                                     })
                                     .collect()
                             }
+                        })
+                        .map(|mut list| {
+                            list.style().restrict_scroll_to_axis = Some(true);
+                            list
                         })
                         .with_sizing_behavior(ListSizingBehavior::Infer)
                         .track_scroll(self.scroll_handle.clone())
@@ -1066,6 +1096,8 @@ fn suggestion_row(
     item: &SuggestionItem,
     window: &Window,
     cx: &gpui::App,
+    row_scroll: Entity<RowScrollState>,
+    content_key: u64,
     is_selected: bool,
     is_ai_promoted: bool,
     search_term: &str,
@@ -1123,45 +1155,39 @@ fn suggestion_row(
     let insertion_search_term = insertion_search_term.to_string();
     let (title_text, title_highlights) = suggestion_title_highlights(&runs, text, match_text, match_bg);
     let available = (list_width - row_pad_left(font_size) - icon_size - 5.0).max(1.0);
-    let extra = estimated_title_width(&title_text, font_size) - available;
-    let marquee = is_selected && title_overflow == TitleOverflow::Scroll && extra > 4.0;
     let title_style = gpui::TextStyle {
         font_family: font_family.clone().into(),
         ..Default::default()
     };
-    let name_width = f32::from(
-        window
-            .text_system()
-            .layout_line(
-                &title_text,
-                px(font_size),
-                &[title_style.to_run(title_text.len())],
-                None,
-            )
-            .width,
-    )
-    .min(available);
-    // GPUI only applies text overflow when its text node receives a definite
-    // width. This nested row can still hand the node an unconstrained width,
-    // so use GPUI's own glyph-aware truncator before building the hint slot.
-    let hint_width = (available - name_width - 8.0).max(0.0);
-    let ellipsis_width = f32::from(
-        window
-            .text_system()
-            .layout_line("…", px(font_size), &[title_style.to_run("…".len())], None)
-            .width,
-    );
-    let hint_text = if !item.args_hint.is_empty() && hint_width > ellipsis_width {
-        let mut runs = vec![title_style.to_run(item.args_hint.len())];
-        let mut wrapper = cx.text_system().line_wrapper(title_style.font(), px(font_size));
-        wrapper.truncate_line(item.args_hint.clone().into(), px(hint_width), "…", &mut runs)
-    } else {
-        "".into()
+    let measured_width = |value: &str| {
+        f32::from(
+            window
+                .text_system()
+                .layout_line(value, px(font_size), &[title_style.to_run(value.len())], None)
+                .width,
+        )
     };
+    let name_width = measured_width(&title_text);
+    let hint_width = measured_width(&item.args_hint);
+    let show_hint = !item.args_hint.is_empty();
+    let content_width = name_width + if show_hint { 5.0 + hint_width } else { 0.0 };
+    let overflows = content_width > available;
+    let manual_scroll = row_scroll.read(cx).manual;
+    let extra = name_width - available;
+    let marquee = is_selected && title_overflow == TitleOverflow::Scroll && extra > 4.0;
     let styled = StyledText::new(title_text).with_highlights(title_highlights);
-    // The name keeps the user's overflow setting. A long argument hint must
-    // never move the command name; it gets its own lower-priority clipped slot.
-    let title = if marquee {
+    // Preserve the initial overflow presentation, then reveal the full title
+    // on manual scroll. The outer name slot always reserves the complete width
+    // so the very first wheel event can move, including when args_hint is empty.
+    let title = if show_hint || manual_scroll {
+        div()
+            .w(px(name_width))
+            .flex_none()
+            .whitespace_nowrap()
+            .font_family(font_family)
+            .text_color(text)
+            .child(styled)
+    } else if marquee {
         let duration = marquee_duration(extra);
         div()
             .min_w(px(0.))
@@ -1185,9 +1211,12 @@ fn suggestion_row(
             .text_color(text)
             .child(styled)
     };
+    let title = div().w(px(name_width)).flex_none().child(title);
     let mut hint_color = text;
     hint_color.a *= 0.55;
+    let scroll_state = state.clone();
     let mut title_content = div()
+        .id(("ec-suggestion-content", content_key))
         .min_w(px(0.))
         .w(px(available))
         .flex_none()
@@ -1195,17 +1224,53 @@ fn suggestion_row(
         .flex_row()
         .items_center()
         .overflow_hidden()
+        .when(overflows, |this| this.overflow_x_scroll())
+        .track_scroll(&row_scroll.read(cx).handle)
+        .on_scroll_wheel(move |event, window, cx| {
+            let delta = event.delta.pixel_delta(window.line_height());
+            if !overflows || !f32::from(delta.x).is_finite() || delta.x == px(0.) {
+                return;
+            }
+            // GPUI applies the delta before this callback and clamps it during
+            // the next layout. An outward gesture at either edge moves nothing.
+            let scroll = row_scroll.read(cx);
+            let offset = scroll.handle.offset().x;
+            let min = -scroll.handle.max_offset().width;
+            let moved = offset.clamp(min, px(0.)) != (offset - delta.x).clamp(min, px(0.));
+            if moved {
+                if !scroll.manual {
+                    row_scroll.update(cx, |scroll, cx| {
+                        scroll.manual = true;
+                        cx.notify();
+                    });
+                }
+                scroll_state.update(cx, |overlay, cx| {
+                    // Browsing a row is interaction too: keep the visible AI
+                    // promotion, but reject pending recommendations and do not
+                    // change which item Enter/Tab would accept.
+                    overlay.invalidate_ai_request();
+                    cx.notify();
+                });
+            }
+            // The inner native scroller runs first in GPUI's bubble phase.
+            // Keep a mostly horizontal gesture from also moving the list.
+            if delta.x.abs() > delta.y.abs() {
+                cx.stop_propagation();
+            }
+        })
         .child(title);
-    if !hint_text.is_empty() {
+    // Neither axis should be remapped: horizontal movement reveals text,
+    // vertical movement continues to the uniform list.
+    title_content.style().restrict_scroll_to_axis = Some(true);
+    if show_hint {
         title_content = title_content.child(
             div()
                 .ml(px(5.))
-                .min_w(px(0.))
                 .w(px(hint_width))
                 .flex_none()
-                .truncate()
+                .whitespace_nowrap()
                 .text_color(hint_color)
-                .child(hint_text),
+                .child(item.args_hint.clone()),
         );
     }
     let icon = item.icon_png.clone();
@@ -1802,6 +1867,173 @@ pub fn overlay_content_size_with_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{AppContext, ScrollDelta, ScrollWheelEvent, TestAppContext, size};
+
+    struct ScrollTestRow {
+        overlay: Entity<OverlayState>,
+        row: Entity<RowScrollState>,
+        vertical: ScrollHandle,
+    }
+
+    impl Render for ScrollTestRow {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+            let overlay = self.overlay.read(cx);
+            let mut viewport = div()
+                .id("test-viewport")
+                .w(px(160.))
+                .h(px(40.))
+                .overflow_y_scroll()
+                .track_scroll(&self.vertical)
+                .text_size(px(DEFAULT_FONT_SIZE))
+                .child(suggestion_row(
+                    &overlay.items[0],
+                    window,
+                    cx,
+                    self.row.clone(),
+                    0,
+                    true,
+                    overlay.has_ai_promotion(),
+                    "",
+                    "",
+                    "",
+                    false,
+                    "",
+                    overlay.theme,
+                    DEFAULT_ROW_HEIGHT,
+                    ICON_SIZE,
+                    DEFAULT_FONT_SIZE,
+                    160.,
+                    overlay.title_overflow,
+                    (0., 0.),
+                    overlay.font_family.clone(),
+                    self.overlay.clone(),
+                    None,
+                    0,
+                ))
+                .child(div().h(px(200.)));
+            viewport.style().restrict_scroll_to_axis = Some(true);
+            viewport
+        }
+    }
+
+    // Exercise GPUI's real layout, hit testing, native scroll listener and
+    // bubble order: state-only tests cannot catch an ellipsis with no overflow.
+    #[gpui::test]
+    fn horizontal_scroll_reveals_titles_and_freezes_pending_ai(cx: &mut TestAppContext) {
+        for (name, hint, overflow, promoted) in [
+            (
+                "very-long-file-or-branch-name-that-exceeds-the-row",
+                "",
+                TitleOverflow::Scroll,
+                false,
+            ),
+            (
+                "very-long-option-name-that-exceeds-the-row",
+                "",
+                TitleOverflow::Ellipsis,
+                false,
+            ),
+            (
+                "cmd",
+                "<long-argument-with-a-tail-that-must-remain-readable>",
+                TitleOverflow::Scroll,
+                false,
+            ),
+            (
+                "very-long-already-promoted-name-that-exceeds-the-row",
+                "",
+                TitleOverflow::Scroll,
+                true,
+            ),
+        ] {
+            let cx = cx.add_empty_window();
+            let overlay = cx.new(|_| {
+                let mut overlay = OverlayState::default();
+                overlay.items = vec![
+                    SuggestionItem {
+                        name: name.into(),
+                        args_hint: hint.into(),
+                        ..Default::default()
+                    },
+                    SuggestionItem {
+                        name: "other".into(),
+                        ..Default::default()
+                    },
+                ];
+                overlay.title_overflow = overflow;
+                if promoted {
+                    overlay.items.swap(0, 1);
+                    assert!(overlay.promote_ai_suggestion(1));
+                } else {
+                    overlay.ai_preview = Some(crate::ai::AiPreview::Loading(0));
+                }
+                overlay
+            });
+            let row = cx.new(|_| RowScrollState::default());
+            let vertical = ScrollHandle::new();
+            let view = cx.new(|_| ScrollTestRow {
+                overlay: overlay.clone(),
+                row: row.clone(),
+                vertical: vertical.clone(),
+            });
+            let draw = |cx: &mut gpui::VisualTestContext| {
+                cx.draw(point(px(0.), px(0.)), size(px(160.), px(40.)), |_, _| view.clone());
+            };
+            let wheel = |cx: &mut gpui::VisualTestContext, x, y| {
+                cx.simulate_event(ScrollWheelEvent {
+                    position: point(px(60.), px(10.)),
+                    delta: ScrollDelta::Pixels(point(px(x), px(y))),
+                    ..Default::default()
+                });
+            };
+            draw(cx);
+            let revision = overlay.read_with(cx, |s, _| s.suggestions_revision);
+            // Outward gestures at the start and pure vertical scrolling do not
+            // cancel AI or switch away from the configured title presentation.
+            wheel(cx, 40., 0.);
+            draw(cx);
+            wheel(cx, 0., -5.);
+            assert_eq!(vertical.offset().y, px(-5.));
+            assert!(!row.read_with(cx, |r, _| r.manual));
+            assert_eq!(overlay.read_with(cx, |s, _| s.ai_revision), 0);
+            vertical.set_offset(point(px(0.), px(0.)));
+            draw(cx);
+
+            wheel(cx, -40., -5.);
+            draw(cx);
+            let handle = row.read_with(cx, |r, _| {
+                assert!(r.manual);
+                r.handle.clone()
+            });
+            assert_eq!(handle.offset().x, px(-40.));
+            assert_eq!(vertical.offset().y, px(0.));
+            overlay.update(cx, |s, _| {
+                assert_eq!(s.ai_revision, 1);
+                assert!(s.ai_preview.is_none());
+                assert_eq!(s.suggestions_revision, revision);
+                assert_eq!(s.selected, 0);
+                assert_eq!(s.items[0].name, name);
+                assert_eq!(s.has_ai_promotion(), promoted);
+                assert!(!s.has_changed_index);
+            });
+            // Repaint and another gesture retain the offset instead of
+            // restarting the marquee or rebuilding the scroll handle.
+            draw(cx);
+            wheel(cx, -20., 0.);
+            draw(cx);
+            assert_eq!(handle.offset().x, px(-60.));
+            wheel(cx, -1000., 0.);
+            draw(cx);
+            assert_eq!(handle.offset().x, -handle.max_offset().width);
+            let ai_revision = overlay.read_with(cx, |s, _| s.ai_revision);
+            wheel(cx, -40., 0.);
+            draw(cx);
+            assert_eq!(overlay.read_with(cx, |s, _| s.ai_revision), ai_revision);
+            wheel(cx, 1000., 0.);
+            draw(cx);
+            assert_eq!(handle.offset().x, px(0.));
+        }
+    }
 
     #[test]
     fn match_prefix_is_case_insensitive() {

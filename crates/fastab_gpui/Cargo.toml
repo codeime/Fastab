@@ -19,6 +19,9 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+gpui = { version = "0.2.2", features = ["test-support"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 dispatch = "0.2.0"
 cocoa.workspace = true

@@ -1371,8 +1371,13 @@ fn apply_settings(overlay: &mut OverlayState) {
     overlay.effective_fuzzy_search = overlay.fuzzy_search;
     overlay.only_show_on_tab = fastab_settings::settings::get_bool_or("autocomplete.onlyShowOnTab", false);
     overlay.first_token_completion = fastab_settings::settings::get_bool_or("autocomplete.firstTokenCompletion", false);
-    overlay.scroll_wrap_around = fastab_settings::settings::get_bool_or("autocomplete.scrollWrapAround", false);
     overlay.navigate_to_history = fastab_settings::settings::get_bool_or("autocomplete.navigateToHistory", false);
+    overlay.scroll_wrap_around = resolve_scroll_wrap_around(
+        fastab_settings::settings::get_bool("autocomplete.scrollWrapAround")
+            .ok()
+            .flatten(),
+        overlay.navigate_to_history,
+    );
     overlay.insert_space_automatically =
         fastab_settings::settings::get_bool_or("autocomplete.insertSpaceAutomatically", true);
     overlay.title_overflow = fastab_gpui::TitleOverflow::parse(&fastab_settings::settings::get_string_or(
@@ -1389,6 +1394,12 @@ fn apply_settings(overlay: &mut OverlayState) {
     }
     overlay.show_dev_banner = fastab_settings::settings::get_bool_or("autocomplete.developerModeNPM", false);
     overlay.description_hint = description_hint_from_settings();
+}
+
+fn resolve_scroll_wrap_around(configured: Option<bool>, navigate_to_history: bool) -> bool {
+    // An explicit wrap preference takes precedence. With no preference, keep
+    // the Up-for-history setting useful while making the normal list cyclic.
+    configured.unwrap_or(!navigate_to_history)
 }
 
 fn legacy_list_width(configured_width: Option<i64>, configured_history_mode: Option<&str>) -> i64 {
@@ -3161,6 +3172,38 @@ mod tests {
         assert_eq!(intercept_flags(false, true), (false, true));
         assert_eq!(intercept_flags(false, false), (false, false));
         assert_eq!(intercept_flags(true, false), (false, false));
+    }
+
+    #[test]
+    fn up_from_first_row_respects_default_wrap_and_existing_history_preferences() {
+        for (configured_wrap, navigate_to_history, expected_visible, expected_selected) in [
+            (None, false, true, 1),
+            (None, true, false, 0),
+            (Some(false), false, false, 0),
+            (Some(true), true, true, 1),
+        ] {
+            let mut overlay = OverlayState::new();
+            overlay.set_suggestions(
+                vec![
+                    SuggestionItem {
+                        name: "first".into(),
+                        ..SuggestionItem::default()
+                    },
+                    SuggestionItem {
+                        name: "last".into(),
+                        ..SuggestionItem::default()
+                    },
+                ],
+                "".into(),
+            );
+            overlay.navigate_to_history = navigate_to_history;
+            overlay.scroll_wrap_around = resolve_scroll_wrap_around(configured_wrap, navigate_to_history);
+            assert_eq!(
+                overlay.move_selection_with_wrap(-1, overlay.scroll_wrap_around),
+                expected_visible
+            );
+            assert_eq!(overlay.selected, expected_selected);
+        }
     }
 
     #[test]
