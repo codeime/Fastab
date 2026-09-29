@@ -107,6 +107,7 @@ pub struct OverlayController {
     self_insertion: Arc<Mutex<Option<String>>>,
     proxy: EventLoopProxy,
     jev: ai::JevRuntime,
+    _ai_observer: gpui::Subscription,
 }
 
 impl OverlayController {
@@ -151,6 +152,15 @@ impl OverlayController {
                 });
             }));
         });
+        let mut observed_ai_revision = state.read(cx).ai_revision;
+        let ai_proxy = proxy.clone();
+        let ai_observer = cx.observe(&state, move |state, cx| {
+            let revision = state.read(cx).ai_revision;
+            if revision != observed_ai_revision {
+                observed_ai_revision = revision;
+                let _ = ai_proxy.send_event(Event::JevContextChanged);
+            }
+        });
         let handle = Arc::new(Mutex::new(None));
         let mut controller = Self {
             state,
@@ -170,6 +180,7 @@ impl OverlayController {
             self_insertion: Arc::new(Mutex::new(None)),
             proxy,
             jev: ai::JevRuntime::default(),
+            _ai_observer: ai_observer,
         };
         controller.reload_jev(cx);
         Ok(controller)
@@ -1193,15 +1204,21 @@ impl OverlayController {
                 icon_identifier: item.icon_identifier.clone(),
                 original_type: item.original_type.clone(),
                 query_term: item.query_term.clone(),
+                argument_value: item.argument_value,
+                acceptance_scope: item.acceptance_scope.clone(),
             }
         };
         self.insert_item(selected, execute, figterm_state, cx);
     }
 
     fn insert_item(&mut self, item: ClickInsert, execute: bool, figterm_state: &FigtermState, cx: &mut App) {
+        let ai_acceptance = self.take_jev_acceptance(&item);
         self.cancel_jev(cx);
         let input_before_accept = self.current_input_snapshot();
-        let acceptance = accepted_suggestion_key(&item, input_before_accept.as_ref());
+        let acceptance = (!item.argument_value)
+            .then(|| accepted_suggestion_key(&item, input_before_accept.as_ref()))
+            .flatten();
+        let scoped_acceptance = accepted_scoped_suggestion_key(&item);
         let add_space = self.state.read(cx).insert_space_automatically;
         let text = resolve_cursor_marker(full_insertion_for_item(
             &item.name,
@@ -1235,11 +1252,18 @@ impl OverlayController {
         );
         let should_suppress = should_suppress_after_insert(execute, &kind, opens_new_arg, &text);
         let inserted = self.insert_text_with_offset(&insertion, deletion, offset, execute, figterm_state, cx);
-        if inserted
-            && let Some((root_command, accepted_name)) = acceptance
-            && let Err(err) = self.engine.record_acceptance(root_command, accepted_name)
-        {
-            debug!(%err, "failed to record autocomplete acceptance");
+        Self::finish_jev_acceptance(ai_acceptance, inserted);
+        if inserted {
+            if let Some((scope, accepted_name)) = scoped_acceptance {
+                if let Err(err) = self.engine.record_scoped_acceptance(scope, accepted_name) {
+                    debug!(%err, "failed to record scoped autocomplete acceptance");
+                }
+            } else if !item.argument_value
+                && let Some((root_command, accepted_name)) = acceptance
+                && let Err(err) = self.engine.record_acceptance(root_command, accepted_name)
+            {
+                debug!(%err, "failed to record autocomplete acceptance");
+            }
         }
         let changed_buffer = insertion_changes_buffer(&insertion, deletion, execute);
         if inserted && changed_buffer && should_suppress {
@@ -1568,6 +1592,8 @@ fn apply_complete_result(
                     icon_identifier: s.icon,
                     original_type: s.original_type,
                     query_term: s.query_term,
+                    argument_value: s.argument_value,
+                    acceptance_scope: s.acceptance_scope,
                 })
                 .collect::<Vec<_>>();
             let empty = items.is_empty();
@@ -1857,6 +1883,16 @@ fn accepted_suggestion_key(item: &ClickInsert, input: Option<&(String, u32)>) ->
     let (buffer, cursor) = input?;
     Some((
         ranking_root_command(buffer, Some(*cursor)),
+        item.primary_name.clone().unwrap_or_else(|| item.name.clone()),
+    ))
+}
+
+fn accepted_scoped_suggestion_key(item: &ClickInsert) -> Option<(String, String)> {
+    if !item.argument_value {
+        return None;
+    }
+    Some((
+        item.acceptance_scope.clone()?,
         item.primary_name.clone().unwrap_or_else(|| item.name.clone()),
     ))
 }
@@ -2535,6 +2571,8 @@ fn click_matches_current(click: &ClickInsert, overlay: &OverlayState) -> bool {
                 && item.separator_to_add == click.separator_to_add
                 && item.should_add_space == click.should_add_space
                 && item.query_term == click.query_term
+                && item.argument_value == click.argument_value
+                && item.acceptance_scope == click.acceptance_scope
         })
 }
 
@@ -2914,6 +2952,35 @@ mod tests {
             Some(("git".into(), "status".into()))
         );
         assert_eq!(accepted_suggestion_key(&item, None), None);
+    }
+
+    #[test]
+    fn argument_acceptance_keeps_the_scope_from_the_selected_row() {
+        let item = ClickInsert {
+            name: "co".into(),
+            primary_name: Some("checkout".into()),
+            argument_value: true,
+            acceptance_scope: Some("v1:stored-parser-scope".into()),
+            ..ClickInsert::default()
+        };
+        assert_eq!(
+            accepted_scoped_suggestion_key(&item),
+            Some(("v1:stored-parser-scope".into(), "checkout".into()))
+        );
+        assert_eq!(
+            accepted_scoped_suggestion_key(&ClickInsert {
+                acceptance_scope: None,
+                ..item.clone()
+            }),
+            None
+        );
+        assert_eq!(
+            accepted_scoped_suggestion_key(&ClickInsert {
+                argument_value: false,
+                ..item
+            }),
+            None
+        );
     }
 
     #[test]
@@ -3449,8 +3516,16 @@ mod tests {
             icon_identifier: item.icon_identifier,
             original_type: item.original_type,
             query_term: item.query_term,
+            argument_value: item.argument_value,
+            acceptance_scope: item.acceptance_scope,
         };
         assert!(click_matches_current(&click, &overlay));
+        click.argument_value = true;
+        assert!(!click_matches_current(&click, &overlay));
+        click.argument_value = false;
+        click.acceptance_scope = Some("stale-scope".into());
+        assert!(!click_matches_current(&click, &overlay));
+        click.acceptance_scope = None;
         click.search = "co".into();
         assert!(!click_matches_current(&click, &overlay));
         click.search = "'co".into();

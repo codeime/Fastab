@@ -5,6 +5,7 @@
 //! been checked against a pinned public release. It cannot be reconstructed
 //! from a final row's kind or display name.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::ir::{Registry, Spec, SuggestionMeta};
@@ -138,9 +139,8 @@ pub(crate) fn context(
 
 /// Called only while constructing a row from a verified static collection.
 /// The bounded metadata copies contain no insertion string, history, or icon.
-pub(crate) fn mark_candidate(suggestion: &mut Suggestion, meta: &SuggestionMeta, remaining: &mut usize) {
-    if *remaining == 0
-        || meta.ai_resolved_reference
+pub(crate) fn mark_candidate(suggestion: &mut Suggestion, meta: &SuggestionMeta) {
+    if meta.ai_resolved_reference
         || meta.ai_generated
         || meta.js_get_query_term.is_some()
         || meta.get_query_term.is_some()
@@ -170,7 +170,6 @@ pub(crate) fn mark_candidate(suggestion: &mut Suggestion, meta: &SuggestionMeta,
         name: suggestion.name.clone(),
         description: suggestion.description[..end].to_owned(),
     });
-    *remaining -= 1;
 }
 
 pub(crate) fn clear(result: &mut CompleteResult) {
@@ -180,9 +179,46 @@ pub(crate) fn clear(result: &mut CompleteResult) {
     }
 }
 
-/// Run before local deduplication can hide an ambiguous origin, then again
-/// after history/ranking. This never removes or reorders ordinary rows.
-pub(crate) fn finalize(result: &mut CompleteResult) {
+/// Check every marked name against all rows before local deduplication can
+/// hide an ambiguous static/dynamic or history origin. Only marked names use
+/// auxiliary storage; generated and history rows are scanned once.
+pub(crate) fn validate_provenance(result: &mut CompleteResult) {
+    let Some(context) = result.public_ai_context.as_ref() else {
+        return;
+    };
+    if result.pending_generators {
+        clear(result);
+        return;
+    }
+    let mut counts: HashMap<String, u8> = result
+        .suggestions
+        .iter()
+        .filter(|suggestion| suggestion.public_ai_candidate.is_some())
+        .map(|suggestion| (suggestion.name.clone(), 0))
+        .collect();
+    for suggestion in &result.suggestions {
+        if let Some(count) = counts.get_mut(&suggestion.name) {
+            *count = count.saturating_add(1).min(2);
+        }
+    }
+    let mut accepted = 0;
+    for suggestion in &mut result.suggestions {
+        if suggestion.public_ai_candidate.is_some() {
+            if counts.get(&suggestion.name) == Some(&1) && safe_public_row(suggestion, context) {
+                accepted += 1;
+            } else {
+                suggestion.public_ai_candidate = None;
+            }
+        }
+    }
+    if accepted < 2 {
+        clear(result);
+    }
+}
+
+/// Apply the request budget only after local history, matching, acceptance
+/// recency and priority have determined the ordinary list's final order.
+pub(crate) fn finalize_ranked_candidates(result: &mut CompleteResult) {
     let Some(context) = result.public_ai_context.as_ref() else {
         return;
     };
@@ -191,26 +227,42 @@ pub(crate) fn finalize(result: &mut CompleteResult) {
         return;
     }
     let mut accepted = 0;
-    // At most MAX_CANDIDATES marked rows are inspected; do not allocate an
-    // auxiliary set proportional to an unbounded generator/history result.
-    for index in 0..result.suggestions.len() {
-        let candidate = &result.suggestions[index];
-        if candidate.public_ai_candidate.is_none() {
-            continue;
-        }
-        let eligible = candidate.name.starts_with(&context.token_prefix)
-            && !result
-                .suggestions
-                .iter()
-                .enumerate()
-                .any(|(other_index, other)| other_index != index && other.name == candidate.name);
-        if eligible {
-            accepted += 1;
-        } else {
-            result.suggestions[index].public_ai_candidate = None;
+    for suggestion in &mut result.suggestions {
+        if suggestion.public_ai_candidate.is_some() {
+            if accepted < MAX_CANDIDATES && safe_public_row(suggestion, context) {
+                accepted += 1;
+            } else {
+                suggestion.public_ai_candidate = None;
+            }
         }
     }
     if accepted < 2 {
         clear(result);
     }
+}
+
+fn safe_public_row(suggestion: &Suggestion, context: &PublicAiContext) -> bool {
+    let Some(candidate) = suggestion.public_ai_candidate.as_ref() else {
+        return false;
+    };
+    candidate.name == suggestion.name
+        && suggestion.name.starts_with(&context.token_prefix)
+        && !suggestion.hidden
+        && !suggestion.is_dangerous
+        && matches!(suggestion.kind.as_str(), "cmd" | "subcommand" | "option")
+        && !matches!(suggestion.original_type.as_deref(), Some("auto-execute" | "special"))
+        && suggestion.query_term.is_none()
+        && !suggestion.name.is_empty()
+        && suggestion.name.len() <= MAX_NAME_BYTES
+        && suggestion.name.bytes().all(word_byte)
+        && suggestion
+            .insert_value
+            .as_deref()
+            .is_none_or(|value| value == suggestion.name)
+        && suggestion
+            .separator_to_add
+            .as_deref()
+            .is_none_or(|separator| matches!(separator, "" | " " | "="))
+        && candidate.description.len() <= MAX_DESCRIPTION_BYTES
+        && !candidate.description.chars().any(char::is_control)
 }

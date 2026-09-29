@@ -251,6 +251,7 @@ pub fn generate(spec: &Spec, tokens: &[String], query: &str, cwd: &str, fuzzy: b
     .or_else(|| {
         spec.args.first().map(|arg| crate::lookup::ActiveArg {
             arg: arg.clone(),
+            slot: None,
             query: query.to_string(),
             search_term: query.to_string(),
             only_suggest_args: false,

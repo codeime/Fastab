@@ -314,33 +314,10 @@ pub fn history_icon_image_element(size: f32) -> gpui::Img {
         .object_fit(ObjectFit::Contain)
 }
 
-/// AI uses the history tile's image/layout mechanism. Two fixed black/white
-/// images retain their identities across sizes and arbitrary theme colors.
-pub fn ai_icon_image_element(size: f32, background_color: u32) -> gpui::Div {
-    let red = (background_color >> 16) & 0xff;
-    let green = (background_color >> 8) & 0xff;
-    let blue = background_color & 0xff;
-    // Perceived brightness keeps the default blue themes white while giving
-    // light custom tiles a dark glyph without changing their exact color.
-    let light_background = red * 299 + green * 587 + blue * 114 >= 128_000;
-    let image = cached_image(if light_background { "ai-black" } else { "ai" }).expect("AI icon");
-    div()
-        .w(px(size))
-        .h(px(size))
-        .min_w(px(size))
-        .min_h(px(size))
-        .flex_shrink_0()
-        .rounded(px(size * 0.25))
-        .bg(rgb(background_color))
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(png_icon_element(image, size * 0.74))
-}
-
-/// Filled yellow sparkles on the same static tile as other suggestion icons.
+/// One primary sparkle and one accent stay legible in the 13–15px icon slot.
+/// Recommendations and pending/status indicators share the same gold tile.
 /// Native paths avoid GPUI 0.2.2's SVG image RGBA/BGRA channel mismatch.
-pub fn recommendation_icon_element(size: f32) -> gpui::Div {
+pub fn ai_icon_element(size: f32) -> gpui::Div {
     div()
         .w(px(size))
         .h(px(size))
@@ -348,9 +325,9 @@ pub fn recommendation_icon_element(size: f32) -> gpui::Div {
         .min_h(px(size))
         .flex_shrink_0()
         .rounded(px(size * 0.25))
-        .bg(rgb(0x403625))
+        .bg(rgb(0x342d21))
         .border(px(0.5))
-        .border_color(rgb(0x665333))
+        .border_color(rgb(0x655132))
         .flex()
         .items_center()
         .justify_center()
@@ -359,7 +336,7 @@ pub fn recommendation_icon_element(size: f32) -> gpui::Div {
                 |_, _, _| (),
                 |bounds, _, window, _| {
                     let mut path = PathBuilder::fill();
-                    for (x, y, rx, ry) in [(8.6, 13.3, 6.8, 7.8), (17.2, 6.3, 4.4, 4.8), (17.7, 18.5, 3.9, 4.1)] {
+                    for (x, y, rx, ry) in [(9., 14., 7., 8.), (18., 5.5, 3.5, 3.5)] {
                         let at = |dx: f32, dy: f32| {
                             bounds.origin
                                 + point(
@@ -375,11 +352,11 @@ pub fn recommendation_icon_element(size: f32) -> gpui::Div {
                         path.close();
                     }
                     if let Ok(path) = path.build() {
-                        window.paint_path(path, rgb(0xffd65c));
+                        window.paint_path(path, rgb(0xffd56a));
                     }
                 },
             )
-            .size(px(size * 0.88)),
+            .size(px(size * 0.92)),
         )
 }
 

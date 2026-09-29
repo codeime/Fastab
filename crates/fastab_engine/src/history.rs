@@ -77,7 +77,7 @@ impl WalkTrace {
         self.path.push(primary_name(&spec.names));
     }
 
-    fn slot(&self, option: Option<&OptionSpec>, index: usize) -> ArgSlot {
+    pub(crate) fn slot(&self, option: Option<&OptionSpec>, index: usize) -> ArgSlot {
         ArgSlot {
             root: self.root.clone(),
             path: self.path.clone(),

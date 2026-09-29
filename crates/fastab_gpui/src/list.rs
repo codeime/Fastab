@@ -100,6 +100,10 @@ pub struct SuggestionItem {
     /// Per-row query after applying a static `getQueryTerm` rule. This may
     /// differ between generator rows in the same result set.
     pub query_term: Option<String>,
+    /// Explicit source signal: argument values never use global recency,
+    /// including when an empty cwd prevents a durable scope.
+    pub argument_value: bool,
+    pub acceptance_scope: Option<String>,
     pub icon_png: Option<Arc<Image>>,
 }
 
@@ -118,7 +122,7 @@ pub fn selection_identity(item: &SuggestionItem) -> SelectionIdentity {
     )
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ClickInsert {
     pub name: String,
     pub description: String,
@@ -135,6 +139,8 @@ pub struct ClickInsert {
     pub icon_identifier: Option<String>,
     pub original_type: Option<String>,
     pub query_term: Option<String>,
+    pub argument_value: bool,
+    pub acceptance_scope: Option<String>,
 }
 
 impl std::fmt::Debug for SuggestionItem {
@@ -1290,7 +1296,7 @@ fn suggestion_row(
         .h(px(row_height))
         .when_some(bg, |this, bg| this.bg(bg))
         .child(if is_ai_promoted {
-            crate::icons::recommendation_icon_element(icon_size).into_any_element()
+            crate::icons::ai_icon_element(icon_size).into_any_element()
         } else {
             row_icon(&item.kind, icon, item.icon_identifier.as_deref(), icon_size).into_any_element()
         })
@@ -1394,6 +1400,8 @@ fn click_insert_for(item: &SuggestionItem, raw_search_term: &str) -> ClickInsert
         icon_identifier: item.icon_identifier.clone(),
         original_type: item.original_type.clone(),
         query_term: item.query_term.clone(),
+        argument_value: item.argument_value,
+        acceptance_scope: item.acceptance_scope.clone(),
     }
 }
 
@@ -1640,7 +1648,7 @@ fn description_bar(
         .text_color(rgb(if empty { 0x8c8c8c } else { theme.muted }))
         .overflow_hidden()
         .when_some(ai_loading, |this, preview| {
-            this.child(crate::ai::loading_badge(preview, theme, height))
+            this.child(crate::ai::loading_badge(preview, height))
         })
         .child(content)
         .when(loading, |this| this.child(loading_icon(theme, height)))

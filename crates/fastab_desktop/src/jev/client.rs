@@ -1,10 +1,11 @@
 use std::fmt;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use reqwest::StatusCode;
 use reqwest::header::{ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, HeaderMap, HeaderValue};
 
 use super::config::ResolvedProfile;
+use super::diagnostics::{self, Metric, Status, Ticket};
 use super::policy::{MAX_RESPONSE_BYTES, REQUEST_TIMEOUT, cooldown};
 use super::types::{Candidate, Recommendation, RecommendationInput, decode_response, encode_request};
 
@@ -32,6 +33,15 @@ pub struct ClientError {
 }
 
 impl ClientError {
+    pub(crate) fn diagnostic_status(&self) -> Status {
+        match self.kind {
+            ClientErrorKind::Timeout => Status::Timeout,
+            ClientErrorKind::Authentication | ClientErrorKind::InvalidCredential => Status::Authentication,
+            ClientErrorKind::PaymentRequired => Status::PaymentRequired,
+            _ => Status::Failed,
+        }
+    }
+
     fn new(kind: ClientErrorKind) -> Self {
         Self {
             kind,
@@ -93,6 +103,16 @@ impl JevClient {
         key: &[u8],
         input: &RecommendationInput,
     ) -> Result<Recommendation, ClientError> {
+        self.recommend_observed(profile, key, input, None).await
+    }
+
+    pub async fn recommend_observed(
+        &self,
+        profile: &ResolvedProfile,
+        key: &[u8],
+        input: &RecommendationInput,
+        ticket: Option<Ticket>,
+    ) -> Result<Recommendation, ClientError> {
         if !profile.integrity_is_valid() {
             return Err(ClientError::new(ClientErrorKind::InvalidRequest));
         }
@@ -108,10 +128,25 @@ impl JevClient {
             HeaderValue::from_bytes(&bearer).map_err(|_error| ClientError::new(ClientErrorKind::InvalidCredential))?;
         authorization.set_sensitive(true);
         drop(bearer);
-        match tokio::time::timeout(REQUEST_TIMEOUT, self.attempt(profile, authorization, body, input)).await {
-            Ok(result) => result,
-            Err(_elapsed) => Err(ClientError::new(ClientErrorKind::Timeout)),
+        // Admission and context collection are not HTTP requests. Count only
+        // after validation, immediately before polling the actual send future.
+        let started = Instant::now();
+        if let Some(ticket) = ticket {
+            diagnostics::record(ticket, Metric::Request, Status::Requesting);
         }
+        let result =
+            match tokio::time::timeout(REQUEST_TIMEOUT, self.attempt(profile, authorization, body, input)).await {
+                Ok(result) => result,
+                Err(_elapsed) => Err(ClientError::new(ClientErrorKind::Timeout)),
+            };
+        if let Some(ticket) = ticket {
+            diagnostics::latency(ticket, started.elapsed());
+            match &result {
+                Ok(_) => diagnostics::record(ticket, Metric::Response, Status::Collecting),
+                Err(error) => diagnostics::record(ticket, Metric::Failed, error.diagnostic_status()),
+            }
+        }
+        result
     }
 
     async fn attempt(

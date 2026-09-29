@@ -33,7 +33,7 @@ pub enum Event {
     JevDebounced(crate::overlay::ai::RequestToken),
     JevComplete {
         token: crate::overlay::ai::RequestToken,
-        result: Result<crate::jev::types::Recommendation, crate::jev::client::ClientError>,
+        result: crate::overlay::ai::Completed,
     },
     JevContextChanged,
     ReloadAccessibility,

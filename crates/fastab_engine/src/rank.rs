@@ -2,11 +2,14 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
+use crate::history::ArgSlot;
 use crate::query::MatchScore;
 use crate::runtime::{CompleteResult, Suggestion};
 
@@ -18,6 +21,147 @@ const CUSTOM_HISTORY_TIMEOUT: Duration = Duration::from_secs(5);
 /// State key used for the native equivalent of the WebView's recency index.
 /// The value is a JSON object `{ command: { acceptedName: unixMillis } }`.
 pub const ACCEPTANCE_STATE_KEY: &str = "autocomplete.acceptanceRecency";
+/// Separate from the old root-command index so existing settings remain
+/// readable and argument values cannot inherit their global recency.
+pub(crate) const SCOPED_ACCEPTANCE_STATE_KEY: &str = "autocomplete.argumentAcceptanceRecencyV1";
+const MAX_SCOPED_ACCEPTANCES: usize = 512;
+const MAX_SCOPED_NAME_BYTES: usize = 128;
+const MAX_SCOPED_STATE_BYTES: usize = 256 * 1024;
+const SCOPE_PREFIX: &str = "v1:";
+
+/// Opaque identity carried with an argument row through the UI. The hash is
+/// built from the parser's actual argument slot plus the request cwd; no
+/// filesystem lookup or canonicalization occurs on the completion path.
+pub(crate) fn argument_scope(cwd: &str, slot: &ArgSlot) -> Option<String> {
+    if cwd.is_empty()
+        || !Path::new(cwd).is_absolute()
+        || slot.root.is_empty()
+        || slot.path.iter().any(String::is_empty)
+        || slot.option.as_ref().is_some_and(String::is_empty)
+    {
+        return None;
+    }
+    let mut hash = Sha256::new();
+    hash.update(b"fastab.argumentAcceptance.v1");
+    hash_part(&mut hash, cwd.as_bytes());
+    hash_part(&mut hash, slot.root.as_bytes());
+    hash.update((slot.path.len() as u64).to_le_bytes());
+    for name in &slot.path {
+        hash_part(&mut hash, name.as_bytes());
+    }
+    hash.update([u8::from(slot.option.is_some())]);
+    if let Some(option) = &slot.option {
+        hash_part(&mut hash, option.as_bytes());
+    }
+    hash.update((slot.index as u64).to_le_bytes());
+    let digest = hash.finalize();
+    let mut scope = String::with_capacity(SCOPE_PREFIX.len() + digest.len() * 2);
+    scope.push_str(SCOPE_PREFIX);
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for byte in digest.iter().copied() {
+        scope.push(HEX[(byte >> 4) as usize] as char);
+        scope.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    Some(scope)
+}
+
+fn hash_part(hash: &mut Sha256, bytes: &[u8]) {
+    hash.update((bytes.len() as u64).to_le_bytes());
+    hash.update(bytes);
+}
+
+fn valid_scope(scope: &str) -> bool {
+    scope.strip_prefix(SCOPE_PREFIX).is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct ScopedAcceptanceIndex {
+    entries: HashMap<String, HashMap<String, u64>>,
+}
+
+impl ScopedAcceptanceIndex {
+    fn load() -> Self {
+        let loaded: Self = fastab_settings::state::get_value(SCOPED_ACCEPTANCE_STATE_KEY)
+            .ok()
+            .flatten()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
+        let mut bounded = Self::default();
+        let mut entries: Vec<_> = loaded
+            .entries
+            .into_iter()
+            .flat_map(|(scope, names)| {
+                names
+                    .into_iter()
+                    .map(move |(name, timestamp)| (scope.clone(), name, timestamp))
+            })
+            .collect();
+        entries.sort_by_key(|(_, _, timestamp)| *timestamp);
+        for (scope, name, timestamp) in entries {
+            bounded.record_at(&scope, &name, timestamp);
+        }
+        bounded
+    }
+
+    pub(crate) fn timestamp(&self, scope: &str, name: &str) -> Option<u64> {
+        self.entries.get(scope).and_then(|names| names.get(name)).copied()
+    }
+
+    /// Replaying the same client timestamp is idempotent. When full, an older
+    /// queued replay cannot evict a newer choice already kept in memory.
+    pub(crate) fn record_at(&mut self, scope: &str, name: &str, timestamp: u64) -> bool {
+        if !valid_scope(scope)
+            || name.is_empty()
+            || name.len() > MAX_SCOPED_NAME_BYTES
+            || name.chars().any(char::is_control)
+            || matches!(name, "↪" | "../")
+        {
+            return false;
+        }
+        if let Some(existing) = self.entries.get_mut(scope).and_then(|names| names.get_mut(name)) {
+            *existing = (*existing).max(timestamp);
+            return true;
+        }
+        if self.entries.values().map(HashMap::len).sum::<usize>() >= MAX_SCOPED_ACCEPTANCES {
+            let oldest = self
+                .entries
+                .iter()
+                .flat_map(|(scope, names)| names.iter().map(move |(name, timestamp)| (scope, name, timestamp)))
+                .min_by_key(|(_, _, timestamp)| *timestamp)
+                .map(|(scope, name, timestamp)| (scope.clone(), name.clone(), *timestamp));
+            if let Some((old_scope, old_name, oldest_timestamp)) = oldest {
+                if timestamp <= oldest_timestamp {
+                    return true;
+                }
+                let names = self.entries.get_mut(&old_scope).expect("oldest scope exists");
+                names.remove(&old_name);
+                if names.is_empty() {
+                    self.entries.remove(&old_scope);
+                }
+            }
+        }
+        self.entries
+            .entry(scope.to_owned())
+            .or_default()
+            .insert(name.to_owned(), timestamp);
+        true
+    }
+
+    pub(crate) fn persist(&self) {
+        if let Ok(bytes) = serde_json::to_vec(self)
+            && bytes.len() <= MAX_SCOPED_STATE_BYTES
+            && let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        {
+            let _ = fastab_settings::state::set_value(SCOPED_ACCEPTANCE_STATE_KEY, value);
+        }
+    }
+}
 
 /// The shell families used by the legacy history source selector.  Keep this
 /// deliberately small: Fig only loaded shell history for these three shells;
@@ -316,6 +460,8 @@ fn record_next_words(command: &str, counts: &mut NextWords) {
 #[serde(transparent)]
 pub struct AcceptanceIndex {
     entries: HashMap<String, HashMap<String, u64>>,
+    #[serde(skip)]
+    scoped: ScopedAcceptanceIndex,
 }
 
 impl AcceptanceIndex {
@@ -326,17 +472,31 @@ impl AcceptanceIndex {
     }
 
     pub fn load() -> Self {
-        fastab_settings::state::get_value(ACCEPTANCE_STATE_KEY)
+        let mut index: Self = fastab_settings::state::get_value(ACCEPTANCE_STATE_KEY)
             .ok()
             .flatten()
             .and_then(|value| serde_json::from_value(value).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        index.scoped = ScopedAcceptanceIndex::load();
+        index
     }
 
     /// Return the last acceptance time in Unix milliseconds for a command and
     /// primary suggestion name.
     pub fn timestamp(&self, command: &str, name: &str) -> Option<u64> {
         self.entries.get(command).and_then(|items| items.get(name)).copied()
+    }
+
+    pub(crate) fn scoped_timestamp(&self, scope: &str, name: &str) -> Option<u64> {
+        self.scoped.timestamp(scope, name)
+    }
+
+    pub(crate) fn record_scoped_at(&mut self, scope: &str, name: &str, timestamp: u64) -> bool {
+        self.scoped.record_at(scope, name, timestamp)
+    }
+
+    pub(crate) fn scoped_snapshot(&self) -> ScopedAcceptanceIndex {
+        self.scoped.clone()
     }
 
     /// Update the in-memory index with an explicit timestamp.  This pure
@@ -523,7 +683,11 @@ fn effective_priority_tenths(suggestion: &Suggestion, history_counts: &HashMap<S
     // 0..100. Do not normalize zero again here: an explicit negative value
     // has already become a meaningful zero by this point.
     let ordinary = suggestion.priority.clamp(0, 100) * 10;
-    let history = history_priority_tenths(suggestion_first_word_count(suggestion, history_counts));
+    let history = if suggestion.argument_value {
+        0
+    } else {
+        history_priority_tenths(suggestion_first_word_count(suggestion, history_counts))
+    };
     ordinary.max(history)
 }
 
@@ -538,7 +702,15 @@ fn effective_priority_score(
 
     if use_acceptance && suggestion.kind != "auto-execute" && suggestion.name != "../" && suggestion.name != "↪" {
         let name = suggestion.primary_name.as_deref().unwrap_or(suggestion.name.as_str());
-        if let Some(timestamp) = acceptance.timestamp(root_command, name) {
+        let timestamp = if suggestion.argument_value {
+            suggestion
+                .acceptance_scope
+                .as_deref()
+                .and_then(|scope| acceptance.scoped_timestamp(scope, name))
+        } else {
+            acceptance.timestamp(root_command, name)
+        };
+        if let Some(timestamp) = timestamp {
             // updatePriorities promotes priorities in [50, 75] to 75 before
             // adding the millisecond-derived fraction. A timestamp divided
             // by 1e13 is the exact scale used by the old JavaScript helper.
@@ -1092,6 +1264,71 @@ mod tests {
             false,
         );
         assert_eq!(after.suggestions[0].name, "push");
+    }
+
+    #[test]
+    fn argument_rows_without_scope_ignore_global_acceptance_and_history_words() {
+        let frecency = Frecency::from_commands((0..8).map(|_| ("git checkout zeta".into(), 1_000)));
+        let acceptance = AcceptanceIndex::from_entries([("git".into(), "zeta".into(), 3_000_000_000_000)]);
+        let mut alpha = Suggestion::new("alpha", "", "arg");
+        alpha.argument_value = true;
+        let mut zeta = Suggestion::new("zeta", "", "arg");
+        zeta.argument_value = true;
+        let mut result = CompleteResult {
+            suggestions: vec![alpha, zeta],
+            ..CompleteResult::default()
+        };
+        apply_with_acceptance(
+            &mut result,
+            &["git".into(), "checkout".into()],
+            &frecency,
+            &acceptance,
+            "git",
+            false,
+        );
+        assert_eq!(result.suggestions[0].name, "alpha");
+
+        result.suggestions[1].priority = 90;
+        apply_with_acceptance(
+            &mut result,
+            &["git".into(), "checkout".into()],
+            &frecency,
+            &acceptance,
+            "git",
+            false,
+        );
+        assert_eq!(result.suggestions[0].name, "zeta", "explicit priority must still work");
+    }
+
+    #[test]
+    fn scoped_acceptance_is_bounded_idempotent_and_separate_from_legacy_json() {
+        let slot = ArgSlot {
+            root: "git".into(),
+            path: vec!["checkout".into()],
+            option: None,
+            index: 0,
+        };
+        assert!(argument_scope("relative/project", &slot).is_none());
+        let scope = argument_scope("/project", &slot).unwrap();
+        let mut acceptance = AcceptanceIndex::from_entries([("git".into(), "status".into(), 10)]);
+        let legacy_json = serde_json::to_value(&acceptance).unwrap();
+        for index in 0..=MAX_SCOPED_ACCEPTANCES {
+            assert!(acceptance.record_scoped_at(&scope, &format!("branch-{index}"), index as u64 + 1));
+        }
+        assert_eq!(
+            acceptance.scoped.entries.values().map(HashMap::len).sum::<usize>(),
+            MAX_SCOPED_ACCEPTANCES
+        );
+        assert_eq!(acceptance.scoped_timestamp(&scope, "branch-0"), None);
+        assert_eq!(acceptance.scoped_timestamp(&scope, "branch-512"), Some(513));
+        // A delayed worker replay of the oldest client update cannot undo
+        // eviction of that update or replace a newer one.
+        assert!(acceptance.record_scoped_at(&scope, "branch-0", 1));
+        assert_eq!(acceptance.scoped_timestamp(&scope, "branch-0"), None);
+        assert!(acceptance.record_scoped_at(&scope, "branch-512", 513));
+        assert_eq!(acceptance.scoped_timestamp(&scope, "branch-512"), Some(513));
+        assert_eq!(serde_json::to_value(&acceptance).unwrap(), legacy_json);
+        assert!(serde_json::to_vec(&acceptance.scoped).unwrap().len() < 128 * 1024);
     }
 
     #[test]

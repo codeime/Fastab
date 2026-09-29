@@ -679,6 +679,9 @@ fn command_is_disabled(settings: &fastab_settings::settings::Settings, command: 
 #[derive(Debug)]
 pub(crate) struct ActiveArg {
     pub arg: ArgSpec,
+    /// The parser's real value slot, including a loadSpec root switch and
+    /// option argument index. Missing for values beyond a variadic slot.
+    pub slot: Option<crate::history::ArgSlot>,
     /// Normalized value used to filter generator output.
     pub query: String,
     /// Raw shell text used as the result search term for deletion.
@@ -850,6 +853,7 @@ pub(crate) fn resolve_context(
         query,
         raw_query,
         &walked.parser_directives,
+        &trace,
     );
     CompletionContext {
         spec: walked.spec,
@@ -1364,6 +1368,7 @@ fn active_arg<'a>(
     query: &str,
     raw_query: &str,
     parser_directives: &ParserDirectives,
+    trace: &crate::history::WalkTrace,
 ) -> Option<ActiveArg> {
     let current_index = if ends_with_space {
         tokens.len()
@@ -1406,6 +1411,7 @@ fn active_arg<'a>(
                         let raw_value = attached_search_term(raw_query, resolved, value);
                         return option.args.first().map(|arg| ActiveArg {
                             arg: arg.clone(),
+                            slot: Some(trace.slot(Some(option), 0)),
                             query: value.to_string(),
                             search_term: raw_value,
                             only_suggest_args: true,
@@ -1445,6 +1451,7 @@ fn active_arg<'a>(
                     // consume it as a positional argument.
                     return option.args.first().map(|arg| ActiveArg {
                         arg: arg.clone(),
+                        slot: Some(trace.slot(Some(option), 0)),
                         query: query.to_string(),
                         search_term: raw_query.to_string(),
                         only_suggest_args: false,
@@ -1478,6 +1485,7 @@ fn active_arg<'a>(
     if let Some(state) = option_arg {
         return Some(ActiveArg {
             arg: state.arg,
+            slot: (state.count < state.option.args.len()).then(|| trace.slot(Some(&state.option), state.count)),
             query: query.to_string(),
             search_term: raw_query.to_string(),
             only_suggest_args: false,
@@ -1510,6 +1518,7 @@ fn active_arg<'a>(
                         if let Some(arg) = option.args.first() {
                             return Some(ActiveArg {
                                 arg: arg.clone(),
+                                slot: Some(trace.slot(Some(option), 0)),
                                 query: value.to_string(),
                                 search_term: raw_value,
                                 only_suggest_args: true,
@@ -1526,6 +1535,7 @@ fn active_arg<'a>(
                     {
                         return Some(ActiveArg {
                             arg: arg.clone(),
+                            slot: Some(trace.slot(Some(option), 0)),
                             query: String::new(),
                             search_term: String::new(),
                             only_suggest_args: false,
@@ -1543,8 +1553,10 @@ fn active_arg<'a>(
         }
     }
 
+    let slot_index = positional + subcommand_variadic_count;
     positional_arg(&spec.args, positional).map(|arg| ActiveArg {
         arg: arg.clone(),
+        slot: (slot_index < spec.args.len()).then(|| trace.slot(None, slot_index)),
         query: query.to_string(),
         search_term: raw_query.to_string(),
         only_suggest_args: false,
@@ -2124,11 +2136,6 @@ pub(crate) fn complete_with_settings(
             crossed_loaded_spec: context.crossed_loaded_spec,
         },
     );
-    let mut public_ai_budget = if public_ai_context.is_some() {
-        crate::public_ai::MAX_CANDIDATES
-    } else {
-        0
-    };
     let fuzzy = effective_fuzzy(
         request.fuzzy,
         Some(context.spec.as_ref()),
@@ -2191,7 +2198,6 @@ pub(crate) fn complete_with_settings(
                     && spec.load_spec.is_none()
                     && spec.js_load_spec.is_none()
             },
-            &mut public_ai_budget,
         )
     } else {
         Vec::new()
@@ -2219,20 +2225,28 @@ pub(crate) fn complete_with_settings(
             fuzzy,
             &history_values,
         );
-        if open_option_chain.is_some() {
-            for suggestion in &mut active_suggestions {
-                suggestion.query_term = Some(String::new());
-            }
-        }
-        suggestions.extend(active_suggestions);
         if active.arg.templates.contains(&Template::Help) {
-            suggestions.extend(help_template_suggestions(
+            active_suggestions.extend(help_template_suggestions(
                 context.help_parent.as_ref(),
                 current,
                 &query,
                 fuzzy,
             ));
         }
+        let acceptance_scope = active
+            .slot
+            .as_ref()
+            .and_then(|slot| crate::rank::argument_scope(&request.cwd, slot));
+        for suggestion in &mut active_suggestions {
+            suggestion.argument_value = true;
+            suggestion.acceptance_scope = acceptance_scope.clone();
+        }
+        if open_option_chain.is_some() {
+            for suggestion in &mut active_suggestions {
+                suggestion.query_term = Some(String::new());
+            }
+        }
+        suggestions.extend(active_suggestions);
     }
     let mut additional_items = current.additional_suggestions.clone();
     additional_items.sort_by(|left, right| cmp_named_names(&left.names, &right.names));
@@ -2251,7 +2265,6 @@ pub(crate) fn complete_with_settings(
         fuzzy,
         prefer_verbose,
         |_| false,
-        &mut public_ai_budget,
     );
     if open_option_chain.is_some() {
         for suggestion in &mut additional {
@@ -2292,7 +2305,6 @@ pub(crate) fn complete_with_settings(
             prefer_verbose,
             &context.parser_directives,
             public_ai_context.is_some(),
-            &mut public_ai_budget,
         ));
     }
 
@@ -2313,6 +2325,7 @@ pub(crate) fn complete_with_settings(
         settings.get_bool_or("autocomplete.hideAutoExecuteSuggestion", false),
         settings.get_bool_or("autocomplete.onlyShowOnTab", false),
         settings.get_bool_or("autocomplete.immediatelyRunDangerousCommands", false),
+        context.active_arg.is_some(),
     );
     add_space_auto_execute(
         &mut suggestions,
@@ -2333,7 +2346,7 @@ pub(crate) fn complete_with_settings(
         pending_generators,
         debounce_ms,
     };
-    crate::public_ai::finalize(&mut result);
+    crate::public_ai::validate_provenance(&mut result);
     result
 }
 
@@ -2523,7 +2536,6 @@ fn collect_named<T>(
     fuzzy: bool,
     prefer_verbose: bool,
     public_source: impl Fn(&T) -> bool,
-    public_ai_budget: &mut usize,
 ) -> Vec<Suggestion> {
     let mut out = Vec::new();
     for item in items {
@@ -2576,7 +2588,7 @@ fn collect_named<T>(
             .with_alias_names(item_names.to_vec());
         suggestion.requires_arg = requires_arg(item);
         if public_source(item) && suggestion.name.starts_with(query) {
-            crate::public_ai::mark_candidate(&mut suggestion, metadata, public_ai_budget);
+            crate::public_ai::mark_candidate(&mut suggestion, metadata);
         }
         out.push(suggestion);
     }
@@ -2649,7 +2661,6 @@ fn collect_option_suggestions(
     prefer_verbose: bool,
     directives: &ParserDirectives,
     public_source: bool,
-    public_ai_budget: &mut usize,
 ) -> Vec<Suggestion> {
     let mut options = Vec::new();
     for option in current
@@ -2693,7 +2704,6 @@ fn collect_option_suggestions(
                 && !option.meta.ai_generated
                 && option.load_spec.is_none()
         },
-        public_ai_budget,
     )
 }
 
@@ -2852,6 +2862,8 @@ fn add_exact_auto_execute(
     let is_folder = original.kind == "folder";
     let auto = Suggestion {
         public_ai_candidate: None,
+        argument_value: original.argument_value,
+        acceptance_scope: None,
         name: if is_folder {
             original.name.strip_suffix('/').unwrap_or(&original.name).to_string()
         } else {
@@ -2897,6 +2909,8 @@ fn add_space_auto_execute(
         Suggestion {
             name: "↪".into(),
             public_ai_candidate: None,
+            argument_value: false,
+            acceptance_scope: None,
             description: "Immediately execute".into(),
             kind: "auto-execute".into(),
             args_hint: String::new(),
@@ -2925,6 +2939,7 @@ fn add_current_token_auto_execute(
     hide: bool,
     only_show_on_tab: bool,
     allow_dangerous: bool,
+    argument_value: bool,
 ) {
     if query.is_empty()
         || hide
@@ -2967,6 +2982,8 @@ fn add_current_token_auto_execute(
             Suggestion {
                 name: if query == "." { query.to_string() } else { "↪".into() },
                 public_ai_candidate: None,
+                argument_value,
+                acceptance_scope: None,
                 description: "Enter the current directory".into(),
                 kind: "auto-execute".into(),
                 args_hint: String::new(),
@@ -2997,6 +3014,8 @@ fn add_current_token_auto_execute(
         Suggestion {
             name: query.to_string(),
             public_ai_candidate: None,
+            argument_value,
+            acceptance_scope: None,
             description: "Enter the current argument".into(),
             kind: "auto-execute".into(),
             args_hint: String::new(),
@@ -3840,6 +3859,18 @@ mod tests {
         assert!(names.contains(&"build"), "{names:?}");
         assert!(names.contains(&"test"), "{names:?}");
         assert!(!names.contains(&"help"), "{names:?}");
+        let help_rows: Vec<_> = result
+            .suggestions
+            .iter()
+            .filter(|row| matches!(row.name.as_str(), "build" | "test"))
+            .collect();
+        assert!(help_rows.iter().all(|row| row.argument_value));
+        let scope = help_rows[0].acceptance_scope.as_deref().expect("help parser slot");
+        assert!(
+            help_rows
+                .iter()
+                .all(|row| row.acceptance_scope.as_deref() == Some(scope))
+        );
         assert!(
             result.suggestions.iter().any(|item| item.kind == "special"),
             "{:?}",
@@ -5260,6 +5291,7 @@ mod tests {
         fn active(arg: &ArgSpec) -> ActiveArg {
             ActiveArg {
                 arg: arg.clone(),
+                slot: None,
                 query: "value".into(),
                 search_term: "value".into(),
                 only_suggest_args: false,
@@ -5301,7 +5333,7 @@ mod tests {
     #[test]
     fn partial_dangerous_match_still_allows_current_token_fallback() {
         let mut suggestions = vec![Suggestion::new("clean", "Remove files", "subcommand").with_dangerous(true)];
-        add_current_token_auto_execute(&mut suggestions, "cl", true, false, false, false);
+        add_current_token_auto_execute(&mut suggestions, "cl", true, false, false, false, false);
         assert_eq!(suggestions[0].kind, "auto-execute");
         assert_eq!(suggestions[0].name, "cl");
     }
@@ -5309,7 +5341,7 @@ mod tests {
     #[test]
     fn exact_dangerous_match_blocks_current_token_fallback() {
         let mut suggestions = vec![Suggestion::new("clean", "Remove files", "subcommand").with_dangerous(true)];
-        add_current_token_auto_execute(&mut suggestions, "clean", true, false, false, false);
+        add_current_token_auto_execute(&mut suggestions, "clean", true, false, false, false, false);
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].kind, "subcommand");
     }
@@ -5317,13 +5349,13 @@ mod tests {
     #[test]
     fn directory_auto_execute_special_cases_do_not_require_current_token_setting() {
         let mut dot = vec![Suggestion::new(".gitignore", "File", "file")];
-        add_current_token_auto_execute(&mut dot, ".", false, false, false, false);
+        add_current_token_auto_execute(&mut dot, ".", false, false, false, false, false);
         assert_eq!(dot[0].name, ".");
         assert_eq!(dot[0].description, "Enter the current directory");
         assert_eq!(dot[0].original_type.as_deref(), Some("folder"));
 
         let mut folder = vec![Suggestion::new("src/", "Folder", "folder")];
-        add_current_token_auto_execute(&mut folder, "src/", false, false, false, false);
+        add_current_token_auto_execute(&mut folder, "src/", false, false, false, false, false);
         assert_eq!(folder[0].name, "↪");
         assert_eq!(folder[0].description, "Enter the current directory");
     }
@@ -5335,7 +5367,7 @@ mod tests {
         assert!(exact_hidden.iter().all(|item| item.kind != "auto-execute"));
 
         let mut dot_hidden = vec![Suggestion::new(".gitignore", "File", "file")];
-        add_current_token_auto_execute(&mut dot_hidden, ".", false, true, false, false);
+        add_current_token_auto_execute(&mut dot_hidden, ".", false, true, false, false, false);
         assert!(dot_hidden.iter().all(|item| item.kind != "auto-execute"));
 
         let mut exact_tab_only = vec![Suggestion::new("status", "Show status", "subcommand")];
@@ -5363,7 +5395,7 @@ mod tests {
     #[test]
     fn always_suggest_current_token_adds_an_action_row() {
         let mut suggestions = vec![Suggestion::new("checkout", "", "subcommand")];
-        add_current_token_auto_execute(&mut suggestions, "ch", true, false, false, true);
+        add_current_token_auto_execute(&mut suggestions, "ch", true, false, false, true, false);
         assert_eq!(suggestions[0].name, "ch");
         assert_eq!(suggestions[0].description, "Enter the current argument");
         assert_eq!(suggestions[0].insert_value.as_deref(), Some("\n"));

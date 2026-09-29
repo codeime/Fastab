@@ -41,6 +41,11 @@ enum JobKind {
         accepted_name: String,
         timestamp: u64,
     },
+    RecordScopedAcceptance {
+        scope: String,
+        accepted_name: String,
+        timestamp: u64,
+    },
     /// `ftab hook clear-autocomplete-cache`: drop every cached spec and
     /// generator result before the next completion runs.
     ClearCaches,
@@ -155,6 +160,20 @@ impl EngineClient {
                             );
                             continue;
                         },
+                        JobKind::RecordScopedAcceptance {
+                            scope,
+                            accepted_name,
+                            timestamp,
+                        } => {
+                            record_scoped_acceptance(
+                                &mut engine,
+                                &worker_acceptance,
+                                &scope,
+                                &accepted_name,
+                                timestamp,
+                            );
+                            continue;
+                        },
                         JobKind::ClearCaches => {
                             clear_caches(&supervisor_specs_dir, &mut engine, &mut registry_template);
                             continue;
@@ -180,6 +199,19 @@ impl EngineClient {
                             &accepted_name,
                             timestamp,
                         ),
+                        SideEffect::RecordScopedAcceptance {
+                            scope,
+                            accepted_name,
+                            timestamp,
+                        } => {
+                            record_scoped_acceptance(
+                                &mut engine,
+                                &worker_acceptance,
+                                &scope,
+                                &accepted_name,
+                                timestamp,
+                            );
+                        },
                         SideEffect::ClearCaches => {
                             clear_caches(&supervisor_specs_dir, &mut engine, &mut registry_template);
                         },
@@ -293,6 +325,35 @@ impl EngineClient {
             })
     }
 
+    /// Update in-memory scoped ranking immediately; persistence is replayed
+    /// only by the worker so the GPUI insertion path never waits on SQLite.
+    pub fn record_scoped_acceptance(
+        &self,
+        scope: impl Into<String>,
+        accepted_name: impl Into<String>,
+    ) -> anyhow::Result<()> {
+        let scope = scope.into();
+        let accepted_name = accepted_name.into();
+        let timestamp = AcceptanceIndex::now_millis();
+        let valid = self
+            .acceptance
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .record_scoped_at(&scope, &accepted_name, timestamp);
+        if !valid {
+            return Ok(());
+        }
+        self.tx
+            .send(Job {
+                kind: JobKind::RecordScopedAcceptance {
+                    scope,
+                    accepted_name,
+                    timestamp,
+                },
+            })
+            .map_err(|_err| anyhow!("engine thread is gone"))
+    }
+
     /// Forget every cached spec and generator result. Applied on the worker
     /// between completions, like an acceptance record, so it is never
     /// coalesced away by a newer completion request.
@@ -309,6 +370,11 @@ impl EngineClient {
 enum SideEffect {
     RecordAcceptance {
         root_command: String,
+        accepted_name: String,
+        timestamp: u64,
+    },
+    RecordScopedAcceptance {
+        scope: String,
         accepted_name: String,
         timestamp: u64,
     },
@@ -418,6 +484,28 @@ fn record_acceptance(
     }
 }
 
+fn record_scoped_acceptance(
+    engine: &mut Option<Engine>,
+    acceptance: &Arc<Mutex<AcceptanceIndex>>,
+    scope: &str,
+    accepted_name: &str,
+    timestamp: u64,
+) {
+    if let Some(engine) = engine.as_mut() {
+        engine.record_scoped_acceptance_at(scope, accepted_name, timestamp);
+    } else {
+        let snapshot = {
+            let mut index = acceptance.lock().unwrap_or_else(|err| err.into_inner());
+            index
+                .record_scoped_at(scope, accepted_name, timestamp)
+                .then(|| index.scoped_snapshot())
+        };
+        if let Some(snapshot) = snapshot {
+            snapshot.persist();
+        }
+    }
+}
+
 /// Build an engine from the last known generation when it is still current;
 /// refresh a stale template before handing it to a replacement attempt.
 ///
@@ -471,6 +559,15 @@ where
                 timestamp,
             } => on_side_effect(SideEffect::RecordAcceptance {
                 root_command,
+                accepted_name,
+                timestamp,
+            }),
+            JobKind::RecordScopedAcceptance {
+                scope,
+                accepted_name,
+                timestamp,
+            } => on_side_effect(SideEffect::RecordScopedAcceptance {
+                scope,
                 accepted_name,
                 timestamp,
             }),
@@ -693,6 +790,7 @@ mod tests {
                 accepted_name,
                 ..
             } => records.push((root_command, accepted_name)),
+            SideEffect::RecordScopedAcceptance { .. } => unreachable!("no scoped acceptance in this test"),
             SideEffect::ClearCaches => unreachable!("no cache clear in this test"),
         });
         assert_eq!(records, vec![("git".into(), "status".into())]);
@@ -700,6 +798,58 @@ mod tests {
             unreachable!("latest job should be a completion");
         };
         assert_eq!(request.buffer, "git ");
+    }
+
+    #[test]
+    fn scoped_acceptance_updates_memory_and_survives_completion_coalescing() {
+        let (tx, rx) = mpsc::channel::<Job>();
+        let acceptance = Arc::new(Mutex::new(AcceptanceIndex::default()));
+        let client = EngineClient {
+            tx: tx.clone(),
+            acceptance: Arc::clone(&acceptance),
+        };
+        let scope = crate::rank::argument_scope(
+            "/project",
+            &crate::history::ArgSlot {
+                root: "git".into(),
+                path: vec!["checkout".into()],
+                option: None,
+                index: 0,
+            },
+        )
+        .unwrap();
+        let (reply_a, _rx_a) = oneshot::channel();
+        let (reply_b, _rx_b) = oneshot::channel();
+        tx.send(completion_job(CompleteRequest::default(), reply_a)).unwrap();
+        client.record_scoped_acceptance(scope.clone(), "feature").unwrap();
+        let timestamp = acceptance
+            .lock()
+            .unwrap()
+            .scoped_timestamp(&scope, "feature")
+            .expect("client writes before worker replay");
+        tx.send(completion_job(CompleteRequest::default(), reply_b)).unwrap();
+
+        let mut records = Vec::new();
+        let latest = drain_to_latest(&rx, rx.recv().unwrap(), |side_effect| match side_effect {
+            SideEffect::RecordScopedAcceptance {
+                scope,
+                accepted_name,
+                timestamp,
+            } => records.push((scope, accepted_name, timestamp)),
+            SideEffect::RecordAcceptance { .. } | SideEffect::ClearCaches => unreachable!(),
+        });
+        assert_eq!(records, vec![(scope.clone(), "feature".into(), timestamp)]);
+        assert!(matches!(latest.kind, JobKind::Complete { .. }));
+        assert!(
+            acceptance
+                .lock()
+                .unwrap()
+                .record_scoped_at(&scope, "feature", timestamp)
+        );
+        assert_eq!(
+            acceptance.lock().unwrap().scoped_timestamp(&scope, "feature"),
+            Some(timestamp)
+        );
     }
 
     #[test]

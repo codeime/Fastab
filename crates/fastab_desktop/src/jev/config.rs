@@ -407,6 +407,9 @@ pub struct AiConfig {
     pub enabled: bool,
     pub active_profile_id: Option<String>,
     pub profiles: Vec<Profile>,
+    /// Separately authorized structured Git state. Defaults off for saved v1 configs.
+    #[serde(default)]
+    pub share_git_status: bool,
 }
 
 impl Default for AiConfig {
@@ -415,6 +418,7 @@ impl Default for AiConfig {
             enabled: false,
             active_profile_id: Some("typesafe".into()),
             profiles: vec![Profile::typesafe(), Profile::openrouter()],
+            share_git_status: false,
         }
     }
 }
@@ -572,6 +576,21 @@ mod tests {
 
     fn value(enabled: bool) -> Value {
         json!({ "enabled": enabled, "profiles": [] })
+    }
+
+    #[test]
+    fn saved_config_without_git_scope_keeps_sharing_disabled() {
+        let mut old = serde_json::to_value(AiConfig::default()).unwrap();
+        old.as_object_mut().unwrap().remove("share_git_status");
+        let restored: AiConfig = serde_json::from_value(old).unwrap();
+        assert!(!restored.share_git_status);
+
+        let mut opted_in = restored;
+        opted_in.share_git_status = true;
+        assert_eq!(
+            serde_json::to_value(opted_in).unwrap()["share_git_status"].as_bool(),
+            Some(true)
+        );
     }
 
     #[test]

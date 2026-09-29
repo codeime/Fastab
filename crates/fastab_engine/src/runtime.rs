@@ -97,6 +97,14 @@ pub struct Suggestion {
     /// Provenance for the separate, constrained AI projection; not wire data.
     #[serde(skip)]
     pub public_ai_candidate: Option<crate::public_ai::PublicAiCandidate>,
+    /// The row came from the active parser argument, even when cwd is absent
+    /// and no durable scope can be formed. It must never use global recency.
+    #[serde(skip)]
+    pub argument_value: bool,
+    /// Versioned digest of cwd plus the parser's actual argument slot. This
+    /// travels with the row to acceptance; the UI never guesses it later.
+    #[serde(skip)]
+    pub acceptance_scope: Option<String>,
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -153,6 +161,8 @@ impl Suggestion {
     pub fn new(name: impl Into<String>, description: impl Into<String>, kind: impl Into<String>) -> Self {
         Self {
             public_ai_candidate: None,
+            argument_value: false,
+            acceptance_scope: None,
             name: name.into(),
             description: description.into(),
             kind: kind.into(),
@@ -538,6 +548,18 @@ impl Engine {
         }
     }
 
+    pub(crate) fn record_scoped_acceptance_at(&mut self, scope: &str, accepted_name: &str, timestamp: u64) {
+        let snapshot = {
+            let mut acceptance = self.acceptance.lock().unwrap_or_else(|err| err.into_inner());
+            acceptance
+                .record_scoped_at(scope, accepted_name, timestamp)
+                .then(|| acceptance.scoped_snapshot())
+        };
+        if let Some(snapshot) = snapshot {
+            snapshot.persist();
+        }
+    }
+
     fn ensure_frecency(&mut self, request: &CompleteRequest) {
         let custom_command = fastab_settings::settings::get_string_or("beta.history.customCommand", String::new());
         let custom_command = (!custom_command.is_empty()).then_some(custom_command);
@@ -637,7 +659,7 @@ impl Engine {
             let prefix = rank::history_prefix_from_buffer(buffer, ends_with_space, &tokens);
             rank::merge_history_with_prefix(&mut result, &tokens, prefix, &self.frecency, effective_fuzzy);
         }
-        crate::public_ai::finalize(&mut result);
+        crate::public_ai::validate_provenance(&mut result);
         let alphabetical =
             fastab_settings::settings::get_string_or("autocomplete.sortMethod", "default".into()) == "alphabetical";
         let root_command = ranking_root_command(&request.buffer, request.cursor);
@@ -666,7 +688,7 @@ impl Engine {
                 );
             }
         }
-        crate::public_ai::finalize(&mut result);
+        crate::public_ai::finalize_ranked_candidates(&mut result);
         Ok(result)
     }
 }
@@ -969,6 +991,312 @@ mod tests {
     fn engine_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         LOCK.lock().unwrap_or_else(|err| err.into_inner())
+    }
+
+    #[test]
+    fn public_ai_acceptance_promotes_a_candidate_beyond_the_collection_budget() {
+        let _lock = engine_lock();
+        let _settings =
+            fastab_settings::settings::install_override(fastab_settings::settings::Settings::from_slice(&[
+                ("autocomplete.history.disableLoading", serde_json::json!(true)),
+                ("autocomplete.sortMethod", serde_json::json!("default")),
+                ("autocomplete.hideAutoExecuteSuggestion", serde_json::json!(true)),
+            ]));
+        let dir = tempfile::tempdir().unwrap();
+        let mut subcommands: Vec<_> = (0..25)
+            .map(|index| serde_json::json!({"names": [format!("a{index:02}")]}))
+            .collect();
+        subcommands.push(serde_json::json!({"names": ["z-last"]}));
+        write_spec(
+            dir.path(),
+            "git",
+            &serde_json::json!({"names": ["git"], "subcommands": subcommands}).to_string(),
+        );
+        let acceptance = Arc::new(Mutex::new(rank::AcceptanceIndex::default()));
+        let mut engine = Engine::new_with_acceptance(dir.path().to_path_buf(), Arc::clone(&acceptance)).unwrap();
+        engine.registry.trust_public_ai_fixture_for_test();
+        let request = CompleteRequest {
+            buffer: "git ".into(),
+            cwd: dir.path().display().to_string(),
+            include_history: false,
+            include_public_ai: true,
+            ..CompleteRequest::default()
+        };
+
+        let before = engine.complete(request.clone()).unwrap();
+        assert_eq!(before.suggestions.len(), 26);
+        assert_eq!(
+            before
+                .suggestions
+                .iter()
+                .filter(|row| row.public_ai_candidate.is_some())
+                .count(),
+            20
+        );
+        assert!(
+            before
+                .suggestions
+                .iter()
+                .find(|row| row.name == "z-last")
+                .unwrap()
+                .public_ai_candidate
+                .is_none()
+        );
+
+        acceptance.lock().unwrap().record_at("git", "z-last", 2_000_000_000_000);
+        let after = engine.complete(request.clone()).unwrap();
+        assert_eq!(after.suggestions.len(), 26);
+        assert_eq!(after.suggestions[0].name, "z-last");
+        assert!(after.suggestions[0].public_ai_candidate.is_some());
+        assert_eq!(
+            after
+                .suggestions
+                .iter()
+                .filter(|row| row.public_ai_candidate.is_some())
+                .count(),
+            20
+        );
+        assert!(
+            after
+                .suggestions
+                .iter()
+                .find(|row| row.name == "a19")
+                .unwrap()
+                .public_ai_candidate
+                .is_none()
+        );
+
+        let lone = engine
+            .complete(CompleteRequest {
+                buffer: "git a24".into(),
+                ..request
+            })
+            .unwrap();
+        assert!(lone.public_ai_context.is_none());
+        assert!(lone.suggestions.iter().all(|row| row.public_ai_candidate.is_none()));
+    }
+
+    #[test]
+    fn public_ai_rejects_same_name_dynamic_origin_before_ranking_deduplicates() {
+        let _lock = engine_lock();
+        let _settings =
+            fastab_settings::settings::install_override(fastab_settings::settings::Settings::from_slice(&[
+                ("autocomplete.history.disableLoading", serde_json::json!(true)),
+                ("autocomplete.hideAutoExecuteSuggestion", serde_json::json!(true)),
+            ]));
+        let dir = tempfile::tempdir().unwrap();
+        write_typed_custom(dir.path(), "git#custom#0", "collision");
+        write_spec(
+            dir.path(),
+            "git",
+            &serde_json::json!({
+                "names": ["git"],
+                "args": [{"name": "target", "jsCustom": "git#custom#0"}],
+                "subcommands": [
+                    {"names": ["collision"], "insertValue": "collision"},
+                    {"names": ["safe-one"]},
+                    {"names": ["safe-two"]}
+                ]
+            })
+            .to_string(),
+        );
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).unwrap();
+        engine.registry.trust_public_ai_fixture_for_test();
+        let result = engine
+            .complete(CompleteRequest {
+                buffer: "git ".into(),
+                cwd: dir.path().display().to_string(),
+                include_history: false,
+                include_public_ai: true,
+                ..CompleteRequest::default()
+            })
+            .unwrap();
+
+        assert!(result.public_ai_context.is_some(), "{result:?}");
+        assert!(result.suggestions.iter().any(|row| row.name == "collision"));
+        assert_eq!(
+            result.suggestions.iter().filter(|row| row.name == "collision").count(),
+            1,
+            "the conflicting rows should deduplicate after provenance validation"
+        );
+        assert!(
+            result
+                .suggestions
+                .iter()
+                .filter(|row| row.name == "collision")
+                .all(|row| row.public_ai_candidate.is_none())
+        );
+        for name in ["safe-one", "safe-two"] {
+            assert!(
+                result
+                    .suggestions
+                    .iter()
+                    .find(|row| row.name == name)
+                    .unwrap()
+                    .public_ai_candidate
+                    .is_some(),
+                "{name} should remain eligible: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn argument_acceptance_uses_the_parser_slot_and_cwd_without_global_fallback() {
+        let _lock = engine_lock();
+        let settings = fastab_settings::settings::Settings::from_slice(&[
+            ("autocomplete.history.disableLoading", serde_json::json!(true)),
+            ("autocomplete.sortMethod", serde_json::json!("default")),
+            ("autocomplete.hideAutoExecuteSuggestion", serde_json::json!(true)),
+        ]);
+        let _settings = fastab_settings::settings::install_override(settings.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let values = serde_json::json!([{"names": ["alpha"]}, {"names": ["zeta"]}]);
+        write_spec(
+            dir.path(),
+            "git",
+            &serde_json::json!({
+                "names": ["git"],
+                "options": [{"names": ["--target"], "args": [{"name": "target", "suggestions": values.clone()}]}],
+                "subcommands": [
+                    {"names": ["checkout"], "args": [
+                        {"name": "first", "suggestions": values.clone()},
+                        {"name": "second", "suggestions": values.clone()}
+                    ]},
+                    {"names": ["switch"], "args": [{"name": "branch", "suggestions": values.clone()}]}
+                ]
+            })
+            .to_string(),
+        );
+        write_spec(
+            dir.path(),
+            "npm",
+            &serde_json::json!({
+                "names": ["npm"],
+                "subcommands": [{"names": ["run"], "args": [{"name": "script", "suggestions": values.clone()}]}]
+            })
+            .to_string(),
+        );
+        write_spec(
+            dir.path(),
+            "docker",
+            &serde_json::json!({
+                "names": ["docker"],
+                "subcommands": [{
+                    "names": ["run"],
+                    "options": [{"names": ["--network"], "args": [{"name": "network", "suggestions": values.clone()}]}]
+                }]
+            })
+            .to_string(),
+        );
+        let acceptance = Arc::new(Mutex::new(rank::AcceptanceIndex::default()));
+        let mut engine = Engine::new_with_acceptance(dir.path().to_path_buf(), Arc::clone(&acceptance)).unwrap();
+        let cwd_a = dir.path().display().to_string();
+        let cwd_b = dir.path().join("other-project").display().to_string();
+        let request = |buffer: &str, cwd: &str| CompleteRequest {
+            buffer: buffer.into(),
+            cwd: cwd.into(),
+            include_history: false,
+            ..CompleteRequest::default()
+        };
+        let scenarios = [
+            ("git checkout ", "git branch"),
+            ("npm run ", "npm script"),
+            ("docker run --network ", "container parameter"),
+        ];
+        let target_index = |result: &CompleteResult| {
+            result
+                .suggestions
+                .iter()
+                .position(|row| row.name == "zeta")
+                .expect("target candidate")
+        };
+        let mut scopes = Vec::new();
+        for (buffer, label) in scenarios {
+            let result = engine.complete(request(buffer, &cwd_a)).unwrap();
+            assert_eq!(target_index(&result), 1, "{label}: no acceptance");
+            assert!(
+                result.suggestions.iter().all(|row| row.argument_value),
+                "{label}: {result:?}"
+            );
+            scopes.push(
+                result.suggestions[0]
+                    .acceptance_scope
+                    .clone()
+                    .expect("parser slot with absolute cwd"),
+            );
+        }
+        for root in ["git", "npm", "docker"] {
+            acceptance.lock().unwrap().record_at(root, "zeta", 3_000_000_000_000);
+        }
+        for (buffer, label) in scenarios {
+            let result = engine.complete(request(buffer, &cwd_a)).unwrap();
+            assert_eq!(target_index(&result), 1, "{label}: old global acceptance");
+        }
+
+        let before = engine.complete(request("git checkout ", &cwd_a)).unwrap();
+        assert_eq!(
+            before.suggestions[0].name, "alpha",
+            "old global acceptance must not rank arguments"
+        );
+        assert!(before.suggestions.iter().all(|row| row.argument_value));
+        let scope = &scopes[0];
+        assert!(
+            before
+                .suggestions
+                .iter()
+                .all(|row| row.acceptance_scope.as_deref() == Some(scope.as_str()))
+        );
+        assert_eq!(
+            engine.complete(request("git checkout ", &cwd_a)).unwrap().suggestions[0]
+                .acceptance_scope
+                .as_deref(),
+            Some(scope.as_str())
+        );
+        for (buffer, cwd) in [
+            ("git checkout ", cwd_b.as_str()),
+            ("git switch ", cwd_a.as_str()),
+            ("git checkout chosen ", cwd_a.as_str()),
+            ("git --target ", cwd_a.as_str()),
+        ] {
+            let other = engine.complete(request(buffer, cwd)).unwrap();
+            assert_eq!(other.suggestions[0].name, "alpha", "{buffer} in {cwd}");
+            assert!(other.suggestions[0].argument_value);
+            assert_ne!(other.suggestions[0].acceptance_scope.as_deref(), Some(scope.as_str()));
+        }
+        let no_cwd = engine.complete(request("git checkout ", "")).unwrap();
+        assert_eq!(no_cwd.suggestions[0].name, "alpha");
+        assert!(
+            no_cwd
+                .suggestions
+                .iter()
+                .all(|row| row.argument_value && row.acceptance_scope.is_none())
+        );
+
+        for scope in &scopes {
+            acceptance
+                .lock()
+                .unwrap()
+                .record_scoped_at(scope, "zeta", 2_000_000_000_000);
+        }
+        for (buffer, label) in scenarios {
+            let result = engine.complete(request(buffer, &cwd_a)).unwrap();
+            assert_eq!(target_index(&result), 0, "{label}: scoped acceptance");
+            let other_project = engine.complete(request(buffer, &cwd_b)).unwrap();
+            assert_eq!(target_index(&other_project), 1, "{label}: other project");
+        }
+        assert_eq!(
+            engine.complete(request("git checkout ", &cwd_b)).unwrap().suggestions[0].name,
+            "alpha"
+        );
+        assert_eq!(
+            engine.complete(request("git switch ", &cwd_a)).unwrap().suggestions[0].name,
+            "alpha"
+        );
+        settings.set_value("autocomplete.sortMethod", "alphabetical").unwrap();
+        assert_eq!(
+            target_index(&engine.complete(request("git checkout ", &cwd_a)).unwrap()),
+            1
+        );
     }
 
     #[test]

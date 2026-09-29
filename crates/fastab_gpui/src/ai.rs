@@ -26,7 +26,7 @@ impl AiPreview {
 
 /// Two gentle breathing cycles cover the request timeout without leaving a
 /// perpetual redraw loop if completion delivery ever stalls.
-pub(crate) fn loading_badge(preview: &AiPreview, theme: OverlayTheme, row_height: f32) -> AnyElement {
+pub(crate) fn loading_badge(preview: &AiPreview, row_height: f32) -> AnyElement {
     let AiPreview::Loading(revision) = preview else {
         return div().into_any_element();
     };
@@ -36,16 +36,14 @@ pub(crate) fn loading_badge(preview: &AiPreview, theme: OverlayTheme, row_height
         .items_center()
         .flex_shrink_0()
         .mr(px(6.))
-        .child(
-            crate::icons::ai_icon_image_element(row_height * 0.65, theme.accent).with_animation(
-                ("jev-loading-pulse", *revision),
-                Animation::new(Duration::from_millis(3200)),
-                |icon, progress| {
-                    let brightness = (1.0 + (progress * std::f32::consts::TAU * 2.0).cos()) * 0.5;
-                    icon.opacity(0.35 + brightness * 0.65)
-                },
-            ),
-        )
+        .child(crate::icons::ai_icon_element(row_height * 0.65).with_animation(
+            ("jev-loading-pulse", *revision),
+            Animation::new(Duration::from_millis(3200)),
+            |icon, progress| {
+                let brightness = (1.0 + (progress * std::f32::consts::TAU * 2.0).cos()) * 0.5;
+                icon.opacity(0.55 + brightness * 0.45)
+            },
+        ))
         .into_any_element()
 }
 
@@ -63,7 +61,7 @@ pub(crate) fn preview(preview: &AiPreview, theme: OverlayTheme, row_height: f32)
             .px(px(5.))
             .border_t_1()
             .border_color(rgb(theme.border))
-            .child(loading_badge(preview, theme, row_height))
+            .child(loading_badge(preview, row_height))
             .into_any_element();
     };
     div()
@@ -77,7 +75,7 @@ pub(crate) fn preview(preview: &AiPreview, theme: OverlayTheme, row_height: f32)
         .flex_shrink_0()
         .overflow_hidden()
         .text_color(rgb(theme.text))
-        .child(crate::icons::ai_icon_image_element(row_height * 0.75, theme.accent))
+        .child(crate::icons::ai_icon_element(row_height * 0.75))
         .child(div().min_w(px(0.)).truncate().child(message.clone()))
         .into_any_element()
 }
