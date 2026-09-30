@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fs;
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{Arc, Weak};
@@ -622,15 +622,90 @@ where
     serializer.collect_seq(options.iter().map(Arc::as_ref))
 }
 
-fn hash_option(option: &OptionSpec) -> u64 {
+#[derive(Default)]
+struct OptionHashWriter(std::collections::hash_map::DefaultHasher);
+
+impl OptionHashWriter {
+    fn finish(self) -> u64 {
+        self.0.finish()
+    }
+}
+
+impl std::io::Write for OptionHashWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        // Hash the byte stream, not each chunk's length-prefixed Hash value.
+        self.0.write(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OptionHashProfileMode {
+    LegacyVec,
+    StreamedNoMemo,
+    StreamedMemo,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+struct OptionHashProfile {
+    mode: OptionHashProfileMode,
+    calls: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    // Only ignored profiling/tests opt in. No switches or counters are
+    // compiled into the production interning path.
+    static OPTION_HASH_PROFILE: std::cell::Cell<Option<OptionHashProfile>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn legacy_option_hash(option: &OptionSpec) -> u64 {
     let bytes = serde_json::to_vec(option).unwrap_or_default();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
+    std::hash::Hash::hash(&bytes, &mut hasher);
     hasher.finish()
 }
 
+fn hash_option(option: &OptionSpec) -> u64 {
+    #[cfg(test)]
+    if OPTION_HASH_PROFILE.with(|slot| {
+        let Some(mut profile) = slot.get() else {
+            return false;
+        };
+        profile.calls = profile.calls.saturating_add(1);
+        slot.set(Some(profile));
+        profile.mode == OptionHashProfileMode::LegacyVec
+    }) {
+        return legacy_option_hash(option);
+    }
+
+    let mut writer = OptionHashWriter::default();
+    if serde_json::to_writer(&mut writer, option).is_err() {
+        // Do not fingerprint a partially serialized value. Equality still
+        // protects this fallback bucket, as it did for an empty JSON Vec.
+        return OptionHashWriter::default().finish();
+    }
+    writer.finish()
+}
+
+#[cfg(test)]
 fn intern_one_option(option: Arc<OptionSpec>, pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>) -> Arc<OptionSpec> {
     let hash = hash_option(&option);
+    intern_one_option_hashed(option, pool, hash)
+}
+
+fn intern_one_option_hashed(
+    option: Arc<OptionSpec>,
+    pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>,
+    hash: u64,
+) -> Arc<OptionSpec> {
     let bucket = pool.entry(hash).or_default();
     bucket.retain(|weak| weak.strong_count() > 0);
     if let Some(existing) = bucket
@@ -644,53 +719,101 @@ fn intern_one_option(option: Arc<OptionSpec>, pool: &mut HashMap<u64, Vec<Weak<O
     option
 }
 
-fn intern_arg_options(arg: &mut ArgSpec, pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>) {
+// Lives only for one registry interning traversal. Weak ownership both avoids
+// retaining replaced bodies and verifies identity before accepting a hit.
+type OptionFingerprintMemo = HashMap<usize, (Weak<OptionSpec>, u64)>;
+
+fn memoized_option_hash(option: &Arc<OptionSpec>, memo: &mut Option<OptionFingerprintMemo>) -> u64 {
+    let Some(memo) = memo else {
+        return hash_option(option);
+    };
+    let key = Arc::as_ptr(option) as usize;
+    if let Some((weak, hash)) = memo.get(&key)
+        && weak.upgrade().is_some_and(|cached| Arc::ptr_eq(&cached, option))
+    {
+        return *hash;
+    }
+    let hash = hash_option(option);
+    memo.insert(key, (Arc::downgrade(option), hash));
+    hash
+}
+
+fn intern_arg_options(
+    arg: &mut ArgSpec,
+    pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>,
+    memo: &mut Option<OptionFingerprintMemo>,
+) {
     if let Some(spec) = &mut arg.resolved_spec {
-        intern_spec_options(spec, pool);
+        intern_spec_options_with_memo(spec, pool, memo);
     }
     if let Some(LoadSpec::Inline(spec)) = &mut arg.load_spec {
-        intern_spec_options(spec, pool);
+        intern_spec_options_with_memo(spec, pool, memo);
     }
 }
 
-fn intern_option_children(option: &mut Arc<OptionSpec>, pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>) {
+fn intern_option_children(
+    option: &mut Arc<OptionSpec>,
+    pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>,
+    memo: &mut Option<OptionFingerprintMemo>,
+) {
     let Some(option) = Arc::get_mut(option) else {
         return;
     };
     for arg in &mut option.args {
-        intern_arg_options(arg, pool);
+        intern_arg_options(arg, pool, memo);
     }
     if let Some(LoadSpec::Inline(spec)) = &mut option.load_spec {
-        intern_spec_options(spec, pool);
+        intern_spec_options_with_memo(spec, pool, memo);
     }
 }
 
-fn intern_option_list(options: &mut Vec<Arc<OptionSpec>>, pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>) {
+fn intern_option_list(
+    options: &mut Vec<Arc<OptionSpec>>,
+    pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>,
+    memo: &mut Option<OptionFingerprintMemo>,
+) {
     for option in options {
-        intern_option_children(option, pool);
-        *option = intern_one_option(Arc::clone(option), pool);
+        intern_option_children(option, pool, memo);
+        let hash = memoized_option_hash(option, memo);
+        *option = intern_one_option_hashed(Arc::clone(option), pool, hash);
     }
 }
 
-/// Share byte-identical options inside `spec`. `pool` is dropped with the
-/// caller, so this pass does not keep options alive after `spec` is dropped.
+/// Share byte-identical options inside `spec`. The initial parse has not yet
+/// shared option bodies, so do not allocate a fingerprint memo for this pass.
 fn intern_spec_options_local(spec: &mut Spec) {
     let mut pool = HashMap::new();
-    intern_spec_options(spec, &mut pool);
+    intern_spec_options_with_memo(spec, &mut pool, &mut None);
 }
 
 fn intern_spec_options(spec: &mut Spec, pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>) {
+    #[cfg(test)]
+    let memoize = OPTION_HASH_PROFILE.with(|slot| {
+        slot.get()
+            .is_none_or(|profile| profile.mode == OptionHashProfileMode::StreamedMemo)
+    });
+    #[cfg(not(test))]
+    let memoize = true;
+    let mut memo = memoize.then(HashMap::new);
+    intern_spec_options_with_memo(spec, pool, &mut memo);
+}
+
+fn intern_spec_options_with_memo(
+    spec: &mut Spec,
+    pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>,
+    memo: &mut Option<OptionFingerprintMemo>,
+) {
     for child in &mut spec.subcommands {
-        intern_spec_options(Arc::make_mut(child), pool);
+        intern_spec_options_with_memo(Arc::make_mut(child), pool, memo);
     }
     for arg in &mut spec.args {
-        intern_arg_options(arg, pool);
+        intern_arg_options(arg, pool, memo);
     }
     if let Some(LoadSpec::Inline(inner)) = &mut spec.load_spec {
-        intern_spec_options(inner, pool);
+        intern_spec_options_with_memo(inner, pool, memo);
     }
-    intern_option_list(&mut spec.options, pool);
-    intern_option_list(&mut spec.persistent_options, pool);
+    intern_option_list(&mut spec.options, pool, memo);
+    intern_option_list(&mut spec.persistent_options, pool, memo);
 }
 
 impl ShrinkSpecTree for ArgSpec {
@@ -2207,6 +2330,26 @@ mod tests {
 
     use super::*;
 
+    struct OptionHashProfileGuard(Option<OptionHashProfile>);
+
+    impl OptionHashProfileGuard {
+        fn enter(mode: OptionHashProfileMode) -> Self {
+            Self(OPTION_HASH_PROFILE.with(|slot| slot.replace(Some(OptionHashProfile { mode, calls: 0 }))))
+        }
+
+        // Keep observation scoped to a live profiling guard.
+        #[allow(clippy::unused_self)]
+        fn calls(&self) -> usize {
+            OPTION_HASH_PROFILE.with(|slot| slot.get().unwrap().calls)
+        }
+    }
+
+    impl Drop for OptionHashProfileGuard {
+        fn drop(&mut self) {
+            OPTION_HASH_PROFILE.with(|slot| slot.set(self.0));
+        }
+    }
+
     fn write_spec(dir: &Path, name: &str, body: &str) {
         fs::create_dir_all(dir).unwrap();
         fs::write(dir.join(format!("{name}.json")), body).unwrap();
@@ -2455,6 +2598,268 @@ mod tests {
         assert_eq!(spec.names, vec!["tool".to_owned()]);
         assert_eq!(spec.options[0].names, vec!["--a".to_owned()]);
         assert!(spec.find_subcommand("sub").is_some());
+    }
+
+    #[test]
+    fn option_fingerprint_matches_the_unbuffered_json_byte_stream() {
+        let rich = OptionSpec {
+            names: vec!["--文件".into(), "-f".into()],
+            description: "quotes: \" \\ and newline\n".into(),
+            args: vec![ArgSpec {
+                name: "target".into(),
+                templates: vec![Template::Filepaths],
+                load_spec: Some(LoadSpec::Inline(Box::new(Spec {
+                    names: vec!["nested".into()],
+                    options: vec![Arc::new(OptionSpec {
+                        names: vec!["--inner".into()],
+                        ..OptionSpec::default()
+                    })],
+                    ..Spec::default()
+                }))),
+                ..ArgSpec::default()
+            }],
+            is_repeatable: Some(serde_json::json!(3)),
+            requires_separator: Some(serde_json::json!(":")),
+            ..OptionSpec::default()
+        };
+        for option in [OptionSpec::default(), rich] {
+            let bytes = serde_json::to_vec(&option).unwrap();
+            let mut reference = std::collections::hash_map::DefaultHasher::new();
+            reference.write(&bytes);
+            assert_eq!(hash_option(&option), reference.finish());
+            assert_eq!(hash_option(&option.clone()), reference.finish());
+        }
+    }
+
+    #[test]
+    fn option_fingerprint_writer_keeps_order_across_flushes_and_large_fragments() {
+        use std::io::Write as _;
+
+        let bytes: Vec<u8> = (0..1025).map(|index| u8::try_from(index % 251).unwrap()).collect();
+        let mut reference = std::collections::hash_map::DefaultHasher::new();
+        reference.write(&bytes);
+        for chunk_size in [1, 7, 255, 256, 257, 1025] {
+            let mut writer = OptionHashWriter::default();
+            for (index, chunk) in bytes.chunks(chunk_size).enumerate() {
+                writer.write_all(chunk).unwrap();
+                if index % 3 == 0 {
+                    writer.flush().unwrap();
+                }
+            }
+            writer.write_all(&[]).unwrap();
+            assert_eq!(writer.finish(), reference.finish());
+        }
+    }
+
+    #[test]
+    fn option_fingerprint_collisions_still_require_structural_equality() {
+        let plain = Arc::new(OptionSpec {
+            names: vec!["--same".into()],
+            ..OptionSpec::default()
+        });
+        let mut tainted = plain.as_ref().clone();
+        // Provenance is excluded from JSON, so these unequal options have a
+        // real fingerprint collision without weakening the production hash.
+        tainted.meta.ai_generated = true;
+        assert_ne!(plain.as_ref(), &tainted);
+        assert_eq!(hash_option(&plain), hash_option(&tainted));
+        let mut pool = HashMap::new();
+        let original = intern_one_option(Arc::clone(&plain), &mut pool);
+        let collision = intern_one_option(Arc::new(tainted), &mut pool);
+        assert!(!Arc::ptr_eq(&original, &collision));
+        assert!(collision.meta.ai_generated);
+        let equal = intern_one_option(Arc::new(plain.as_ref().clone()), &mut pool);
+        assert!(Arc::ptr_eq(&original, &equal));
+    }
+
+    #[test]
+    fn option_fingerprint_memo_is_scoped_to_one_registry_pass() {
+        for (mode, expected_calls) in [
+            (OptionHashProfileMode::StreamedNoMemo, 3),
+            (OptionHashProfileMode::StreamedMemo, 1),
+        ] {
+            let option = Arc::new(OptionSpec {
+                names: vec!["--shared".into()],
+                ..OptionSpec::default()
+            });
+            let mut spec = Spec {
+                options: vec![Arc::clone(&option), Arc::clone(&option)],
+                persistent_options: vec![Arc::clone(&option)],
+                ..Spec::default()
+            };
+            let mut pool = HashMap::new();
+            let profile = OptionHashProfileGuard::enter(mode);
+            intern_spec_options(&mut spec, &mut pool);
+            assert_eq!(profile.calls(), expected_calls);
+            assert!(spec.options.iter().all(|shared| Arc::ptr_eq(shared, &option)));
+            // Only the pool's Weak survives return; the pass memo is gone.
+            assert_eq!(Arc::weak_count(&option), 1);
+            intern_spec_options(&mut spec, &mut pool);
+            assert_eq!(profile.calls(), expected_calls * 2);
+            let weak = Arc::downgrade(&option);
+            drop(spec);
+            drop(option);
+            assert!(weak.upgrade().is_none(), "neither memo nor pool may own a body");
+        }
+    }
+
+    #[test]
+    fn option_fingerprint_memo_validates_weak_identity() {
+        let option = Arc::new(OptionSpec {
+            names: vec!["--candidate".into()],
+            ..OptionSpec::default()
+        });
+        let other = Arc::new(OptionSpec::default());
+        let expected = hash_option(&option);
+        let key = Arc::as_ptr(&option) as usize;
+        let mut memo = Some(HashMap::from([(key, (Arc::downgrade(&other), expected ^ 1))]));
+        assert_eq!(memoized_option_hash(&option, &mut memo), expected);
+        memo.as_mut()
+            .unwrap()
+            .insert(key, (Arc::downgrade(&other), expected ^ 1));
+        drop(other);
+        assert_eq!(memoized_option_hash(&option, &mut memo), expected);
+        let weak = Arc::downgrade(&option);
+        drop(option);
+        assert!(
+            weak.upgrade().is_none(),
+            "the live memo must only retain Weak ownership"
+        );
+    }
+
+    #[test]
+    #[ignore = "profiles fingerprints in bundle/specs-ir/gcloud/compute.json"]
+    fn compute_option_fingerprint_profile() {
+        fn collect_args<'a>(args: &'a [ArgSpec], out: &mut Vec<&'a Arc<OptionSpec>>) {
+            for arg in args {
+                if let Some(spec) = &arg.resolved_spec {
+                    collect_options(spec, out);
+                }
+                if let Some(LoadSpec::Inline(spec)) = &arg.load_spec {
+                    collect_options(spec, out);
+                }
+            }
+        }
+
+        fn collect_options<'a>(spec: &'a Spec, out: &mut Vec<&'a Arc<OptionSpec>>) {
+            for child in &spec.subcommands {
+                collect_options(child, out);
+            }
+            collect_args(&spec.args, out);
+            if let Some(LoadSpec::Inline(spec)) = &spec.load_spec {
+                collect_options(spec, out);
+            }
+            for option in spec.options.iter().chain(&spec.persistent_options) {
+                collect_args(&option.args, out);
+                if let Some(LoadSpec::Inline(spec)) = &option.load_spec {
+                    collect_options(spec, out);
+                }
+                out.push(option);
+            }
+        }
+
+        fn measure(options: &[&Arc<OptionSpec>], legacy: bool, memoize: bool) -> (u128, usize) {
+            let started = Instant::now();
+            let mut memo: HashMap<usize, (Weak<OptionSpec>, u64)> = HashMap::new();
+            let mut calls = 0;
+            let mut checksum = 0;
+            for option in options {
+                let key = Arc::as_ptr(option) as usize;
+                let cached = memo.get(&key).and_then(|(weak, hash)| {
+                    weak.upgrade()
+                        .filter(|cached| Arc::ptr_eq(cached, option))
+                        .map(|_| *hash)
+                });
+                let hash = cached.unwrap_or_else(|| {
+                    calls += 1;
+                    let hash = if legacy {
+                        legacy_option_hash(option)
+                    } else {
+                        hash_option(option)
+                    };
+                    if memoize {
+                        memo.insert(key, (Arc::downgrade(option), hash));
+                    }
+                    hash
+                });
+                checksum ^= hash;
+            }
+            std::hint::black_box(checksum);
+            // Include destruction of the temporary Weak memo in its cost.
+            drop(memo);
+            (started.elapsed().as_micros(), calls)
+        }
+
+        let specs = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bundle/specs-ir");
+        let bytes = fs::read(specs.join("gcloud/compute.json")).unwrap();
+        let started = Instant::now();
+        let mut spec: Spec = serde_json::from_slice(&bytes).unwrap();
+        let parse_us = started.elapsed().as_micros();
+        let mut raw = Vec::new();
+        collect_options(&spec, &mut raw);
+        let raw_slots = raw.len();
+        assert!(raw_slots > 0);
+        drop(raw);
+        let started = Instant::now();
+        intern_spec_options_local(&mut spec);
+        let intern_us = started.elapsed().as_micros();
+        let mut options = Vec::new();
+        collect_options(&spec, &mut options);
+        assert_eq!(options.len(), raw_slots);
+        let unique = options
+            .iter()
+            .map(|option| Arc::as_ptr(option) as usize)
+            .collect::<HashSet<_>>();
+        let serialized_bytes: usize = options
+            .iter()
+            .map(|option| serde_json::to_vec(option).unwrap().len())
+            .sum();
+        println!(
+            "OPTION_HASH slots={raw_slots} unique={} serialized_bytes={serialized_bytes} parse_us={parse_us} intern_us={intern_us}",
+            unique.len()
+        );
+        // Rotate order to expose warm-cache bias. These are isolated hash
+        // passes over real shared options, not end-to-end completion timings.
+        for round in 0..6 {
+            for offset in 0..3 {
+                let mode = (round + offset) % 3;
+                let (micros, calls) = measure(&options, mode == 0, mode == 2);
+                let name = ["legacy_vec", "writer", "writer_weak_memo"][mode];
+                println!("OPTION_HASH round={round} mode={name} elapsed_us={micros} hash_calls={calls}");
+            }
+        }
+        drop(options);
+        drop(unique);
+        drop(spec);
+        drop(bytes);
+
+        // Exercise the real snapshot/read/parse/local-intern/registry-intern
+        // path as well. The thread-local test-only switch compares all three
+        // implementations in one binary; rotating order exposes cache bias.
+        // These are load timings, not complete() or peak-memory measurements.
+        for round in 0..3 {
+            for offset in 0..3 {
+                let mode = [
+                    OptionHashProfileMode::LegacyVec,
+                    OptionHashProfileMode::StreamedNoMemo,
+                    OptionHashProfileMode::StreamedMemo,
+                ][(round + offset) % 3];
+                let profile = OptionHashProfileGuard::enter(mode);
+                let started = Instant::now();
+                let mut registry = Registry::load(&specs).unwrap();
+                let registry_load_us = started.elapsed().as_micros();
+                let registry_hash_calls = profile.calls();
+                let started = Instant::now();
+                let compute = registry.load_referenced_spec("gcloud/compute").unwrap();
+                let compute_load_us = started.elapsed().as_micros();
+                let compute_hash_calls = profile.calls() - registry_hash_calls;
+                assert!(compute.find_subcommand("instances").is_some());
+                println!(
+                    "OPTION_LOAD round={round} mode={mode:?} registry_load_us={registry_load_us} registry_hash_calls={registry_hash_calls} compute_load_us={compute_load_us} compute_hash_calls={compute_hash_calls} allocated_bytes={}",
+                    compute.allocated_bytes()
+                );
+            }
+        }
     }
 
     #[test]

@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,8 +23,6 @@ use std::ffi::{CStr, CString};
 #[cfg(unix)]
 use std::fs::File;
 #[cfg(unix)]
-use std::io::Read;
-#[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 #[cfg(unix)]
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
@@ -32,6 +30,7 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 /// Files the opener already read while hashing the tree. `NativeHooks::load`
 /// takes `typed-hooks.json` so the 4.6 MB sidecar is not read and hashed twice.
 const CAPTURED_ON_OPEN: &[&str] = &["typed-hooks.json"];
+const HASH_READ_BUFFER_SIZE: usize = 64 * 1024;
 
 /// One opened generation of the IR directory. Cloning this value is cheap and
 /// shares stale state with every Registry/NativeHooks clone.
@@ -441,13 +440,8 @@ fn capture_tree(
             capture_tree(fd.as_raw_fd(), &relative, entries, file_digests, captured_files)?;
         } else if is_regular_file(&metadata) {
             let mut file = File::from(fd);
-            let mut bytes = Vec::new();
-            file.read_to_end(&mut bytes)?;
-            let digest = sha256_hex(&bytes);
+            let digest = capture_file_digest(&mut file, &relative, captured_files)?;
             entries.insert(relative.clone(), EntryKind::File);
-            if should_capture_on_open(&relative) {
-                captured_files.insert(relative.clone(), bytes);
-            }
             file_digests.insert(relative, digest);
         } else {
             return Err(io::Error::new(
@@ -575,12 +569,9 @@ fn capture_tree_path(
             entries.insert(relative.clone(), EntryKind::Directory);
             capture_tree_path(root, &relative, entries, file_digests, captured_files)?;
         } else if metadata.is_file() {
-            let bytes = std::fs::read(entry.path())?;
-            let digest = sha256_hex(&bytes);
+            let mut file = std::fs::File::open(entry.path())?;
+            let digest = capture_file_digest(&mut file, &relative, captured_files)?;
             entries.insert(relative.clone(), EntryKind::File);
-            if should_capture_on_open(&relative) {
-                captured_files.insert(relative.clone(), bytes);
-            }
             file_digests.insert(relative, digest);
         } else {
             return Err(io::Error::new(
@@ -614,8 +605,43 @@ fn should_capture_on_open(relative: &Path) -> bool {
     CAPTURED_ON_OPEN.iter().any(|name| relative == Path::new(name))
 }
 
+fn capture_file_digest(
+    file: &mut impl Read,
+    relative: &Path,
+    captured_files: &mut HashMap<PathBuf, Vec<u8>>,
+) -> io::Result<String> {
+    if should_capture_on_open(relative) {
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        let digest = sha256_hex(&bytes);
+        captured_files.insert(relative.to_path_buf(), bytes);
+        Ok(digest)
+    } else {
+        sha256_reader(file)
+    }
+}
+
+/// Hash through EOF without retaining ordinary spec bodies during startup.
+// This bounded 64 KiB scratch buffer replaces allocations as large as a spec.
+#[allow(clippy::large_stack_arrays)]
+fn sha256_reader(reader: &mut impl Read) -> io::Result<String> {
+    let mut digest = Sha256::new();
+    let mut buffer = [0; HASH_READ_BUFFER_SIZE];
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) => return Ok(digest_hex(&digest.finalize())),
+            Ok(count) => digest.update(&buffer[..count]),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {},
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
+    digest_hex(&Sha256::digest(bytes))
+}
+
+fn digest_hex(digest: &[u8]) -> String {
     let mut output = String::with_capacity(64);
     for byte in digest {
         output.push(char::from(b"0123456789abcdef"[(byte >> 4) as usize]));
@@ -624,15 +650,17 @@ fn sha256_hex(bytes: &[u8]) -> String {
     output
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     fn open_fd_count() -> Option<usize> {
         std::fs::read_dir("/dev/fd").ok().map(|entries| entries.count())
     }
 
     #[test]
+    #[cfg(unix)]
     fn snapshot_does_not_retain_one_descriptor_per_file() {
         let root = tempfile::tempdir().expect("snapshot root");
         for index in 0..256 {
@@ -654,6 +682,89 @@ mod tests {
             during.saturating_sub(before) < 64,
             "snapshot retained too many descriptors: before={before}, during={during}"
         );
+    }
+
+    #[test]
+    fn streamed_digest_matches_empty_and_multi_block_inputs() {
+        for size in [
+            0,
+            1,
+            HASH_READ_BUFFER_SIZE - 1,
+            HASH_READ_BUFFER_SIZE,
+            HASH_READ_BUFFER_SIZE * 2 + 17,
+        ] {
+            let bytes: Vec<u8> = (0..size).map(|index| u8::try_from(index % 251).unwrap()).collect();
+            assert_eq!(sha256_reader(&mut bytes.as_slice()).unwrap(), sha256_hex(&bytes));
+        }
+    }
+
+    #[test]
+    fn streamed_digest_retries_interruptions_and_accepts_short_reads() {
+        struct ShortReader<'a> {
+            bytes: &'a [u8],
+            interrupt_next: bool,
+            interruptions: usize,
+        }
+
+        impl Read for ShortReader<'_> {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                assert_eq!(buffer.len(), HASH_READ_BUFFER_SIZE);
+                if self.interrupt_next {
+                    self.interrupt_next = false;
+                    self.interruptions += 1;
+                    return Err(io::ErrorKind::Interrupted.into());
+                }
+                self.interrupt_next = true;
+                let count = self.bytes.len().min(7);
+                buffer[..count].copy_from_slice(&self.bytes[..count]);
+                self.bytes = &self.bytes[count..];
+                Ok(count)
+            }
+        }
+
+        let bytes = b"a short read is not EOF, and an interruption is not a failed snapshot";
+        let mut reader = ShortReader {
+            bytes,
+            interrupt_next: true,
+            interruptions: 0,
+        };
+        assert_eq!(sha256_reader(&mut reader).unwrap(), sha256_hex(bytes));
+        assert!(reader.interruptions > 1);
+        assert!(reader.bytes.is_empty());
+    }
+
+    #[test]
+    fn streamed_digest_propagates_an_error_after_partial_input() {
+        struct FailingReader(bool);
+
+        impl Read for FailingReader {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                if std::mem::take(&mut self.0) {
+                    buffer[..3].copy_from_slice(b"abc");
+                    return Ok(3);
+                }
+                Err(io::Error::new(io::ErrorKind::PermissionDenied, "fixture read failure"))
+            }
+        }
+
+        let error = sha256_reader(&mut FailingReader(true)).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(error.to_string(), "fixture read failure");
+    }
+
+    #[test]
+    fn open_hashes_large_uncaptured_files_and_rejects_later_changes() {
+        let root = tempfile::tempdir().expect("snapshot root");
+        let bytes = vec![b'x'; HASH_READ_BUFFER_SIZE * 2 + 17];
+        std::fs::write(root.path().join("large.json"), &bytes).unwrap();
+        let snapshot = DirectorySnapshot::open(root.path()).unwrap();
+        assert!(snapshot.take_captured_file(Path::new("large.json")).is_none());
+        assert_eq!(snapshot.read_file(Path::new("large.json")).unwrap(), bytes);
+
+        std::fs::write(root.path().join("large.json"), b"changed").unwrap();
+        let error = snapshot.read_file(Path::new("large.json")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(snapshot.is_stale());
     }
 
     #[test]
