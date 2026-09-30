@@ -1,5 +1,6 @@
 use std::ffi::c_void;
 use std::fmt;
+use std::time::Instant;
 
 use accessibility::util::ax_call;
 use accessibility_sys::{
@@ -266,42 +267,82 @@ impl UIElement {
         Ok(children)
     }
 
-    /// VS Code / Cursor / Windsurf caret is this focused helper field. A
-    /// hit here is the leaf; callers must not walk the window from here.
-    pub fn is_xterm_helper_textarea(&self) -> bool {
-        self.role().map(|role| role == kAXTextFieldRole).unwrap_or(false)
-            && self.is_focused().unwrap_or(false)
-            && self
-                .dom_class_list()
-                .ok()
-                .is_some_and(|classes| classes.iter().any(|cls| cls == "xterm-helper-textarea"))
+    /// One deadline is shared by cached-leaf validation, tree discovery and
+    /// frame lookup. Reset the per-element timeout even when the query fails.
+    fn query_before<T>(&self, deadline: Instant, read: impl FnOnce(&Self) -> Result<T>) -> Result<T> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(accessibility_sys::kAXErrorCannotComplete);
+        }
+        let timeout = remaining.as_secs_f32().min(AX_MESSAGING_TIMEOUT_SECONDS);
+        let error = unsafe { AXUIElementSetMessagingTimeout(self.get_ref(), timeout) };
+        if error != 0 {
+            self.set_messaging_timeout();
+            return Err(error);
+        }
+        struct ResetTimeout<'a>(&'a UIElement);
+        impl Drop for ResetTimeout<'_> {
+            fn drop(&mut self) {
+                self.0.set_messaging_timeout();
+            }
+        }
+        let _reset = ResetTimeout(self);
+        let result = read(self);
+        if Instant::now() >= deadline {
+            Err(accessibility_sys::kAXErrorCannotComplete)
+        } else {
+            result
+        }
     }
 
-    pub fn find_x_term_caret_tree(&self) -> Result<Vec<UIElement>> {
-        if self.is_xterm_helper_textarea() {
+    pub fn is_xterm_helper_textarea_before(&self, deadline: Instant) -> Result<bool> {
+        if self.query_before(deadline, Self::role)? != kAXTextFieldRole
+            || !self.query_before(deadline, Self::is_focused)?
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .query_before(deadline, Self::dom_class_list)?
+            .iter()
+            .any(|class| class == "xterm-helper-textarea"))
+    }
+
+    pub fn frame_before(&self, deadline: Instant) -> Result<CGRect> {
+        self.query_before(deadline, Self::frame)
+    }
+
+    pub fn window_id_before(&self, deadline: Instant) -> Result<CGWindowID> {
+        self.query_before(deadline, |element| unsafe { element.get_window_id() })
+    }
+
+    pub fn find_x_term_caret_tree_before(&self, deadline: Instant) -> Result<Vec<UIElement>> {
+        if self.is_xterm_helper_textarea_before(deadline).unwrap_or(false) {
             return Ok(vec![self.clone()]);
         }
-
-        let mut children_with_cursor: Vec<_> = self
-            .children()?
-            .into_iter()
-            .filter_map(|elem| {
-                elem.role().ok().and_then(|role| {
-                    let role: std::borrow::Cow<'_, str> = (&role).into();
-                    if XTERM_ROLES.contains(&role.as_ref()) {
-                        elem.find_x_term_caret_tree().ok()
-                    } else {
-                        None
-                    }
-                })
-            })
-            .collect();
-
-        if children_with_cursor.len() > 1 {
-            warn!("Found multiple candidate cursors");
+        let mut found = None;
+        for child in self.query_before(deadline, Self::children)? {
+            // Exhaustion is terminal, not a miss that starts another subtree.
+            if Instant::now() >= deadline {
+                return Err(accessibility_sys::kAXErrorCannotComplete);
+            }
+            let Ok(role) = child.query_before(deadline, Self::role) else {
+                continue;
+            };
+            let role: std::borrow::Cow<'_, str> = (&role).into();
+            if !XTERM_ROLES.contains(&role.as_ref()) {
+                continue;
+            }
+            if let Ok(tree) = child.find_x_term_caret_tree_before(deadline) {
+                if found.is_some() {
+                    warn!("Found multiple candidate cursors");
+                }
+                found = Some(tree);
+            }
         }
-
-        let mut tree = children_with_cursor.pop().ok_or(-1)?;
+        if Instant::now() >= deadline {
+            return Err(accessibility_sys::kAXErrorCannotComplete);
+        }
+        let mut tree = found.ok_or(-1)?;
         tree.push(self.clone());
         Ok(tree)
     }
@@ -366,6 +407,37 @@ unsafe extern "C" {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exhausted_shared_deadline_never_starts_another_query() {
+        let element = UIElement::application(std::process::id() as pid_t);
+        let expired = Instant::now();
+        let result = element.query_before(expired, |_| -> Result<()> {
+            panic!("expired budget must not query AX");
+        });
+        assert_eq!(result, Err(accessibility_sys::kAXErrorCannotComplete));
+        assert!(element.is_xterm_helper_textarea_before(expired).is_err());
+        assert!(element.find_x_term_caret_tree_before(expired).is_err());
+        assert!(element.frame_before(expired).is_err());
+    }
+
+    #[test]
+    fn query_exhausting_shared_deadline_rejects_result_and_stops_next_query() {
+        let element = UIElement::application(std::process::id() as pid_t);
+        let deadline = Instant::now() + std::time::Duration::from_millis(20);
+        let mut queried = false;
+        let result = element.query_before(deadline, |_| {
+            queried = true;
+            std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+            Ok(42)
+        });
+        assert!(queried, "the first query must actually start");
+        assert_eq!(result, Err(accessibility_sys::kAXErrorCannotComplete));
+        assert_eq!(
+            element.query_before(deadline, |_| -> Result<()> { panic!("shared budget is exhausted") }),
+            Err(accessibility_sys::kAXErrorCannotComplete)
+        );
+    }
 
     /// `AXUIElementCreateApplication` needs no Accessibility grant, so the two constructors
     /// can be checked against real retain counts: the owning one takes the +1 as is, the

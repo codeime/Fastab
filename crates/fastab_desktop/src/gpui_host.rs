@@ -138,7 +138,8 @@ impl DesktopHost {
                 }
                 #[cfg(target_os = "macos")]
                 if let crate::platform::PlatformBoundEvent::FocusedElementChanged { app, element } = &native_event {
-                    if crate::platform::prefers_ax_caret_for_app(app)
+                    if (crate::platform::prefers_ax_caret_for_app(app)
+                        || macos_utils::window_server::XTERM_BUNDLE_IDS.contains(&app.bundle_id.as_str()))
                         && macos_utils::window_server::is_frontmost_application(app)
                     {
                         // A same-process notification can outlive its window or

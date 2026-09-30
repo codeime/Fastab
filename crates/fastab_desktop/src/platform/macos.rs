@@ -188,6 +188,7 @@ pub struct PlatformWindowImpl {
     window_id: CGWindowID,
     ui_element: UIElement,
     x_term_tree_cache: Option<Vec<UIElement>>,
+    x_term_last_failure: Option<Instant>,
     pub bundle_id: String,
     pub pid: pid_t,
 }
@@ -215,6 +216,7 @@ impl PlatformWindowImpl {
             ui_element,
             pid,
             x_term_tree_cache: None,
+            x_term_last_failure: None,
             bundle_id,
         })
     }
@@ -238,43 +240,76 @@ impl PlatformWindowImpl {
         Some(info.level)
     }
 
-    pub fn get_x_term_cursor_elem(&mut self) -> Option<UIElement> {
-        let tree = self
+    pub fn get_x_term_cursor_frame(&mut self) -> Option<CGRect> {
+        if xterm_retry_is_throttled(self.x_term_last_failure, Instant::now()) {
+            return None;
+        }
+        let deadline = Instant::now() + Duration::from_millis(250);
+        let cached_leaf = self
             .x_term_tree_cache
             .as_ref()
-            .and_then(|cached| {
-                debug!("About to walk through {:?}", cached.len());
-                let result: Option<Vec<UIElement>> =
-                    cached.iter().fold(None::<Vec<UIElement>>, |accum, item| match accum {
-                        Some(mut x) => {
-                            x.push(item.clone());
-                            Some(x)
-                        },
-                        None => item.find_x_term_caret_tree().ok(),
-                    });
-                result
-            })
-            .or_else(|| self.ui_element.find_x_term_caret_tree().ok());
+            .and_then(|tree| tree.first())
+            .filter(|leaf| leaf.is_xterm_helper_textarea_before(deadline).unwrap_or(false));
+        let tree = cached_leaf
+            .map(|leaf| vec![leaf.clone()])
+            .or_else(|| self.ui_element.find_x_term_caret_tree_before(deadline).ok());
+        let frame = tree
+            .as_ref()
+            .and_then(|tree| tree.first())
+            .and_then(|leaf| leaf.frame_before(deadline).ok());
+        if frame.is_some() {
+            self.x_term_tree_cache = tree;
+            self.x_term_last_failure = None;
+        } else {
+            self.x_term_tree_cache = None;
+            self.x_term_last_failure = Some(Instant::now());
+        }
+        frame
+    }
 
-        self.x_term_tree_cache = tree;
-        self.x_term_tree_cache.as_ref()?.first().cloned()
+    fn apply_xterm_query(&mut self, query: CaretQueryIdentity, epoch: u64, result: Self) -> bool {
+        if !caret_query_matches(query, Some((self.pid, self.window_id)), epoch) {
+            return false;
+        }
+        self.x_term_tree_cache = result.x_term_tree_cache;
+        self.x_term_last_failure = result.x_term_last_failure;
+        true
     }
 
     /// The cached tree points at one specific terminal pane's caret element. Once focus moves it
     /// is stale, and reusing it would anchor the overlay to the pane the user just left.
     pub fn invalidate_x_term_cache(&mut self) {
         self.x_term_tree_cache = None;
+        self.x_term_last_failure = None;
     }
 
     /// Apply the AX-derived cache decision after its queries run outside the
     /// focused-window mutex.
     fn apply_x_term_cache_update(&mut self, element: Option<UIElement>, update: XTermCacheUpdate) {
         match update {
-            XTermCacheUpdate::Retarget => self.x_term_tree_cache = element.map(|element| vec![element]),
+            XTermCacheUpdate::Retarget => {
+                self.x_term_tree_cache = element.map(|element| vec![element]);
+                self.x_term_last_failure = None;
+            },
             XTermCacheUpdate::Invalidate => self.invalidate_x_term_cache(),
             XTermCacheUpdate::Leave => {},
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CaretQueryIdentity {
+    pid: i32,
+    window_id: u32,
+    epoch: u64,
+}
+
+fn caret_query_matches(query: CaretQueryIdentity, current: Option<(i32, u32)>, epoch: u64) -> bool {
+    current == Some((query.pid, query.window_id)) && epoch == query.epoch
+}
+
+fn xterm_retry_is_throttled(failed_at: Option<Instant>, now: Instant) -> bool {
+    failed_at.is_some_and(|failed| now.saturating_duration_since(failed) < WINDOW_RECOVERY_BACKOFF)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -423,9 +458,9 @@ impl PlatformStateImpl {
                                     }),
                                 ]);
                             },
-                            WindowServerEvent::RequestCaretPositionUpdate => {
+                            WindowServerEvent::RequestCaretPositionUpdate { app, window_id } => {
                                 events.push(Event::PlatformBoundEvent(
-                                    PlatformBoundEvent::CaretPositionUpdateRequested,
+                                    PlatformBoundEvent::CaretPositionUpdateRequested { app, window_id },
                                 ));
                             },
                         };
@@ -457,11 +492,15 @@ impl PlatformStateImpl {
                     trace!(pid = app.pid, bundle_id = %app.bundle_id, "Ignoring stale external app activation");
                     return Ok(());
                 }
-                self.caret_epoch.fetch_add(1, Ordering::Relaxed);
+                // Invalidate cached identity and its epoch under the same lock.
+                {
+                    let mut focused = self.focused_window.lock().unwrap();
+                    self.caret_epoch.fetch_add(1, Ordering::Relaxed);
+                    focused.take();
+                }
 
                 // A same-process window switch whose AX lookup failed must not
                 // leave the previous window eligible for the app-level fast path.
-                self.focused_window.lock().unwrap().take();
                 self.last_window_recovery_failure.lock().unwrap().take();
                 self.last_ax_caret_failure.lock().unwrap().take();
                 let Some(window) = window else {
@@ -487,17 +526,29 @@ impl PlatformStateImpl {
                 Ok(())
             },
             PlatformBoundEvent::AutocompleteWindowLevelUpdateRequested => {
-                let level = self
-                    .focused_window
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .and_then(|window| window.get_level());
+                let window = self.focused_window.lock().unwrap().clone();
+                let level = window.as_ref().and_then(|window| window.get_level());
                 apply_autocomplete_window_level(window_map, level);
 
                 Ok(())
             },
-            PlatformBoundEvent::CaretPositionUpdateRequested => {
+            PlatformBoundEvent::CaretPositionUpdateRequested { app, window_id } => {
+                if !macos_utils::window_server::is_frontmost_application(&app) {
+                    return Ok(());
+                }
+                {
+                    let mut focused = self.focused_window.lock().unwrap();
+                    let Some(window) = focused.as_mut().filter(|window| {
+                        window.pid == app.pid && window.bundle_id == app.bundle_id && window.window_id == window_id
+                    }) else {
+                        return Ok(());
+                    };
+                    window.invalidate_x_term_cache();
+                    self.caret_epoch.fetch_add(1, Ordering::Relaxed);
+                }
+                self.last_ax_caret_failure.lock().unwrap().take();
+                // Movement invalidates older geometry, not the completion list.
+                // The refresh emits None only if the new caret cannot be found.
                 if let Err(e) = self.refresh_window_position() {
                     debug!(%e, "Failed to refresh window position");
                 }
@@ -613,6 +664,7 @@ impl PlatformStateImpl {
                     // this event. Invalidate queued results from another pane or
                     // the terminal before a Find/command-palette field took focus.
                     if macos_utils::window_server::is_frontmost_application(&app) {
+                        let _focused = self.focused_window.lock().unwrap();
                         self.caret_epoch.fetch_add(1, Ordering::Relaxed);
                         self.last_ax_caret_failure.lock().unwrap().take();
                     }
@@ -620,25 +672,6 @@ impl PlatformStateImpl {
                 }
                 if !macos_utils::window_server::is_frontmost_application(&app) {
                     trace!(pid = app.pid, bundle_id = %app.bundle_id, "Ignoring stale focused-element event");
-                    let belongs_to_tracked_window = {
-                        let mut focused = self.focused_window.lock().unwrap();
-                        focused.as_mut().is_some_and(|focused_window| {
-                            if focused_window.pid == app.pid && focused_window.bundle_id() == app.bundle_id {
-                                focused_window.invalidate_x_term_cache();
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                    };
-                    if belongs_to_tracked_window && hide_overlay_on_element_change(&app.bundle_id) {
-                        self.proxy
-                            .send_event(Event::WindowEvent {
-                                window_id: AUTOCOMPLETE_ID,
-                                window_event: WindowEvent::Hide,
-                            })
-                            .ok();
-                    }
                     return Ok(());
                 }
 
@@ -647,11 +680,14 @@ impl PlatformStateImpl {
                 let tracked_window = {
                     let focused = self.focused_window.lock().unwrap();
                     focused.as_ref().and_then(|focused_window| {
-                        (focused_window.pid == app.pid && focused_window.bundle_id() == app.bundle_id)
-                            .then_some((focused_window.window_id, should_refresh_x_term_cache(&app.bundle_id)))
+                        (focused_window.pid == app.pid && focused_window.bundle_id() == app.bundle_id).then_some((
+                            focused_window.window_id,
+                            should_refresh_x_term_cache(&app.bundle_id),
+                            self.caret_epoch(),
+                        ))
                     })
                 };
-                let Some((window_id, is_xterm)) = tracked_window else {
+                let Some((window_id, is_xterm, epoch)) = tracked_window else {
                     return Ok(());
                 };
 
@@ -662,46 +698,46 @@ impl PlatformStateImpl {
                 // it. IME and other AX terminals never use this cache, so
                 // skip the extra AX queries and just clear it.
                 let cache_update = if is_xterm {
-                    let same_window = unsafe { element.get_window_id() }
+                    let deadline = Instant::now() + Duration::from_millis(250);
+                    let same_window = element
+                        .window_id_before(deadline)
                         .ok()
                         .map(|element_window| element_window == window_id);
-                    let is_helper = matches!(same_window, Some(true)) && element.is_xterm_helper_textarea();
+                    let is_helper = matches!(same_window, Some(true))
+                        && element.is_xterm_helper_textarea_before(deadline).unwrap_or(false);
                     x_term_cache_update_for_focused_element(is_helper, same_window)
                 } else {
                     XTermCacheUpdate::Invalidate
                 };
                 let cache_element = (cache_update == XTermCacheUpdate::Retarget).then(|| element.clone());
 
-                // AX calls may overlap with a newer window event; recheck before
-                // mutating the cache and keep this lock limited to local state.
-                let mut focused = self.focused_window.lock().unwrap();
-                if let Some(focused_window) = focused.as_mut() {
-                    if focused_window.pid == app.pid
-                        && focused_window.bundle_id() == app.bundle_id
-                        && focused_window.window_id == window_id
+                // Commit cache state and advance the pane epoch together.
+                let query = {
+                    let mut focused = self.focused_window.lock().unwrap();
+                    let Some(window) = focused.as_mut() else {
+                        return Ok(());
+                    };
+                    if window.pid != app.pid
+                        || window.bundle_id != app.bundle_id
+                        || window.window_id != window_id
+                        || self.caret_epoch() != epoch
+                        || !macos_utils::window_server::is_frontmost_application(&app)
                     {
-                        focused_window.apply_x_term_cache_update(cache_element, cache_update);
-                    } else {
                         return Ok(());
                     }
-                } else {
-                    return Ok(());
-                }
-                drop(focused);
-                // Ghostty / Kitty do not expose an AX caret. Their IME
-                // controller also fires element-changed noise (palette switch,
-                // IMK activate/deactivate). Hiding here parks the list, and
-                // without a subsequent IME hook it never comes back.
+                    if cache_update == XTermCacheUpdate::Leave {
+                        return Ok(());
+                    }
+                    let epoch = self.caret_epoch.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+                    window.apply_x_term_cache_update(cache_element, cache_update);
+                    CaretQueryIdentity {
+                        pid: window.pid,
+                        window_id: window.window_id,
+                        epoch,
+                    }
+                };
                 if hide_overlay_on_element_change(&app.bundle_id) {
-                    debug!(pid = app.pid, bundle_id = %app.bundle_id, "Focused element changed, hiding autocomplete");
-                    self.proxy
-                        .send_event(Event::WindowEvent {
-                            window_id: AUTOCOMPLETE_ID,
-                            window_event: WindowEvent::Hide,
-                        })
-                        .ok();
-                } else {
-                    debug!(pid = app.pid, bundle_id = %app.bundle_id, "Focused element changed in IME terminal, keeping overlay");
+                    self.send_terminal_caret_for_query(app, query, None);
                 }
 
                 Ok(())
@@ -832,8 +868,11 @@ impl PlatformStateImpl {
         match recovered {
             Ok(window) => {
                 self.last_window_recovery_failure.lock().unwrap().take();
-                self.caret_epoch.fetch_add(1, Ordering::Relaxed);
-                self.focused_window.lock().unwrap().replace(window);
+                {
+                    let mut focused = self.focused_window.lock().unwrap();
+                    self.caret_epoch.fetch_add(1, Ordering::Relaxed);
+                    focused.replace(window);
+                }
                 self.refresh_autocomplete_enabled(&app.bundle_id);
                 debug!(pid = app.pid, bundle_id = %app.bundle_id, "Recovered focused terminal window");
                 true
@@ -876,21 +915,58 @@ impl PlatformStateImpl {
     }
 
     fn send_terminal_caret(&self, app: ApplicationSpecifier, position: Option<WindowPosition>) {
+        let (identity, epoch) = {
+            let focused = self.focused_window.lock().unwrap();
+            (
+                focused.as_ref().map(|window| (window.pid, window.window_id)),
+                self.caret_epoch(),
+            )
+        };
+        self.send_terminal_caret_snapshot(app, identity, epoch, position);
+    }
+
+    fn send_terminal_caret_snapshot(
+        &self,
+        app: ApplicationSpecifier,
+        cache_identity: Option<(i32, u32)>,
+        epoch: u64,
+        position: Option<WindowPosition>,
+    ) {
         self.proxy
             .send_event(Event::WindowEvent {
                 window_id: AUTOCOMPLETE_ID,
                 window_event: WindowEvent::TerminalCaret {
                     app,
-                    cache_identity: self.caret_cache_identity(),
-                    epoch: self.caret_epoch(),
+                    cache_identity,
+                    epoch,
                     position,
                 },
             })
             .ok();
     }
 
+    fn send_terminal_caret_for_query(
+        &self,
+        app: ApplicationSpecifier,
+        query: CaretQueryIdentity,
+        position: Option<WindowPosition>,
+    ) {
+        self.send_terminal_caret_snapshot(app, Some((query.pid, query.window_id)), query.epoch, position);
+    }
+
     fn refresh_ax_terminal_caret(&self, app: ApplicationSpecifier) {
-        let Some((pid, window_id)) = self.caret_cache_identity().filter(|(pid, _)| *pid == app.pid) else {
+        let query = {
+            let focused = self.focused_window.lock().unwrap();
+            focused
+                .as_ref()
+                .filter(|window| window.pid == app.pid && window.bundle_id == app.bundle_id)
+                .map(|window| CaretQueryIdentity {
+                    pid: window.pid,
+                    window_id: window.window_id,
+                    epoch: self.caret_epoch(),
+                })
+        };
+        let Some(query) = query else {
             self.send_terminal_caret(app, None);
             return;
         };
@@ -899,35 +975,38 @@ impl PlatformStateImpl {
             &app,
             Instant::now(),
         ) {
-            self.send_terminal_caret(app, None);
+            self.send_terminal_caret_for_query(app, query, None);
             return;
         }
-        // The strict reader shares one 250 ms budget across all AX attributes,
-        // validates the text area's window, and rejects nonempty selections.
-        let caret = unsafe { get_terminal_caret_position(pid, window_id) };
-        if !macos_utils::window_server::is_frontmost_application(&app)
-            || self.caret_cache_identity() != Some((pid, window_id))
-        {
+        let caret = unsafe { get_terminal_caret_position(query.pid, query.window_id) };
+        if !macos_utils::window_server::is_frontmost_application(&app) {
             return;
         }
-        if caret.valid {
-            self.last_ax_caret_failure.lock().unwrap().take();
-            self.send_terminal_caret(
-                app,
-                Some(WindowPosition::RelativeToCaret {
-                    caret_position: LogicalPosition::new(caret.x, caret.y).into(),
-                    caret_size: LogicalSize::new(DEFAULT_CARET_WIDTH, caret.height).into(),
-                    origin: Origin::TopLeft,
-                }),
-            );
-        } else {
-            *self.last_ax_caret_failure.lock().unwrap() = Some((app.clone(), Instant::now()));
-            // A missed same-app window change is recoverable at the next key.
-            // Never let the old coordinates reappear while AX is unavailable.
-            self.focused_window.lock().unwrap().take();
-            self.caret_epoch.fetch_add(1, Ordering::Relaxed);
-            self.send_terminal_caret(app, None);
-        }
+        let (identity, epoch, position) = {
+            let mut focused = self.focused_window.lock().unwrap();
+            let identity = focused.as_ref().map(|window| (window.pid, window.window_id));
+            if !caret_query_matches(query, identity, self.caret_epoch()) {
+                return;
+            }
+            if caret.valid {
+                self.last_ax_caret_failure.lock().unwrap().take();
+                (
+                    identity,
+                    query.epoch,
+                    Some(WindowPosition::RelativeToCaret {
+                        caret_position: LogicalPosition::new(caret.x, caret.y).into(),
+                        caret_size: LogicalSize::new(DEFAULT_CARET_WIDTH, caret.height).into(),
+                        origin: Origin::TopLeft,
+                    }),
+                )
+            } else {
+                *self.last_ax_caret_failure.lock().unwrap() = Some((app.clone(), Instant::now()));
+                focused.take();
+                let epoch = self.caret_epoch.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+                (None, epoch, None)
+            }
+        };
+        self.send_terminal_caret_snapshot(app, identity, epoch, position);
     }
 
     fn refresh_window_position(&self) -> anyhow::Result<()> {
@@ -942,8 +1021,18 @@ impl PlatformStateImpl {
             self.refresh_ax_terminal_caret(app);
             return Ok(());
         }
-        let mut guard = self.focused_window.lock().unwrap();
-        let active_window = guard.as_mut().context("No active window")?;
+        let (mut active_window, query) = {
+            let focused = self.focused_window.lock().unwrap();
+            let window = focused.as_ref().context("No active window")?;
+            (
+                window.clone(),
+                CaretQueryIdentity {
+                    pid: window.pid,
+                    window_id: window.window_id,
+                    epoch: self.caret_epoch(),
+                },
+            )
+        };
         let current_terminal = Terminal::from_bundle_id(active_window.bundle_id());
 
         let supports_ime = current_terminal
@@ -952,9 +1041,37 @@ impl PlatformStateImpl {
 
         let is_xterm = current_terminal.is_some_and(|t| t.is_xterm());
 
-        // let supports_accessibility = current_terminal
-        // .map(|t| t.supports_macos_accessibility())
-        // .unwrap_or(false);
+        if is_xterm {
+            let app = ApplicationSpecifier {
+                pid: query.pid,
+                bundle_id: active_window.bundle_id.clone(),
+            };
+            let frame = active_window.get_x_term_cursor_frame();
+            if !macos_utils::window_server::is_frontmost_application(&app) {
+                return Ok(());
+            }
+            {
+                let mut focused = self.focused_window.lock().unwrap();
+                let identity = focused.as_ref().map(|window| (window.pid, window.window_id));
+                if !caret_query_matches(query, identity, self.caret_epoch()) {
+                    return Ok(());
+                }
+                let window = focused.as_mut().expect("matching window");
+                if !window.apply_xterm_query(query, self.caret_epoch(), active_window) {
+                    return Ok(());
+                }
+            }
+            self.send_terminal_caret_for_query(
+                app,
+                query,
+                frame.map(|frame| WindowPosition::RelativeToCaret {
+                    caret_position: LogicalPosition::new(frame.origin.x, frame.origin.y).into(),
+                    caret_size: LogicalSize::new(frame.size.width, frame.size.height).into(),
+                    origin: Origin::TopLeft,
+                }),
+            );
+            return Ok(());
+        }
 
         if !is_xterm && supports_ime {
             tracing::debug!("Sending notif {}", fastab_util::macos::EDIT_BUFFER_UPDATED_NOTIFICATION);
@@ -966,14 +1083,7 @@ impl PlatformStateImpl {
                 &NSDictionary::new(),
             );
         } else {
-            let caret = if is_xterm {
-                active_window
-                    .get_x_term_cursor_elem()
-                    .and_then(|c| c.frame().ok())
-                    .map(Rect::from)
-            } else {
-                self.get_cursor_position()
-            };
+            let caret = self.get_cursor_position();
 
             let caret = caret.context("Failed to get cursor position")?;
             debug!("Sending caret update {:?}", caret);
@@ -1094,6 +1204,74 @@ mod tests {
         other.pid = app.pid;
         other.bundle_id = "com.mitchellh.ghostty".into();
         assert!(!recovery_is_throttled(Some(&failure), &other, failed_at));
+    }
+
+    fn xterm_window() -> super::PlatformWindowImpl {
+        super::PlatformWindowImpl {
+            window_id: 7,
+            ui_element: macos_utils::window_server::UIElement::application(std::process::id() as i32),
+            x_term_tree_cache: None,
+            x_term_last_failure: None,
+            bundle_id: "com.microsoft.VSCode".into(),
+            pid: std::process::id() as i32,
+        }
+    }
+
+    #[test]
+    fn old_pane_success_and_failure_cannot_change_current_cache_or_backoff() {
+        let mut current = xterm_window();
+        let query = super::CaretQueryIdentity {
+            pid: current.pid,
+            window_id: current.window_id,
+            epoch: 1,
+        };
+        let mut old_success = current.clone();
+        old_success.x_term_tree_cache = Some(vec![current.ui_element.clone()]);
+        let mut old_failure = current.clone();
+        old_failure.x_term_last_failure = Some(Instant::now());
+        assert!(!current.apply_xterm_query(query, 2, old_success));
+        assert!(!current.apply_xterm_query(query, 2, old_failure));
+        assert!(current.x_term_tree_cache.is_none());
+        assert!(current.x_term_last_failure.is_none());
+
+        let mut latest_success = current.clone();
+        latest_success.x_term_tree_cache = Some(vec![current.ui_element.clone()]);
+        assert!(current.apply_xterm_query(super::CaretQueryIdentity { epoch: 2, ..query }, 2, latest_success));
+        let mut late_failure = current.clone();
+        late_failure.x_term_tree_cache = None;
+        late_failure.x_term_last_failure = Some(Instant::now());
+        assert!(!current.apply_xterm_query(query, 2, late_failure));
+        assert!(current.x_term_tree_cache.is_some());
+        assert!(current.x_term_last_failure.is_none());
+    }
+
+    #[test]
+    fn xterm_backoff_expires_and_focus_invalidation_allows_immediate_retry() {
+        let mut window = xterm_window();
+        let failed_at = Instant::now();
+        window.x_term_last_failure = Some(failed_at);
+        assert!(super::xterm_retry_is_throttled(window.x_term_last_failure, failed_at));
+        assert!(!super::xterm_retry_is_throttled(
+            window.x_term_last_failure,
+            failed_at + WINDOW_RECOVERY_BACKOFF
+        ));
+        window.invalidate_x_term_cache();
+        assert!(!super::xterm_retry_is_throttled(window.x_term_last_failure, failed_at));
+        let other = xterm_window();
+        assert!(!super::xterm_retry_is_throttled(other.x_term_last_failure, failed_at));
+    }
+
+    #[test]
+    fn moved_or_replaced_windows_reject_older_geometry() {
+        let query = super::CaretQueryIdentity {
+            pid: 42,
+            window_id: 7,
+            epoch: 3,
+        };
+        assert!(super::caret_query_matches(query, Some((42, 7)), 3));
+        for (identity, epoch) in [(Some((42, 7)), 4), (Some((42, 8)), 3), (Some((43, 7)), 3), (None, 3)] {
+            assert!(!super::caret_query_matches(query, identity, epoch));
+        }
     }
 
     #[test]

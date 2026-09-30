@@ -173,7 +173,10 @@ pub enum WindowServerEvent {
     ActiveSpaceChanged {
         is_fullscreen: bool,
     },
-    RequestCaretPositionUpdate,
+    RequestCaretPositionUpdate {
+        app: ApplicationSpecifier,
+        window_id: u32,
+    },
 }
 
 pub struct AccessibilityCallbackData {
@@ -610,7 +613,17 @@ unsafe extern "C" fn application_ax_callback(
             }
         },
         kAXWindowResizedNotification | kAXWindowMovedNotification => {
-            Some(WindowServerEvent::RequestCaretPositionUpdate)
+            if is_frontmost_application(&app) {
+                element
+                    .window_id_before(std::time::Instant::now() + std::time::Duration::from_millis(250))
+                    .ok()
+                    .map(|window_id| WindowServerEvent::RequestCaretPositionUpdate {
+                        app: app.clone(),
+                        window_id,
+                    })
+            } else {
+                None
+            }
         },
         kAXUIElementDestroyedNotification => {
             // Destruction notifications also describe child elements. Clear the

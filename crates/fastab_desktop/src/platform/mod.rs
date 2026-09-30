@@ -106,7 +106,11 @@ pub enum PlatformBoundEvent {
         fullscreen: bool,
         visible: bool,
     },
-    CaretPositionUpdateRequested,
+    #[cfg(target_os = "macos")]
+    CaretPositionUpdateRequested {
+        app: ApplicationSpecifier,
+        window_id: u32,
+    },
     WindowDestroyed {
         // TODO: dont use on other platforms than macos
         #[cfg(target_os = "macos")]
