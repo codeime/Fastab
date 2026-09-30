@@ -36,6 +36,7 @@ pub fn spec_from_fig_json(value: &JsonValue) -> Option<Spec> {
         subcommands: json_array(object.get("subcommands"))
             .iter()
             .filter_map(spec_from_fig_json)
+            .map(Arc::new)
             .collect(),
         options: json_array(object.get("options"))
             .iter()
@@ -107,7 +108,7 @@ pub fn merge_generated_spec(wrapper: &Spec, generated: Spec) -> Spec {
 fn mark_generated_spec(spec: &mut Spec) {
     spec.meta.ai_generated = true;
     for child in &mut spec.subcommands {
-        mark_generated_spec(child);
+        mark_generated_spec(Arc::make_mut(child));
     }
     for option in spec.options.iter_mut().chain(&mut spec.persistent_options) {
         let option = Arc::make_mut(option);
@@ -140,7 +141,7 @@ fn mark_generated_arg(arg: &mut ArgSpec) {
     }
 }
 
-fn merge_specs(mut dest: Vec<Spec>, incoming: Vec<Spec>) -> Vec<Spec> {
+fn merge_specs(mut dest: Vec<Arc<Spec>>, incoming: Vec<Arc<Spec>>) -> Vec<Arc<Spec>> {
     for spec in incoming {
         if let Some(existing) = dest
             .iter_mut()

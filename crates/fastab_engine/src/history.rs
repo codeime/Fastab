@@ -525,4 +525,60 @@ mod tests {
             vec!["value0".to_owned()]
         );
     }
+
+    #[test]
+    fn history_that_enters_one_load_spec_does_not_load_the_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("gcloud")).unwrap();
+        fs::write(
+            dir.path().join("gcloud.json"),
+            r#"{
+              "names":["gcloud"],
+              "subcommands":[
+                {"names":["sql"],"loadSpec":"gcloud/sql"},
+                {"names":["compute"],"loadSpec":"gcloud/compute"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("gcloud/sql.json"),
+            r#"{
+              "names":["sql-target"],
+              "args":[{"name":"instance","templates":["history"]}],
+              "subcommands":[{"names":["backups"]}]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("gcloud/compute.json"),
+            r#"{
+              "names":["compute"],
+              "args":[{"name":"name"}],
+              "subcommands":[{"names":["instances"]}]
+            }"#,
+        )
+        .unwrap();
+        fs::write(dir.path().join("index.json"), r#"{"files":{"gcloud":"gcloud.json"}}"#).unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let _kept = dir.keep();
+        {
+            let gcloud = registry.get("gcloud").expect("gcloud");
+            assert!(gcloud.find_subcommand("sql").expect("sql stub").args.is_empty());
+            assert!(gcloud.find_subcommand("compute").expect("compute stub").args.is_empty());
+        }
+        let store = HistoryStore::from_lines(vec!["gcloud sql prod".into()]);
+        let slot = ArgSlot {
+            root: "gcloud".into(),
+            path: vec!["sql".into()],
+            option: None,
+            index: 0,
+        };
+        assert_eq!(
+            store.arg_values(&mut registry, None, None, &[slot]),
+            vec!["prod".to_owned()]
+        );
+        assert!(registry.cached_load_spec("gcloud/sql").is_some());
+        assert!(registry.cached_load_spec("gcloud/compute").is_none());
+    }
 }

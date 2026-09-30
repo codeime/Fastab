@@ -120,14 +120,14 @@ pub(crate) fn context(
         return None;
     }
     for token in &words[1..finished] {
-        node = node.find_subcommand(token)?;
+        node = node.find_subcommand(token)?.as_ref();
         if !static_path_node(node) {
             return None;
         }
     }
-    // `walk_spec` owns a cloned node and may have merged a generateSpec
-    // result into it. Trust only if it still represents this literal static
-    // path. Generated descendants are filtered at their collection sites.
+    // The walk holds this Arc, or a new one after generateSpec, jsLoadSpec,
+    // or a path loadSpec. Trust only if it still represents this literal
+    // static path. Generated descendants are filtered at collection.
     if !static_path_node(current) || node.names != current.names {
         return None;
     }

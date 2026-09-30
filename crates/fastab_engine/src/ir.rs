@@ -58,8 +58,9 @@ impl FilterStrategy {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SuggestionMeta {
-    /// Loader-only taint retained after eager static loadSpec replacement.
-    /// Skipped by serde so input JSON cannot grant or erase provenance.
+    /// Set when a static path `loadSpec` is followed: the file root at read
+    /// time, or a subcommand path once the walker enters that token. Skipped
+    /// by serde so input JSON cannot grant or erase provenance.
     #[serde(skip)]
     pub ai_resolved_reference: bool,
     /// Runtime-only taint for rows that came from a generateSpec/loadSpec
@@ -365,8 +366,11 @@ pub struct Spec {
     pub names: Vec<String>,
     #[serde(default)]
     pub description: String,
+    /// Each child is its own `Arc`. A descent that does not rewrite the node
+    /// clones this handle. The bytes of a shared child are counted once.
+    /// Identical children are not interned; only options go through that pool.
     #[serde(default)]
-    pub subcommands: Vec<Spec>,
+    pub subcommands: Vec<Arc<Spec>>,
     /// Shared within a file and across specs loaded by one [`Registry`].
     /// `persistentOptions` stays a separate list: lookup merges that list
     /// and treats `options` as the node's own flags.
@@ -414,7 +418,7 @@ impl Spec {
         self.names.iter().any(|candidate| candidate == name)
     }
 
-    pub fn find_subcommand(&self, name: &str) -> Option<&Spec> {
+    pub fn find_subcommand(&self, name: &str) -> Option<&Arc<Spec>> {
         self.subcommands.iter().find(|spec| spec.has_name(name))
     }
 
@@ -444,24 +448,32 @@ impl Spec {
     /// out so the figure does not depend on the allocator. Nothing evicts
     /// from this number.
     pub fn allocated_bytes(&self) -> usize {
-        std::mem::size_of::<Self>() + self.heap_bytes(&mut std::collections::HashSet::new())
+        std::mem::size_of::<Self>()
+            + self.heap_bytes(
+                &mut std::collections::HashSet::new(),
+                &mut std::collections::HashSet::new(),
+            )
     }
 
-    fn heap_bytes(&self, seen_options: &mut std::collections::HashSet<usize>) -> usize {
+    fn heap_bytes(
+        &self,
+        seen_options: &mut std::collections::HashSet<usize>,
+        seen_specs: &mut std::collections::HashSet<usize>,
+    ) -> usize {
         string_vec_heap(&self.names)
             + string_heap(&self.description)
-            + self.subcommands.capacity() * std::mem::size_of::<Spec>()
-            + self
-                .subcommands
-                .iter()
-                .map(|child| child.heap_bytes(seen_options))
-                .sum::<usize>()
+            + self.subcommands.capacity() * std::mem::size_of::<Arc<Spec>>()
+            + shared_spec_bodies(&self.subcommands, seen_options, seen_specs)
             + shared_option_slots(&self.options)
-            + shared_option_bodies(&self.options, seen_options)
+            + shared_option_bodies(&self.options, seen_options, seen_specs)
             + shared_option_slots(&self.persistent_options)
-            + shared_option_bodies(&self.persistent_options, seen_options)
+            + shared_option_bodies(&self.persistent_options, seen_options, seen_specs)
             + self.args.capacity() * std::mem::size_of::<ArgSpec>()
-            + self.args.iter().map(|arg| arg.heap_bytes(seen_options)).sum::<usize>()
+            + self
+                .args
+                .iter()
+                .map(|arg| arg.heap_bytes(seen_options, seen_specs))
+                .sum::<usize>()
             + self.additional_suggestions.capacity() * std::mem::size_of::<SuggestionSeed>()
             + self
                 .additional_suggestions
@@ -469,7 +481,7 @@ impl Spec {
                 .map(SuggestionSeed::heap_bytes)
                 .sum::<usize>()
             + self.meta.heap_bytes()
-            + load_spec_heap(&self.load_spec, seen_options)
+            + load_spec_heap(&self.load_spec, seen_options, seen_specs)
             + self.parser_directives.as_ref().map_or(0, ParserDirectives::heap_bytes)
             + opt_string_heap(&self.js_generate_spec)
             + opt_string_heap(&self.generate_spec_cache_key)
@@ -483,21 +495,44 @@ fn shared_option_slots(options: &Vec<Arc<OptionSpec>>) -> usize {
     options.capacity() * std::mem::size_of::<Arc<OptionSpec>>()
 }
 
-fn shared_option_bodies(options: &[Arc<OptionSpec>], seen_options: &mut std::collections::HashSet<usize>) -> usize {
+fn shared_option_bodies(
+    options: &[Arc<OptionSpec>],
+    seen_options: &mut std::collections::HashSet<usize>,
+    seen_specs: &mut std::collections::HashSet<usize>,
+) -> usize {
     let mut total = 0;
     for option in options {
         if !seen_options.insert(Arc::as_ptr(option) as usize) {
             continue;
         }
-        total += std::mem::size_of::<OptionSpec>() + option.heap_bytes(seen_options);
+        total += std::mem::size_of::<OptionSpec>() + option.heap_bytes(seen_options, seen_specs);
     }
     total
 }
 
-fn load_spec_heap(load_spec: &Option<LoadSpec>, seen_options: &mut std::collections::HashSet<usize>) -> usize {
+fn shared_spec_bodies(
+    specs: &[Arc<Spec>],
+    seen_options: &mut std::collections::HashSet<usize>,
+    seen_specs: &mut std::collections::HashSet<usize>,
+) -> usize {
+    let mut total = 0;
+    for spec in specs {
+        if !seen_specs.insert(Arc::as_ptr(spec) as usize) {
+            continue;
+        }
+        total += std::mem::size_of::<Spec>() + spec.heap_bytes(seen_options, seen_specs);
+    }
+    total
+}
+
+fn load_spec_heap(
+    load_spec: &Option<LoadSpec>,
+    seen_options: &mut std::collections::HashSet<usize>,
+    seen_specs: &mut std::collections::HashSet<usize>,
+) -> usize {
     match load_spec {
         Some(LoadSpec::Path(path)) => path.len(),
-        Some(LoadSpec::Inline(spec)) => std::mem::size_of::<Spec>() + spec.heap_bytes(seen_options),
+        Some(LoadSpec::Inline(spec)) => std::mem::size_of::<Spec>() + spec.heap_bytes(seen_options, seen_specs),
         None => 0,
     }
 }
@@ -539,14 +574,30 @@ impl ShrinkSpecTree for Arc<OptionSpec> {
     }
 }
 
+impl ShrinkSpecTree for Arc<Spec> {
+    fn shrink_tree(&mut self) {
+        if let Some(spec) = Arc::get_mut(self) {
+            spec.shrink_to_fit();
+        }
+    }
+}
+
 impl OptionSpec {
-    fn heap_bytes(&self, seen_options: &mut std::collections::HashSet<usize>) -> usize {
+    fn heap_bytes(
+        &self,
+        seen_options: &mut std::collections::HashSet<usize>,
+        seen_specs: &mut std::collections::HashSet<usize>,
+    ) -> usize {
         string_vec_heap(&self.names)
             + string_heap(&self.description)
             + self.args.capacity() * std::mem::size_of::<ArgSpec>()
-            + self.args.iter().map(|arg| arg.heap_bytes(seen_options)).sum::<usize>()
+            + self
+                .args
+                .iter()
+                .map(|arg| arg.heap_bytes(seen_options, seen_specs))
+                .sum::<usize>()
             + self.meta.heap_bytes()
-            + load_spec_heap(&self.load_spec, seen_options)
+            + load_spec_heap(&self.load_spec, seen_options, seen_specs)
             + self.requires_separator.as_ref().map_or(0, json_heap)
             + string_vec_heap(&self.exclusive_on)
             + string_vec_heap(&self.depends_on)
@@ -628,7 +679,7 @@ fn intern_spec_options_local(spec: &mut Spec) {
 
 fn intern_spec_options(spec: &mut Spec, pool: &mut HashMap<u64, Vec<Weak<OptionSpec>>>) {
     for child in &mut spec.subcommands {
-        intern_spec_options(child, pool);
+        intern_spec_options(Arc::make_mut(child), pool);
     }
     for arg in &mut spec.args {
         intern_arg_options(arg, pool);
@@ -660,7 +711,11 @@ impl ShrinkSpecTree for ArgSpec {
 }
 
 impl ArgSpec {
-    fn heap_bytes(&self, seen_options: &mut std::collections::HashSet<usize>) -> usize {
+    fn heap_bytes(
+        &self,
+        seen_options: &mut std::collections::HashSet<usize>,
+        seen_specs: &mut std::collections::HashSet<usize>,
+    ) -> usize {
         string_heap(&self.name)
             + string_heap(&self.description)
             + self.templates.capacity() * std::mem::size_of::<Template>()
@@ -675,11 +730,10 @@ impl ArgSpec {
             + self.suggestions.capacity() * std::mem::size_of::<SuggestionSeed>()
             + self.suggestions.iter().map(SuggestionSeed::heap_bytes).sum::<usize>()
             + self.meta.heap_bytes()
-            + load_spec_heap(&self.load_spec, seen_options)
-            + self
-                .resolved_spec
-                .as_ref()
-                .map_or(0, |spec| std::mem::size_of::<Spec>() + spec.heap_bytes(seen_options))
+            + load_spec_heap(&self.load_spec, seen_options, seen_specs)
+            + self.resolved_spec.as_ref().map_or(0, |spec| {
+                std::mem::size_of::<Spec>() + spec.heap_bytes(seen_options, seen_specs)
+            })
             + opt_string_heap(&self.is_module)
             + opt_string_heap(&self.js_load_spec)
             + opt_string_heap(&self.js_get_query_term)
@@ -834,6 +888,10 @@ pub struct Registry {
     version_cache: HashMap<String, Option<String>>,
     /// Specs loaded by relative IR path for versioned selection.
     path_specs: HashMap<PathBuf, Arc<Spec>>,
+    /// `loadSpec` files entered during a walk, keyed by relative IR path.
+    /// Each `Arc` also lives in `loaded`, so it takes one of the 48 LRU slots
+    /// instead of a second cache. The parent spec keeps its stub.
+    load_spec_cache: HashMap<PathBuf, Arc<Spec>>,
     /// Identical options loaded by this registry share one `Arc`. Entries are
     /// `Weak`, so evicting the last spec that used an option drops the body.
     option_pool: HashMap<u64, Vec<Weak<OptionSpec>>>,
@@ -996,7 +1054,12 @@ impl Registry {
         while let Some(old) = self.loaded.pop_front() {
             let before = self.specs.len();
             self.specs.retain(|_, cached| !Arc::ptr_eq(cached, &old));
-            if self.specs.len() < before {
+            let before_paths = self.load_spec_cache.len();
+            self.load_spec_cache.retain(|_, cached| !Arc::ptr_eq(cached, &old));
+            // One pop drops one cached file. A path-only `loadSpec` is not in
+            // `specs`; it still occupies a slot and must count as the eviction.
+            // Entries in neither map are leftovers and keep the scan going.
+            if self.specs.len() < before || self.load_spec_cache.len() < before_paths {
                 return;
             }
         }
@@ -1083,6 +1146,106 @@ impl Registry {
             .clone();
         let relative = crate::versioned::resolve_versioned_path(&entry, detected.as_deref())?;
         self.load_relative_spec(&relative, name)
+    }
+
+    /// The spec a walked subcommand's `loadSpec` path points at.
+    ///
+    /// Command-map paths share that command's LRU entry. Nested files such as
+    /// `gcloud/compute.json` take a slot of their own. Either way the parsed
+    /// tree is not written back onto the parent stub.
+    pub(crate) fn load_referenced_spec(&mut self, reference: &str) -> Option<Arc<Spec>> {
+        let reference = reference.trim().trim_start_matches("./");
+        if reference.is_empty() || reference.contains('\\') {
+            return None;
+        }
+        // Same resolution as `resolve_reference_path`: a command-map key wins
+        // over `reference.json`. `heroku` is `heroku/8.6.0.json`, not
+        // `heroku.json`.
+        let (command_name, relative_path) = if let Some((name, path)) = self.files.get_key_value(reference) {
+            (Some(name.to_string()), path.clone())
+        } else {
+            let relative = if reference.ends_with(".json") {
+                reference.to_string()
+            } else {
+                format!("{reference}.json")
+            };
+            let relative_path = safe_relative_path(&relative)?;
+            let command_name = self
+                .files
+                .iter()
+                .find(|(_, path)| path.as_path() == relative_path.as_path())
+                .map(|(name, _)| name.to_string());
+            (command_name, relative_path)
+        };
+        if let Some(spec) = self.load_spec_cache.get(&relative_path).cloned() {
+            self.touch_loaded(&spec);
+            return Some(spec);
+        }
+        // Share the command LRU entry when it is the file this path names.
+        // A dev-folder overlay replaces `specs[name]` but leaves `files`
+        // pointing at the bundle, so a pinned name must load the referenced
+        // file into the path cache instead of returning the overlay.
+        if let Some(name) = command_name {
+            if !self.is_pinned_name(&name) {
+                if let Some(spec) = self.get_arc(&name) {
+                    return Some(spec);
+                }
+            }
+        }
+
+        let files = self.files.clone();
+        let loaded = if let Some(snapshot) = self.snapshot.as_ref() {
+            if !snapshot.is_file(&relative_path) {
+                tracing::warn!(path = %relative_path.display(), "loadSpec target missing");
+                return None;
+            }
+            load_snapshot_file(snapshot, &relative_path, &files, &mut Vec::new())
+        } else {
+            let Some(path) = relative_path
+                .to_str()
+                .and_then(|relative| safe_index_path(&self.root, relative))
+            else {
+                tracing::warn!(path = %relative_path.display(), "loadSpec target missing");
+                return None;
+            };
+            load_spec_file(&path, &self.root, &files, &mut Vec::new())
+        };
+        match loaded {
+            Ok(mut spec) => {
+                if self.loaded.len() >= MAX_CACHED_SPECS {
+                    self.evict_oldest_spec();
+                    self.prune_dead_options();
+                }
+                intern_spec_options(&mut spec, &mut self.option_pool);
+                let spec = Arc::new(spec);
+                self.loaded.push_back(Arc::clone(&spec));
+                self.load_spec_cache.insert(relative_path, Arc::clone(&spec));
+                Some(spec)
+            },
+            Err(error) => {
+                tracing::warn!(path = %relative_path.display(), %error, "loadSpec target failed");
+                None
+            },
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_load_spec(&self, relative: &str) -> Option<Arc<Spec>> {
+        let relative = relative.trim().trim_start_matches("./");
+        let relative = if relative.ends_with(".json") {
+            relative.to_string()
+        } else {
+            format!("{relative}.json")
+        };
+        let path = safe_relative_path(&relative)?;
+        self.load_spec_cache.get(&path).cloned()
+    }
+
+    /// Version files live in `path_specs`, outside the 48-slot LRU.
+    #[cfg(test)]
+    pub(crate) fn cached_versioned_spec(&self, relative: &str) -> Option<Arc<Spec>> {
+        let path = safe_relative_path(relative.trim().trim_start_matches("./"))?;
+        self.path_specs.get(&path).cloned()
     }
 
     fn load_relative_spec(&mut self, relative: &str, name: &str) -> Option<Arc<Spec>> {
@@ -1199,12 +1362,12 @@ impl Registry {
     }
 
     #[cfg(test)]
-    fn loaded_spec_count(&self) -> usize {
+    pub(crate) fn loaded_spec_count(&self) -> usize {
         self.loaded.len()
     }
 
     #[cfg(test)]
-    fn is_cached(&self, name: &str) -> bool {
+    pub(crate) fn is_cached(&self, name: &str) -> bool {
         self.specs.contains_key(name)
     }
 
@@ -1480,7 +1643,7 @@ fn resolve_reference_path(root: &Path, files: &HashMap<Arc<str>, PathBuf>, refer
     safe_index_path(root, &relative)
 }
 
-fn replace_spec_with_loaded(base: &mut Spec, mut loaded: Spec) {
+pub(crate) fn replace_spec_with_loaded(base: &mut Spec, mut loaded: Spec) {
     // `loadSpec` in the JS parser replaces the current completion object.
     // Keep the wrapper names so a parent such as `chezmoi git` or `pass grep`
     // still resolves the node by the spelling present in the command line.
@@ -1490,31 +1653,57 @@ fn replace_spec_with_loaded(base: &mut Spec, mut loaded: Spec) {
     *base = loaded;
 }
 
-fn resolve_spec_references(spec: &mut Spec, root: &Path, files: &HashMap<Arc<str>, PathBuf>, stack: &mut Vec<PathBuf>) {
-    let load_spec = spec.load_spec.take();
-    if let Some(load_spec) = load_spec {
-        let target = match load_spec {
-            LoadSpec::Path(reference) => resolve_reference_path(root, files, &reference),
-            LoadSpec::Inline(target) => {
-                replace_spec_with_loaded(spec, *target);
-                None
-            },
-        };
-        if let Some(target_path) = target {
-            let already_loading = stack.iter().any(|path| path == &target_path);
-            if !already_loading {
-                if let Ok(loaded) = load_spec_file_inner(&target_path, root, files, stack) {
-                    replace_spec_with_loaded(spec, loaded);
-                }
+/// Follow this node's own `loadSpec`. Subcommand paths stay on the stub until
+/// the walker enters that token. Inline objects are already in the file, so
+/// they expand here. `follow_path` is set only for the file's root object,
+/// matching the one root `loadSpec` q-cli resolves at the start of a walk.
+fn follow_load_spec(
+    spec: &mut Spec,
+    root: &Path,
+    files: &HashMap<Arc<str>, PathBuf>,
+    stack: &mut Vec<PathBuf>,
+    follow_path: bool,
+) {
+    let should_follow = match &spec.load_spec {
+        Some(LoadSpec::Inline(_)) => true,
+        Some(LoadSpec::Path(_)) => follow_path,
+        None => false,
+    };
+    if !should_follow {
+        return;
+    }
+    let Some(load_spec) = spec.load_spec.take() else {
+        return;
+    };
+    let target = match load_spec {
+        LoadSpec::Path(reference) => resolve_reference_path(root, files, &reference),
+        LoadSpec::Inline(target) => {
+            replace_spec_with_loaded(spec, *target);
+            None
+        },
+    };
+    if let Some(target_path) = target {
+        let already_loading = stack.iter().any(|path| path == &target_path);
+        if !already_loading {
+            if let Ok(loaded) = load_spec_file_inner(&target_path, root, files, stack) {
+                replace_spec_with_loaded(spec, loaded);
             }
         }
-        spec.meta.ai_resolved_reference = true;
     }
+    spec.meta.ai_resolved_reference = true;
+}
 
+fn resolve_unentered_descendants(
+    spec: &mut Spec,
+    root: &Path,
+    files: &HashMap<Arc<str>, PathBuf>,
+    stack: &mut Vec<PathBuf>,
+) {
     for child in &mut spec.subcommands {
-        resolve_spec_references(child, root, files, stack);
+        let child = Arc::make_mut(child);
+        follow_load_spec(child, root, files, stack, false);
+        resolve_unentered_descendants(child, root, files, stack);
     }
-
     for arg in &mut spec.args {
         resolve_arg_spec(arg, root, files, stack);
     }
@@ -1528,28 +1717,22 @@ fn resolve_spec_references(spec: &mut Spec, root: &Path, files: &HashMap<Arc<str
     }
 }
 
+fn resolve_spec_references(spec: &mut Spec, root: &Path, files: &HashMap<Arc<str>, PathBuf>, stack: &mut Vec<PathBuf>) {
+    follow_load_spec(spec, root, files, stack, true);
+    resolve_unentered_descendants(spec, root, files, stack);
+}
+
 fn resolve_arg_spec(arg: &mut ArgSpec, root: &Path, files: &HashMap<Arc<str>, PathBuf>, stack: &mut Vec<PathBuf>) {
     let Some(load_spec) = arg.load_spec.as_ref() else {
         return;
     };
 
-    match load_spec {
-        LoadSpec::Path(reference) => {
-            let Some(target_path) = resolve_reference_path(root, files, reference) else {
-                return;
-            };
-            if stack.iter().any(|path| path == &target_path) {
-                return;
-            }
-            if let Ok(loaded) = load_spec_file_inner(&target_path, root, files, stack) {
-                arg.resolved_spec = Some(Box::new(loaded));
-            }
-        },
-        LoadSpec::Inline(target) => {
-            let mut loaded = (**target).clone();
-            resolve_spec_references(&mut loaded, root, files, stack);
-            arg.resolved_spec = Some(Box::new(loaded));
-        },
+    // Path targets stay on the argument until that token is consumed.
+    // Inline objects are already in this file.
+    if let LoadSpec::Inline(target) = load_spec {
+        let mut loaded = (**target).clone();
+        resolve_spec_references(&mut loaded, root, files, stack);
+        arg.resolved_spec = Some(Box::new(loaded));
     }
 }
 
@@ -1599,33 +1782,52 @@ fn resolve_snapshot_reference_path(
     snapshot.is_file(&path).then_some(path)
 }
 
-fn resolve_snapshot_spec_references(
+fn follow_snapshot_load_spec(
+    spec: &mut Spec,
+    snapshot: &DirectorySnapshot,
+    files: &HashMap<Arc<str>, PathBuf>,
+    stack: &mut Vec<PathBuf>,
+    follow_path: bool,
+) -> anyhow::Result<()> {
+    let should_follow = match &spec.load_spec {
+        Some(LoadSpec::Inline(_)) => true,
+        Some(LoadSpec::Path(_)) => follow_path,
+        None => false,
+    };
+    if !should_follow {
+        return Ok(());
+    }
+    let Some(load_spec) = spec.load_spec.take() else {
+        return Ok(());
+    };
+    let target = match load_spec {
+        LoadSpec::Path(reference) => resolve_snapshot_reference_path(snapshot, files, &reference),
+        LoadSpec::Inline(target) => {
+            replace_spec_with_loaded(spec, *target);
+            None
+        },
+    };
+    if let Some(target_path) = target {
+        let already_loading = stack.iter().any(|path| path == &target_path);
+        if !already_loading {
+            let loaded = load_snapshot_file_inner(snapshot, &target_path, files, stack)?;
+            replace_spec_with_loaded(spec, loaded);
+        }
+    }
+    spec.meta.ai_resolved_reference = true;
+    Ok(())
+}
+
+fn resolve_snapshot_unentered_descendants(
     spec: &mut Spec,
     snapshot: &DirectorySnapshot,
     files: &HashMap<Arc<str>, PathBuf>,
     stack: &mut Vec<PathBuf>,
 ) -> anyhow::Result<()> {
-    let load_spec = spec.load_spec.take();
-    if let Some(load_spec) = load_spec {
-        let target = match load_spec {
-            LoadSpec::Path(reference) => resolve_snapshot_reference_path(snapshot, files, &reference),
-            LoadSpec::Inline(target) => {
-                replace_spec_with_loaded(spec, *target);
-                None
-            },
-        };
-        if let Some(target_path) = target {
-            let already_loading = stack.iter().any(|path| path == &target_path);
-            if !already_loading {
-                let loaded = load_snapshot_file_inner(snapshot, &target_path, files, stack)?;
-                replace_spec_with_loaded(spec, loaded);
-            }
-        }
-        spec.meta.ai_resolved_reference = true;
-    }
-
     for child in &mut spec.subcommands {
-        resolve_snapshot_spec_references(child, snapshot, files, stack)?;
+        let child = Arc::make_mut(child);
+        follow_snapshot_load_spec(child, snapshot, files, stack, false)?;
+        resolve_snapshot_unentered_descendants(child, snapshot, files, stack)?;
     }
     for arg in &mut spec.args {
         resolve_snapshot_arg_spec(arg, snapshot, files, stack)?;
@@ -1641,6 +1843,16 @@ fn resolve_snapshot_spec_references(
     Ok(())
 }
 
+fn resolve_snapshot_spec_references(
+    spec: &mut Spec,
+    snapshot: &DirectorySnapshot,
+    files: &HashMap<Arc<str>, PathBuf>,
+    stack: &mut Vec<PathBuf>,
+) -> anyhow::Result<()> {
+    follow_snapshot_load_spec(spec, snapshot, files, stack, true)?;
+    resolve_snapshot_unentered_descendants(spec, snapshot, files, stack)
+}
+
 fn resolve_snapshot_arg_spec(
     arg: &mut ArgSpec,
     snapshot: &DirectorySnapshot,
@@ -1650,24 +1862,54 @@ fn resolve_snapshot_arg_spec(
     let Some(load_spec) = arg.load_spec.as_ref() else {
         return Ok(());
     };
-    match load_spec {
-        LoadSpec::Path(reference) => {
-            let Some(target_path) = resolve_snapshot_reference_path(snapshot, files, reference) else {
-                return Ok(());
-            };
-            if stack.iter().any(|path| path == &target_path) {
-                return Ok(());
-            }
-            let loaded = load_snapshot_file_inner(snapshot, &target_path, files, stack)?;
-            arg.resolved_spec = Some(Box::new(loaded));
-        },
-        LoadSpec::Inline(target) => {
-            let mut loaded = (**target).clone();
-            resolve_snapshot_spec_references(&mut loaded, snapshot, files, stack)?;
-            arg.resolved_spec = Some(Box::new(loaded));
-        },
+    // Path targets stay on the argument until that token is consumed.
+    // A missing or swapped child then fails that one completion, not the
+    // parent insert. Inline objects are already in this file.
+    if let LoadSpec::Inline(target) = load_spec {
+        let mut loaded = (**target).clone();
+        resolve_snapshot_spec_references(&mut loaded, snapshot, files, stack)?;
+        arg.resolved_spec = Some(Box::new(loaded));
     }
     Ok(())
+}
+
+/// A `LoadSpec::Path` still on this tree was not digest-checked while reading
+/// `path`. Subcommand paths and argument paths both stay unread until the
+/// walker enters that token. Inline objects are already expanded.
+fn contains_deferred_load_spec_path(spec: &Spec) -> bool {
+    spec.subcommands
+        .iter()
+        .any(|child| contains_deferred_load_spec_path(child))
+        || matches!(spec.load_spec, Some(LoadSpec::Path(_)))
+        || spec.args.iter().any(arg_has_deferred_load_spec_path)
+        || spec.options.iter().any(|option| {
+            option.args.iter().any(arg_has_deferred_load_spec_path) || option_has_deferred_load_spec(option)
+        })
+        || spec.persistent_options.iter().any(|option| {
+            option.args.iter().any(arg_has_deferred_load_spec_path) || option_has_deferred_load_spec(option)
+        })
+}
+
+fn option_has_deferred_load_spec(option: &OptionSpec) -> bool {
+    match &option.load_spec {
+        Some(LoadSpec::Path(_)) => true,
+        Some(LoadSpec::Inline(inner)) => contains_deferred_load_spec_path(inner),
+        None => false,
+    }
+}
+
+fn arg_has_deferred_load_spec_path(arg: &ArgSpec) -> bool {
+    if let Some(resolved) = arg.resolved_spec.as_deref() {
+        if contains_deferred_load_spec_path(resolved) {
+            return true;
+        }
+    } else if matches!(arg.load_spec, Some(LoadSpec::Path(_))) {
+        return true;
+    }
+    if let Some(LoadSpec::Inline(inner)) = &arg.load_spec {
+        return contains_deferred_load_spec_path(inner);
+    }
+    false
 }
 
 fn load_snapshot_file_inner(
@@ -1684,6 +1926,17 @@ fn load_snapshot_file_inner(
     let resolved = resolve_snapshot_spec_references(&mut spec, snapshot, files, stack);
     stack.pop();
     resolved?;
+    // The publisher swaps the directory. Parent bytes can match while a
+    // deferred child does not. Caching that parent would keep the old
+    // generation until LRU eviction. Refuse the insert; Engine::complete
+    // reloads before the next request. A stable generation does not stat
+    // or read those children.
+    if contains_deferred_load_spec_path(&spec) && snapshot.generation_changed() {
+        anyhow::bail!(
+            "snapshot generation changed with a deferred loadSpec still unread: {}",
+            path.display()
+        );
+    }
     spec.shrink_to_fit();
     intern_spec_options_local(&mut spec);
     Ok(spec)
@@ -1849,7 +2102,7 @@ mod tests {
             option_arg_separators: Some(Vec::with_capacity(5)),
             ..ParserDirectives::default()
         });
-        spec.subcommands.push(child);
+        spec.subcommands.push(Arc::new(child));
 
         let names = spec.names.clone();
         let option_names = spec.options[0].names.clone();
@@ -2061,6 +2314,40 @@ mod tests {
     }
 
     #[test]
+    fn shared_subcommand_body_is_counted_once() {
+        let child = Arc::new(Spec {
+            names: vec!["child".into()],
+            description: "nested".into(),
+            ..Spec::default()
+        });
+        let empty = Spec::default();
+        let once = Spec {
+            subcommands: vec![Arc::clone(&child)],
+            ..Spec::default()
+        };
+        let shared = Spec {
+            subcommands: vec![Arc::clone(&child), Arc::clone(&child)],
+            ..Spec::default()
+        };
+        let distinct = Spec {
+            subcommands: vec![
+                Arc::clone(&child),
+                Arc::new(Spec {
+                    names: vec!["child".into()],
+                    description: "nested".into(),
+                    ..Spec::default()
+                }),
+            ],
+            ..Spec::default()
+        };
+        let slot = std::mem::size_of::<Arc<Spec>>();
+        let body = once.allocated_bytes() - empty.allocated_bytes() - slot;
+        assert!(body > slot);
+        assert_eq!(shared.allocated_bytes(), once.allocated_bytes() + slot);
+        assert_eq!(distinct.allocated_bytes(), once.allocated_bytes() + slot + body);
+    }
+
+    #[test]
     fn command_names_matching_skips_exact_and_matches_prefix() {
         let dir = tempfile::tempdir().unwrap();
         write_spec(dir.path(), "git", r#"{"names":["git"],"description":"git"}"#);
@@ -2258,6 +2545,218 @@ mod tests {
     }
 
     #[test]
+    fn root_load_spec_still_resolves_while_child_paths_stay_stubs() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "wrapper",
+            r#"{"names":["wrapper"],"description":"wrapper description","loadSpec":"real"}"#,
+        );
+        write_spec(
+            dir.path(),
+            "real",
+            r#"{
+              "names":["real-target"],
+              "description":"from real",
+              "subcommands":[
+                {"names":["child"]},
+                {"names":["later"],"loadSpec":"later"}
+              ]
+            }"#,
+        );
+        write_spec(
+            dir.path(),
+            "later",
+            r#"{"names":["later"],"subcommands":[{"names":["nope"]}]}"#,
+        );
+        fs::write(dir.path().join("index.json"), r#"{"files":{"wrapper":"wrapper.json"}}"#).unwrap();
+
+        let mut registry = Registry::load(dir.path()).expect("load");
+        let wrapper = registry.get("wrapper").expect("wrapper");
+        assert_eq!(wrapper.names, vec!["wrapper"]);
+        assert_eq!(wrapper.description, "from real");
+        assert!(wrapper.find_subcommand("child").is_some());
+        let later = wrapper.find_subcommand("later").expect("later stub");
+        assert!(matches!(later.load_spec, Some(LoadSpec::Path(ref path)) if path == "later"));
+        assert!(later.find_subcommand("nope").is_none());
+        assert!(wrapper.meta.ai_resolved_reference);
+        assert!(!later.meta.ai_resolved_reference);
+        assert!(registry.cached_load_spec("later").is_none());
+    }
+
+    #[test]
+    fn inline_subcommand_expands_at_load_and_path_sibling_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "tool",
+            r#"{
+              "names":["tool"],
+              "subcommands":[
+                {"names":["now"],"loadSpec":{"names":["now"],"description":"expanded","subcommands":[{"names":["inside"]}]}},
+                {"names":["later"],"description":"stub","loadSpec":"later"}
+              ]
+            }"#,
+        );
+        write_spec(
+            dir.path(),
+            "later",
+            r#"{"names":["later"],"subcommands":[{"names":["hidden"]}]}"#,
+        );
+        fs::write(dir.path().join("index.json"), r#"{"files":{"tool":"tool.json"}}"#).unwrap();
+
+        let mut registry = Registry::load(dir.path()).expect("load");
+        let tool = registry.get("tool").expect("tool");
+        let now = tool.find_subcommand("now").expect("now");
+        assert_eq!(now.description, "expanded");
+        assert!(now.find_subcommand("inside").is_some());
+        assert!(now.meta.ai_resolved_reference);
+        let later = tool.find_subcommand("later").expect("later");
+        assert_eq!(later.description, "stub");
+        assert!(matches!(later.load_spec, Some(LoadSpec::Path(ref path)) if path == "later"));
+        assert!(!later.meta.ai_resolved_reference);
+        assert!(later.find_subcommand("hidden").is_none());
+    }
+
+    #[test]
+    fn referenced_load_spec_occupies_one_lru_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..48 {
+            write_spec(dir.path(), &format!("cmd{i}"), &format!(r#"{{"names":["cmd{i}"]}}"#));
+        }
+        fs::create_dir_all(dir.path().join("gcloud")).unwrap();
+        fs::write(
+            dir.path().join("gcloud/compute.json"),
+            r#"{"names":["compute"],"subcommands":[{"names":["instances"]}]}"#,
+        )
+        .unwrap();
+        let mut files = String::from("{\"files\":{");
+        for i in 0..48 {
+            if i > 0 {
+                files.push(',');
+            }
+            files.push_str(&format!("\"cmd{i}\":\"cmd{i}.json\""));
+        }
+        files.push_str("}}");
+        fs::write(dir.path().join("index.json"), files).unwrap();
+        let mut registry = Registry::load(dir.path()).expect("load");
+        for i in 0..48 {
+            assert!(registry.get(&format!("cmd{i}")).is_some());
+        }
+        assert_eq!(registry.loaded_spec_count(), 48);
+        let compute = registry.load_referenced_spec("gcloud/compute").expect("compute");
+        assert!(compute.find_subcommand("instances").is_some());
+        assert_eq!(registry.loaded_spec_count(), 48);
+        assert!(!registry.is_cached("cmd0"));
+        assert!(registry.is_cached("cmd1"));
+        assert!(registry.cached_load_spec("gcloud/compute").is_some());
+        assert!(!registry.is_cached("compute"));
+        assert!(
+            registry
+                .command_names_matching("")
+                .iter()
+                .all(|(name, _)| name != "compute")
+        );
+    }
+
+    #[test]
+    fn referenced_command_file_shares_its_lru_entry_unless_overlaid() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "git",
+            r#"{"names":["git"],"subcommands":[{"names":["status"]}]}"#,
+        );
+        write_spec(
+            dir.path(),
+            "host",
+            r#"{"names":["host"],"subcommands":[{"names":["git"],"loadSpec":"git"}]}"#,
+        );
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{"files":{"git":"git.json","host":"host.json"}}"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).expect("load");
+        let host = registry.get_arc("host").expect("host");
+        let mut tokens = vec!["host".to_string(), "git".to_string()];
+        let walked = crate::lookup::resolve_context(host, &mut tokens, true, "", "", Some(&mut registry));
+        assert!(walked.spec.find_subcommand("status").is_some());
+        assert_eq!(walked.spec.names, vec!["git"]);
+        assert_eq!(registry.loaded_spec_count(), 2);
+        assert!(registry.cached_load_spec("git").is_none());
+
+        let overlay = dir.path().join("overlay");
+        fs::create_dir(&overlay).unwrap();
+        fs::write(
+            overlay.join("git.json"),
+            r#"{"names":["git"],"description":"overlay","subcommands":[{"names":["from-overlay"]}]}"#,
+        )
+        .unwrap();
+        registry.overlay_specs_dir(&overlay, OverlayMode::Replace);
+        let host = registry.get_arc("host").expect("host");
+        let mut tokens = vec!["host".to_string(), "git".to_string()];
+        let walked = crate::lookup::resolve_context(host, &mut tokens, true, "", "", Some(&mut registry));
+        assert!(walked.spec.find_subcommand("status").is_some());
+        assert!(walked.spec.find_subcommand("from-overlay").is_none());
+        assert_eq!(registry.get("git").expect("overlay").description, "overlay");
+    }
+
+    #[test]
+    fn command_name_load_spec_follows_the_mapped_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("nested")).unwrap();
+        fs::write(
+            dir.path().join("nested/alias.json"),
+            r#"{"names":["alias-target"],"subcommands":[{"names":["status"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("alias.json"),
+            r#"{"names":["decoy"],"subcommands":[{"names":["decoy"]}]}"#,
+        )
+        .unwrap();
+        write_spec(
+            dir.path(),
+            "host",
+            r#"{"names":["host"],"subcommands":[{"names":["alias"],"loadSpec":"alias"}]}"#,
+        );
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{"files":{"alias":"nested/alias.json","host":"host.json"}}"#,
+        )
+        .unwrap();
+
+        let mut registry = Registry::load(dir.path()).expect("load");
+        let host = registry.get_arc("host").expect("host");
+        let mut tokens = vec!["host".to_string(), "alias".to_string()];
+        let walked = crate::lookup::resolve_context(host, &mut tokens, true, "", "", Some(&mut registry));
+        assert!(walked.spec.find_subcommand("status").is_some());
+        assert!(walked.spec.find_subcommand("decoy").is_none());
+        assert_eq!(walked.spec.names, vec!["alias"]);
+        assert_eq!(registry.loaded_spec_count(), 2);
+        assert!(registry.cached_load_spec("alias").is_none());
+        assert!(registry.cached_load_spec("nested/alias").is_none());
+        assert!(registry.is_cached("alias"));
+
+        let overlay = dir.path().join("overlay");
+        fs::create_dir(&overlay).unwrap();
+        fs::write(
+            overlay.join("alias.json"),
+            r#"{"names":["alias"],"description":"overlay","subcommands":[{"names":["from-overlay"]}]}"#,
+        )
+        .unwrap();
+        registry.overlay_specs_dir(&overlay, OverlayMode::Replace);
+        let host = registry.get_arc("host").expect("host");
+        let mut tokens = vec!["host".to_string(), "alias".to_string()];
+        let walked = crate::lookup::resolve_context(host, &mut tokens, true, "", "", Some(&mut registry));
+        assert!(walked.spec.find_subcommand("status").is_some());
+        assert!(walked.spec.find_subcommand("from-overlay").is_none());
+        assert_eq!(registry.get("alias").expect("overlay").description, "overlay");
+        assert!(registry.cached_load_spec("nested/alias").is_some());
+    }
+
+    #[test]
     fn command_map_loads_versioned_alias_and_hides_nested_implementation_files() {
         let dir = tempfile::tempdir().unwrap();
         write_spec(
@@ -2316,9 +2815,14 @@ mod tests {
         {
             let docker = registry.get("docker").expect("docker");
             let compose = docker.find_subcommand("compose").expect("compose");
-            assert!(compose.find_subcommand("up").is_some());
+            assert!(
+                matches!(compose.load_spec, Some(LoadSpec::Path(ref path)) if path == "docker-compose"),
+                "compose stays a stub until the walker enters it"
+            );
+            assert!(compose.find_subcommand("up").is_none());
             let domains = docker.find_subcommand("domains").expect("domains");
-            assert!(domains.find_subcommand("list").is_some());
+            assert!(matches!(domains.load_spec, Some(LoadSpec::Path(ref path)) if path == "gcloud/domains"));
+            assert!(domains.find_subcommand("list").is_none());
         }
         let heroku = registry.get("heroku").expect("heroku");
         assert!(heroku.find_subcommand("new").is_some());
@@ -2439,21 +2943,31 @@ mod tests {
             let pass = registry.get("pass").expect("pass");
             let grep = pass.find_subcommand("grep").expect("grep");
             assert_eq!(grep.names, vec!["grep"]);
-            assert_eq!(grep.description, "loaded description");
+            assert_eq!(grep.description, "wrapper description");
+            assert!(matches!(grep.load_spec, Some(LoadSpec::Path(ref path)) if path == "grep"));
             assert_eq!(
                 grep.args.iter().map(|arg| arg.name.as_str()).collect::<Vec<_>>(),
-                vec!["pattern", "file"]
+                vec!["pass-name"]
             );
         }
 
-        let chezmoi = registry.get("chezmoi").expect("chezmoi");
+        let chezmoi = registry.get_arc("chezmoi").expect("chezmoi");
         let git = chezmoi.find_subcommand("git").expect("git");
-        assert_eq!(git.names, vec!["git"]);
-        assert_eq!(git.description, "loaded description");
+        assert_eq!(git.description, "wrapper description");
+        assert!(matches!(git.load_spec, Some(LoadSpec::Path(ref path)) if path == "git"));
+
+        let mut tokens = vec!["chezmoi".to_string(), "git".to_string()];
+        let walked = crate::lookup::resolve_context(chezmoi, &mut tokens, true, "", "", Some(&mut registry));
+        assert_eq!(walked.spec.names, vec!["git"]);
+        assert_eq!(walked.spec.description, "loaded description");
         assert_eq!(
-            git.args.iter().map(|arg| arg.name.as_str()).collect::<Vec<_>>(),
+            walked.spec.args.iter().map(|arg| arg.name.as_str()).collect::<Vec<_>>(),
             vec!["command"]
         );
+        let chezmoi = registry.get("chezmoi").expect("chezmoi");
+        let git = chezmoi.find_subcommand("git").expect("git");
+        assert_eq!(git.description, "wrapper description");
+        assert!(git.args.iter().any(|arg| arg.name == "source-dir"));
     }
 
     #[test]
@@ -2478,11 +2992,33 @@ mod tests {
         let mut registry = Registry::load(dir.path()).expect("load");
         let a = registry.get("a").expect("a");
         let b = a.find_subcommand("b").expect("b");
-        assert!(b.find_subcommand("a").is_some());
+        assert!(matches!(b.load_spec, Some(LoadSpec::Path(ref path)) if path == "b"));
+        assert!(b.find_subcommand("a").is_none());
         assert!(a.find_subcommand("missing").is_some());
         assert!(a.args[0].resolved_spec.is_none());
-        let cycle = a.args[1].resolved_spec.as_deref().expect("cycle target loads once");
-        assert!(cycle.args[0].resolved_spec.is_none());
+        assert!(a.args[1].resolved_spec.is_none());
+        assert!(matches!(a.args[1].load_spec, Some(LoadSpec::Path(ref path)) if path == "b"));
+
+        let a_arc = registry.get_arc("a").expect("a");
+        let mut tokens = vec!["a".to_string(), "missing-value".to_string(), "cycle-value".to_string()];
+        let walked = crate::lookup::resolve_context(a_arc, &mut tokens, true, "", "", Some(&mut registry));
+        assert_eq!(walked.spec.names, vec!["b"]);
+        assert!(walked.spec.find_subcommand("a").is_some());
+        assert!(walked.spec.args[0].resolved_spec.is_none());
+        assert!(registry.is_cached("b"));
+        let a_after = registry.get("a").expect("a");
+        assert!(a_after.args[1].resolved_spec.is_none());
+
+        let a_arc = registry.get_arc("a").expect("a");
+        let mut tokens = vec![
+            "a".to_string(),
+            "missing-value".to_string(),
+            "cycle-value".to_string(),
+            "back".to_string(),
+        ];
+        let walked = crate::lookup::resolve_context(a_arc, &mut tokens, true, "", "", Some(&mut registry));
+        assert_eq!(walked.spec.names, vec!["a"]);
+        assert!(walked.spec.find_subcommand("b").is_some());
     }
 
     #[cfg(unix)]
@@ -2493,6 +3029,58 @@ mod tests {
             fs::write(
                 root.join("demo.json"),
                 r#"{"names":["demo"],"subcommands":[{"names":["child"],"loadSpec":"nested"}]}"#,
+            )
+            .unwrap();
+            fs::write(
+                root.join("nested.json"),
+                serde_json::json!({
+                    "names": ["nested"],
+                    "description": nested_description,
+                })
+                .to_string(),
+            )
+            .unwrap();
+            fs::write(root.join("plain.json"), r#"{"names":["plain"],"description":"same"}"#).unwrap();
+            fs::write(
+                root.join("index.json"),
+                r#"{"files":{"demo":"demo.json","plain":"plain.json"}}"#,
+            )
+            .unwrap();
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let generation_a = root.path().join("generation-a");
+        let generation_b = root.path().join("generation-b");
+        write_generation(&generation_a, "generation A");
+        write_generation(&generation_b, "generation B");
+        let canonical = root.path().join("specs-ir");
+        let backup = root.path().join("backup");
+        fs::rename(&generation_a, &canonical).unwrap();
+        let mut registry = Registry::load(&canonical).expect("generation A registry");
+
+        // The parent bytes are identical, but its nested loadSpec differs.
+        // Loading the parent no longer parses that child. Caching the stub
+        // anyway would keep this generation until LRU eviction, so `get`
+        // fails closed. A file with no deferred path still loads when its
+        // own bytes match.
+        fs::rename(&canonical, &backup).unwrap();
+        fs::rename(&generation_b, &canonical).unwrap();
+        assert!(registry.get("demo").is_none());
+        assert!(!registry.is_cached("demo"));
+        assert!(registry.cached_load_spec("nested").is_none());
+        let plain = registry.get("plain").expect("identical file with no deferred loadSpec");
+        assert_eq!(plain.description, "same");
+        assert!(registry.needs_refresh());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn changed_argument_load_spec_does_not_cache_parent() {
+        fn write_generation(root: &Path, nested_description: &str) {
+            fs::create_dir_all(root).unwrap();
+            fs::write(
+                root.join("demo.json"),
+                r#"{"names":["demo"],"args":[{"name":"input","loadSpec":"nested"}]}"#,
             )
             .unwrap();
             fs::write(
@@ -2516,14 +3104,11 @@ mod tests {
         let backup = root.path().join("backup");
         fs::rename(&generation_a, &canonical).unwrap();
         let mut registry = Registry::load(&canonical).expect("generation A registry");
-
-        // The parent bytes are identical, but its nested loadSpec differs.
-        // Returning and caching the parent without that child would expose a
-        // partial generation until LRU eviction or a manual cache clear.
         fs::rename(&canonical, &backup).unwrap();
         fs::rename(&generation_b, &canonical).unwrap();
         assert!(registry.get("demo").is_none());
         assert!(!registry.is_cached("demo"));
+        assert!(registry.cached_load_spec("nested").is_none());
         assert!(registry.needs_refresh());
     }
 
@@ -2551,15 +3136,30 @@ mod tests {
         );
 
         let mut registry = Registry::load(dir.path()).expect("load");
-        let tool = registry.get("tool").expect("tool");
-        let arg_spec = tool.args[0].resolved_spec.as_deref().expect("argument target");
-        assert!(arg_spec.find_subcommand("list").is_some());
-        let option_arg_spec = tool.options[0].args[0]
-            .resolved_spec
-            .as_deref()
-            .expect("option argument target");
-        assert!(option_arg_spec.find_subcommand("show").is_some());
-        assert!(matches!(tool.args[0].load_spec, Some(LoadSpec::Path(ref path)) if path == "arg-target"));
+        {
+            let tool = registry.get("tool").expect("tool");
+            assert!(tool.args[0].resolved_spec.is_none());
+            assert!(tool.options[0].args[0].resolved_spec.is_none());
+            assert!(matches!(tool.args[0].load_spec, Some(LoadSpec::Path(ref path)) if path == "arg-target"));
+            assert!(
+                matches!(tool.options[0].args[0].load_spec, Some(LoadSpec::Path(ref path)) if path == "option-target")
+            );
+        }
+        assert!(!registry.is_cached("arg-target"));
+        assert!(!registry.is_cached("option-target"));
+
+        let tool = registry.get_arc("tool").expect("tool");
+        let mut typing = vec!["tool".to_string(), "ds".to_string()];
+        let _typing = crate::lookup::resolve_context(tool, &mut typing, false, "ds", "ds", Some(&mut registry));
+        assert!(!registry.is_cached("arg-target"));
+
+        let tool = registry.get_arc("tool").expect("tool");
+        let mut entered = vec!["tool".to_string(), "ds".to_string()];
+        let walked = crate::lookup::resolve_context(tool, &mut entered, true, "", "", Some(&mut registry));
+        assert!(walked.spec.find_subcommand("list").is_some());
+        assert!(registry.is_cached("arg-target"));
+        assert!(!registry.is_cached("option-target"));
+        assert!(registry.get("tool").expect("tool").args[0].resolved_spec.is_none());
     }
 
     #[test]
@@ -2581,5 +3181,299 @@ mod tests {
         assert!(loaded.find_subcommand("list").is_some());
         let resolved = dscl.args[0].resolved_spec.as_deref().expect("resolved inline loadSpec");
         assert!(resolved.find_subcommand("list").is_some());
+    }
+
+    #[derive(Clone)]
+    struct WarnCounter {
+        hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        needle: &'static str,
+    }
+
+    struct WarnVisitor<'a> {
+        counter: &'a WarnCounter,
+    }
+
+    impl tracing::field::Visit for WarnVisitor<'_> {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" && format!("{value:?}").contains(self.counter.needle) {
+                self.counter.hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+            if field.name() == "message" && value.contains(self.counter.needle) {
+                self.counter.hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+    }
+
+    impl tracing::Subscriber for WarnCounter {
+        fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+            *metadata.level() <= tracing::Level::WARN
+        }
+
+        fn register_callsite(&self, _: &'static tracing::Metadata<'static>) -> tracing::subscriber::Interest {
+            tracing::subscriber::Interest::sometimes()
+        }
+
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+        fn event(&self, event: &tracing::Event<'_>) {
+            event.record(&mut WarnVisitor { counter: self });
+        }
+
+        fn enter(&self, _: &tracing::span::Id) {}
+
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    fn count_load_spec_warns(needle: &'static str, body: impl FnOnce()) -> usize {
+        let counter = WarnCounter {
+            hits: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            needle,
+        };
+        let probe = counter.clone();
+        tracing::subscriber::with_default(counter, || {
+            tracing::callsite::rebuild_interest_cache();
+            body();
+        });
+        probe.hits.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[test]
+    fn missing_subcommand_load_spec_keeps_the_stub_and_warns_once() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "tool",
+            r#"{
+              "names":["tool"],
+              "subcommands":[
+                {"names":["gone"],"description":"kept","loadSpec":"not-present","subcommands":[{"names":["still-here"]}]},
+                {"names":["stay"]}
+              ]
+            }"#,
+        );
+        fs::write(dir.path().join("index.json"), r#"{"files":{"tool":"tool.json"}}"#).unwrap();
+        let mut registry = Registry::load(dir.path()).expect("load");
+        let tool = registry.get_arc("tool").expect("tool");
+        let warns = count_load_spec_warns("loadSpec target missing", || {
+            let mut tokens = vec!["tool".to_string(), "gone".to_string()];
+            let walked = crate::lookup::resolve_context(tool, &mut tokens, true, "", "", Some(&mut registry));
+            assert_eq!(walked.spec.names, vec!["gone"]);
+            assert_eq!(walked.spec.description, "kept");
+            assert!(walked.spec.find_subcommand("still-here").is_some());
+            assert!(walked.spec.find_subcommand("stay").is_none());
+            assert!(!walked.spec.meta.ai_resolved_reference);
+        });
+        assert_eq!(warns, 1);
+        assert!(registry.is_cached("tool"));
+        assert!(registry.cached_load_spec("not-present").is_none());
+        let tool = registry.get("tool").expect("tool");
+        let gone = tool.find_subcommand("gone").expect("stub");
+        assert_eq!(gone.description, "kept");
+        assert!(gone.find_subcommand("still-here").is_some());
+        assert!(matches!(gone.load_spec, Some(LoadSpec::Path(ref path)) if path == "not-present"));
+    }
+
+    #[test]
+    fn corrupt_subcommand_load_spec_keeps_the_stub_and_warns_once() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "tool",
+            r#"{
+              "names":["tool"],
+              "subcommands":[
+                {"names":["broken"],"description":"kept","loadSpec":"broken","subcommands":[{"names":["still-here"]}]}
+              ]
+            }"#,
+        );
+        fs::write(dir.path().join("broken.json"), "{").unwrap();
+        fs::write(dir.path().join("index.json"), r#"{"files":{"tool":"tool.json"}}"#).unwrap();
+        let mut registry = Registry::load(dir.path()).expect("load");
+        let tool = registry.get_arc("tool").expect("tool");
+        let warns = count_load_spec_warns("loadSpec target failed", || {
+            let mut tokens = vec!["tool".to_string(), "broken".to_string()];
+            let walked = crate::lookup::resolve_context(tool, &mut tokens, true, "", "", Some(&mut registry));
+            assert_eq!(walked.spec.names, vec!["broken"]);
+            assert_eq!(walked.spec.description, "kept");
+            assert!(walked.spec.find_subcommand("still-here").is_some());
+            assert!(!walked.spec.meta.ai_resolved_reference);
+        });
+        assert_eq!(warns, 1);
+        assert!(registry.is_cached("tool"));
+        assert!(registry.cached_load_spec("broken").is_none());
+        let tool = registry.get("tool").expect("tool");
+        let broken = tool.find_subcommand("broken").expect("stub");
+        assert!(matches!(broken.load_spec, Some(LoadSpec::Path(ref path)) if path == "broken"));
+        assert!(broken.find_subcommand("still-here").is_some());
+    }
+
+    #[test]
+    fn root_load_spec_cycle_stops_on_the_load_stack() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "wrapper",
+            r#"{"names":["wrapper"],"description":"wrapper description","loadSpec":"a"}"#,
+        );
+        write_spec(
+            dir.path(),
+            "a",
+            r#"{"names":["a"],"description":"from-a","loadSpec":"b"}"#,
+        );
+        write_spec(
+            dir.path(),
+            "b",
+            r#"{"names":["b"],"description":"from-b","loadSpec":"a","subcommands":[{"names":["leaf"]}]}"#,
+        );
+        fs::write(dir.path().join("index.json"), r#"{"files":{"wrapper":"wrapper.json"}}"#).unwrap();
+
+        let mut registry = Registry::load(dir.path()).expect("load");
+        let wrapper = registry.get("wrapper").expect("wrapper");
+        assert_eq!(wrapper.names, vec!["wrapper"]);
+        assert_eq!(wrapper.description, "from-b");
+        assert!(wrapper.find_subcommand("leaf").is_some());
+        assert!(wrapper.meta.ai_resolved_reference);
+        assert!(wrapper.load_spec.is_none());
+        assert!(registry.get("a").is_none());
+        assert!(registry.get("b").is_none());
+        assert!(registry.cached_load_spec("a").is_none());
+        assert!(registry.cached_load_spec("b").is_none());
+    }
+
+    #[test]
+    fn subcommand_load_spec_cycle_reenters_one_file_per_token() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "host",
+            r#"{"names":["host"],"subcommands":[{"names":["a"],"loadSpec":"a"}]}"#,
+        );
+        write_spec(
+            dir.path(),
+            "a",
+            r#"{"names":["a-file"],"description":"from-a","subcommands":[{"names":["b"],"loadSpec":"b"}]}"#,
+        );
+        write_spec(
+            dir.path(),
+            "b",
+            r#"{"names":["b-file"],"description":"from-b","subcommands":[{"names":["a"],"loadSpec":"a"}]}"#,
+        );
+        fs::write(dir.path().join("index.json"), r#"{"files":{"host":"host.json"}}"#).unwrap();
+
+        let mut registry = Registry::load(dir.path()).expect("load");
+        let host = registry.get_arc("host").expect("host");
+        let mut tokens = vec!["host".to_string(), "a".to_string()];
+        let first = crate::lookup::resolve_context(host, &mut tokens, true, "", "", Some(&mut registry));
+        assert_eq!(first.spec.names, vec!["a"]);
+        assert_eq!(first.spec.description, "from-a");
+        assert!(first.spec.find_subcommand("b").is_some());
+        let cached_a = registry.cached_load_spec("a").expect("a file");
+        assert_eq!(registry.loaded_spec_count(), 2);
+
+        let host = registry.get_arc("host").expect("host");
+        let mut tokens = vec!["host".to_string(), "a".to_string(), "b".to_string(), "a".to_string()];
+        let again = crate::lookup::resolve_context(host, &mut tokens, true, "", "", Some(&mut registry));
+        assert_eq!(again.spec.names, vec!["a"]);
+        assert_eq!(again.spec.description, "from-a");
+        assert!(again.spec.find_subcommand("b").is_some());
+        assert!(std::sync::Arc::ptr_eq(
+            &cached_a,
+            &registry.cached_load_spec("a").expect("same a file")
+        ));
+        assert!(registry.cached_load_spec("b").is_some());
+        assert_eq!(registry.loaded_spec_count(), 3);
+        let host = registry.get("host").expect("host");
+        let stub = host.find_subcommand("a").expect("stub");
+        assert!(matches!(stub.load_spec, Some(LoadSpec::Path(ref path)) if path == "a"));
+        assert!(stub.find_subcommand("b").is_none());
+    }
+
+    #[test]
+    fn versioned_spec_loads_only_the_resolved_file_and_defers_its_child() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("heroku")).unwrap();
+        fs::write(
+            dir.path().join("heroku/8.0.0.json"),
+            r#"{
+              "names":["heroku"],
+              "subcommands":[
+                {"names":["old"],"loadSpec":"heroku/old"},
+                {"names":["apps"]}
+              ]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("heroku/old.json"),
+            r#"{"names":["old"],"subcommands":[{"names":["list"]}]}"#,
+        )
+        .unwrap();
+        fs::write(dir.path().join("heroku/8.6.0.json"), "{").unwrap();
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{
+              "completions":["heroku"],
+              "files":{"heroku":"heroku/8.6.0.json"},
+              "versioned":{
+                "heroku":{
+                  "command":["heroku","--version"],
+                  "parse":"after-first-space",
+                  "fallback":"8.6.0",
+                  "files":{"8.0.0":"heroku/8.0.0.json","8.6.0":"heroku/8.6.0.json"}
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let mut registry = Registry::load(dir.path()).expect("load");
+        let _guard = crate::process::mock::install(vec![crate::process::mock::ExecRule {
+            command: Some("heroku".into()),
+            args: Some(vec!["--version".into()]),
+            stdout: "heroku 8.0.1".into(),
+            ..crate::process::mock::ExecRule::default()
+        }]);
+        let spec = registry
+            .get_versioned_arc("heroku", "/", std::time::Duration::from_secs(5))
+            .expect("resolved 8.0.0 file");
+        assert!(spec.find_subcommand("apps").is_some());
+        assert!(spec.find_subcommand("new").is_none());
+        let old = spec.find_subcommand("old").expect("old stub");
+        assert!(matches!(old.load_spec, Some(LoadSpec::Path(ref path)) if path == "heroku/old"));
+        assert!(old.find_subcommand("list").is_none());
+        assert!(registry.cached_versioned_spec("heroku/8.0.0.json").is_some());
+        assert!(registry.cached_versioned_spec("heroku/8.6.0.json").is_none());
+        assert!(registry.cached_load_spec("heroku/old").is_none());
+        assert_eq!(registry.loaded_spec_count(), 0);
+
+        let result = crate::lookup::complete(
+            &mut registry,
+            &crate::runtime::CompleteRequest {
+                buffer: "heroku old ".into(),
+                include_history: false,
+                ..crate::runtime::CompleteRequest::default()
+            },
+        );
+        let names: Vec<_> = result.suggestions.iter().map(|item| item.name.as_str()).collect();
+        assert!(names.contains(&"list"), "{names:?}");
+        assert!(!names.contains(&"apps"), "{names:?}");
+        assert!(registry.cached_load_spec("heroku/old").is_some());
+        assert!(registry.cached_versioned_spec("heroku/8.6.0.json").is_none());
+        assert_eq!(registry.loaded_spec_count(), 1);
+        let spec = registry
+            .cached_versioned_spec("heroku/8.0.0.json")
+            .expect("version file stays put");
+        let old = spec.find_subcommand("old").expect("stub");
+        assert!(matches!(old.load_spec, Some(LoadSpec::Path(ref path)) if path == "heroku/old"));
+        assert!(old.find_subcommand("list").is_none());
     }
 }

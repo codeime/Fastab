@@ -1069,8 +1069,26 @@ fn walk_spec(
                 if let Some(trace) = trace.as_deref_mut() {
                     trace.enter_subcommand(next);
                 }
-                parent = current.clone();
-                current = Arc::new(next.clone());
+                let path_reference = match next.load_spec.as_ref() {
+                    Some(LoadSpec::Path(reference)) => Some(reference.clone()),
+                    _ => None,
+                };
+                parent = Arc::clone(&current);
+                let mut entered = Arc::clone(next);
+                if let Some(reference) = path_reference {
+                    if let Some(registry) = registry.as_deref_mut() {
+                        if let Some(loaded) = registry.load_referenced_spec(&reference) {
+                            // Keep the command-line names. The new node shares
+                            // the loaded file's child Arcs. The cached file and
+                            // the parent stub stay on their own Arcs.
+                            let mut owned = (*entered).clone();
+                            crate::ir::replace_spec_with_loaded(&mut owned, (*loaded).clone());
+                            owned.meta.ai_resolved_reference = true;
+                            entered = Arc::new(owned);
+                        }
+                    }
+                }
+                current = entered;
                 apply_generate_spec(&mut current, tokens);
                 apply_js_load_spec(&mut current, token);
                 index += 1;
@@ -1317,7 +1335,15 @@ fn next_spec_after_arg(registry: Option<&mut Registry>, arg: &ArgSpec, token: &s
             crate::hook_backend::dispatch_load_spec(hook_id, token, &cwd, timeout).map(Arc::new)
         });
     }
-    if arg.load_spec.is_some() {
+    if let Some(LoadSpec::Path(reference)) = &arg.load_spec {
+        let reference = reference.clone();
+        let loaded = registry?.load_referenced_spec(&reference)?;
+        // The loaded file's own names become the new parser root
+        // (`sudo curl` files later tokens under curl). The walk holds that
+        // cached Arc and does not write it back onto the argument.
+        return Some(loaded);
+    }
+    if let Some(LoadSpec::Inline(_)) = &arg.load_spec {
         return arg.resolved_spec.as_deref().map(|spec| Arc::new(spec.clone()));
     }
     if let Some(resolved) = arg.resolved_spec.as_deref() {
@@ -2171,14 +2197,14 @@ pub(crate) fn complete_with_settings(
     // `getAllSuggestions`, which is the chain branch below.
     let suggest_subcommands = context.subcommands_allowed && !only_suggest_args && open_option_chain.is_none();
     let mut suggestions = if suggest_subcommands {
-        let mut subcommands = current.subcommands.clone();
-        subcommands.sort_by(|left, right| cmp_named_names(&left.names, &right.names));
+        let subcommands = sorted_named_refs(&current.subcommands, |spec| spec.names.as_slice());
         collect_named(
             &subcommands,
             |spec| spec.names.as_slice(),
             |spec| spec.description.as_str(),
             |spec| args_hint(&spec.args),
             |spec| &spec.meta,
+            |spec| spec.meta.priority,
             |spec| {
                 spec.meta.should_add_space.unwrap_or_else(|| {
                     should_add_space(&spec.args, spec.requires_subcommand, !spec.subcommands.is_empty())
@@ -2248,14 +2274,14 @@ pub(crate) fn complete_with_settings(
         }
         suggestions.extend(active_suggestions);
     }
-    let mut additional_items = current.additional_suggestions.clone();
-    additional_items.sort_by(|left, right| cmp_named_names(&left.names, &right.names));
+    let additional_items = sorted_named_refs(&current.additional_suggestions, |seed| seed.names.as_slice());
     let mut additional = collect_named(
         &additional_items,
         |seed| seed.names.as_slice(),
         |seed| seed.description.as_str(),
         |seed| seed.args_hint.clone(),
         |seed| &seed.meta,
+        |seed| seed.meta.priority,
         |seed| seed.meta.should_add_space.unwrap_or(false),
         |seed| seed.meta.separator_to_add.clone(),
         |_| false,
@@ -2527,6 +2553,7 @@ fn collect_named<T>(
     description: impl Fn(&T) -> &str,
     hint: impl Fn(&T) -> String,
     meta: impl Fn(&T) -> &SuggestionMeta,
+    priority: impl Fn(&T) -> Option<i64>,
     should_add_space: impl Fn(&T) -> bool,
     separator: impl Fn(&T) -> Option<String>,
     requires_arg: impl Fn(&T) -> bool,
@@ -2578,7 +2605,7 @@ fn collect_named<T>(
                 separator(item),
                 should_add_space(item),
                 metadata.hidden,
-                metadata.priority,
+                priority(item),
                 metadata.icon.clone(),
             )
             .with_primary_name(item_names.first().cloned())
@@ -2599,6 +2626,14 @@ fn cmp_named_names(left: &[String], right: &[String]) -> std::cmp::Ordering {
     let left = left.first().map(String::as_str).unwrap_or_default();
     let right = right.first().map(String::as_str).unwrap_or_default();
     crate::query::cmp_ignore_ascii_case(left, right).then_with(|| left.cmp(right))
+}
+
+/// Sort indexes, then hand out references in that order. Equal names keep
+/// their original relative order because `sort_by` is stable.
+fn sorted_named_refs<T>(items: &[T], names: impl Fn(&T) -> &[String]) -> Vec<&T> {
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    order.sort_by(|&left, &right| cmp_named_names(names(&items[left]), names(&items[right])));
+    order.into_iter().map(|index| &items[index]).collect()
 }
 
 fn option_repetition_limit(option: &OptionSpec) -> Option<f64> {
@@ -2662,30 +2697,26 @@ fn collect_option_suggestions(
     directives: &ParserDirectives,
     public_source: bool,
 ) -> Vec<Suggestion> {
-    let mut options = Vec::new();
-    for option in current
+    let mut options: Vec<&OptionSpec> = current
         .options
         .iter()
         .map(Arc::as_ref)
         .chain(persistent.iter().copied())
-    {
-        if option_is_excluded(option, passed)
-            || option_repetition_limit(option)
-                .is_some_and(|limit| option_repetition_count(option, passed) as f64 >= limit)
-        {
-            continue;
-        }
-        let mut option = option.clone();
-        option.meta.priority = option_priority(&option, passed);
-        options.push(option);
-    }
+        .collect();
     options.sort_by(|left, right| cmp_named_names(&left.names, &right.names));
+    options.retain(|option| {
+        !option_is_excluded(option, passed)
+            && !option_repetition_limit(option)
+                .is_some_and(|limit| option_repetition_count(option, passed) as f64 >= limit)
+    });
     collect_named(
         &options,
         |opt| opt.names.as_slice(),
         |opt| opt.description.as_str(),
         |opt| args_hint(&opt.args),
         |opt| &opt.meta,
+        // Depends-on promotion is a suggestion-row override. The cached option keeps its own priority.
+        |opt| option_priority(opt, passed),
         |opt| {
             opt.meta
                 .should_add_space
@@ -3270,6 +3301,130 @@ mod tests {
                 .iter()
                 .all(|suggestion| suggestion.public_ai_candidate.is_none())
         );
+    }
+
+    #[test]
+    fn public_ai_excludes_unentered_load_spec_stubs_and_entered_replacements() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("gcloud")).unwrap();
+        fs::write(
+            dir.path().join("gcloud.json"),
+            r#"{
+              "names":["gcloud"],
+              "subcommands":[
+                {"names":["compute"],"description":"Compute","loadSpec":"gcloud/compute"},
+                {"names":["sql"],"description":"SQL","loadSpec":"gcloud/sql"},
+                {"names":["config"],"description":"Config","subcommands":[
+                  {"names":["list"],"description":"List"},
+                  {"names":["get"],"description":"Get"}
+                ]},
+                {"names":["auth"],"description":"Auth","subcommands":[
+                  {"names":["login"],"description":"Login"},
+                  {"names":["logout"],"description":"Logout"}
+                ]}
+              ]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("gcloud/compute.json"),
+            r#"{
+              "names":["compute"],
+              "subcommands":[
+                {"names":["instances"],"description":"Instances"},
+                {"names":["disks"],"description":"Disks"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("gcloud/sql.json"),
+            r#"{"names":["sql"],"subcommands":[{"names":["backups"]}]}"#,
+        )
+        .unwrap();
+        fs::write(dir.path().join("index.json"), r#"{"files":{"gcloud":"gcloud.json"}}"#).unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        trusted_fixture(&mut registry);
+        let cwd = dir.path().display().to_string();
+
+        let menu = complete(&mut registry, &public_ai_request("gcloud ", &cwd));
+        assert!(menu.public_ai_context.is_some(), "{menu:?}");
+        for name in ["config", "auth"] {
+            assert!(
+                menu.suggestions
+                    .iter()
+                    .find(|suggestion| suggestion.name == name)
+                    .is_some_and(|suggestion| suggestion.public_ai_candidate.is_some()),
+                "{name} was not marked: {:?}",
+                menu.suggestions
+            );
+        }
+        for name in ["compute", "sql"] {
+            assert!(
+                menu.suggestions
+                    .iter()
+                    .find(|suggestion| suggestion.name == name)
+                    .is_some_and(|suggestion| suggestion.public_ai_candidate.is_none()),
+                "{name} was marked from a loadSpec stub: {:?}",
+                menu.suggestions
+            );
+        }
+        assert!(registry.cached_load_spec("gcloud/compute").is_none());
+        assert!(registry.cached_load_spec("gcloud/sql").is_none());
+
+        let typing = complete(&mut registry, &public_ai_request("gcloud comp", &cwd));
+        assert!(
+            typing
+                .suggestions
+                .iter()
+                .find(|suggestion| suggestion.name == "compute")
+                .is_some_and(|suggestion| suggestion.public_ai_candidate.is_none())
+        );
+        assert!(registry.cached_load_spec("gcloud/compute").is_none());
+
+        let config = complete(&mut registry, &public_ai_request("gcloud config ", &cwd));
+        assert!(config.public_ai_context.is_some(), "{config:?}");
+        for name in ["list", "get"] {
+            assert!(
+                config
+                    .suggestions
+                    .iter()
+                    .find(|suggestion| suggestion.name == name)
+                    .is_some_and(|suggestion| suggestion.public_ai_candidate.is_some()),
+                "{name} was not marked: {:?}",
+                config.suggestions
+            );
+        }
+        assert!(registry.cached_load_spec("gcloud/compute").is_none());
+
+        let entered = complete(&mut registry, &public_ai_request("gcloud compute ", &cwd));
+        assert!(entered.public_ai_context.is_none(), "{entered:?}");
+        for name in ["instances", "disks"] {
+            assert!(
+                entered
+                    .suggestions
+                    .iter()
+                    .find(|suggestion| suggestion.name == name)
+                    .is_some_and(|suggestion| suggestion.public_ai_candidate.is_none()),
+                "{name} was marked after a loadSpec: {:?}",
+                entered.suggestions
+            );
+        }
+        let cached = registry.cached_load_spec("gcloud/compute").expect("compute file");
+        assert!(!cached.meta.ai_resolved_reference);
+        assert!(registry.cached_load_spec("gcloud/sql").is_none());
+
+        let root = registry.get_arc("gcloud").expect("gcloud");
+        let mut tokens = vec!["gcloud".to_string(), "compute".to_string()];
+        let walked = resolve_context(root, &mut tokens, true, "", "", Some(&mut registry));
+        assert_eq!(walked.spec.names, vec!["compute"]);
+        assert!(walked.spec.meta.ai_resolved_reference);
+        assert!(!walked.crossed_loaded_spec);
+        assert!(!std::sync::Arc::ptr_eq(&cached, &walked.spec));
+        let gcloud = registry.get("gcloud").expect("gcloud");
+        let stub = gcloud.find_subcommand("compute").expect("stub");
+        assert!(!stub.meta.ai_resolved_reference);
+        assert!(matches!(stub.load_spec, Some(crate::ir::LoadSpec::Path(ref path)) if path == "gcloud/compute"));
     }
 
     #[test]
@@ -4270,6 +4425,519 @@ mod tests {
     }
 
     #[test]
+    fn named_lists_keep_name_order_when_hidden_and_passed_rows_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("sortopt.json"),
+            r#"{
+              "names":["sortopt"],
+              "subcommands":[
+                {"names":["same"],"description":"second"},
+                {"names":["same"],"description":"first"},
+                {"names":["sub-zulu"],"hidden":true},
+                {"names":["sub-beta"]},
+                {"names":["sub-mike"],"hidden":true},
+                {"names":["sub-Beta"]},
+                {"names":["sub-alpha"]}
+              ],
+              "additionalSuggestions":[
+                {"names":["add-zulu"],"hidden":true},
+                {"names":["add-beta"]},
+                {"names":["add-mike"],"hidden":true},
+                {"names":["add-Beta"]},
+                {"names":["add-alpha"]}
+              ],
+              "options":[
+                {"names":["--zulu"],"hidden":true},
+                {"names":["--beta"]},
+                {"names":["--mike"],"hidden":true},
+                {"names":["--Beta"]},
+                {"names":["--alpha"]},
+                {"names":["--one"]}
+              ],
+              "persistentOptions":[{"names":["--delta"]}]
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let menu = context_result(&mut registry, "sortopt ");
+        let names: Vec<_> = menu.suggestions.iter().map(|item| item.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "same",
+                "same",
+                "sub-alpha",
+                "sub-Beta",
+                "sub-beta",
+                "add-alpha",
+                "add-Beta",
+                "add-beta",
+                "--alpha",
+                "--Beta",
+                "--beta",
+                "--delta",
+                "--one",
+            ]
+        );
+        let same_descriptions: Vec<_> = menu
+            .suggestions
+            .iter()
+            .filter(|item| item.name == "same")
+            .map(|item| item.description.as_str())
+            .collect();
+        assert_eq!(same_descriptions, ["second", "first"]);
+
+        let passed = context_result(&mut registry, "sortopt --one ");
+        let names: Vec<_> = passed.suggestions.iter().map(|item| item.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "same",
+                "same",
+                "sub-alpha",
+                "sub-Beta",
+                "sub-beta",
+                "add-alpha",
+                "add-Beta",
+                "add-beta",
+                "--alpha",
+                "--Beta",
+                "--beta",
+                "--delta",
+            ]
+        );
+
+        let revealed = context_result(&mut registry, "sortopt sub-zulu");
+        assert!(
+            revealed
+                .suggestions
+                .iter()
+                .any(|item| item.name == "sub-zulu" && item.kind == "subcommand")
+        );
+        assert!(
+            revealed
+                .suggestions
+                .iter()
+                .all(|item| item.name == "sub-zulu" || item.kind == "auto-execute")
+        );
+        let revealed_option = context_result(&mut registry, "sortopt --zulu");
+        assert!(
+            revealed_option
+                .suggestions
+                .iter()
+                .any(|item| item.name == "--zulu" && item.kind == "option")
+        );
+    }
+
+    #[test]
+    fn promoted_option_priority_stays_off_the_cached_spec() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("tool.json"),
+            r#"{
+              "names":["tool"],
+              "options":[
+                {"names":["--one","-o"],"dependsOn":["--needed"]},
+                {"names":["--needed"],"priority":40},
+                {"names":["--alpha"],"priority":40}
+              ]
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let before = registry.get_arc("tool").expect("tool");
+        let needed_before = before
+            .options
+            .iter()
+            .find(|option| option.names.iter().any(|name| name == "--needed"))
+            .unwrap()
+            .clone();
+        let alpha_before = before
+            .options
+            .iter()
+            .find(|option| option.names.iter().any(|name| name == "--alpha"))
+            .unwrap()
+            .clone();
+        assert_eq!(needed_before.meta.priority, Some(40));
+
+        let menu = context_result(&mut registry, "tool ");
+        assert_eq!(
+            menu.suggestions
+                .iter()
+                .find(|item| item.name == "--needed")
+                .map(|item| item.priority),
+            Some(40)
+        );
+        assert_eq!(
+            menu.suggestions
+                .iter()
+                .find(|item| item.name == "--alpha")
+                .map(|item| item.priority),
+            Some(40)
+        );
+
+        let result = context_result(&mut registry, "tool -o ");
+        assert_eq!(
+            result
+                .suggestions
+                .iter()
+                .find(|item| item.name == "--needed")
+                .map(|item| item.priority),
+            Some(75)
+        );
+        assert_eq!(
+            result
+                .suggestions
+                .iter()
+                .find(|item| item.name == "--alpha")
+                .map(|item| item.priority),
+            Some(40)
+        );
+
+        let after = registry.get_arc("tool").expect("tool");
+        assert!(Arc::ptr_eq(&before, &after));
+        let needed_after = after
+            .options
+            .iter()
+            .find(|option| option.names.iter().any(|name| name == "--needed"))
+            .unwrap();
+        let alpha_after = after
+            .options
+            .iter()
+            .find(|option| option.names.iter().any(|name| name == "--alpha"))
+            .unwrap();
+        assert!(Arc::ptr_eq(&needed_before, needed_after));
+        assert!(Arc::ptr_eq(&alpha_before, alpha_after));
+        assert_eq!(needed_after.meta.priority, Some(40));
+        assert_eq!(alpha_after.meta.priority, Some(40));
+    }
+
+    #[test]
+    fn plain_subcommand_descent_shares_the_cached_child_arc() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("git.json"),
+            r#"{
+              "names":["git"],
+              "subcommands":[
+                {"names":["checkout","co"],"description":"Switch","subcommands":[{"names":["orphan"]}]},
+                {"names":["status"]}
+              ]
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let git = registry.get_arc("git").expect("git");
+        let checkout = Arc::clone(git.find_subcommand("checkout").expect("checkout"));
+        let orphan = Arc::clone(checkout.find_subcommand("orphan").expect("orphan"));
+
+        let (mut tokens, trailing) = tokenize("git checkout orphan ");
+        let context = resolve_context(Arc::clone(&git), &mut tokens, trailing, "", "", Some(&mut registry));
+        assert!(Arc::ptr_eq(&orphan, &context.spec));
+        assert!(Arc::ptr_eq(&checkout, &context.help_parent));
+
+        let git_after = registry.get_arc("git").expect("git");
+        assert!(Arc::ptr_eq(&git, &git_after));
+        assert!(Arc::ptr_eq(
+            &checkout,
+            git_after.find_subcommand("checkout").expect("checkout")
+        ));
+        assert!(Arc::ptr_eq(
+            &orphan,
+            checkout.find_subcommand("orphan").expect("orphan")
+        ));
+    }
+
+    #[test]
+    fn path_load_spec_descent_writes_a_new_arc_and_shares_loaded_children() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("tool.json"),
+            r#"{
+              "names":["tool"],
+              "subcommands":[
+                {"names":["child"],"description":"wrapper","loadSpec":"child"},
+                {"names":["keep"],"description":"sibling"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("child.json"),
+            r#"{
+              "names":["child-target"],
+              "description":"loaded",
+              "subcommands":[{"names":["inside"],"description":"nested"}]
+            }"#,
+        )
+        .unwrap();
+        fs::write(dir.path().join("index.json"), r#"{"files":{"tool":"tool.json"}}"#).unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let tool = registry.get_arc("tool").expect("tool");
+        let stub = Arc::clone(tool.find_subcommand("child").expect("stub"));
+        let keep = Arc::clone(tool.find_subcommand("keep").expect("keep"));
+
+        let (mut tokens, trailing) = tokenize("tool child ");
+        let context = resolve_context(Arc::clone(&tool), &mut tokens, trailing, "", "", Some(&mut registry));
+        let cached = registry.cached_load_spec("child").expect("child file");
+        let inside = Arc::clone(cached.find_subcommand("inside").expect("inside"));
+
+        assert!(!Arc::ptr_eq(&stub, &context.spec));
+        assert!(!Arc::ptr_eq(&cached, &context.spec));
+        assert!(Arc::ptr_eq(&tool, &context.help_parent));
+        assert_eq!(context.spec.names, vec!["child"]);
+        assert_eq!(context.spec.description, "loaded");
+        assert!(context.spec.meta.ai_resolved_reference);
+        assert!(context.spec.load_spec.is_none());
+        assert!(Arc::ptr_eq(
+            &inside,
+            context.spec.find_subcommand("inside").expect("walk inside")
+        ));
+        assert!(!inside.meta.ai_resolved_reference);
+
+        let tool_after = registry.get_arc("tool").expect("tool");
+        let cached_after = registry.cached_load_spec("child").expect("child file");
+        assert!(Arc::ptr_eq(&tool, &tool_after));
+        assert!(Arc::ptr_eq(&stub, tool_after.find_subcommand("child").expect("stub")));
+        assert!(Arc::ptr_eq(&keep, tool_after.find_subcommand("keep").expect("keep")));
+        assert!(Arc::ptr_eq(&cached, &cached_after));
+        assert_eq!(stub.description, "wrapper");
+        assert!(stub.find_subcommand("inside").is_none());
+        assert!(!stub.meta.ai_resolved_reference);
+        assert!(matches!(stub.load_spec, Some(crate::ir::LoadSpec::Path(ref path)) if path == "child"));
+        assert_eq!(cached.names, vec!["child-target"]);
+        assert_eq!(cached.description, "loaded");
+        assert!(!cached.meta.ai_resolved_reference);
+        assert!(Arc::ptr_eq(
+            &inside,
+            cached_after.find_subcommand("inside").expect("cached inside")
+        ));
+        assert!(registry.cached_load_spec("keep").is_none());
+    }
+
+    #[test]
+    fn argument_load_spec_holds_the_cached_arc() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("tool.json"),
+            r#"{
+              "names":["tool"],
+              "args":[{"name":"command","loadSpec":"curl"}]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("curl.json"),
+            r#"{
+              "names":["curl"],
+              "description":"transfer",
+              "subcommands":[{"names":["inside"],"description":"nested"}]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{"files":{"tool":"tool.json","curl":"curl.json"}}"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let tool = registry.get_arc("tool").expect("tool");
+        assert!(tool.args[0].resolved_spec.is_none());
+        assert!(!registry.is_cached("curl"));
+
+        let (mut tokens, trailing) = tokenize("tool curl ");
+        let context = resolve_context(Arc::clone(&tool), &mut tokens, trailing, "", "", Some(&mut registry));
+        let cached = registry.get_arc("curl").expect("curl");
+        let inside = Arc::clone(cached.find_subcommand("inside").expect("inside"));
+
+        assert!(context.crossed_loaded_spec);
+        assert!(Arc::ptr_eq(&cached, &context.spec));
+        assert!(Arc::ptr_eq(&tool, &context.help_parent));
+        assert_eq!(context.spec.names, vec!["curl"]);
+        assert_eq!(context.spec.description, "transfer");
+        assert!(!context.spec.meta.ai_resolved_reference);
+        assert!(Arc::ptr_eq(
+            &inside,
+            context.spec.find_subcommand("inside").expect("walk inside")
+        ));
+        assert!(registry.cached_load_spec("curl").is_none());
+        assert!(registry.is_cached("curl"));
+
+        let tool_after = registry.get_arc("tool").expect("tool");
+        let cached_after = registry.get_arc("curl").expect("curl");
+        assert!(Arc::ptr_eq(&tool, &tool_after));
+        assert!(Arc::ptr_eq(&cached, &cached_after));
+        assert!(tool_after.args[0].resolved_spec.is_none());
+        assert!(matches!(
+            tool_after.args[0].load_spec,
+            Some(crate::ir::LoadSpec::Path(ref path)) if path == "curl"
+        ));
+        assert_eq!(cached_after.description, "transfer");
+        assert!(!cached_after.meta.ai_resolved_reference);
+        assert!(Arc::ptr_eq(
+            &inside,
+            cached_after.find_subcommand("inside").expect("cached inside")
+        ));
+    }
+
+    #[test]
+    fn generate_spec_replaces_the_walk_root_and_shares_static_children() {
+        let dir = tempfile::tempdir().unwrap();
+        let (hook_id, hook_entry) = crate::hook_backend::test_typed_entry(
+            "git#generate#0",
+            "generateSpec",
+            serde_json::json!({
+                "op": "spec-object",
+                "fields": [
+                    {"key": "name", "value": {"op": "string", "value": "git"}},
+                    {"key": "subcommands", "value": {"op": "array", "items": [{
+                        "op": "spec-object",
+                        "fields": [
+                            {"key": "name", "value": {"op": "string", "value": "changelog"}},
+                            {"key": "description", "value": {"op": "string", "value": "Generated entry"}}
+                        ]
+                    }]}}
+                ]
+            }),
+        );
+        fs::write(
+            dir.path().join("git.json"),
+            r#"{
+              "names":["git"],
+              "description":"source",
+              "jsGenerateSpec":"git#generate#0",
+              "subcommands":[
+                {"names":["checkout"],"description":"Switch branches"},
+                {"names":["cherry-pick"],"description":"Apply commits"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let git = registry.get_arc("git").expect("git");
+        let checkout = Arc::clone(git.find_subcommand("checkout").expect("checkout"));
+        let cherry_pick = Arc::clone(git.find_subcommand("cherry-pick").expect("cherry-pick"));
+        assert!(!checkout.meta.ai_generated);
+        let native = crate::hook_backend::test_native_hooks(vec![(hook_id, hook_entry)]);
+        let _bound = crate::hook_backend::bind_native(Arc::new(native));
+        let cwd = dir.path().display().to_string();
+
+        let (mut tokens, trailing) = tokenize("git ");
+        let context = crate::hook_backend::enter_context(&cwd, &crate::hook_types::ShellContext::default(), || {
+            resolve_context(Arc::clone(&git), &mut tokens, trailing, "", "", Some(&mut registry))
+        });
+
+        assert!(!Arc::ptr_eq(&git, &context.spec));
+        assert_eq!(context.spec.names, vec!["git"]);
+        assert!(context.spec.find_subcommand("changelog").is_some());
+        assert!(context.spec.find_subcommand("changelog").unwrap().meta.ai_generated);
+        assert!(Arc::ptr_eq(
+            &checkout,
+            context.spec.find_subcommand("checkout").expect("walk checkout")
+        ));
+        assert!(Arc::ptr_eq(
+            &cherry_pick,
+            context.spec.find_subcommand("cherry-pick").expect("walk cherry-pick")
+        ));
+        assert!(!checkout.meta.ai_generated);
+        assert!(!context.spec.meta.ai_generated);
+
+        let (mut tokens, trailing) = tokenize("git checkout ");
+        let entered = crate::hook_backend::enter_context(&cwd, &crate::hook_types::ShellContext::default(), || {
+            resolve_context(Arc::clone(&git), &mut tokens, trailing, "", "", Some(&mut registry))
+        });
+        assert!(Arc::ptr_eq(&checkout, &entered.spec));
+        assert!(!Arc::ptr_eq(&git, &entered.help_parent));
+        assert!(entered.help_parent.find_subcommand("changelog").is_some());
+        assert!(!checkout.meta.ai_generated);
+
+        let git_after = registry.get_arc("git").expect("git");
+        assert!(Arc::ptr_eq(&git, &git_after));
+        assert!(git_after.find_subcommand("changelog").is_none());
+        assert_eq!(git_after.description, "source");
+        assert_eq!(git_after.js_generate_spec.as_deref(), Some("git#generate#0"));
+        assert!(Arc::ptr_eq(
+            &checkout,
+            git_after.find_subcommand("checkout").expect("cached checkout")
+        ));
+        assert_eq!(checkout.description, "Switch branches");
+        assert!(!checkout.meta.ai_generated);
+    }
+
+    #[test]
+    fn js_load_spec_on_a_subcommand_replaces_only_the_walk_arc() {
+        let dir = tempfile::tempdir().unwrap();
+        let (hook_id, hook_entry) = crate::hook_backend::test_typed_entry(
+            "tool#load#0",
+            "loadSpec",
+            serde_json::json!({
+                "op": "spec-object",
+                "fields": [
+                    {"key": "name", "value": {"op": "string", "value": "loaded"}},
+                    {"key": "description", "value": {"op": "string", "value": "from hook"}},
+                    {"key": "subcommands", "value": {"op": "array", "items": [{
+                        "op": "spec-object",
+                        "fields": [
+                            {"key": "name", "value": {"op": "string", "value": "from-hook"}},
+                            {"key": "description", "value": {"op": "string", "value": "hooked"}}
+                        ]
+                    }]}}
+                ]
+            }),
+        );
+        fs::write(
+            dir.path().join("tool.json"),
+            r#"{
+              "names":["tool"],
+              "subcommands":[{
+                "names":["child"],
+                "description":"stub",
+                "jsLoadSpec":"tool#load#0",
+                "subcommands":[{"names":["static-child"],"description":"stays"}]
+              }]
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let tool = registry.get_arc("tool").expect("tool");
+        let stub = Arc::clone(tool.find_subcommand("child").expect("stub"));
+        let static_child = Arc::clone(stub.find_subcommand("static-child").expect("static-child"));
+        let native = crate::hook_backend::test_native_hooks(vec![(hook_id, hook_entry)]);
+        let _bound = crate::hook_backend::bind_native(Arc::new(native));
+        let cwd = dir.path().display().to_string();
+
+        let (mut tokens, trailing) = tokenize("tool child ");
+        let context = crate::hook_backend::enter_context(&cwd, &crate::hook_types::ShellContext::default(), || {
+            resolve_context(Arc::clone(&tool), &mut tokens, trailing, "", "", Some(&mut registry))
+        });
+
+        assert!(!Arc::ptr_eq(&stub, &context.spec));
+        assert!(Arc::ptr_eq(&tool, &context.help_parent));
+        assert_eq!(context.spec.names, vec!["child"]);
+        assert_eq!(context.spec.description, "from hook");
+        assert!(context.spec.find_subcommand("from-hook").unwrap().meta.ai_generated);
+        assert!(Arc::ptr_eq(
+            &static_child,
+            context.spec.find_subcommand("static-child").expect("walk static")
+        ));
+        assert!(!static_child.meta.ai_generated);
+
+        let tool_after = registry.get_arc("tool").expect("tool");
+        assert!(Arc::ptr_eq(&tool, &tool_after));
+        assert!(Arc::ptr_eq(&stub, tool_after.find_subcommand("child").expect("stub")));
+        assert_eq!(stub.description, "stub");
+        assert_eq!(stub.js_load_spec.as_deref(), Some("tool#load#0"));
+        assert!(stub.find_subcommand("from-hook").is_none());
+        assert!(Arc::ptr_eq(
+            &static_child,
+            stub.find_subcommand("static-child").expect("cached static")
+        ));
+        assert_eq!(static_child.description, "stays");
+        assert!(!static_child.meta.ai_generated);
+    }
+
+    #[test]
     fn option_state_filters_exclusive_repeatable_and_promotes_dependencies() {
         let (_dir, mut registry) = load_option_state_spec();
         let result = context_result(&mut registry, "tool -o ");
@@ -4309,6 +4977,146 @@ mod tests {
         assert!(!result.suggestions.iter().any(|s| s.name == "--one"));
     }
 
+    #[test]
+    fn entered_load_spec_keeps_wrapper_names_and_merges_persistent_options_and_directives() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("tool.json"),
+            r#"{
+              "names":["tool"],
+              "parserDirectives":{
+                "optionsMustPrecedeArguments":true,
+                "flagsArePosixNoncompliant":true
+              },
+              "persistentOptions":[{"names":["--global"],"description":"Global"}],
+              "subcommands":[
+                {"names":["child"],"description":"wrapper","loadSpec":"child"},
+                {"names":["keep"],"description":"wrapper","loadSpec":"keep"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("child.json"),
+            r#"{
+              "names":["child-target"],
+              "description":"loaded",
+              "parserDirectives":{"optionArgSeparators":[":"]},
+              "persistentOptions":[{"names":["--inner"],"description":"Inner"}],
+              "options":[{"names":["--local"],"description":"Local","args":[{"name":"local-value"}]}],
+              "args":[{"name":"value"}],
+              "subcommands":[{"names":["deeper"]}]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("keep.json"),
+            r#"{
+              "names":["keep-target"],
+              "description":"loaded-keep",
+              "options":[{"names":["--local"],"description":"Local"}],
+              "args":[{"name":"value"}]
+            }"#,
+        )
+        .unwrap();
+        fs::write(dir.path().join("index.json"), r#"{"files":{"tool":"tool.json"}}"#).unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+
+        let tool = registry.get_arc("tool").expect("tool");
+        let mut tokens = vec!["tool".to_string(), "child".to_string()];
+        let walked = resolve_context(tool, &mut tokens, true, "", "", Some(&mut registry));
+        assert_eq!(walked.spec.names, vec!["child"]);
+        assert_eq!(walked.spec.description, "loaded");
+        assert!(walked.spec.find_subcommand("deeper").is_some());
+        assert!(walked.parser_directives.options_must_precede_arguments.is_none());
+        assert!(walked.parser_directives.flags_are_posix_noncompliant.is_none());
+        assert_eq!(
+            walked.parser_directives.option_arg_separators.as_deref(),
+            Some(&[":".to_string()][..])
+        );
+        let persistent: Vec<_> = walked
+            .persistent_options
+            .iter()
+            .filter_map(|option| option.names.first().map(String::as_str))
+            .collect();
+        assert!(persistent.contains(&"--global"), "{persistent:?}");
+        assert!(persistent.contains(&"--inner"), "{persistent:?}");
+        assert!(registry.cached_load_spec("child").is_some());
+        assert!(registry.cached_load_spec("keep").is_none());
+
+        let entered = context_result(&mut registry, "tool child ");
+        for name in ["--global", "--inner", "--local", "deeper"] {
+            assert!(
+                entered.suggestions.iter().any(|suggestion| suggestion.name == name),
+                "{name} missing from {:?}",
+                entered
+                    .suggestions
+                    .iter()
+                    .map(|suggestion| suggestion.name.as_str())
+                    .collect::<Vec<_>>()
+            );
+        }
+        let after_value = context_result(&mut registry, "tool child value ");
+        for name in ["--global", "--inner", "--local"] {
+            assert!(
+                after_value.suggestions.iter().any(|suggestion| suggestion.name == name),
+                "{name} missing after the positional"
+            );
+        }
+        assert!(
+            !after_value
+                .suggestions
+                .iter()
+                .any(|suggestion| suggestion.name == "deeper")
+        );
+        let attached = context_result(&mut registry, "tool child --local:abc");
+        assert_eq!(attached.search_term, "abc");
+        assert_eq!(
+            attached.current_arg.as_ref().map(|arg| arg.name.as_str()),
+            Some("local-value")
+        );
+
+        let tool = registry.get("tool").expect("tool");
+        let stub = tool.find_subcommand("child").expect("stub");
+        assert_eq!(stub.description, "wrapper");
+        assert!(stub.find_subcommand("deeper").is_none());
+        assert!(matches!(stub.load_spec, Some(crate::ir::LoadSpec::Path(ref path)) if path == "child"));
+
+        let tool = registry.get_arc("tool").expect("tool");
+        let mut tokens = vec!["tool".to_string(), "keep".to_string()];
+        let walked = resolve_context(tool, &mut tokens, true, "", "", Some(&mut registry));
+        assert_eq!(walked.spec.names, vec!["keep"]);
+        assert_eq!(walked.spec.description, "loaded-keep");
+        assert_eq!(walked.parser_directives.options_must_precede_arguments, Some(true));
+        assert_eq!(walked.parser_directives.flags_are_posix_noncompliant, Some(true));
+        assert!(walked.parser_directives.option_arg_separators.is_none());
+        assert!(
+            walked
+                .persistent_options
+                .iter()
+                .any(|option| option.names.iter().any(|name| name == "--global"))
+        );
+
+        let keep = context_result(&mut registry, "tool keep ");
+        assert!(keep.suggestions.iter().any(|suggestion| suggestion.name == "--global"));
+        assert!(keep.suggestions.iter().any(|suggestion| suggestion.name == "--local"));
+        let keep_after = context_result(&mut registry, "tool keep value ");
+        assert!(
+            !keep_after
+                .suggestions
+                .iter()
+                .any(|suggestion| suggestion.name == "--global")
+        );
+        assert!(
+            !keep_after
+                .suggestions
+                .iter()
+                .any(|suggestion| suggestion.name == "--local")
+        );
+        let keep_attached = context_result(&mut registry, "tool keep --local:abc");
+        assert_ne!(keep_attached.search_term, "abc");
+    }
+
     fn context_result(registry: &mut Registry, buffer: &str) -> CompleteResult {
         complete(
             registry,
@@ -4318,6 +5126,76 @@ mod tests {
                 ..CompleteRequest::default()
             },
         )
+    }
+
+    fn load_gcloud_load_spec() -> (tempfile::TempDir, Registry) {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("gcloud")).unwrap();
+        fs::write(
+            dir.path().join("gcloud.json"),
+            r#"{
+              "names":["gcloud"],
+              "subcommands":[
+                {"names":["compute"],"description":"Compute Engine","loadSpec":"gcloud/compute"},
+                {"names":["sql"],"description":"Cloud SQL","loadSpec":"gcloud/sql"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("gcloud/compute.json"),
+            r#"{"names":["compute"],"subcommands":[{"names":["instances"]},{"names":["disks"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("gcloud/sql.json"),
+            r#"{"names":["sql"],"subcommands":[{"names":["backups"]}]}"#,
+        )
+        .unwrap();
+        fs::write(dir.path().join("index.json"), r#"{"files":{"gcloud":"gcloud.json"}}"#).unwrap();
+        let registry = Registry::load(dir.path()).unwrap();
+        (dir, registry)
+    }
+
+    #[test]
+    fn subcommand_load_spec_loads_only_the_entered_file() {
+        let (_dir, mut registry) = load_gcloud_load_spec();
+
+        let menu = context_result(&mut registry, "gcloud ");
+        let menu_names: Vec<_> = menu.suggestions.iter().map(|item| item.name.as_str()).collect();
+        assert!(menu_names.contains(&"compute"), "{menu_names:?}");
+        assert!(menu_names.contains(&"sql"), "{menu_names:?}");
+        assert!(registry.cached_load_spec("gcloud/compute").is_none());
+        assert!(registry.cached_load_spec("gcloud/sql").is_none());
+
+        let typing = context_result(&mut registry, "gcloud comp");
+        assert!(
+            typing.suggestions.iter().any(|item| item.name == "compute"),
+            "{:?}",
+            typing.suggestions
+        );
+        assert!(registry.cached_load_spec("gcloud/compute").is_none());
+
+        let entered = context_result(&mut registry, "gcloud compute ");
+        let entered_names: Vec<_> = entered.suggestions.iter().map(|item| item.name.as_str()).collect();
+        assert!(entered_names.contains(&"instances"), "{entered_names:?}");
+        assert!(entered_names.contains(&"disks"), "{entered_names:?}");
+        assert!(!entered_names.contains(&"backups"), "{entered_names:?}");
+        assert!(!entered_names.contains(&"sql"), "{entered_names:?}");
+        let compute = registry.cached_load_spec("gcloud/compute").expect("compute cached");
+        assert!(registry.cached_load_spec("gcloud/sql").is_none());
+
+        let again = context_result(&mut registry, "gcloud compute ");
+        assert!(again.suggestions.iter().any(|item| item.name == "instances"));
+        let compute_again = registry.cached_load_spec("gcloud/compute").expect("cache hit");
+        assert!(std::sync::Arc::ptr_eq(&compute, &compute_again));
+
+        let gcloud = registry.get("gcloud").expect("gcloud");
+        let stub = gcloud.find_subcommand("compute").expect("stub");
+        assert!(stub.find_subcommand("instances").is_none());
+        assert!(matches!(stub.load_spec, Some(crate::ir::LoadSpec::Path(ref path)) if path == "gcloud/compute"));
+        let sql = gcloud.find_subcommand("sql").expect("sql stub");
+        assert!(matches!(sql.load_spec, Some(crate::ir::LoadSpec::Path(ref path)) if path == "gcloud/sql"));
     }
 
     #[test]
@@ -4439,12 +5317,16 @@ mod tests {
         let editing = context_result(&mut registry, "tool value");
         assert_eq!(editing.current_arg.as_ref().map(|arg| arg.name.as_str()), Some("input"));
         assert!(!editing.suggestions.iter().any(|suggestion| suggestion.name == "child"));
+        assert!(!registry.is_cached("positional-target"));
+        assert!(!registry.is_cached("profile-target"));
 
         let completed = context_result(&mut registry, "tool value ");
         assert_eq!(
             completed.current_arg.as_ref().map(|arg| arg.name.as_str()),
             Some("next input")
         );
+        assert!(registry.is_cached("positional-target"));
+        assert!(!registry.is_cached("profile-target"));
         assert!(
             completed
                 .suggestions
@@ -4469,8 +5351,12 @@ mod tests {
             Some("profile")
         );
         assert!(!editing.suggestions.iter().any(|suggestion| suggestion.name == "list"));
+        assert!(!registry.is_cached("profile-target"));
+        assert!(!registry.is_cached("positional-target"));
 
         let completed = context_result(&mut registry, "tool --profile value ");
+        assert!(registry.is_cached("profile-target"));
+        assert!(!registry.is_cached("positional-target"));
         assert_eq!(
             completed.current_arg.as_ref().map(|arg| arg.name.as_str()),
             Some("next profile")
@@ -4488,20 +5374,6 @@ mod tests {
     fn completed_equals_and_short_attached_values_load_the_option_spec() {
         let (_dir, mut registry) = load_argument_load_spec();
 
-        for buffer in ["tool --profile=value ", "tool -pvalue "] {
-            let completed = context_result(&mut registry, buffer);
-            assert_eq!(
-                completed.current_arg.as_ref().map(|arg| arg.name.as_str()),
-                Some("next profile"),
-                "buffer={buffer}"
-            );
-            assert!(
-                completed.suggestions.iter().any(|suggestion| suggestion.name == "list"),
-                "buffer={buffer}, suggestions={:?}",
-                completed.suggestions
-            );
-        }
-
         for buffer in ["tool --profile=value", "tool -pvalue"] {
             let editing = context_result(&mut registry, buffer);
             assert_eq!(
@@ -4514,6 +5386,24 @@ mod tests {
                 "buffer={buffer}, suggestions={:?}",
                 editing.suggestions
             );
+            assert!(!registry.is_cached("profile-target"), "buffer={buffer}");
+            assert!(!registry.is_cached("positional-target"), "buffer={buffer}");
+        }
+
+        for buffer in ["tool --profile=value ", "tool -pvalue "] {
+            let completed = context_result(&mut registry, buffer);
+            assert_eq!(
+                completed.current_arg.as_ref().map(|arg| arg.name.as_str()),
+                Some("next profile"),
+                "buffer={buffer}"
+            );
+            assert!(
+                completed.suggestions.iter().any(|suggestion| suggestion.name == "list"),
+                "buffer={buffer}, suggestions={:?}",
+                completed.suggestions
+            );
+            assert!(registry.is_cached("profile-target"), "buffer={buffer}");
+            assert!(!registry.is_cached("positional-target"), "buffer={buffer}");
         }
     }
 
