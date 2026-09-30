@@ -17,10 +17,10 @@ use time::OffsetDateTime;
 use tracing::{debug, error};
 use uuid::Uuid;
 
+use crate::EventLoopProxy;
 use crate::event::{EmitEventName, Event, WindowEvent};
 use crate::platform::PlatformBoundEvent;
 use crate::webview::notification::WebviewNotificationsState;
-use crate::{AUTOCOMPLETE_ID, EventLoopProxy};
 
 #[derive(Debug, Clone)]
 pub struct RemoteHook {
@@ -34,6 +34,10 @@ impl fastab_remote_ipc::RemoteHookHandler for RemoteHook {
 
     async fn sessions_changed(&mut self, _figterm_state: &Arc<FigtermState>) {
         let _ = self.proxy.send_event(Event::JevContextChanged);
+    }
+
+    async fn session_closed(&mut self, session_id: Uuid) {
+        let _ = self.proxy.send_event(Event::GpuiOverlayEndInput { session_id });
     }
 
     async fn edit_buffer(
@@ -219,10 +223,7 @@ impl fastab_remote_ipc::RemoteHookHandler for RemoteHook {
             session.apply_context(hook.context.clone());
         });
 
-        self.proxy.send_event(Event::WindowEvent {
-            window_id: AUTOCOMPLETE_ID.clone(),
-            window_event: WindowEvent::Hide,
-        })?;
+        self.proxy.send_event(Event::GpuiOverlayEndInput { session_id })?;
 
         self.notifications_state
             .broadcast_notification_all(

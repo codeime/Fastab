@@ -201,6 +201,9 @@ impl DesktopHost {
             Event::GpuiOverlayLoading { generation } => {
                 self.overlay.show_loading(generation, cx);
             },
+            Event::GpuiOverlayEndInput { session_id } => {
+                self.overlay.end_input(session_id, cx);
+            },
             Event::GpuiOverlayLoadingExpired { generation } => {
                 self.overlay.expire_loading(generation, cx);
             },

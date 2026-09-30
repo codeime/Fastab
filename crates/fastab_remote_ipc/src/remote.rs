@@ -291,6 +291,7 @@ pub async fn handle_remote_ipc(
     //     session.dead_since = Some(Instant::now());
     // });
     if figterm_state.remove_id(&session_id).is_some() {
+        hook.session_closed(session_id).await;
         hook.sessions_changed(&figterm_state).await;
     }
 
@@ -466,5 +467,131 @@ async fn send_pings(outgoing: flume::Sender<Clientbound>, mut on_close_rx: tokio
 fn sanitize_fn(context: &mut Option<ShellContext>, session_id: Uuid) {
     if let Some(context) = context {
         context.session_id = Some(session_id.to_string());
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use fastab_proto::local::{EditBufferHook, InterceptedKeyHook, PostExecHook, PreExecHook, PromptHook};
+
+    #[derive(Debug)]
+    enum Lifecycle {
+        Changed(Vec<Uuid>),
+        Closed(Uuid),
+    }
+
+    #[derive(Clone)]
+    struct Hook(tokio::sync::mpsc::UnboundedSender<Lifecycle>);
+
+    #[async_trait::async_trait]
+    impl RemoteHookHandler for Hook {
+        type Error = anyhow::Error;
+        async fn sessions_changed(&mut self, state: &Arc<FigtermState>) {
+            let ids = state.inner.lock().linked_sessions.keys().copied().collect();
+            self.0.send(Lifecycle::Changed(ids)).unwrap();
+        }
+        async fn session_closed(&mut self, id: Uuid) {
+            self.0.send(Lifecycle::Closed(id)).unwrap();
+        }
+        async fn edit_buffer(
+            &mut self,
+            _: &EditBufferHook,
+            _: Uuid,
+            _: &Arc<FigtermState>,
+        ) -> Result<Option<clientbound::response::Response>> {
+            Ok(None)
+        }
+        async fn prompt(
+            &mut self,
+            _: &PromptHook,
+            _: Uuid,
+            _: &Arc<FigtermState>,
+        ) -> Result<Option<clientbound::response::Response>> {
+            Ok(None)
+        }
+        async fn pre_exec(
+            &mut self,
+            _: &PreExecHook,
+            _: Uuid,
+            _: &Arc<FigtermState>,
+        ) -> Result<Option<clientbound::response::Response>> {
+            Ok(None)
+        }
+        async fn post_exec(
+            &mut self,
+            _: &PostExecHook,
+            _: Uuid,
+            _: &Arc<FigtermState>,
+        ) -> Result<Option<clientbound::response::Response>> {
+            Ok(None)
+        }
+        async fn intercepted_key(
+            &mut self,
+            _: InterceptedKeyHook,
+            _: Uuid,
+        ) -> Result<Option<clientbound::response::Response>> {
+            Ok(None)
+        }
+    }
+
+    async fn next_event(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Lifecycle>) -> Lifecycle {
+        tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn disconnect_notifies_only_the_removed_server_session_before_session_list_change() {
+        let state = Arc::new(FigtermState::new());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let hook = Hook(tx);
+        let mut clients = Vec::new();
+        let mut servers = Vec::new();
+        let mut ids: Vec<Uuid> = Vec::new();
+        // Reusing a shell's handshake ID still creates separate server owners.
+        for _ in 0..2 {
+            let (mut client, server) = UnixStream::pair().unwrap();
+            servers.push(tokio::spawn(handle_remote_ipc(server, state.clone(), hook.clone())));
+            client
+                .send_message(Hostbound {
+                    packet: Some(hostbound::Packet::Handshake(hostbound::Handshake {
+                        id: "same-shell".into(),
+                        secret: "fixture".into(),
+                        parent_id: None,
+                    })),
+                })
+                .await
+                .unwrap();
+            let Lifecycle::Changed(current) = next_event(&mut rx).await else {
+                panic!("expected authenticated session")
+            };
+            ids.push(*current.iter().find(|id| !ids.contains(*id)).unwrap());
+            clients.push(client);
+        }
+        assert_ne!(ids[0], ids[1]);
+        for id in ids {
+            drop(clients.remove(0));
+            assert!(matches!(next_event(&mut rx).await, Lifecycle::Closed(closed) if closed == id));
+            let Lifecycle::Changed(remaining) = next_event(&mut rx).await else {
+                panic!("expected session list change")
+            };
+            assert!(!remaining.contains(&id));
+            assert_eq!(remaining.len(), clients.len());
+            tokio::time::timeout(Duration::from_secs(3), servers.remove(0))
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        // A connection that never authenticated did not own engine input.
+        let (client, server) = UnixStream::pair().unwrap();
+        let server = tokio::spawn(handle_remote_ipc(server, state, hook));
+        drop(client);
+        tokio::time::timeout(Duration::from_secs(3), server)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(rx.try_recv().is_err());
     }
 }

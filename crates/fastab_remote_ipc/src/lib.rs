@@ -18,6 +18,10 @@ pub trait RemoteHookHandler {
     /// Called after the set of authenticated figterm sessions changes.
     async fn sessions_changed(&mut self, _figterm_state: &Arc<FigtermState>) {}
 
+    /// Called only after an authenticated session was removed. Connections
+    /// receive distinct server-side IDs, including reconnects of the same shell.
+    async fn session_closed(&mut self, _session_id: Uuid) {}
+
     async fn edit_buffer(
         &mut self,
         edit_buffer_hook: &EditBufferHook,

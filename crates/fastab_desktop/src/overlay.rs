@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use fastab_engine::{
-    CompleteRequest, CompleteResult, EngineClient, ranking_root_command, tokenize, ui_completion_deadline,
+    CompleteRequest, CompleteResult, EngineClient, SessionId, ranking_root_command, tokenize, ui_completion_deadline,
 };
 use fastab_gpui::{
     ClickInsert, DEFAULT_FONT_SIZE, DEFAULT_MAX_LIST_HEIGHT, DEFAULT_WIDTH, OverlayHandle, OverlayState, OverlayTheme,
@@ -316,6 +316,22 @@ impl OverlayController {
         });
         self.park_window(cx);
         self.sync_own_intercept(cx);
+    }
+
+    pub fn end_input(&mut self, session_id: Uuid, cx: &mut App) {
+        self.notify_input_ended(session_id);
+        if self.current_session() == Some(session_id) {
+            // Settings refreshes must not resubmit an ended buffer. The next
+            // real input event will establish a new buffer for this session.
+            self.forget_last_input();
+            self.hide(cx);
+        }
+    }
+
+    fn notify_input_ended(&self, session_id: Uuid) {
+        if let Err(error) = self.engine.end_input(SessionId::new(session_id.as_u128())) {
+            debug!(%error, "Failed to notify engine that input ended");
+        }
     }
 
     pub fn hide_until_shown(&mut self, cx: &mut App) {
@@ -629,7 +645,11 @@ impl OverlayController {
                 }
             }
         }
-        if !self.enabled || buffer.trim().is_empty() || cursor_is_inside_word(&buffer, cursor) {
+        let input_ended = buffer.trim().is_empty();
+        if input_ended {
+            self.notify_input_ended(session_id);
+        }
+        if !self.enabled || input_ended || cursor_is_inside_word(&buffer, cursor) {
             self.dismiss(cx);
             set_intercept(&figterm_state, session_id, false, false);
             return;
@@ -724,12 +744,15 @@ impl OverlayController {
             include_public_ai: self.jev.is_ready(),
         };
         self.capture_jev_request_context(&request, session_id);
-        let engine = self.engine.clone();
+        // Submit before spawning: queue order is the input-event order, not
+        // whichever GPUI future happens to be polled first.
+        let complete = self
+            .engine
+            .complete_for_session(SessionId::new(session_id.as_u128()), request);
         let proxy = self.proxy.clone();
         let executor = cx.background_executor().clone();
 
         cx.spawn(async move |_cx| {
-            let complete = engine.complete(request);
             futures::pin_mut!(complete);
             let timed = executor.timer(loading_threshold);
             futures::pin_mut!(timed);
@@ -2800,6 +2823,135 @@ fn screen_edges_containing(screens: &[(f64, f64, f64, f64)], x: f64, y: f64) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn ended_input_cannot_be_reactivated_by_settings_refresh(cx: &mut gpui::TestAppContext) {
+        // Settings overrides are thread-local, but EngineClient has real
+        // worker threads. Isolate their process-wide settings from both the
+        // user's custom history commands and concurrently running UI tests.
+        const CHILD: &str = "FASTAB_END_INPUT_REGRESSION_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+                .args([
+                    "--exact",
+                    "overlay::tests::ended_input_cannot_be_reactivated_by_settings_refresh",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .expect("isolated regression process");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                // A renamed test must not turn a stale --exact filter into
+                // a successful child run with zero tests.
+                output.status.success() && stdout.contains("test result: ok. 1 passed;"),
+                "{}\n{}",
+                stdout,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        use fastab_settings::JsonStore as _;
+        *fastab_settings::OldSettings::data_lock().write() = Some(
+            [
+                ("autocomplete.history.disableLoading".into(), serde_json::json!(true)),
+                ("autocomplete.sortMethod".into(), serde_json::json!("default")),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let _settings = fastab_settings::settings::install_override(fastab_settings::Settings::from_slice(&[
+            ("dashboard.theme", serde_json::json!("light")),
+            ("beta.history.mode", serde_json::json!("off")),
+        ]));
+        let specs = tempfile::tempdir().expect("fixture directory");
+        std::fs::write(
+            specs.path().join("tool.json"),
+            r#"{"names":["tool"],"options":[{"names":["--value"]}]}"#,
+        )
+        .expect("fixture spec");
+        let engine = EngineClient::spawn_with_options(
+            specs.path().to_path_buf(),
+            fastab_engine::EngineClientOptions {
+                spec_idle_grace: Duration::from_millis(50),
+            },
+        )
+        .expect("engine");
+        let (proxy, _events) = crate::event_loop::channel();
+        // No linked sessions models the state after a terminal disconnects.
+        // The controller must retire its input even though the worker can
+        // still complete this buffer without a live remote connection.
+        let figterm_state = Arc::new(FigtermState::new());
+        let platform_state = Arc::new(PlatformState::new(proxy.clone()));
+        let mut overlay = cx.update(|cx| {
+            let mut overlay =
+                OverlayController::start(cx, engine.clone(), proxy, figterm_state.clone(), platform_state)
+                    .expect("controller");
+            // The headless test does not depend on the test binary's AX grant.
+            overlay.enabled = true;
+            overlay
+        });
+        let session = Uuid::new_v4();
+        let complete_input = |overlay: &mut OverlayController, cx: &mut App| {
+            overlay.complete_buffer("tool ".into(), String::new(), 5, session, figterm_state.clone(), cx);
+        };
+        let refresh_settings = |overlay: &mut OverlayController, cx: &mut App| {
+            // The enabled branch of GpuiHost's ReloadCredentials handler.
+            overlay.apply_theme(cx);
+            overlay.set_enabled(true, cx);
+            overlay.recomplete(cx);
+        };
+        let snapshot = || futures::executor::block_on(engine.diagnostics()).expect("diagnostics");
+
+        cx.update(|cx| complete_input(&mut overlay, cx));
+        assert_eq!(snapshot().requests.completed, 1);
+
+        // Ending a background session and ordinary hiding must retain the
+        // active input, so settings changes can still recompute it.
+        cx.update(|cx| {
+            overlay.end_input(Uuid::new_v4(), cx);
+            refresh_settings(&mut overlay, cx);
+        });
+        assert_eq!(snapshot().requests.completed, 2);
+        cx.update(|cx| {
+            overlay.hide(cx);
+            refresh_settings(&mut overlay, cx);
+        });
+        assert_eq!(snapshot().requests.completed, 3);
+
+        cx.update(|cx| {
+            overlay.end_input(session, cx);
+            refresh_settings(&mut overlay, cx);
+            overlay.end_input(session, cx);
+            refresh_settings(&mut overlay, cx);
+        });
+        assert_eq!(snapshot().requests.submitted, 3, "ended input must not be resubmitted");
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while snapshot()
+            .engine
+            .expect("initialized engine")
+            .registry
+            .cached_file_count
+            != 0
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "ended input must release its spec"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // pre-exec keeps the UUID: a new real buffer, even with identical
+        // text, must be allowed to complete and establish the next input.
+        cx.update(|cx| complete_input(&mut overlay, cx));
+        let resumed = snapshot();
+        assert_eq!(resumed.requests.submitted, 4);
+        assert_eq!(resumed.requests.completed, 4);
+        assert_eq!(
+            resumed.engine.expect("initialized engine").registry.cached_file_count,
+            1
+        );
+    }
 
     #[test]
     fn insert_keeps_directory_prefix() {

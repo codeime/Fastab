@@ -53,6 +53,11 @@ pub enum Event {
         cursor: u32,
         session_id: uuid::Uuid,
     },
+    /// The shell executed its input. Background sessions must not end the
+    /// active terminal's request or hide its overlay.
+    GpuiOverlayEndInput {
+        session_id: uuid::Uuid,
+    },
     /// The current completion request exceeded the loading threshold. This is
     /// routed through the host event queue so GPUI state is only touched from
     /// the top-level dispatcher.
