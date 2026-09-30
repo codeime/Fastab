@@ -192,6 +192,9 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked --exclude fastab_desktop-fuzz --exclude fastab_overlay_spike --exclude fastab_term2
 
+      - name: Replay completion resource lifecycle in one process
+        run: cargo run --locked -p fastab_engine --example resource-replay -- --self-check
+
       # Thin LTO + codegen-units=1 is minutes on every PR and duplicates the
       # tag pipeline in release.yml. Keep the smoke on main so profile-specific
       # breakage (panic = "abort", LTO, strip) still lands before a tag.

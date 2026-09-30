@@ -1,0 +1,26 @@
+{"op": "snapshot", "expect_engine": false}
+{"op": "complete", "session": 1, "request": {"buffer": "gcloud ", "cwd": "", "include_history": false}, "contains": ["compute"]}
+{"op": "snapshot"}
+{"op": "complete", "session": 1, "request": {"buffer": "gcloud compute ", "cwd": "", "include_history": false}, "contains": ["instances"]}
+{"op": "snapshot"}
+{"op": "complete", "session": 1, "request": {"buffer": "gcloud compute ", "cwd": "", "include_history": false}, "contains": ["instances"]}
+{"op": "complete", "session": 1, "request": {"buffer": "gcloud compute ", "cwd": "", "include_history": false}, "contains": ["instances"]}
+{"op": "complete", "session": 1, "request": {"buffer": "gcloud compute ", "cwd": "", "include_history": false}, "contains": ["instances"]}
+{"op": "end_input", "session": 1}
+{"op": "snapshot"}
+{"op": "wait", "ms": 6000}
+{"op": "snapshot"}
+{"op": "complete", "session": 1, "request": {"buffer": "gcloud compute ", "cwd": "", "include_history": false}, "contains": ["instances"]}
+{"op": "snapshot"}
+{"op": "end_input", "session": 1}
+{"op": "snapshot"}
+{"op": "wait", "ms": 11000}
+{"op": "snapshot"}
+{"op": "complete", "session": 1, "request": {"buffer": "gcloud compute ", "cwd": "", "include_history": false}, "contains": ["instances"]}
+{"op": "snapshot"}
+{"op": "end_input", "session": 1}
+{"op": "snapshot"}
+{"op": "wait", "ms": 26000}
+{"op": "snapshot"}
+{"op": "complete", "session": 1, "request": {"buffer": "gcloud compute ", "cwd": "", "include_history": false}, "contains": ["instances"]}
+{"op": "snapshot"}
