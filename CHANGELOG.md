@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.0.5
+
+- change: release parsed spec trees after a subsequent regular completion stops using them and a 25-second grace expires. Re-entering the command reloads the specs on demand with the same suggestion content and order.
+- fix: history indexing and pinned developer specs no longer keep unrelated bundled trees active. Release every cached tree for the same file, and preserve its pending deadline when LRU eviction removes only one of those trees.
+
 ## v0.0.4
 
 - change: a command group that points at another spec file loads when the cursor enters it. The gcloud menu keeps each group's stub name and description; entering `gcloud compute ` parses `compute.json`, and groups that were not entered stay on disk. `git` completions stay the same.
