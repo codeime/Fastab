@@ -2,8 +2,13 @@
 
 ## v0.0.5
 
-- change: release parsed spec trees after a subsequent regular completion stops using them and a 25-second grace expires. Re-entering the command reloads the specs on demand with the same suggestion content and order.
+- change: release unused parsed spec trees after a 10-second grace, including when the input is cleared, executed, or its terminal disconnects. Re-entering a command reloads its specs on demand with the same suggestion content and order.
+- change: cooperatively cancel superseded completions and their scripts, reuse the engine, and prevent cancelled work from publishing incomplete cache or generator state.
+- change: reduce temporary spec-loading allocations with streamed snapshot hashing and shared-option fingerprints; add numeric resource diagnostics and persistent replay scenarios for release and cancellation checks.
 - fix: history indexing and pinned developer specs no longer keep unrelated bundled trees active. Release every cached tree for the same file, and preserve its pending deadline when LRU eviction removes only one of those trees.
+- fix: preserve release notifications across cancelled session switches, allow expiry under a busy control queue, and remove unreachable trees after explicit replacement. Settings refreshes no longer resubmit input from an ended session.
+- fix: invalidate cached history argument indexes when aliases or the shell change, and reject late indexes built for another context.
+- fix: bound xterm Accessibility caret searches with one shared deadline and per-window failure backoff; reject stale focus/window results and clear unavailable caret positions.
 
 ## v0.0.4
 
