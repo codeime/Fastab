@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.0.4
+
+- change: a command group that points at another spec file loads when the cursor enters it. The gcloud menu keeps each group's stub name and description; entering `gcloud compute ` parses `compute.json`, and groups that were not entered stay on disk. `git` completions stay the same.
+- change: suggestion lists and subcommand entry share the cached spec instead of copying the tree. Names, order, hidden rows, and dependency priority 75 stay the same. Accepting a group from the first menu inserts that stub, so a trailing space and a required-argument hint appear after the group is entered.
+
 ## v0.0.3
 
 - change: keep AI Settings focused on enablement, provider configuration and connection testing; removing the session diagnostics card and Git status control does not itself change saved consent or Git-sharing values. Anonymous, bounded AI aggregates remain available through the existing diagnostics command at DEBUG level.
