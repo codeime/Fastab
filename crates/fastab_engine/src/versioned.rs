@@ -192,7 +192,7 @@ pub fn detect_cli_version(entry: &VersionedCommand, cwd: &str, timeout: Duration
                 Some(trimmed.to_string())
             }
         },
-        Err(CommandError::Failed | CommandError::TimedOut) => None,
+        Err(CommandError::Failed | CommandError::TimedOut | CommandError::Cancelled) => None,
     }
 }
 

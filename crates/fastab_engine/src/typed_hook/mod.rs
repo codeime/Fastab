@@ -987,6 +987,7 @@ pub(crate) struct TypedHookError {
     message: String,
     js_class: Option<String>,
     timed_out: bool,
+    cancelled: bool,
 }
 
 impl TypedHookError {
@@ -995,6 +996,7 @@ impl TypedHookError {
             message: message.into(),
             js_class: None,
             timed_out: false,
+            cancelled: false,
         }
     }
 
@@ -1008,6 +1010,17 @@ impl TypedHookError {
         }
     }
 
+    pub(crate) fn cancelled() -> Self {
+        Self {
+            cancelled: true,
+            ..Self::new("completion cancelled")
+        }
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled
+    }
+
     pub(crate) fn is_timed_out(&self) -> bool {
         self.timed_out
     }
@@ -1017,6 +1030,7 @@ impl TypedHookError {
             message: message.into(),
             js_class: Some(class.into()),
             timed_out: false,
+            cancelled: false,
         }
     }
 

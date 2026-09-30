@@ -40,7 +40,9 @@ pub(super) fn evaluate_with_effects(
     effects: Option<&TypedHookEffects<'_>>,
 ) -> TypedHookResult<TypedValue> {
     let mut locals = BTreeMap::new();
-    match evaluate_inner(expression, arguments, &mut locals, effects) {
+    let result = evaluate_inner(expression, arguments, &mut locals, effects);
+    crate::cancellation::check().map_err(|_| TypedHookError::cancelled())?;
+    match result {
         Ok(value) => Ok(value),
         Err(Abort::Return(value)) => Ok(value),
         Err(Abort::Break) => Err(TypedHookError::new("break outside loop")),
@@ -81,6 +83,7 @@ fn evaluate_inner(
     locals: &mut BTreeMap<String, TypedValue>,
     effects: Option<&TypedHookEffects<'_>>,
 ) -> EvalResult<TypedValue> {
+    crate::cancellation::check().map_err(|_| TypedHookError::cancelled())?;
     let ev = |expression: &TypedExpr, locals: &mut BTreeMap<String, TypedValue>| {
         evaluate_inner(expression, arguments, locals, effects)
     };
@@ -362,6 +365,7 @@ fn evaluate_inner(
             Err(Abort::Return(value)) => Err(Abort::Return(value)),
             Err(Abort::Break) => Err(Abort::Break),
             Err(Abort::Continue) => Err(Abort::Continue),
+            Err(Abort::Error(error)) if error.is_cancelled() => Err(Abort::Error(error)),
             Err(Abort::Error(_)) => ev(catch, locals),
         },
         TypedExpr::ForOf { names, value, body } => {
@@ -939,7 +943,10 @@ fn evaluate_exec(
             );
         }
     }
-    let result = (effects.exec)(request)?;
+    crate::cancellation::check().map_err(|_| TypedHookError::cancelled())?;
+    let result = (effects.exec)(request);
+    crate::cancellation::check().map_err(|_| TypedHookError::cancelled())?;
+    let result = result?;
     Ok(TypedValue::Object(vec![
         (
             "stdout".into(),
@@ -1549,4 +1556,94 @@ fn regex_replace(pattern: &str, flags: &str, value: &str, replacement: &str) -> 
 fn regex_split(pattern: &str, flags: &str, value: &str) -> TypedHookResult<Vec<String>> {
     let regex = compile_regex(pattern, flags)?;
     Ok(regex.split(value).filter_map(Result::ok).map(str::to_string).collect())
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+    use crate::typed_hook::{TypedExecResult, TypedHookContext};
+
+    fn exec_expression() -> TypedExpr {
+        TypedExpr::Exec {
+            command: Box::new(TypedExpr::String {
+                value: "test-command".into(),
+            }),
+            args: Box::new(TypedExpr::Array { items: Vec::new() }),
+            cwd: Box::new(TypedExpr::Null),
+            env: Box::new(TypedExpr::Null),
+            timeout: Box::new(TypedExpr::Null),
+        }
+    }
+
+    fn context() -> TypedHookContext {
+        TypedHookContext {
+            current_working_directory: String::new(),
+            current_process: String::new(),
+            ssh_prefix: String::new(),
+            environment_variables: Vec::new(),
+            search_term: String::new(),
+            is_dangerous: false,
+        }
+    }
+
+    #[test]
+    fn typed_try_cannot_catch_a_cancelled_exec() {
+        let calls = std::cell::Cell::new(0);
+        let exec = |_| {
+            calls.set(calls.get() + 1);
+            Err(TypedHookError::cancelled())
+        };
+        let context = context();
+        let effects = TypedHookEffects {
+            context: &context,
+            exec: &exec,
+            deadline: None,
+        };
+        let expression = TypedExpr::Try {
+            body: Box::new(exec_expression()),
+            catch: Box::new(exec_expression()),
+        };
+        let error = evaluate_with_effects(&expression, &[], Some(&effects)).unwrap_err();
+        assert!(error.is_cancelled());
+        assert!(!error.is_timed_out());
+        assert_eq!(calls.get(), 1, "the catch body must never run");
+    }
+
+    #[test]
+    fn typed_loop_observes_cancellation_after_an_effect_handshake() {
+        let token = crate::cancellation::CancellationToken::new();
+        let _scope = crate::cancellation::enter(token.clone());
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let canceller = std::thread::spawn(move || {
+            started_rx.recv().unwrap();
+            token.cancel();
+        });
+        let exec = |_| {
+            started_tx.send(()).unwrap();
+            Ok(TypedExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                status: 0,
+            })
+        };
+        let context = context();
+        let effects = TypedHookEffects {
+            context: &context,
+            exec: &exec,
+            deadline: Some(std::time::Instant::now() + std::time::Duration::from_secs(5)),
+        };
+        let expression = TypedExpr::Par {
+            items: vec![
+                exec_expression(),
+                TypedExpr::While {
+                    condition: Box::new(TypedExpr::Bool { value: true }),
+                    body: Box::new(TypedExpr::Null),
+                },
+            ],
+        };
+        let error = evaluate_with_effects(&expression, &[], Some(&effects)).unwrap_err();
+        canceller.join().unwrap();
+        assert!(error.is_cancelled());
+        assert!(!error.is_timed_out());
+    }
 }

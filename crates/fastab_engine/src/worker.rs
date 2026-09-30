@@ -1,5 +1,8 @@
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, mpsc};
+use std::task::{Context, Poll};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -16,6 +19,8 @@ use anyhow::anyhow;
 // path stays correct even if a caller polls it from inside one again.
 use futures::channel::oneshot;
 
+use crate::cancellation::{CancellationToken, CompletionCancelled};
+use crate::diagnostics::{EngineClientDiagnostics, RequestDiagnostics};
 use crate::ir::Registry;
 use crate::rank::AcceptanceIndex;
 use crate::runtime::{CompleteRequest, CompleteResult, Engine};
@@ -25,6 +30,64 @@ use crate::runtime::{CompleteRequest, CompleteResult, Engine};
 pub struct EngineClient {
     tx: mpsc::Sender<Job>,
     acceptance: Arc<Mutex<AcceptanceIndex>>,
+    submission: Arc<Mutex<Submission>>,
+}
+
+/// Caller identity for one terminal session; zero is the legacy anonymous caller.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct SessionId(u128);
+
+impl SessionId {
+    pub const ANONYMOUS: Self = Self(0);
+    pub const fn new(value: u128) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EngineClientOptions {
+    /// Override for controlled resource replay. Normal clients use the default.
+    pub spec_idle_grace: Duration,
+}
+
+impl Default for EngineClientOptions {
+    fn default() -> Self {
+        Self {
+            spec_idle_grace: crate::ir::SPEC_IDLE_GRACE,
+        }
+    }
+}
+
+#[derive(Default)]
+struct Submission {
+    sequence: u64,
+    owner: Option<SessionId>,
+    latest: Option<CancellationToken>,
+    requests: RequestDiagnostics,
+}
+
+/// Already submitted completion. Dropping an unpolled task cancels that request.
+/// Its reply uses no Tokio cooperative budget and can be polled by GPUI.
+pub struct CompletionTask {
+    receiver: oneshot::Receiver<anyhow::Result<CompleteResult>>,
+    token: CancellationToken,
+}
+
+impl Future for CompletionTask {
+    type Output = anyhow::Result<CompleteResult>;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match Pin::new(&mut self.receiver).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(result)) => Poll::Ready(result),
+            Poll::Ready(Err(_)) => Poll::Ready(Err(anyhow!("engine dropped the reply"))),
+        }
+    }
+}
+
+impl Drop for CompletionTask {
+    fn drop(&mut self) {
+        self.token.cancel();
+    }
 }
 
 struct Job {
@@ -35,6 +98,9 @@ enum JobKind {
     Complete {
         request: CompleteRequest,
         reply: oneshot::Sender<anyhow::Result<CompleteResult>>,
+        token: CancellationToken,
+        session: SessionId,
+        sequence: u64,
     },
     RecordAcceptance {
         root_command: String,
@@ -49,6 +115,12 @@ enum JobKind {
     /// `ftab hook clear-autocomplete-cache`: drop every cached spec and
     /// generator result before the next completion runs.
     ClearCaches,
+    Diagnostics {
+        reply: oneshot::Sender<EngineClientDiagnostics>,
+    },
+    EndInput {
+        session: SessionId,
+    },
     #[cfg(test)]
     InspectIdle {
         relative: String,
@@ -59,6 +131,8 @@ enum JobKind {
 #[cfg(test)]
 struct IdleFileState {
     cached: bool,
+    // Missing, active, and pending are distinct states under test.
+    #[allow(clippy::option_option)]
     mark: Option<Option<Instant>>,
 }
 
@@ -128,7 +202,11 @@ type AttemptResult = Result<(Engine, anyhow::Result<CompleteResult>), AttemptFai
 
 impl EngineClient {
     pub fn spawn(specs_dir: PathBuf) -> anyhow::Result<Self> {
-        Self::spawn_supervised(specs_dir, None, crate::ir::SPEC_IDLE_GRACE)
+        Self::spawn_with_options(specs_dir, EngineClientOptions::default())
+    }
+
+    pub fn spawn_with_options(specs_dir: PathBuf, options: EngineClientOptions) -> anyhow::Result<Self> {
+        Self::spawn_supervised(specs_dir, None, options.spec_idle_grace)
     }
 
     #[cfg(test)]
@@ -154,6 +232,8 @@ impl EngineClient {
         let supervisor_specs_dir = specs_dir.clone();
         let acceptance = Arc::new(Mutex::new(AcceptanceIndex::load()));
         let worker_acceptance = acceptance.clone();
+        let submission = Arc::new(Mutex::new(Submission::default()));
+        let worker_submission = Arc::clone(&submission);
 
         thread::Builder::new()
             .name("ec-engine".into())
@@ -164,10 +244,14 @@ impl EngineClient {
                 // this worker forever: the next request gets another chance
                 // to build the registry after the caller repairs the input.
                 let mut engine = None;
+                // Resource ownership follows committed normal completions, not
+                // submissions which may be cancelled before becoming active.
+                let mut active_session = None;
                 // Pristine index kept aside so recovering from a timed-out
                 // attempt does not re-walk the specs directory. It is cloned,
                 // never handed out, so a poisoned attempt cannot corrupt it.
                 let mut registry_template: Option<Registry> = None;
+                let mut jobs_without_attempt = 0;
                 loop {
                     let first = match wait_for_engine_job(&rx, engine.as_ref(), idle_grace) {
                         Ok(job) => job,
@@ -177,11 +261,21 @@ impl EngineClient {
                             if let Some(engine) = engine.as_mut() {
                                 engine.release_idle_specs(Instant::now(), idle_grace);
                             }
+                            jobs_without_attempt = 0;
                             continue;
                         },
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     };
-                    let first = match first.kind {
+                    maintain_idle_between_queued_jobs(
+                        engine.as_mut(),
+                        &first,
+                        &mut jobs_without_attempt,
+                        Instant::now(),
+                        idle_grace,
+                    );
+                    // Submission cancels superseded tokens immediately, so the worker
+                    // can consume FIFO without draining control messages across jobs.
+                    let (request, reply, token, session, _sequence) = match first.kind {
                         JobKind::RecordAcceptance {
                             root_command,
                             accepted_name,
@@ -211,7 +305,29 @@ impl EngineClient {
                             continue;
                         },
                         JobKind::ClearCaches => {
-                            clear_caches(&supervisor_specs_dir, &mut engine, &mut registry_template);
+                            if clear_caches(&supervisor_specs_dir, &mut engine, &mut registry_template) {
+                                active_session = None;
+                            }
+                            continue;
+                        },
+                        JobKind::EndInput { session } => {
+                            if active_session == Some(session) {
+                                if let Some(engine) = engine.as_mut() {
+                                    engine.end_input();
+                                }
+                                active_session = None;
+                            }
+                            continue;
+                        },
+                        JobKind::Diagnostics { reply } => {
+                            let snapshot = EngineClientDiagnostics {
+                                engine: engine.as_ref().map(|engine| engine.diagnostics_with_grace(idle_grace)),
+                                requests: worker_submission
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .requests,
+                            };
+                            let _ = reply.send(snapshot);
                             continue;
                         },
                         #[cfg(test)]
@@ -219,83 +335,82 @@ impl EngineClient {
                             let _ = reply.send(idle_file_state(engine.as_ref(), &relative));
                             continue;
                         },
-                        JobKind::Complete { request, reply } => Job {
-                            kind: JobKind::Complete { request, reply },
-                        },
+                        JobKind::Complete {
+                            request,
+                            reply,
+                            token,
+                            session,
+                            sequence,
+                        } => (request, reply, token, session, sequence),
                     };
-                    // Rapid typing queues many jobs; only the latest buffer matters.
-                    // Acceptance records and cache clears are independent
-                    // events and are applied while draining instead of being
-                    // mistaken for completion work or dropped by latest-job
-                    // coalescing.
-                    let latest = drain_to_latest(&rx, first, |side_effect| match side_effect {
-                        SideEffect::RecordAcceptance {
-                            root_command,
-                            accepted_name,
-                            timestamp,
-                        } => record_acceptance(
-                            &mut engine,
-                            &worker_acceptance,
-                            &root_command,
-                            &accepted_name,
-                            timestamp,
-                        ),
-                        SideEffect::RecordScopedAcceptance {
-                            scope,
-                            accepted_name,
-                            timestamp,
-                        } => {
-                            record_scoped_acceptance(
-                                &mut engine,
-                                &worker_acceptance,
-                                &scope,
-                                &accepted_name,
-                                timestamp,
-                            );
-                        },
-                        SideEffect::ClearCaches => {
-                            clear_caches(&supervisor_specs_dir, &mut engine, &mut registry_template);
-                        },
-                        #[cfg(test)]
-                        SideEffect::InspectIdle { relative, reply } => {
-                            let _ = reply.send(idle_file_state(engine.as_ref(), &relative));
-                        },
-                    });
-                    let JobKind::Complete { request, reply } = latest.kind else {
-                        unreachable!("drain_to_latest returns a completion job");
-                    };
-                    // A caller can cancel its future while the job is waiting
-                    // behind an in-flight attempt.  Do not initialize an
-                    // engine or run a completion for a request nobody is
-                    // waiting for anymore.
-                    if reply.is_canceled() {
+                    if token.is_cancelled() || reply.is_canceled() {
+                        token.cancel();
+                        update_requests(&worker_submission, |counts| {
+                            counts.cancelled = counts.cancelled.saturating_add(1);
+                        });
+                        let _ = reply.send(Err(CompletionCancelled.into()));
                         continue;
                     }
                     let current_engine = match engine.take() {
                         Some(engine) => engine,
                         None => {
                             match rebuild_engine(&supervisor_specs_dir, &mut registry_template, &worker_acceptance) {
-                                Ok(engine) => engine,
+                                Ok(engine) => {
+                                    update_requests(&worker_submission, |counts| {
+                                        counts.engine_initializations = counts.engine_initializations.saturating_add(1);
+                                    });
+                                    engine
+                                },
                                 Err(err) => {
+                                    update_requests(&worker_submission, |counts| {
+                                        counts.failed = counts.failed.saturating_add(1);
+                                    });
                                     let _ = reply.send(Err(anyhow!("completion engine initialization failed: {err}")));
                                     continue;
                                 },
                             }
                         },
                     };
+                    let history_only = request.history_only;
                     let attempt_timeout = fixed_attempt_timeout.unwrap_or_else(engine_attempt_timeout);
                     let attempt_context = attempt_log_context(&request);
-                    match run_engine_attempt(current_engine, request, attempt_timeout) {
+                    jobs_without_attempt = 0;
+                    update_requests(&worker_submission, |counts| {
+                        counts.started = counts.started.saturating_add(1);
+                    });
+                    match run_engine_attempt_with_token(current_engine, request, attempt_timeout, token.clone()) {
                         Ok((mut next_engine, result)) => {
+                            if result.is_ok() && !history_only {
+                                active_session = Some(session);
+                            }
                             // `complete` already stamped idle marks. A mark from
                             // this attempt is younger than the grace, so this
                             // only releases files whose grace elapsed while the
                             // attempt held the engine.
                             next_engine.release_idle_specs(Instant::now(), idle_grace);
                             engine = Some(next_engine);
+                            update_requests(&worker_submission, |counts| {
+                                if result.as_ref().is_err_and(|error| error.is::<CompletionCancelled>()) {
+                                    counts.cancelled = counts.cancelled.saturating_add(1);
+                                } else if result.is_ok() {
+                                    counts.completed = counts.completed.saturating_add(1);
+                                } else {
+                                    counts.failed = counts.failed.saturating_add(1);
+                                }
+                            });
                             let _ = reply.send(result);
                         },
                         Err(failure) => {
+                            token.cancel();
+                            update_requests(&worker_submission, |counts| {
+                                counts.failed = counts.failed.saturating_add(1);
+                                match failure {
+                                    AttemptFailure::TimedOut => {
+                                        counts.watchdog_timeouts = counts.watchdog_timeouts.saturating_add(1);
+                                    },
+                                    AttemptFailure::Panicked => counts.panics = counts.panics.saturating_add(1),
+                                }
+                            });
                             // The default log filter is ERROR, so this is the
                             // only durable evidence of a wedged or crashed
                             // generator. Keep it at that level.
@@ -313,35 +428,96 @@ impl EngineClient {
                             // the next request will retry initialization and
                             // can recover if the specs directory was repaired.
                             engine = None;
+                            active_session = None;
                         },
                     }
                 }
             })
             .map_err(|err| anyhow!("spawn engine thread: {err}"))?;
 
-        Ok(Self { tx, acceptance })
+        Ok(Self {
+            tx,
+            acceptance,
+            submission,
+        })
     }
 
-    pub async fn complete(&self, request: CompleteRequest) -> anyhow::Result<CompleteResult> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Job {
-                kind: JobKind::Complete { request, reply },
-            })
-            .map_err(|_err| anyhow!("engine thread is gone"))?;
-        rx.await.map_err(|_err| anyhow!("engine dropped the reply"))?
+    pub fn complete(&self, request: CompleteRequest) -> CompletionTask {
+        self.complete_for_session(SessionId::ANONYMOUS, request)
     }
 
-    /// Block the current thread until completion returns. Use from CLI / tests only —
-    /// the desktop overlay must call [`Self::complete`] so generators cannot freeze AppKit.
+    /// Submits synchronously: a later call wins even if its future is polled first.
+    pub fn complete_for_session(&self, session: SessionId, request: CompleteRequest) -> CompletionTask {
+        let (reply, receiver) = oneshot::channel();
+        let token = CancellationToken::new();
+        let mut submission = self.submission.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(previous) = &submission.latest {
+            previous.cancel();
+        }
+        submission.sequence = submission.sequence.wrapping_add(1);
+        submission.owner = Some(session);
+        submission.latest = Some(token.clone());
+        submission.requests.submitted = submission.requests.submitted.saturating_add(1);
+        let sequence = submission.sequence;
+        if let Err(error) = self.tx.send(Job {
+            kind: JobKind::Complete {
+                request,
+                reply,
+                token: token.clone(),
+                session,
+                sequence,
+            },
+        }) {
+            if let JobKind::Complete { reply, .. } = error.0.kind {
+                let _ = reply.send(Err(anyhow!("engine thread is gone")));
+            }
+        }
+        CompletionTask { receiver, token }
+    }
+
+    /// Use from CLI/tests only; the desktop polls CompletionTask on GPUI.
     pub fn complete_blocking(&self, request: CompleteRequest) -> anyhow::Result<CompleteResult> {
-        let (reply, rx) = oneshot::channel();
+        futures::executor::block_on(self.complete(request))
+    }
+
+    /// End a session without cancelling another session's submitted work.
+    /// The worker also checks the owner of committed resources: a newer
+    /// cancelled submission must not swallow the previous owner's end.
+    pub fn end_input(&self, session: SessionId) -> anyhow::Result<()> {
+        let mut submission = self.submission.lock().unwrap_or_else(|error| error.into_inner());
+        if submission.owner == Some(session) {
+            if let Some(token) = submission.latest.take() {
+                token.cancel();
+            }
+            submission.owner = None;
+        }
+        submission.sequence = submission.sequence.wrapping_add(1);
+        // Always keep the notification in FIFO order. Only the worker knows
+        // whether intervening attempts actually committed a new resource owner.
         self.tx
             .send(Job {
-                kind: JobKind::Complete { request, reply },
+                kind: JobKind::EndInput { session },
             })
-            .map_err(|_err| anyhow!("engine thread is gone"))?;
-        futures::executor::block_on(rx).map_err(|_err| anyhow!("engine dropped the reply"))?
+            .map_err(|_disconnected| anyhow!("engine thread is gone"))
+    }
+
+    /// An ordered, read-only snapshot. Does not initialize or interrupt Engine.
+    pub fn diagnostics(&self) -> impl Future<Output = anyhow::Result<EngineClientDiagnostics>> + Send + 'static {
+        let (reply, receiver) = oneshot::channel();
+        let sent = self.send_control(JobKind::Diagnostics { reply });
+        async move {
+            sent?;
+            receiver
+                .await
+                .map_err(|_cancelled| anyhow!("engine dropped diagnostics reply"))
+        }
+    }
+
+    fn send_control(&self, kind: JobKind) -> anyhow::Result<()> {
+        let _submission = self.submission.lock().unwrap_or_else(|error| error.into_inner());
+        self.tx
+            .send(Job { kind })
+            .map_err(|_disconnected| anyhow!("engine thread is gone"))
     }
 
     /// Queue a successful acceptance without participating in completion
@@ -361,18 +537,15 @@ impl EngineClient {
             let mut acceptance = self.acceptance.lock().unwrap_or_else(|err| err.into_inner());
             let _ = acceptance.record_at(&root_command, &accepted_name, timestamp);
         }
-        self.tx
-            .send(Job {
-                kind: JobKind::RecordAcceptance {
-                    root_command,
-                    accepted_name,
-                    timestamp,
-                },
-            })
-            .map_err(|_err| {
-                self.acceptance.lock().unwrap_or_else(|err| err.into_inner()).persist();
-                anyhow!("engine thread is gone")
-            })
+        self.send_control(JobKind::RecordAcceptance {
+            root_command,
+            accepted_name,
+            timestamp,
+        })
+        .map_err(|_err| {
+            self.acceptance.lock().unwrap_or_else(|err| err.into_inner()).persist();
+            anyhow!("engine thread is gone")
+        })
     }
 
     /// Update in-memory scoped ranking immediately; persistence is replayed
@@ -393,26 +566,19 @@ impl EngineClient {
         if !valid {
             return Ok(());
         }
-        self.tx
-            .send(Job {
-                kind: JobKind::RecordScopedAcceptance {
-                    scope,
-                    accepted_name,
-                    timestamp,
-                },
-            })
-            .map_err(|_err| anyhow!("engine thread is gone"))
+        self.send_control(JobKind::RecordScopedAcceptance {
+            scope,
+            accepted_name,
+            timestamp,
+        })
+        .map_err(|_err| anyhow!("engine thread is gone"))
     }
 
     /// Forget every cached spec and generator result. Applied on the worker
     /// between completions, like an acceptance record, so it is never
     /// coalesced away by a newer completion request.
     pub fn clear_caches(&self) -> anyhow::Result<()> {
-        self.tx
-            .send(Job {
-                kind: JobKind::ClearCaches,
-            })
-            .map_err(|_err| anyhow!("engine thread is gone"))
+        self.send_control(JobKind::ClearCaches)
     }
 
     #[cfg(test)]
@@ -430,35 +596,20 @@ impl EngineClient {
     }
 }
 
-/// A queued job that is not a completion: applied in order while draining.
-enum SideEffect {
-    RecordAcceptance {
-        root_command: String,
-        accepted_name: String,
-        timestamp: u64,
-    },
-    RecordScopedAcceptance {
-        scope: String,
-        accepted_name: String,
-        timestamp: u64,
-    },
-    ClearCaches,
-    #[cfg(test)]
-    InspectIdle {
-        relative: String,
-        reply: oneshot::Sender<IdleFileState>,
-    },
+fn update_requests(submission: &Mutex<Submission>, update: impl FnOnce(&mut RequestDiagnostics)) {
+    update(&mut submission.lock().unwrap_or_else(|error| error.into_inner()).requests);
 }
 
-fn clear_caches(specs_dir: &Path, engine: &mut Option<Engine>, registry_template: &mut Option<Registry>) {
+fn clear_caches(specs_dir: &Path, engine: &mut Option<Engine>, registry_template: &mut Option<Registry>) -> bool {
     if let Some(engine) = engine.as_mut() {
         // Keep the old snapshot/template when the canonical directory is
         // temporarily absent during publication. A failed reset must not
         // turn a valid generation into an empty/stale worker state.
         if engine.clear_caches_and_report() {
             *registry_template = None;
+            return true;
         }
-        return;
+        return false;
     }
 
     // A timed-out attempt may have left only the pristine template. Refresh
@@ -467,6 +618,7 @@ fn clear_caches(specs_dir: &Path, engine: &mut Option<Engine>, registry_template
     if let Ok(registry) = Engine::load_registry(specs_dir) {
         *registry_template = Some(registry);
     }
+    false
 }
 
 impl AttemptFailure {
@@ -486,8 +638,19 @@ impl AttemptFailure {
 /// attempt gets stuck, its thread (and the engine it owns) is intentionally
 /// abandoned; the supervisor can then rebuild a fresh engine and accept the
 /// next request.
+#[cfg(test)]
 fn run_engine_attempt(engine: Engine, request: CompleteRequest, timeout: Duration) -> AttemptResult {
-    run_attempt(engine, request, timeout, |mut engine, request| {
+    run_engine_attempt_with_token(engine, request, timeout, CancellationToken::new())
+}
+
+fn run_engine_attempt_with_token(
+    engine: Engine,
+    request: CompleteRequest,
+    timeout: Duration,
+    token: CancellationToken,
+) -> AttemptResult {
+    run_attempt(engine, request, timeout, move |mut engine, request| {
+        let _scope = crate::cancellation::enter(token);
         let result = engine.complete(request);
         (engine, result)
     })
@@ -615,49 +778,27 @@ fn rebuild_engine(
     Ok(Engine::from_registry(specs_dir, registry, acceptance.clone()))
 }
 
-fn drain_to_latest<F>(rx: &mpsc::Receiver<Job>, first: Job, mut on_side_effect: F) -> Job
-where
-    F: FnMut(SideEffect),
-{
-    let mut job = first;
-    while let Ok(next) = rx.try_recv() {
-        match next.kind {
-            JobKind::RecordAcceptance {
-                root_command,
-                accepted_name,
-                timestamp,
-            } => on_side_effect(SideEffect::RecordAcceptance {
-                root_command,
-                accepted_name,
-                timestamp,
-            }),
-            JobKind::RecordScopedAcceptance {
-                scope,
-                accepted_name,
-                timestamp,
-            } => on_side_effect(SideEffect::RecordScopedAcceptance {
-                scope,
-                accepted_name,
-                timestamp,
-            }),
-            JobKind::ClearCaches => on_side_effect(SideEffect::ClearCaches),
-            #[cfg(test)]
-            JobKind::InspectIdle { relative, reply } => {
-                on_side_effect(SideEffect::InspectIdle { relative, reply });
-            },
-            JobKind::Complete { request, reply } => {
-                // A newer request makes the current one irrelevant, but its
-                // caller is still waiting on the reply channel. Finish it
-                // explicitly instead of dropping the sender and leaving that
-                // caller suspended indefinitely.
-                let previous = std::mem::replace(&mut job.kind, JobKind::Complete { request, reply });
-                if let JobKind::Complete { reply, .. } = previous {
-                    let _ = reply.send(Err(anyhow!("completion request superseded by a newer request")));
-                }
-            },
-        }
+// Control traffic can keep recv_timeout ready forever. Give expired trees a
+// bounded maintenance opportunity without moving a control across a request.
+const MAX_JOBS_WITHOUT_ATTEMPT: usize = 64;
+
+fn maintain_idle_between_queued_jobs(
+    engine: Option<&mut Engine>,
+    head: &Job,
+    jobs_without_attempt: &mut usize,
+    now: Instant,
+    grace: Duration,
+) {
+    *jobs_without_attempt = jobs_without_attempt.saturating_add(1);
+    let live_completion = matches!(&head.kind, JobKind::Complete { token, reply, .. }
+        if !token.is_cancelled() && !reply.is_canceled());
+    if *jobs_without_attempt < MAX_JOBS_WITHOUT_ATTEMPT || live_completion {
+        return;
     }
-    job
+    if let Some(engine) = engine {
+        engine.release_idle_specs(now, grace);
+    }
+    *jobs_without_attempt = 0;
 }
 
 /// Block until the next job, or until the earliest idle deadline.
@@ -719,7 +860,13 @@ mod tests {
 
     fn completion_job(request: CompleteRequest, reply: oneshot::Sender<anyhow::Result<CompleteResult>>) -> Job {
         Job {
-            kind: JobKind::Complete { request, reply },
+            kind: JobKind::Complete {
+                request,
+                reply,
+                token: CancellationToken::new(),
+                session: SessionId::ANONYMOUS,
+                sequence: 0,
+            },
         }
     }
 
@@ -814,146 +961,383 @@ mod tests {
     }
 
     #[test]
-    fn drain_keeps_the_newest_job() {
-        let (tx, rx) = mpsc::channel::<Job>();
-        let (reply_a, rx_a) = oneshot::channel();
-        let (reply_b, rx_b) = oneshot::channel();
-        let (reply_c, _rx_c) = oneshot::channel();
-        tx.send(completion_job(
-            CompleteRequest {
-                buffer: "gi".into(),
-                ..CompleteRequest::default()
-            },
-            reply_a,
-        ))
-        .unwrap();
-        tx.send(completion_job(
-            CompleteRequest {
-                buffer: "git".into(),
-                ..CompleteRequest::default()
-            },
-            reply_b,
-        ))
-        .unwrap();
-        tx.send(completion_job(
-            CompleteRequest {
-                buffer: "git ".into(),
-                ..CompleteRequest::default()
-            },
-            reply_c,
-        ))
-        .unwrap();
-        let first = rx.recv().unwrap();
-        let latest = drain_to_latest(&rx, first, |_| unreachable!("no side effects in this test"));
-        let JobKind::Complete { request, .. } = latest.kind else {
-            unreachable!("latest job should be a completion")
+    fn synchronous_submission_cancels_only_older_tasks_and_preserves_control_order() {
+        let (tx, rx) = mpsc::channel();
+        let client = EngineClient {
+            tx,
+            acceptance: Arc::new(Mutex::new(AcceptanceIndex::default())),
+            submission: Arc::new(Mutex::new(Submission::default())),
         };
-        assert_eq!(request.buffer, "git ");
-        assert!(rx.try_recv().is_err());
-
-        let error_a = futures::executor::block_on(rx_a)
-            .expect("superseded request should receive a reply")
-            .expect_err("superseded request should fail explicitly");
-        assert_eq!(error_a.to_string(), "completion request superseded by a newer request");
-        let error_b = futures::executor::block_on(rx_b)
-            .expect("superseded request should receive a reply")
-            .expect_err("superseded request should fail explicitly");
-        assert_eq!(error_b.to_string(), "completion request superseded by a newer request");
+        let older = client.complete_for_session(SessionId::new(1), CompleteRequest::default());
+        client.clear_caches().unwrap();
+        let diagnostic = client.diagnostics();
+        let newer = client.complete_for_session(SessionId::new(2), CompleteRequest::default());
+        assert!(older.token.is_cancelled());
+        drop(older);
+        assert!(!newer.token.is_cancelled());
+        assert!(matches!(rx.recv().unwrap().kind, JobKind::Complete { sequence: 1, .. }));
+        assert!(matches!(rx.recv().unwrap().kind, JobKind::ClearCaches));
+        assert!(matches!(rx.recv().unwrap().kind, JobKind::Diagnostics { .. }));
+        assert!(matches!(rx.recv().unwrap().kind, JobKind::Complete { sequence: 2, .. }));
+        drop(diagnostic);
+        let token = newer.token.clone();
+        drop(newer);
+        assert!(token.is_cancelled(), "even an unpolled task cancels its own work");
     }
 
     #[test]
-    fn acceptance_jobs_survive_completion_coalescing() {
-        let (tx, rx) = mpsc::channel::<Job>();
-        let (reply_a, _rx_a) = oneshot::channel();
-        let (reply_b, _rx_b) = oneshot::channel();
-        tx.send(completion_job(CompleteRequest::default(), reply_a)).unwrap();
+    fn queued_controls_and_cancelled_jobs_cannot_starve_idle_release_or_reorder_live_work() {
+        let dir = tempfile::tempdir().unwrap();
+        write_idle_specs(dir.path());
+        let now = Instant::now();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let child = registry.load_referenced_spec("child").unwrap();
+        let weak = Arc::downgrade(&child);
+        drop(child);
+        registry.set_idle_since("child", Some(now));
+        let mut engine = Engine::from_registry(dir.path(), registry, Arc::new(Mutex::new(AcceptanceIndex::default())));
+        let (tx, rx) = mpsc::channel();
+        let mut receivers = Vec::new();
+        for index in 0..MAX_JOBS_WITHOUT_ATTEMPT {
+            if index % 2 == 0 {
+                let (reply, receiver) = oneshot::channel();
+                receivers.push(receiver);
+                tx.send(Job {
+                    kind: JobKind::Diagnostics { reply },
+                })
+                .unwrap();
+            } else {
+                let (reply, receiver) = oneshot::channel();
+                let job = completion_job(CompleteRequest::default(), reply);
+                if let JobKind::Complete { token, .. } = &job.kind {
+                    token.cancel();
+                }
+                tx.send(job).unwrap();
+                drop(receiver);
+            }
+        }
+        let (live_reply, live_receiver) = oneshot::channel();
+        tx.send(completion_job(CompleteRequest::default(), live_reply)).unwrap();
         tx.send(Job {
-            kind: JobKind::RecordAcceptance {
-                root_command: "git".into(),
-                accepted_name: "status".into(),
-                timestamp: 123,
-            },
+            kind: JobKind::ClearCaches,
         })
         .unwrap();
-        tx.send(completion_job(
-            CompleteRequest {
-                buffer: "git ".into(),
-                ..CompleteRequest::default()
-            },
-            reply_b,
-        ))
-        .unwrap();
+        let mut streak = 0;
+        for _ in 0..MAX_JOBS_WITHOUT_ATTEMPT {
+            let head = rx.recv().unwrap();
+            maintain_idle_between_queued_jobs(
+                Some(&mut engine),
+                &head,
+                &mut streak,
+                now + Duration::from_secs(1),
+                Duration::ZERO,
+            );
+        }
+        assert!(
+            weak.upgrade().is_none(),
+            "a continuously nonempty queue must still release an expired file"
+        );
+        assert!(matches!(rx.recv().unwrap().kind, JobKind::Complete { .. }));
+        assert!(matches!(rx.recv().unwrap().kind, JobKind::ClearCaches));
+        assert!(rx.try_recv().is_err());
+        drop(live_receiver);
 
-        let mut records = Vec::new();
-        let latest = drain_to_latest(&rx, rx.recv().unwrap(), |side_effect| match side_effect {
-            SideEffect::RecordAcceptance {
-                root_command,
-                accepted_name,
-                ..
-            } => records.push((root_command, accepted_name)),
-            SideEffect::RecordScopedAcceptance { .. } => unreachable!("no scoped acceptance in this test"),
-            SideEffect::ClearCaches => unreachable!("no cache clear in this test"),
-            SideEffect::InspectIdle { .. } => unreachable!("no idle inspect in this test"),
-        });
-        assert_eq!(records, vec![("git".into(), "status".into())]);
-        let JobKind::Complete { request, .. } = latest.kind else {
-            unreachable!("latest job should be a completion");
-        };
-        assert_eq!(request.buffer, "git ");
+        // At the same threshold a live FIFO head wins, so its cached tree
+        // remains available until the attempt can touch it again.
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let child = registry.load_referenced_spec("child").unwrap();
+        let weak = Arc::downgrade(&child);
+        drop(child);
+        registry.set_idle_since("child", Some(now));
+        let mut engine = Engine::from_registry(dir.path(), registry, Arc::new(Mutex::new(AcceptanceIndex::default())));
+        let (reply, receiver) = oneshot::channel();
+        let live = completion_job(CompleteRequest::default(), reply);
+        let mut streak = MAX_JOBS_WITHOUT_ATTEMPT;
+        maintain_idle_between_queued_jobs(
+            Some(&mut engine),
+            &live,
+            &mut streak,
+            now + Duration::from_secs(1),
+            Duration::ZERO,
+        );
+        assert!(weak.upgrade().is_some(), "a live completion must precede maintenance");
+        drop(receiver);
     }
 
     #[test]
-    fn scoped_acceptance_updates_memory_and_survives_completion_coalescing() {
-        let (tx, rx) = mpsc::channel::<Job>();
-        let acceptance = Arc::new(Mutex::new(AcceptanceIndex::default()));
+    fn end_input_is_ordered_with_submission_and_does_not_initialize_engine() {
+        let (tx, rx) = mpsc::channel();
         let client = EngineClient {
-            tx: tx.clone(),
-            acceptance: Arc::clone(&acceptance),
+            tx,
+            acceptance: Arc::new(Mutex::new(AcceptanceIndex::default())),
+            submission: Arc::new(Mutex::new(Submission::default())),
         };
-        let scope = crate::rank::argument_scope(
-            "/project",
-            &crate::history::ArgSlot {
-                root: "git".into(),
-                path: vec!["checkout".into()],
-                option: None,
-                index: 0,
+        let old = client.complete_for_session(SessionId::new(1), CompleteRequest::default());
+        client.end_input(SessionId::new(1)).unwrap();
+        assert!(old.token.is_cancelled());
+        client.end_input(SessionId::new(1)).unwrap();
+        let fresh = client.complete_for_session(SessionId::new(1), CompleteRequest::default());
+        assert!(!fresh.token.is_cancelled());
+        assert!(matches!(rx.recv().unwrap().kind, JobKind::Complete { .. }));
+        assert!(matches!(rx.recv().unwrap().kind, JobKind::EndInput { .. }));
+        assert!(matches!(rx.recv().unwrap().kind, JobKind::EndInput { .. }));
+        assert!(matches!(rx.recv().unwrap().kind, JobKind::Complete { .. }));
+        assert!(rx.try_recv().is_err());
+
+        let dir = tempfile::tempdir().unwrap();
+        let lazy = EngineClient::spawn(dir.path().to_path_buf()).unwrap();
+        lazy.end_input(SessionId::new(1)).unwrap();
+        assert!(
+            futures::executor::block_on(lazy.diagnostics())
+                .unwrap()
+                .engine
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn background_end_and_repeated_end_cannot_change_current_input_or_restart_grace() {
+        let dir = tempfile::tempdir().unwrap();
+        write_idle_specs(dir.path());
+        let client = EngineClient::spawn(dir.path().to_path_buf()).unwrap();
+        let request = CompleteRequest {
+            buffer: "tool child ".into(),
+            cwd: dir.path().display().to_string(),
+            ..CompleteRequest::default()
+        };
+        futures::executor::block_on(client.complete_for_session(SessionId::new(1), request.clone())).unwrap();
+        client.end_input(SessionId::new(2)).unwrap();
+        assert_eq!(
+            client.inspect_idle("child").unwrap().mark,
+            Some(None),
+            "an empty background session must not guess the owner ended"
+        );
+        client.end_input(SessionId::new(1)).unwrap();
+        let since = client.inspect_idle("child").unwrap().mark.unwrap().unwrap();
+        client.end_input(SessionId::new(1)).unwrap();
+        assert_eq!(client.inspect_idle("child").unwrap().mark, Some(Some(since)));
+        futures::executor::block_on(client.complete_for_session(SessionId::new(2), request)).unwrap();
+        client.end_input(SessionId::new(1)).unwrap();
+        assert_eq!(client.inspect_idle("child").unwrap().mark, Some(None));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn end_input_cancels_the_running_owner_and_old_completion_cannot_restore_activity() {
+        let dir = tempfile::tempdir().unwrap();
+        slow_fixture(dir.path());
+        let client = EngineClient::spawn(dir.path().to_path_buf()).unwrap();
+        let old = client.complete_for_session(SessionId::new(1), fixture_request(dir.path(), "slow "));
+        await_fixture_start(dir.path());
+        client.end_input(SessionId::new(1)).unwrap();
+        assert!(
+            futures::executor::block_on(old)
+                .unwrap_err()
+                .is::<CompletionCancelled>()
+        );
+        let mark = client.inspect_idle("slow").unwrap().mark.unwrap();
+        assert!(
+            mark.is_some(),
+            "cancelled attempt cannot restore an active marker after end"
+        );
+        std::fs::write(dir.path().join("allow"), "").unwrap();
+        let next = futures::executor::block_on(
+            client.complete_for_session(SessionId::new(1), fixture_request(dir.path(), "slow ")),
+        )
+        .unwrap();
+        assert!(next.suggestions.iter().any(|row| row.name == "recovered"));
+        assert_eq!(client.inspect_idle("slow").unwrap().mark, Some(None));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelled_new_session_cannot_swallow_the_active_sessions_end() {
+        let dir = tempfile::tempdir().unwrap();
+        slow_fixture(dir.path());
+        let client = EngineClient::spawn_with_idle_grace(
+            dir.path().to_path_buf(),
+            WATCHDOG_UNDER_TEST,
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        futures::executor::block_on(
+            client.complete_for_session(SessionId::new(1), fixture_request(dir.path(), "fast ")),
+        )
+        .unwrap();
+        assert_eq!(client.inspect_idle("fast").unwrap().mark, Some(None));
+        let abandoned = client.complete_for_session(SessionId::new(2), fixture_request(dir.path(), "slow "));
+        await_fixture_start(dir.path());
+        drop(abandoned);
+        client.end_input(SessionId::new(1)).unwrap();
+        let state = client.inspect_idle("fast").unwrap();
+        assert!(
+            state.mark.is_none_or(|mark| mark.is_some()),
+            "old active owner must enter grace"
+        );
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while futures::executor::block_on(client.diagnostics())
+            .unwrap()
+            .engine
+            .unwrap()
+            .registry
+            .cached_file_count
+            != 0
+        {
+            assert!(
+                Instant::now() < deadline,
+                "cancelled session swallowed the resource owner's end"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let counts = futures::executor::block_on(client.diagnostics()).unwrap().requests;
+        assert_eq!(counts.engine_initializations, 1);
+        assert_eq!(counts.cancelled, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn committed_session_wins_over_older_end_after_an_interrupted_attempt() {
+        let dir = tempfile::tempdir().unwrap();
+        slow_fixture(dir.path());
+        let client = EngineClient::spawn(dir.path().to_path_buf()).unwrap();
+        futures::executor::block_on(
+            client.complete_for_session(SessionId::new(1), fixture_request(dir.path(), "fast ")),
+        )
+        .unwrap();
+        let old = client.complete_for_session(SessionId::new(1), fixture_request(dir.path(), "slow "));
+        await_fixture_start(dir.path());
+        let newer = client.complete_for_session(SessionId::new(2), fixture_request(dir.path(), "fast "));
+        client.end_input(SessionId::new(1)).unwrap();
+        assert!(!newer.token.is_cancelled(), "ending A must not cancel B");
+        assert!(
+            futures::executor::block_on(old)
+                .unwrap_err()
+                .is::<CompletionCancelled>()
+        );
+        assert!(
+            futures::executor::block_on(newer)
+                .unwrap()
+                .suggestions
+                .iter()
+                .any(|row| row.name == "ready")
+        );
+        assert_eq!(client.inspect_idle("fast").unwrap().mark, Some(None));
+
+        // A history-only success has no normal idle commit and cannot steal
+        // the resource owner from B, even though it is the latest submission.
+        let mut history = fixture_request(dir.path(), "fast ");
+        history.history_only = true;
+        futures::executor::block_on(client.complete_for_session(SessionId::new(3), history)).unwrap();
+        client.end_input(SessionId::new(3)).unwrap();
+        assert_eq!(client.inspect_idle("fast").unwrap().mark, Some(None));
+        client.end_input(SessionId::new(2)).unwrap();
+        assert!(client.inspect_idle("fast").unwrap().mark.unwrap().is_some());
+    }
+
+    #[cfg(unix)]
+    fn slow_fixture(dir: &Path) {
+        let body = serde_json::json!({
+            "names": ["slow"], "args": [{
+                "name": "value", "cacheStrategy": "max-age", "splitOn": "\n",
+                "script": ["/bin/sh", "-c",
+                    "if [ ! -e \"$2\" ]; then : > \"$1\"; while :; do sleep 1; done; fi; printf 'recovered\\n'",
+                    "cancel-fixture", dir.join("started"), dir.join("allow")]
+            }]
+        });
+        std::fs::write(dir.join("slow.json"), body.to_string()).unwrap();
+        std::fs::write(
+            dir.join("fast.json"),
+            r#"{"names":["fast"],"subcommands":[{"names":["ready"]}]}"#,
+        )
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    fn await_fixture_start(dir: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !dir.join("started").exists() {
+            assert!(Instant::now() < deadline, "real script did not signal startup");
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[cfg(unix)]
+    fn fixture_request(dir: &Path, buffer: &str) -> CompleteRequest {
+        CompleteRequest {
+            buffer: buffer.into(),
+            cwd: dir.display().to_string(),
+            ..CompleteRequest::default()
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn newer_input_cancels_a_running_script_without_resetting_engine_or_caching_empty_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        slow_fixture(dir.path());
+        let client = EngineClient::spawn(dir.path().to_path_buf()).unwrap();
+        assert!(
+            futures::executor::block_on(client.diagnostics())
+                .unwrap()
+                .engine
+                .is_none()
+        );
+        let old = client.complete_for_session(SessionId::new(1), fixture_request(dir.path(), "slow "));
+        await_fixture_start(dir.path());
+        let latest = client.complete_for_session(SessionId::new(2), fixture_request(dir.path(), "fast "));
+        let error = futures::executor::block_on(old).unwrap_err();
+        assert!(error.is::<CompletionCancelled>(), "{error}");
+        let result = futures::executor::block_on(latest).unwrap();
+        assert!(result.suggestions.iter().any(|row| row.name == "ready"));
+        let snapshot = futures::executor::block_on(client.diagnostics()).unwrap();
+        assert_eq!(snapshot.requests.engine_initializations, 1);
+        assert_eq!(
+            (
+                snapshot.requests.cancelled,
+                snapshot.requests.completed,
+                snapshot.requests.failed
+            ),
+            (1, 1, 0)
+        );
+        assert_eq!(snapshot.engine.unwrap().hooks.script_output.entries, 0);
+        std::fs::write(dir.path().join("allow"), "").unwrap();
+        let retried = client.complete_blocking(fixture_request(dir.path(), "slow ")).unwrap();
+        assert!(
+            retried.suggestions.iter().any(|row| row.name == "recovered"),
+            "must rerun instead of replaying cancelled generator state"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_a_running_task_releases_its_new_tree_without_another_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        slow_fixture(dir.path());
+        let client = EngineClient::spawn_with_options(
+            dir.path().to_path_buf(),
+            EngineClientOptions {
+                spec_idle_grace: Duration::from_millis(40),
             },
         )
         .unwrap();
-        let (reply_a, _rx_a) = oneshot::channel();
-        let (reply_b, _rx_b) = oneshot::channel();
-        tx.send(completion_job(CompleteRequest::default(), reply_a)).unwrap();
-        client.record_scoped_acceptance(scope.clone(), "feature").unwrap();
-        let timestamp = acceptance
-            .lock()
-            .unwrap()
-            .scoped_timestamp(&scope, "feature")
-            .expect("client writes before worker replay");
-        tx.send(completion_job(CompleteRequest::default(), reply_b)).unwrap();
-
-        let mut records = Vec::new();
-        let latest = drain_to_latest(&rx, rx.recv().unwrap(), |side_effect| match side_effect {
-            SideEffect::RecordScopedAcceptance {
-                scope,
-                accepted_name,
-                timestamp,
-            } => records.push((scope, accepted_name, timestamp)),
-            SideEffect::RecordAcceptance { .. } | SideEffect::ClearCaches | SideEffect::InspectIdle { .. } => {
-                unreachable!()
-            },
-        });
-        assert_eq!(records, vec![(scope.clone(), "feature".into(), timestamp)]);
-        assert!(matches!(latest.kind, JobKind::Complete { .. }));
-        assert!(
-            acceptance
-                .lock()
-                .unwrap()
-                .record_scoped_at(&scope, "feature", timestamp)
-        );
-        assert_eq!(
-            acceptance.lock().unwrap().scoped_timestamp(&scope, "feature"),
-            Some(timestamp)
-        );
+        let task = client.complete(fixture_request(dir.path(), "slow "));
+        await_fixture_start(dir.path());
+        drop(task);
+        let returned = futures::executor::block_on(client.diagnostics()).unwrap();
+        assert_eq!(returned.requests.cancelled, 1);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            thread::sleep(Duration::from_millis(20));
+            let snapshot = futures::executor::block_on(client.diagnostics()).unwrap();
+            assert_eq!(snapshot.requests.submitted, 1);
+            if snapshot.engine.unwrap().registry.cached_file_count == 0 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "cancelled first load must get an idle deadline"
+            );
+        }
     }
 
     #[test]
@@ -1169,9 +1553,7 @@ mod tests {
         tx.send(completion_job(CompleteRequest::default(), reply)).unwrap();
         drop(caller);
 
-        let job = drain_to_latest(&rx, rx.recv().unwrap(), |_| {
-            unreachable!("no side effects in this test")
-        });
+        let job = rx.recv().unwrap();
         let JobKind::Complete { reply, .. } = job.kind else {
             unreachable!("job should be a completion")
         };

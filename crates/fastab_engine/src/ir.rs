@@ -1049,7 +1049,12 @@ const MAX_CACHED_SPECS: usize = 48;
 const MAX_NAME_MATCHES: usize = 50;
 
 /// How long a parsed spec stays after the edit buffer stops using it.
-pub(crate) const SPEC_IDLE_GRACE: Duration = Duration::from_secs(25);
+pub(crate) const SPEC_IDLE_GRACE: Duration = Duration::from_secs(10);
+
+/// Paths and marks only: an attempt checkpoint must never pin parsed trees.
+// Preserve all three registry states: unmarked, active, and an idle timestamp.
+#[allow(clippy::option_option)]
+pub(crate) struct IdleCheckpoint(HashMap<PathBuf, Option<Option<Instant>>>);
 
 struct UnlinkedSpec {
     /// `specs` or `load_spec_cache` lost this `Arc`. A path-only `loadSpec`
@@ -1339,6 +1344,82 @@ impl Registry {
         }
     }
 
+    fn cached_file_paths(&self) -> HashSet<PathBuf> {
+        self.load_spec_cache
+            .keys()
+            .chain(self.path_specs.keys())
+            .cloned()
+            .chain(
+                self.specs
+                    .keys()
+                    .filter_map(|name| self.files.get(name.as_str()).cloned()),
+            )
+            .filter(|path| self.releasable_arcs_for_path(path).next().is_some())
+            .collect()
+    }
+
+    pub(crate) fn checkpoint_idle(&self) -> IdleCheckpoint {
+        IdleCheckpoint(
+            self.cached_file_paths()
+                .into_iter()
+                .map(|path| {
+                    let mark = self.idle_since.get(&path).copied();
+                    (path, mark)
+                })
+                .collect(),
+        )
+    }
+
+    pub(crate) fn restore_cancelled_idle(&mut self, checkpoint: IdleCheckpoint, now: Instant) {
+        self.forget_unowned_idle_paths();
+        for path in self.cached_file_paths() {
+            match checkpoint.0.get(&path) {
+                Some(Some(mark)) => {
+                    self.idle_since.insert(path, *mark);
+                },
+                Some(None) => {
+                    self.idle_since.remove(&path);
+                },
+                None => {
+                    self.idle_since.insert(path, Some(now));
+                },
+            }
+        }
+        self.idle_touched.clear();
+    }
+
+    pub(crate) fn diagnostics(&self, now: Instant, grace: Duration) -> crate::diagnostics::RegistryDiagnostics {
+        let paths = self.cached_file_paths();
+        let mut seen_specs = HashSet::new();
+        let mut seen_options = HashSet::new();
+        let allocated_bytes = self
+            .specs
+            .values()
+            .chain(self.loaded.iter())
+            .chain(self.pinned.iter())
+            .chain(self.path_specs.values())
+            .chain(self.load_spec_cache.values())
+            .map(|spec| {
+                if seen_specs.insert(Arc::as_ptr(spec) as usize) {
+                    std::mem::size_of::<Spec>() + spec.heap_bytes(&mut seen_options, &mut seen_specs)
+                } else {
+                    0
+                }
+            })
+            .sum();
+        crate::diagnostics::RegistryDiagnostics {
+            cached_file_count: paths.len(),
+            idle_file_count: paths
+                .iter()
+                .filter(|path| matches!(self.idle_since.get(*path), Some(Some(_))))
+                .count(),
+            allocated_bytes,
+            next_deadline_ms: self
+                .next_idle_deadline(grace)
+                .map(|deadline| u64::try_from(deadline.saturating_duration_since(now).as_millis()).unwrap_or(u64::MAX)),
+        }
+    }
+
     /// Drop touches recorded by an earlier request. A history-only completion
     /// never reaches [`Self::note_idle_after_complete`], so this is what keeps
     /// its loads from counting as the next edit-buffer walk.
@@ -1492,11 +1573,19 @@ impl Registry {
     /// highest file (with that file's diffs applied), matching WebView.
     pub fn get_versioned_arc(&mut self, name: &str, cwd: &str, timeout: std::time::Duration) -> Option<Arc<Spec>> {
         let entry = self.versioned.get(name)?.clone();
-        let detected = self
-            .version_cache
-            .entry(name.to_string())
-            .or_insert_with(|| crate::versioned::detect_cli_version(&entry, cwd, timeout))
-            .clone();
+        crate::cancellation::check().ok()?;
+        let detected = if let Some(cached) = self.version_cache.get(name) {
+            cached.clone()
+        } else {
+            let detected = crate::versioned::detect_cli_version(&entry, cwd, timeout);
+            // Cancellation is not a cached detection failure. A later request
+            // must still probe the real CLI version instead of choosing fallback.
+            crate::cancellation::commit_if_active(|| {
+                self.version_cache.insert(name.to_string(), detected.clone());
+            })
+            .ok()?;
+            detected
+        };
         let relative = crate::versioned::resolve_versioned_path(&entry, detected.as_deref())?;
         self.load_relative_spec(&relative, name)
     }
@@ -1772,6 +1861,7 @@ impl Registry {
         intern_spec_options(&mut spec, &mut self.option_pool);
         let spec = Arc::new(spec);
         let mut claimed = false;
+        let mut displaced = Vec::new();
         for name in &spec.names {
             if name.is_empty() {
                 continue;
@@ -1780,12 +1870,39 @@ impl Registry {
             {
                 continue;
             }
-            self.specs.insert(name.clone(), spec.clone());
+            if let Some(old) = self.specs.insert(name.clone(), spec.clone())
+                && mode == OverlayMode::Replace
+            {
+                displaced.push(old);
+            }
             self.remember_name(Arc::<str>::from(name.as_str()));
             claimed = true;
         }
         if claimed {
             self.pinned.push(spec);
+        }
+        let mut released = false;
+        for old in displaced {
+            // A public API caller can overlay an already loaded registry.
+            // Once the last alias is replaced, an LRU-only tree is unreachable;
+            // keep trees still owned by another alias/path or a pinned overlay.
+            if self
+                .specs
+                .values()
+                .chain(self.load_spec_cache.values())
+                .chain(self.path_specs.values())
+                .chain(self.pinned.iter())
+                .any(|cached| Arc::ptr_eq(cached, &old))
+            {
+                continue;
+            }
+            let before = self.loaded.len();
+            self.loaded.retain(|cached| !Arc::ptr_eq(cached, &old));
+            released |= self.loaded.len() < before;
+        }
+        // All displaced handles must be gone before removing dead weak entries.
+        if released {
+            self.prune_dead_options();
         }
     }
 }
@@ -2598,6 +2715,84 @@ mod tests {
         assert_eq!(spec.names, vec!["tool".to_owned()]);
         assert_eq!(spec.options[0].names, vec!["--a".to_owned()]);
         assert!(spec.find_subcommand("sub").is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelled_version_detection_is_not_cached_as_a_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(dir.path(), "v1", r#"{"names":["tool"],"description":"selected-old"}"#);
+        write_spec(dir.path(), "v2", r#"{"names":["tool"],"description":"fallback-new"}"#);
+        let started = dir.path().join("started");
+        let allow = dir.path().join("allow");
+        let index = serde_json::json!({
+            "files": {"tool":"v2.json"},
+            "versioned": {"tool": {
+                "command":["/bin/sh", "-c",
+                    "if [ ! -e \"$2\" ]; then : > \"$1\"; while :; do sleep 1; done; fi; printf '1.0.0'",
+                    "version-fixture", started, allow],
+                "parse":"stdout", "fallback":"2.0.0", "files":{"1.0.0":"v1.json","2.0.0":"v2.json"}
+            }}
+        });
+        fs::write(dir.path().join("index.json"), index.to_string()).unwrap();
+        let token = crate::cancellation::CancellationToken::new();
+        let scope = crate::cancellation::enter(token.clone());
+        let marker = started.clone();
+        let canceller = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while !marker.exists() {
+                if Instant::now() >= deadline {
+                    token.cancel();
+                    panic!("version command did not start");
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            token.cancel();
+        });
+        let mut registry = Registry::load(dir.path()).unwrap();
+        assert!(
+            registry
+                .get_versioned_arc("tool", "/", Duration::from_secs(5))
+                .is_none()
+        );
+        canceller.join().unwrap();
+        assert!(!registry.version_cache.contains_key("tool"));
+        drop(scope);
+        fs::write(allow, "").unwrap();
+        assert_eq!(
+            registry
+                .get_versioned_arc("tool", "/", Duration::from_secs(5))
+                .unwrap()
+                .description,
+            "selected-old"
+        );
+    }
+
+    #[test]
+    fn cancelled_idle_checkpoint_preserves_old_marks_and_releases_new_trees() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["old", "active", "new"] {
+            write_spec(dir.path(), name, &format!(r#"{{"names":["{name}"]}}"#));
+        }
+        let mut registry = Registry::load(dir.path()).unwrap();
+        registry.get_arc("old").unwrap();
+        registry.get_arc("active").unwrap();
+        let original = Instant::now();
+        registry.set_idle_since("old", Some(original));
+        registry.set_idle_since("active", None);
+        let checkpoint = registry.checkpoint_idle();
+        registry.get_arc("old").unwrap();
+        let new = registry.get_arc("new").unwrap();
+        let weak = Arc::downgrade(&new);
+        drop(new);
+        let cancelled = original + Duration::from_secs(2);
+        registry.restore_cancelled_idle(checkpoint, cancelled);
+        assert_eq!(registry.idle_mark("old"), Some(Some(original)));
+        assert_eq!(registry.idle_mark("active"), Some(None));
+        assert_eq!(registry.idle_mark("new"), Some(Some(cancelled)));
+        registry.release_idle(cancelled + SPEC_IDLE_GRACE, SPEC_IDLE_GRACE);
+        assert!(weak.upgrade().is_none());
+        assert!(registry.specs.contains_key("active"));
     }
 
     #[test]
@@ -4140,7 +4335,7 @@ mod tests {
 
     #[test]
     fn idle_release_drops_only_the_expired_file() {
-        assert_eq!(SPEC_IDLE_GRACE, Duration::from_secs(25));
+        assert_eq!(SPEC_IDLE_GRACE, Duration::from_secs(10));
         let dir = tempfile::tempdir().unwrap();
         write_spec(
             dir.path(),
@@ -4244,6 +4439,85 @@ mod tests {
         write_spec(dir.path(), "tool", r#"{"names":["tool"],"description":"bundled"}"#);
         fs::write(dir.path().join("index.json"), r#"{"files":{"tool":"tool.json"}}"#).unwrap();
         dir
+    }
+
+    #[test]
+    fn replace_drops_only_the_displaced_lru_only_tree_and_its_options() {
+        let dir = idle_identity_fixture();
+        write_spec(
+            dir.path(),
+            "tool",
+            r#"{"names":["tool"],"options":[{"names":["--old"]}]}"#,
+        );
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let old = registry.get_arc("tool").unwrap();
+        let old_weak = Arc::downgrade(&old);
+        let option_weak = Arc::downgrade(&old.options[0]);
+        drop(old);
+        registry.insert(Spec {
+            names: vec!["unrelated".into()],
+            ..Spec::default()
+        });
+        let unrelated = registry.get_arc("unrelated").unwrap();
+
+        registry.overlay_spec(
+            Spec {
+                names: vec!["tool".into()],
+                ..Spec::default()
+            },
+            OverlayMode::Replace,
+        );
+
+        assert!(old_weak.upgrade().is_none());
+        assert!(option_weak.upgrade().is_none());
+        assert!(registry.option_pool.is_empty());
+        assert_eq!(registry.loaded_spec_count(), 1);
+        assert!(Arc::ptr_eq(&unrelated, &registry.get_arc("unrelated").unwrap()));
+        let pinned_weak = Arc::downgrade(&registry.get_arc("tool").unwrap());
+        registry.overlay_spec(
+            Spec {
+                names: vec!["tool".into()],
+                description: "second overlay".into(),
+                ..Spec::default()
+            },
+            OverlayMode::Replace,
+        );
+        // Pinned overlay lifetime remains the lifetime of the registry.
+        assert!(pinned_weak.upgrade().is_some());
+        assert_eq!(registry.get("tool").unwrap().description, "second overlay");
+    }
+
+    #[test]
+    fn replace_keeps_the_same_paths_versioned_tree_and_deadline() {
+        let dir = idle_identity_fixture();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let ordinary = registry.get_arc("tool").unwrap();
+        let ordinary_weak = Arc::downgrade(&ordinary);
+        let versioned = registry.load_relative_spec("tool.json", "tool").unwrap();
+        let versioned_weak = Arc::downgrade(&versioned);
+        drop((ordinary, versioned));
+        registry.begin_idle_completion();
+        let now = Instant::now();
+        registry.note_idle_after_complete(now);
+
+        registry.overlay_spec(
+            Spec {
+                names: vec!["tool".into()],
+                ..Spec::default()
+            },
+            OverlayMode::Replace,
+        );
+
+        assert!(ordinary_weak.upgrade().is_none());
+        assert!(versioned_weak.upgrade().is_some());
+        assert_eq!(registry.idle_mark("tool"), Some(Some(now)));
+        assert_eq!(
+            registry.next_idle_deadline(SPEC_IDLE_GRACE),
+            Some(now + SPEC_IDLE_GRACE)
+        );
+        registry.release_idle(now + SPEC_IDLE_GRACE, SPEC_IDLE_GRACE);
+        assert!(versioned_weak.upgrade().is_none());
+        assert!(registry.is_cached("tool"));
     }
 
     #[test]
@@ -4359,6 +4633,9 @@ mod tests {
         assert!(Arc::ptr_eq(&bundled, &registry.get_arc("other").unwrap()));
         let bundled_weak = Arc::downgrade(&bundled);
         drop(bundled);
+        registry.begin_idle_completion();
+        let now = Instant::now();
+        registry.note_idle_after_complete(now);
         registry.overlay_spec(
             Spec {
                 names: vec!["tool".into()],
@@ -4366,10 +4643,12 @@ mod tests {
             },
             OverlayMode::Replace,
         );
+        assert!(bundled_weak.upgrade().is_some());
+        assert_eq!(registry.loaded_spec_count(), 1);
+        assert_eq!(registry.idle_mark("tool"), Some(Some(now)));
         registry.begin_idle_completion();
         let pinned = registry.get_arc("tool").unwrap();
-        let now = Instant::now();
-        registry.note_idle_after_complete(now);
+        registry.note_idle_after_complete(now + Duration::from_millis(1));
         assert_eq!(registry.idle_mark("tool"), Some(Some(now)));
         assert_eq!(
             registry.next_idle_deadline(SPEC_IDLE_GRACE),
@@ -4496,7 +4775,9 @@ mod tests {
         registry.release_idle(now, SPEC_IDLE_GRACE);
         assert!(registry.is_cached("tool"));
 
-        let within = now.checked_sub(Duration::from_secs(24)).expect("24s fits in the clock");
+        let within = now
+            .checked_sub(SPEC_IDLE_GRACE - Duration::from_millis(1))
+            .expect("the grace fits in the clock");
         registry.set_idle_since("tool", Some(within));
         registry.release_idle(now, SPEC_IDLE_GRACE);
         assert!(registry.is_cached("tool"));

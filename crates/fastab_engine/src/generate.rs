@@ -337,6 +337,9 @@ pub(crate) fn generate_for_arg_with_history(
         session.entries.resize_with(generators.len(), CachedGenerator::default);
         let previous = session.search_term.clone();
         for (index, generator) in generators.iter().enumerate() {
+            if crate::cancellation::is_cancelled() {
+                return;
+            }
             let trigger = should_trigger(
                 generator.trigger.as_ref(),
                 debounce,
@@ -394,6 +397,9 @@ pub(crate) fn generate_for_arg_with_history(
                     fuzzy,
                     timeout,
                 );
+                if crate::cancellation::is_cancelled() {
+                    return;
+                }
                 session.entries[index].results = rows.clone();
                 session.entries[index].needs_run = false;
                 session.entries[index].ran = true;

@@ -9,6 +9,7 @@ const MAX_STDOUT: usize = 256 * 1024;
 pub(crate) enum RunResult {
     Output(String),
     TimedOut,
+    Cancelled,
     Failed,
 }
 
@@ -29,6 +30,7 @@ pub struct CommandOutput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandError {
     TimedOut,
+    Cancelled,
     Failed,
 }
 
@@ -39,6 +41,7 @@ pub fn execute_full(
     env: &[(String, String)],
     timeout: Duration,
 ) -> Result<CommandOutput, CommandError> {
+    crate::cancellation::check().map_err(|_cancelled| CommandError::Cancelled)?;
     if command.is_empty() {
         return Err(CommandError::Failed);
     }
@@ -62,8 +65,11 @@ pub fn execute_full(
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
+    crate::cancellation::check().map_err(|_cancelled| CommandError::Cancelled)?;
     let child = cmd.spawn().map_err(|_spawn| CommandError::Failed)?;
-    wait_child_output(child, timeout)
+    let result = wait_child_output(child, timeout);
+    crate::cancellation::check().map_err(|_cancelled| CommandError::Cancelled)?;
+    result
 }
 
 #[cfg(unix)]
@@ -99,6 +105,7 @@ fn wait_child_output(mut child: Child, timeout: Duration) -> Result<CommandOutpu
         let mut stdout_eof = false;
         let mut stderr_eof = false;
         loop {
+            crate::cancellation::check().map_err(|_cancelled| CommandError::Cancelled)?;
             if !(stdout_eof && stderr_eof) && started.elapsed() >= timeout {
                 return Err(CommandError::TimedOut);
             }
@@ -211,6 +218,7 @@ fn drain_full_pipe(
     // At most 64 KiB per pipe per turn, even after its saved prefix is full.
     // Continuous stdout must not starve stderr or the deadline checks.
     for _ in 0..16 {
+        crate::cancellation::check().map_err(|_cancelled| CommandError::Cancelled)?;
         if started.elapsed() >= timeout {
             return Err(CommandError::TimedOut);
         }
@@ -239,7 +247,19 @@ fn wait_child_output(child: Child, timeout: Duration) -> Result<CommandOutput, C
     thread::spawn(move || {
         let _ = tx.send(child.wait_with_output());
     });
-    match rx.recv_timeout(timeout) {
+    let started = std::time::Instant::now();
+    let received = loop {
+        if crate::cancellation::is_cancelled() {
+            kill_process_group(pid);
+            return Err(CommandError::Cancelled);
+        }
+        let remaining = timeout.saturating_sub(started.elapsed());
+        match rx.recv_timeout(remaining.min(Duration::from_millis(20))) {
+            Err(mpsc::RecvTimeoutError::Timeout) if !remaining.is_zero() => continue,
+            result => break result,
+        }
+    };
+    match received {
         Ok(Ok(output)) => {
             let status = output.status.code().unwrap_or(-1);
             let mut stdout = output.stdout;
@@ -264,7 +284,7 @@ fn wait_child_output(child: Child, timeout: Duration) -> Result<CommandOutput, C
 pub fn try_execute(command: &str, args: &[String], cwd: &str, timeout: Duration) -> Option<String> {
     match run(command, args, cwd, timeout, false, false) {
         RunResult::Output(stdout) => Some(stdout),
-        RunResult::TimedOut | RunResult::Failed => None,
+        RunResult::TimedOut | RunResult::Cancelled | RunResult::Failed => None,
     }
 }
 
@@ -272,7 +292,7 @@ pub fn try_execute(command: &str, args: &[String], cwd: &str, timeout: Duration)
 pub fn try_execute_isolated(command: &str, args: &[String], cwd: &str, timeout: Duration) -> Option<String> {
     match run(command, args, cwd, timeout, true, false) {
         RunResult::Output(stdout) => Some(stdout),
-        RunResult::TimedOut | RunResult::Failed => None,
+        RunResult::TimedOut | RunResult::Cancelled | RunResult::Failed => None,
     }
 }
 
@@ -282,14 +302,14 @@ pub fn try_execute_isolated(command: &str, args: &[String], cwd: &str, timeout: 
 pub fn try_execute_isolated_success(command: &str, args: &[String], cwd: &str, timeout: Duration) -> Option<String> {
     match run(command, args, cwd, timeout, true, true) {
         RunResult::Output(stdout) => Some(stdout),
-        RunResult::TimedOut | RunResult::Failed => None,
+        RunResult::TimedOut | RunResult::Cancelled | RunResult::Failed => None,
     }
 }
 
 fn output_or_empty(result: RunResult) -> String {
     match result {
         RunResult::Output(stdout) => stdout,
-        RunResult::TimedOut | RunResult::Failed => String::new(),
+        RunResult::TimedOut | RunResult::Cancelled | RunResult::Failed => String::new(),
     }
 }
 
@@ -301,6 +321,9 @@ fn run(
     isolated: bool,
     require_success: bool,
 ) -> RunResult {
+    if crate::cancellation::is_cancelled() {
+        return RunResult::Cancelled;
+    }
     if command.is_empty() {
         return RunResult::Failed;
     }
@@ -333,11 +356,19 @@ fn run(
             cmd.process_group(0);
         }
     }
+    if crate::cancellation::is_cancelled() {
+        return RunResult::Cancelled;
+    }
     let child = match cmd.spawn() {
         Ok(child) => child,
         Err(_) => return RunResult::Failed,
     };
-    wait_child(child, timeout, require_success)
+    let result = wait_child(child, timeout, require_success);
+    if crate::cancellation::is_cancelled() {
+        RunResult::Cancelled
+    } else {
+        result
+    }
 }
 
 fn wait_child(child: Child, timeout: Duration, require_success: bool) -> RunResult {
@@ -376,6 +407,10 @@ fn wait_child_unix(mut child: Child, timeout: Duration, require_success: bool) -
     let mut stdout_eof = false;
 
     loop {
+        if crate::cancellation::is_cancelled() {
+            kill_and_reap(&mut child, pid);
+            return RunResult::Cancelled;
+        }
         if !stdout_eof {
             if drain_stdout(&mut stdout, &mut tmp, &mut buf) {
                 stdout_eof = true;
@@ -454,7 +489,7 @@ fn wait_child_unix(mut child: Child, timeout: Duration, require_success: bool) -
 fn drain_stdout(stdout: &mut impl std::io::Read, tmp: &mut [u8], buf: &mut Vec<u8>) -> bool {
     use std::io::ErrorKind;
     loop {
-        if buf.len() >= MAX_STDOUT {
+        if crate::cancellation::is_cancelled() || buf.len() >= MAX_STDOUT {
             return false;
         }
         match stdout.read(tmp) {
@@ -478,7 +513,19 @@ fn wait_child_threaded(child: Child, timeout: Duration, require_success: bool) -
     thread::spawn(move || {
         let _ = tx.send(child.wait_with_output());
     });
-    match rx.recv_timeout(timeout) {
+    let started = std::time::Instant::now();
+    let received = loop {
+        if crate::cancellation::is_cancelled() {
+            kill_process_group(pid);
+            return RunResult::Cancelled;
+        }
+        let remaining = timeout.saturating_sub(started.elapsed());
+        match rx.recv_timeout(remaining.min(Duration::from_millis(20))) {
+            Err(mpsc::RecvTimeoutError::Timeout) if !remaining.is_zero() => continue,
+            result => break result,
+        }
+    };
+    match received {
         Ok(Ok(output)) => {
             if require_success && !output.status.success() {
                 return RunResult::Failed;
@@ -704,6 +751,80 @@ pub(crate) mod mock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_after_child_handshake_kills_reaps_and_discards_partial_output() {
+        for full_output in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let handshake = directory.path().join("started");
+            let path = handshake.to_string_lossy().into_owned();
+            let token = crate::cancellation::CancellationToken::new();
+            let attempt_token = token.clone();
+            let thread = std::thread::spawn(move || {
+                let _scope = crate::cancellation::enter(attempt_token);
+                let args = vec![
+                    "-c".into(),
+                    "printf partial; printf '%s' \"$$\" > \"$1\"; while :; do sleep 1; done".into(),
+                    "cancel-test".into(),
+                    path,
+                ];
+                if full_output {
+                    assert_eq!(
+                        execute_full("/bin/sh", &args, "/", &[], Duration::from_secs(5)),
+                        Err(CommandError::Cancelled)
+                    );
+                } else {
+                    assert_eq!(
+                        run("/bin/sh", &args, "/", Duration::from_secs(5), true, false),
+                        RunResult::Cancelled
+                    );
+                }
+            });
+            let started = std::time::Instant::now();
+            let pid = loop {
+                if let Some(pid) = std::fs::read_to_string(&handshake)
+                    .ok()
+                    .and_then(|text| text.parse::<i32>().ok())
+                {
+                    break Some(pid);
+                }
+                if started.elapsed() > Duration::from_secs(3) {
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            let cancelled_at = std::time::Instant::now();
+            assert!(token.cancel());
+            thread.join().unwrap();
+            let pid = pid.expect("the real child must have started before cancellation");
+            assert!(
+                cancelled_at.elapsed() < Duration::from_secs(2),
+                "must not wait for the 5s command deadline"
+            );
+            let mut status = 0;
+            // SAFETY: query only the direct child whose PID the handshake returned.
+            assert_eq!(unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) }, -1);
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::ECHILD));
+        }
+    }
+
+    #[test]
+    fn cancelled_attempt_never_starts_another_command() {
+        let _mock = mock::install(vec![mock::ExecRule::default()]);
+        let token = crate::cancellation::CancellationToken::new();
+        let _scope = crate::cancellation::enter(token.clone());
+        token.cancel();
+        assert_eq!(
+            execute_full("unused", &[], "", &[], Duration::from_secs(1)),
+            Err(CommandError::Cancelled)
+        );
+        assert_eq!(
+            run("unused", &[], "", Duration::from_secs(1), false, false),
+            RunResult::Cancelled
+        );
+        assert!(mock::calls().is_empty());
+    }
 
     #[cfg(unix)]
     fn full_shell(script: &str, timeout: Duration) -> Result<CommandOutput, CommandError> {

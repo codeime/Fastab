@@ -461,7 +461,29 @@ impl Engine {
 
     fn rebind_hosts(&mut self, registry: &Registry) {
         self.native = Arc::new(NativeHooks::load(&self.specs_dir, registry.snapshot().as_ref()));
-        self.hook_cache = crate::hook_cache::HookCache::new();
+        // A new spec generation clears data, not this Engine's lifetime counters.
+        self.hook_cache.clear();
+    }
+
+    /// The current input explicitly ended. Preserve running grace clocks;
+    /// ending twice must not keep an otherwise idle tree alive.
+    pub(crate) fn end_input(&mut self) {
+        self.generator_session = crate::generate::GeneratorSession::default();
+        self.registry.begin_idle_completion();
+        self.registry.note_idle_after_complete(std::time::Instant::now());
+    }
+
+    /// Read numeric resources without loading, refreshing, or touching caches.
+    pub fn diagnostics(&self) -> crate::diagnostics::EngineDiagnostics {
+        self.diagnostics_with_grace(crate::ir::SPEC_IDLE_GRACE)
+    }
+
+    pub(crate) fn diagnostics_with_grace(&self, grace: std::time::Duration) -> crate::diagnostics::EngineDiagnostics {
+        crate::diagnostics::EngineDiagnostics {
+            registry: self.registry.diagnostics(std::time::Instant::now(), grace),
+            hooks: self.hook_cache.diagnostics(),
+            history: self.history.diagnostics(),
+        }
     }
 
     pub fn registry(&self) -> &Registry {
@@ -490,6 +512,8 @@ impl Engine {
     }
 
     #[cfg(test)]
+    // Preserve absent, active, and pending marks for worker lifecycle assertions.
+    #[allow(clippy::option_option)]
     pub(crate) fn idle_file_state(&self, relative: &str) -> (bool, Option<Option<std::time::Instant>>) {
         (
             self.registry.cached_load_spec(relative).is_some(),
@@ -591,17 +615,44 @@ impl Engine {
         if self.frecency_loaded && self.history_source.as_ref() == Some(&source) {
             return;
         }
-        self.frecency = Frecency::from_commands(rank::load_commands_for(&source));
-        self.frecency_loaded = true;
-        self.history_source = Some(source);
+        let commands = rank::load_commands_for(&source);
+        if crate::cancellation::is_cancelled() {
+            return;
+        }
+        let frecency = Frecency::from_commands(commands);
+        let _ = crate::cancellation::commit_if_active(|| {
+            self.frecency = frecency;
+            self.frecency_loaded = true;
+            self.history_source = Some(source);
+        });
     }
 
     pub fn complete(&mut self, request: CompleteRequest) -> anyhow::Result<CompleteResult> {
+        crate::cancellation::check()?;
         self.refresh_specs_generation();
+        crate::cancellation::check()?;
+        let idle = self.registry.checkpoint_idle();
+        let history_only = request.history_only;
+        crate::generate::take_pending_generators();
         crate::generate::install_session(std::mem::take(&mut self.generator_session));
         let result = self.complete_with_thread_session(request);
-        self.generator_session = crate::generate::take_session();
-        result
+        let session = crate::generate::take_session();
+        match crate::cancellation::finish_if_active(|| {
+            self.generator_session = session;
+            if result.is_ok() && !history_only {
+                self.registry.note_idle_after_complete(std::time::Instant::now());
+            } else {
+                self.registry.begin_idle_completion();
+            }
+            result
+        }) {
+            Ok(result) => result,
+            Err(cancelled) => {
+                crate::generate::take_pending_generators();
+                self.registry.restore_cancelled_idle(idle, std::time::Instant::now());
+                Err(cancelled.into())
+            },
+        }
     }
 
     fn complete_with_thread_session(&mut self, mut request: CompleteRequest) -> anyhow::Result<CompleteResult> {
@@ -613,6 +664,7 @@ impl Engine {
         if history_loading_enabled(history_disabled) {
             self.ensure_frecency(&request);
         }
+        crate::cancellation::check()?;
         let lines = self.frecency.command_lines();
         if !Arc::ptr_eq(self.history.lines(), &lines) {
             self.history = Arc::new(crate::history::HistoryStore::new(lines));
@@ -673,6 +725,7 @@ impl Engine {
             let _cache = self.hook_cache.bind();
             hook_backend::enter_context(&request.cwd, &shell, || lookup::complete(registry, &request))
         };
+        crate::cancellation::check()?;
         if should_merge_history(request.include_history, history_disabled) {
             let effective_fuzzy = result.fuzzy;
             let prefix = rank::history_prefix_from_buffer(buffer, ends_with_space, &tokens);
@@ -708,7 +761,6 @@ impl Engine {
             }
         }
         crate::public_ai::finalize_ranked_candidates(&mut result);
-        self.registry.note_idle_after_complete(std::time::Instant::now());
         Ok(result)
     }
 }
@@ -797,6 +849,52 @@ mod tests {
             "hooks": { id: entry }
         });
         fs::write(dir.join("typed-hooks.json"), format!("{catalog}\n")).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hook_diagnostics_survive_clear_failure_and_generation_rebind() {
+        use crate::ir::Spec;
+
+        fn populate(cache: &Arc<crate::hook_cache::HookCache>) {
+            let _bound = cache.bind();
+            let spec = crate::hook_cache::cached_spec("key", || {
+                Some(Spec {
+                    names: vec!["cached".into()],
+                    ..Spec::default()
+                })
+            })
+            .unwrap();
+            assert_eq!(spec.names, ["cached"]);
+            assert!(crate::hook_cache::cached_spec("key", || panic!("must hit")).is_some());
+        }
+
+        fn assert_preserved(engine: &Engine, cache: &Arc<crate::hook_cache::HookCache>, lookups: u64) {
+            assert!(Arc::ptr_eq(&engine.hook_cache, cache));
+            let stats = cache.diagnostics().specs;
+            assert_eq!((stats.entries, stats.allocated_bytes), (0, 0));
+            assert_eq!((stats.hits, stats.misses, stats.capacity_clears), (lookups, lookups, 0));
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let live = root.path().join("live");
+        write_spec(&live, "tool", r#"{"names":["tool"]}"#);
+        let mut engine = Engine::new(live.clone()).unwrap();
+        let cache = Arc::clone(&engine.hook_cache);
+        populate(&cache);
+        assert!(engine.clear_caches_and_report());
+        assert_preserved(&engine, &cache, 1);
+
+        populate(&cache);
+        fs::rename(&live, root.path().join("old")).unwrap();
+        assert!(!engine.clear_caches_and_report());
+        assert_preserved(&engine, &cache, 2);
+
+        populate(&cache);
+        write_spec(&live, "tool", r#"{"names":["tool"],"description":"new generation"}"#);
+        engine.refresh_specs_generation();
+        assert_eq!(engine.registry.get_arc("tool").unwrap().description, "new generation");
+        assert_preserved(&engine, &cache, 3);
     }
 
     #[cfg(unix)]
@@ -2123,12 +2221,16 @@ mod tests {
             .idle_mark("child")
             .expect("leaving the child starts the grace")
             .expect("the grace has a start");
-        engine
-            .registry
-            .release_idle(marked + Duration::from_secs(24), crate::ir::SPEC_IDLE_GRACE);
+        engine.registry.release_idle(
+            marked + crate::ir::SPEC_IDLE_GRACE - Duration::from_millis(1),
+            crate::ir::SPEC_IDLE_GRACE,
+        );
         assert!(Arc::ptr_eq(
             &child,
-            &engine.registry.cached_load_spec("child").expect("24s keeps the child")
+            &engine
+                .registry
+                .cached_load_spec("child")
+                .expect("the grace keeps the child")
         ));
     }
 

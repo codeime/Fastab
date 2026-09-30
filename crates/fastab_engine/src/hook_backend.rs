@@ -119,6 +119,9 @@ pub fn last_diagnostic() -> Option<HookDiagnosticRecord> {
 }
 
 fn record(hook_id: &str, outcome: HookDiagnostic) {
+    if crate::cancellation::is_cancelled() {
+        return;
+    }
     LAST_DIAGNOSTIC.with(|cell| {
         *cell.borrow_mut() = Some(HookDiagnosticRecord {
             hook_id: hook_id.to_string(),
@@ -128,7 +131,7 @@ fn record(hook_id: &str, outcome: HookDiagnostic) {
 }
 
 fn hooks_skipped() -> bool {
-    SKIP_HOOKS.get()
+    SKIP_HOOKS.get() || crate::cancellation::is_cancelled()
 }
 
 fn native() -> Option<Arc<NativeHooks>> {
@@ -178,6 +181,9 @@ fn invoke_err<T>(hook_id: &str) -> Option<T> {
 /// broken hook. Keep the two apart in the diagnostic, as the QuickJS
 /// interrupt handler did.
 fn eval_err<T>(hook_id: &str, error: &crate::typed_hook::TypedHookError) -> Option<T> {
+    if error.is_cancelled() {
+        return None;
+    }
     if error.is_timed_out() {
         record(hook_id, HookDiagnostic::Timeout);
         return None;
@@ -210,18 +216,27 @@ fn adapter_err<T>(hook_id: &str, deadline: Option<Instant>) -> Option<T> {
     invoke_err(hook_id)
 }
 
+// Native adapters may catch executeCommand errors. The cancellation token
+// remains sticky, so even a successful fallback cannot escape this boundary.
+fn active_hook<T>(run: impl FnOnce() -> Option<T>) -> Option<T> {
+    crate::cancellation::check().ok()?;
+    let value = run();
+    crate::cancellation::check().ok()?;
+    value
+}
+
 pub fn dispatch_trigger(hook_id: &str, search_term: &str, previous: &str) -> Option<bool> {
     if hooks_skipped() {
         return None;
     }
-    native_trigger(hook_id, search_term, previous)
+    active_hook(|| native_trigger(hook_id, search_term, previous))
 }
 
 pub fn dispatch_get_query_term(hook_id: &str, search_term: &str) -> Option<String> {
     if hooks_skipped() {
         return None;
     }
-    native_get_query_term(hook_id, search_term)
+    active_hook(|| native_get_query_term(hook_id, search_term))
 }
 
 /// `script` is the generator's own command line — the one whose output
@@ -235,14 +250,14 @@ pub fn dispatch_post_process(
     if hooks_skipped() {
         return None;
     }
-    native_post_process(hook_id, stdout, tokens, script)
+    active_hook(|| native_post_process(hook_id, stdout, tokens, script))
 }
 
 pub fn dispatch_script_command(hook_id: &str, tokens: &[String]) -> Option<ScriptCommand> {
     if hooks_skipped() {
         return None;
     }
-    native_script(hook_id, tokens)
+    active_hook(|| native_script(hook_id, tokens))
 }
 
 pub fn dispatch_filter_template_suggestions(
@@ -253,7 +268,7 @@ pub fn dispatch_filter_template_suggestions(
     if hooks_skipped() {
         return None;
     }
-    native_filter(hook_id, suggestions, tokens)
+    active_hook(|| native_filter(hook_id, suggestions, tokens))
 }
 
 pub fn dispatch_custom(
@@ -267,28 +282,28 @@ pub fn dispatch_custom(
     if hooks_skipped() {
         return None;
     }
-    native_custom(hook_id, tokens, cwd, search_term, timeout, is_dangerous)
+    active_hook(|| native_custom(hook_id, tokens, cwd, search_term, timeout, is_dangerous))
 }
 
 pub fn dispatch_alias(hook_id: &str, token: &str, cwd: &str, timeout: Duration) -> Option<String> {
     if hooks_skipped() {
         return None;
     }
-    native_alias(hook_id, token, cwd, timeout)
+    active_hook(|| native_alias(hook_id, token, cwd, timeout))
 }
 
 pub fn dispatch_load_spec(hook_id: &str, token: &str, cwd: &str, timeout: Duration) -> Option<Spec> {
     if hooks_skipped() {
         return None;
     }
-    native_load_spec(hook_id, token, cwd, timeout)
+    active_hook(|| native_load_spec(hook_id, token, cwd, timeout))
 }
 
 pub fn dispatch_generate_spec(hook_id: &str, tokens: &[String], cwd: &str, timeout: Duration) -> Option<Spec> {
     if hooks_skipped() {
         return None;
     }
-    native_generate_spec(hook_id, tokens, cwd, timeout)
+    active_hook(|| native_generate_spec(hook_id, tokens, cwd, timeout))
 }
 
 fn typed_entry<'a>(native: &'a NativeHooks, hook_id: &str) -> Result<Option<&'a TypedHookIr>, TypedHookError> {
@@ -576,6 +591,7 @@ fn live_typed_exec(
                 stderr: output.stderr,
                 status: i64::from(output.status),
             }),
+            Err(CommandError::Cancelled) => Err(crate::typed_hook::TypedHookError::cancelled()),
             Err(CommandError::TimedOut) => Err(crate::typed_hook::TypedHookError::timed_out("timeout")),
             Err(CommandError::Failed) => Err(crate::typed_hook::TypedHookError::new("exec failed")),
         }
@@ -596,6 +612,9 @@ fn live_adapter_exec(
 ) -> Result<crate::native_adapters::AdapterExecResult, crate::native_adapters::AdapterError>
 + '_ {
     move |request| {
+        if crate::cancellation::is_cancelled() {
+            return Err(crate::native_adapters::adapter_throw("Error"));
+        }
         let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
             return Err(crate::native_adapters::adapter_throw("Error"));
         };
@@ -744,6 +763,33 @@ mod tests {
     use crate::process::mock::{self, ExecRule};
 
     const MAKE_TARGETS_SHA: &str = "03b126c52218b618b258b4113e23cf47ef5a0197646c1f48f7983f6bf146ead8";
+
+    #[test]
+    fn cancellation_rejects_a_native_adapters_caught_error_fallback() {
+        let token = crate::cancellation::CancellationToken::new();
+        let _scope = crate::cancellation::enter(token.clone());
+        let exec = |_request| {
+            token.cancel();
+            Err(crate::native_adapters::adapter_throw("Error"))
+        };
+        let context = HookContext::from_shell("/", &ShellContext::default(), "", false);
+        let result = active_hook(|| {
+            // The real deno adapter catches both failed cat commands and
+            // produces a successful empty fallback. It cannot clear the token.
+            let fallback = crate::native_adapters::evaluate_custom(
+                "20e727a6b059f8d895ae13dcba72e4308f8935db13897c58057e7805f0182e1e",
+                &[],
+                &exec,
+                &context,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(fallback, serde_json::json!([]));
+            Some(fallback)
+        });
+        assert!(result.is_none());
+        assert!(crate::cancellation::is_cancelled());
+    }
 
     fn adapter_only_hooks(id: &str, field: &str, sha: &str) -> NativeHooks {
         use crate::typed_hook::parse_typed_hook_catalog;

@@ -3,7 +3,9 @@
 //! Bundled Fig specs are compiled to static JSON IR at build time. Lookup and
 //! generators run in Rust.
 
+mod cancellation;
 mod cobra;
+mod diagnostics;
 #[cfg(test)]
 mod engine_golden;
 mod fig_spec;
@@ -29,6 +31,11 @@ mod typed_hook;
 mod versioned;
 mod worker;
 
+pub use cancellation::CompletionCancelled;
+pub use diagnostics::{
+    CacheMapDiagnostics, EngineClientDiagnostics, EngineDiagnostics, HistoryDiagnostics, HookDiagnostics,
+    RegistryDiagnostics, RequestDiagnostics,
+};
 pub use ir::{ArgSpec, Builtin, OptionSpec, Registry, Spec, Template};
 pub use lookup::{completion_buffer, current_command_slice, tokenize};
 pub use native_adapters::{dump_native_adapter_catalog, native_adapter_catalog_path};
@@ -36,4 +43,7 @@ pub use public_ai::{PublicAiCandidate, PublicAiContext};
 pub use rank::{ACCEPTANCE_STATE_KEY, AcceptanceIndex};
 pub use runtime::{CompleteRequest, CompleteResult, CurrentArg, Engine, Suggestion, ranking_root_command};
 pub use spec_pair::public_ai_baseline_ok;
-pub use worker::{EngineClient, default_specs_dir, engine_attempt_timeout, ui_completion_deadline};
+pub use worker::{
+    CompletionTask, EngineClient, EngineClientOptions, SessionId, default_specs_dir, engine_attempt_timeout,
+    ui_completion_deadline,
+};

@@ -13,7 +13,7 @@
 //! of the line: Fig split each parsed line into one annotation run per
 //! `loadSpec` / `isCommand` switch, so `sudo curl <url>` filed `<url>` under
 //! `curl`. Lines are parsed lazily per spec and cached until the history
-//! itself is reloaded. Fig parsed everything up front in the background,
+//! itself or its alias/shell parsing context changes. Fig parsed everything up front in the background,
 //! which took seconds; here the first `ssh <TAB>` pays only for the lines
 //! that mention `ssh`.
 //!
@@ -133,9 +133,24 @@ const MAX_CACHED_INDEXES: usize = 32;
 struct IndexCache {
     entries: HashMap<String, Arc<SlotIndex>>,
     recent: VecDeque<String>,
+    aliases: Option<String>,
+    shell: Option<String>,
 }
 
 impl IndexCache {
+    fn matches_context(&self, aliases: Option<&str>, shell: Option<&str>) -> bool {
+        self.aliases.as_deref() == aliases && self.shell.as_deref() == shell
+    }
+
+    fn select_context(&mut self, aliases: Option<&str>, shell: Option<&str>) {
+        if !self.matches_context(aliases, shell) {
+            self.entries.clear();
+            self.recent.clear();
+            self.aliases = aliases.map(str::to_owned);
+            self.shell = shell.map(str::to_owned);
+        }
+    }
+
     fn get(&mut self, name: &str) -> Option<Arc<SlotIndex>> {
         let index = Arc::clone(self.entries.get(name)?);
         self.touch(name);
@@ -198,6 +213,39 @@ impl HistoryStore {
         &self.lines
     }
 
+    pub(crate) fn diagnostics(&self) -> crate::diagnostics::HistoryDiagnostics {
+        let cache = self.index.lock().unwrap_or_else(|error| error.into_inner());
+        let line_bytes = self.lines.capacity() * std::mem::size_of::<Arc<str>>()
+            + self.lines.iter().map(|line| line.len()).sum::<usize>();
+        let index_bytes = cache
+            .entries
+            .iter()
+            .map(|(root, index)| {
+                root.len()
+                    + index
+                        .iter()
+                        .map(|(slot, values)| {
+                            std::mem::size_of::<ArgSlot>()
+                                + slot.root.len()
+                                + slot.path.capacity() * std::mem::size_of::<String>()
+                                + slot.path.iter().map(String::len).sum::<usize>()
+                                + slot.option.as_ref().map_or(0, String::len)
+                                + values.capacity() * std::mem::size_of::<String>()
+                                + values.iter().map(String::len).sum::<usize>()
+                        })
+                        .sum::<usize>()
+            })
+            .sum::<usize>();
+        crate::diagnostics::HistoryDiagnostics {
+            line_count: self.lines.len(),
+            index_count: cache.entries.len(),
+            allocated_bytes: line_bytes
+                + index_bytes
+                + cache.aliases.as_ref().map_or(0, String::len)
+                + cache.shell.as_ref().map_or(0, String::len),
+        }
+    }
+
     /// Values previously typed into any of `slots`, most recent first,
     /// deduplicated across slots. `aliases` and `shell` are the request's, so
     /// history lines expand the same way the buffer does.
@@ -234,16 +282,44 @@ impl HistoryStore {
         aliases: Option<&str>,
         shell: Option<&str>,
     ) -> Arc<SlotIndex> {
-        if let Some(index) = self.index.lock().unwrap_or_else(|err| err.into_inner()).get(root_name) {
-            return index;
+        match crate::cancellation::commit_if_active(|| {
+            let mut cache = self.index.lock().unwrap_or_else(|err| err.into_inner());
+            cache.select_context(aliases, shell);
+            cache.get(root_name)
+        }) {
+            Ok(Some(index)) => return index,
+            Ok(None) => {},
+            Err(_) => return Arc::default(),
         }
         let built = Arc::new(build_index(&self.lines, registry, root_name, aliases, shell));
-        let mut cache = self.index.lock().unwrap_or_else(|err| err.into_inner());
-        if let Some(index) = cache.get(root_name) {
-            return index;
+        self.publish_index(root_name, aliases, shell, built)
+    }
+
+    fn publish_index(
+        &self,
+        root_name: &str,
+        aliases: Option<&str>,
+        shell: Option<&str>,
+        built: Arc<SlotIndex>,
+    ) -> Arc<SlotIndex> {
+        if crate::cancellation::is_cancelled() {
+            return Arc::default();
         }
-        cache.insert(root_name.to_string(), Arc::clone(&built));
-        built
+        crate::cancellation::commit_if_active(|| {
+            let mut cache = self.index.lock().unwrap_or_else(|err| err.into_inner());
+            // Another request may select a different context while this index is
+            // built outside the lock. It may use its own result, but cannot publish
+            // it into that request's cache or return an index from that context.
+            if !cache.matches_context(aliases, shell) {
+                return built;
+            }
+            if let Some(index) = cache.get(root_name) {
+                return index;
+            }
+            cache.insert(root_name.to_string(), Arc::clone(&built));
+            built
+        })
+        .unwrap_or_default()
     }
 }
 
@@ -274,6 +350,9 @@ fn build_index(
     let mut index: SlotIndex = HashMap::new();
     let aliases = aliases.map(|raw| crate::lookup::parse_alias_map(raw, shell));
     for line in lines {
+        if crate::cancellation::is_cancelled() {
+            return SlotIndex::new();
+        }
         let (tokens, _) = crate::lookup::tokenize(line);
         for command in tokens.split(|token| is_command_separator(token)) {
             if command.is_empty() {
@@ -404,6 +483,79 @@ mod tests {
         };
         let values = store.arg_values(&mut registry, Some("alias g='git'\n"), None, &[slot]);
         assert_eq!(values, vec!["main", "feature"]);
+    }
+
+    #[test]
+    fn cancelled_history_build_cannot_publish_or_change_the_active_context() {
+        let mut registry = registry_with(&[("curl", CURL)]);
+        let store = HistoryStore::from_lines(vec!["curl https://example.test".into()]);
+        let original = store.index_for(&mut registry, "curl", None, None);
+        let built = Arc::new(build_index(&store.lines, &mut registry, "curl", None, None));
+        let token = crate::cancellation::CancellationToken::new();
+        let scope = crate::cancellation::enter(token.clone());
+        token.cancel();
+        assert!(store.publish_index("curl", None, None, built).is_empty());
+        assert!(
+            store
+                .index_for(&mut registry, "curl", Some("alias c=curl"), Some("zsh"))
+                .is_empty()
+        );
+        assert!(build_index(&store.lines, &mut registry, "curl", None, None).is_empty());
+        drop(scope);
+        assert!(Arc::ptr_eq(
+            &original,
+            &store.index_for(&mut registry, "curl", None, None)
+        ));
+    }
+
+    #[test]
+    fn changing_aliases_or_shell_rebuilds_the_same_history() {
+        let mut registry = registry_with(&[("curl", CURL)]);
+        let lines = vec!["c https://alias.example".into(), "curl https://plain.example".into()];
+        let store = HistoryStore::from_lines(lines.clone());
+        let contexts = [
+            (Some("alias c='curl'"), Some("/bin/zsh")),
+            (Some("alias c='wget'"), Some("/bin/zsh")),
+            (Some("alias c 'curl'"), Some("/bin/zsh")),
+            (Some("alias c 'curl'"), Some("/usr/local/bin/fish")),
+            (None, None),
+        ];
+        let mut previous = None;
+        for (aliases, shell) in contexts {
+            let warm = store.index_for(&mut registry, "curl", aliases, shell);
+            let cold = HistoryStore::from_lines(lines.clone()).index_for(&mut registry, "curl", aliases, shell);
+            assert_eq!(*warm, *cold);
+            let expected = if (aliases, shell) == contexts[0] || (aliases, shell) == contexts[3] {
+                2
+            } else {
+                1
+            };
+            assert_eq!(warm.values().map(Vec::len).sum::<usize>(), expected);
+            let again = store.index_for(&mut registry, "curl", aliases, shell);
+            assert!(Arc::ptr_eq(&warm, &again));
+            if let Some(previous) = previous {
+                assert!(!Arc::ptr_eq(&warm, &previous));
+            }
+            previous = Some(warm);
+        }
+    }
+
+    #[test]
+    fn late_index_build_cannot_publish_into_a_different_context() {
+        let mut registry = registry_with(&[("curl", CURL)]);
+        let store = HistoryStore::from_lines(vec!["c https://alias.example".into()]);
+        let aliases_a = Some("alias c='curl'");
+        let aliases_b = Some("alias c='wget'");
+        store.index.lock().unwrap().select_context(aliases_a, None);
+        let built_a = Arc::new(build_index(&store.lines, &mut registry, "curl", aliases_a, None));
+        let current_b = store.index_for(&mut registry, "curl", aliases_b, None);
+        assert!(current_b.is_empty());
+        let late_a = store.publish_index("curl", aliases_a, None, Arc::clone(&built_a));
+        assert!(Arc::ptr_eq(&late_a, &built_a));
+        assert!(!late_a.is_empty());
+        let still_b = store.index_for(&mut registry, "curl", aliases_b, None);
+        assert!(Arc::ptr_eq(&still_b, &current_b));
+        assert_eq!(store.index.lock().unwrap().entries.len(), 1);
     }
 
     #[test]
