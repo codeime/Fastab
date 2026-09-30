@@ -1,11 +1,13 @@
 //! Static Fig-spec IR loaded from build-time JSON (no V8).
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{Arc, Weak};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -895,6 +897,19 @@ pub struct Registry {
     /// Identical options loaded by this registry share one `Arc`. Entries are
     /// `Weak`, so evicting the last spec that used an option drops the body.
     option_pool: HashMap<u64, Vec<Weak<OptionSpec>>>,
+    /// Relative IR path → when the edit-buffer walk last stopped using this
+    /// cached file. `None` means a buffer walk still holds it. Absent means
+    /// this registry has not been asked to track the file. Specs inserted
+    /// without a path never appear here.
+    idle_since: HashMap<PathBuf, Option<Instant>>,
+    /// History indexing sets this so a side-loaded file is not recorded as
+    /// the edit buffer still using it. A separate allocation: the guard
+    /// restores it while `build_index` holds `&mut Registry`, and a cloned
+    /// registry must not share that flag. `Engine` moves across threads.
+    suppress_idle_touch: IdleTouchFlag,
+    /// Paths returned to this completion's edit-buffer walk. Applied once
+    /// after the walk, so a grace already running is not restarted.
+    idle_touched: HashSet<PathBuf>,
 }
 
 /// How [`Registry::overlay_specs_dir`] treats a name the bundle already has.
@@ -909,6 +924,49 @@ pub enum OverlayMode {
 
 const MAX_CACHED_SPECS: usize = 48;
 const MAX_NAME_MATCHES: usize = 50;
+
+/// How long a parsed spec stays after the edit buffer stops using it.
+pub(crate) const SPEC_IDLE_GRACE: Duration = Duration::from_secs(25);
+
+struct UnlinkedSpec {
+    /// `specs` or `load_spec_cache` lost this `Arc`. A path-only `loadSpec`
+    /// lives only in the latter and still counts as one LRU file.
+    lru_slot: bool,
+    /// `path_specs` lost this `Arc`. Idle release counts that as a drop.
+    /// LRU eviction still keys success off `lru_slot` only.
+    path_specs: bool,
+}
+
+/// Per-registry idle-touch switch. Cloning a registry starts recording again
+/// instead of sharing the flag the original's history walk may be holding.
+#[derive(Debug)]
+struct IdleTouchFlag(Arc<AtomicBool>);
+
+impl Default for IdleTouchFlag {
+    fn default() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+}
+
+impl Clone for IdleTouchFlag {
+    fn clone(&self) -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+}
+
+/// Restores [`Registry::suppress_idle_touch`] when the history walk returns,
+/// including by unwind. The flag lives outside the registry allocation so the
+/// walk can hold `&mut Registry` for the whole build.
+pub(crate) struct IdleTouchPause {
+    flag: Arc<AtomicBool>,
+    previous: bool,
+}
+
+impl Drop for IdleTouchPause {
+    fn drop(&mut self) {
+        self.flag.store(self.previous, AtomicOrdering::Relaxed);
+    }
+}
 
 /// Max-heap by ignore-ASCII-case so we can keep the 50 alphabetically first fuzzy hits.
 struct AlphaMax<'a>(&'a str);
@@ -1052,17 +1110,183 @@ impl Registry {
 
     fn evict_oldest_spec(&mut self) {
         while let Some(old) = self.loaded.pop_front() {
-            let before = self.specs.len();
-            self.specs.retain(|_, cached| !Arc::ptr_eq(cached, &old));
-            let before_paths = self.load_spec_cache.len();
-            self.load_spec_cache.retain(|_, cached| !Arc::ptr_eq(cached, &old));
             // One pop drops one cached file. A path-only `loadSpec` is not in
             // `specs`; it still occupies a slot and must count as the eviction.
             // Entries in neither map are leftovers and keep the scan going.
-            if self.specs.len() < before || self.load_spec_cache.len() < before_paths {
+            let unlinked = self.unlink_cached_arc(&old);
+            self.forget_unowned_idle_paths();
+            if unlinked.lru_slot {
                 return;
             }
         }
+    }
+
+    /// Remove `old` from every cache that might own it. `loaded` is included
+    /// so a caller that still has the `Arc` (LRU pop, idle release) does not
+    /// leave a second handle behind. The caller's own `Arc` stays alive.
+    fn unlink_cached_arc(&mut self, old: &Arc<Spec>) -> UnlinkedSpec {
+        let before_specs = self.specs.len();
+        self.specs.retain(|_, cached| !Arc::ptr_eq(cached, old));
+        let before_paths = self.load_spec_cache.len();
+        self.load_spec_cache.retain(|_, cached| !Arc::ptr_eq(cached, old));
+        let before_versioned = self.path_specs.len();
+        self.path_specs.retain(|_, cached| !Arc::ptr_eq(cached, old));
+        self.loaded.retain(|cached| !Arc::ptr_eq(cached, old));
+        UnlinkedSpec {
+            lru_slot: self.specs.len() < before_specs || self.load_spec_cache.len() < before_paths,
+            path_specs: self.path_specs.len() < before_versioned,
+        }
+    }
+
+    fn forget_unowned_idle_paths(&mut self) {
+        // Run after unlinking: another cache may still own a different tree
+        // for the same file, which must keep its original grace clock.
+        let stale: Vec<PathBuf> = self
+            .idle_since
+            .keys()
+            .filter(|path| self.releasable_arcs_for_path(path).next().is_none())
+            .cloned()
+            .collect();
+        for path in stale {
+            self.idle_since.remove(&path);
+        }
+    }
+
+    /// A path can own distinct ordinary and versioned trees. Inspect every
+    /// cached alias as well: a pinned alias must not hide a bundled sibling.
+    /// This borrowed iterator may yield the same tree through several aliases.
+    fn releasable_arcs_for_path<'a>(&'a self, path: &'a Path) -> impl Iterator<Item = &'a Arc<Spec>> + 'a {
+        self.load_spec_cache
+            .get(path)
+            .into_iter()
+            .chain(self.path_specs.get(path))
+            .chain(self.specs.iter().filter_map(move |(name, spec)| {
+                self.files
+                    .get(name.as_str())
+                    .is_some_and(|existing| existing.as_path() == path)
+                    .then_some(spec)
+            }))
+            .filter(move |spec| !self.pinned.iter().any(|pinned| Arc::ptr_eq(pinned, spec)))
+    }
+
+    /// Record whether `relative` is waiting to be released. `None` clears a
+    /// pending release without deleting the parsed tree. Paths that do not
+    /// parse are ignored. Specs inserted with no file path are not tracked.
+    #[cfg(test)]
+    pub(crate) fn set_idle_since(&mut self, relative: &str, since: Option<Instant>) {
+        let Some(path) = idle_path(relative) else {
+            return;
+        };
+        self.idle_since.insert(path, since);
+    }
+
+    /// Drop parsed trees whose idle mark is at least `grace` old.
+    ///
+    /// The temporary `Arc` is dropped before [`Self::prune_dead_options`], so
+    /// option bodies owned only by the released tree leave the pool. Pinned
+    /// overlays are left in place, even when their path is past `grace`.
+    /// `version_cache` is not touched.
+    pub(crate) fn release_idle(&mut self, now: Instant, grace: Duration) {
+        let expired: Vec<PathBuf> = self
+            .idle_since
+            .iter()
+            .filter_map(|(path, since)| {
+                let since = (*since)?;
+                (now.saturating_duration_since(since) >= grace).then(|| path.clone())
+            })
+            .collect();
+        let mut released = false;
+        for path in expired {
+            let mut trees = Vec::new();
+            for spec in self.releasable_arcs_for_path(&path) {
+                if !trees.iter().any(|tree| Arc::ptr_eq(tree, spec)) {
+                    trees.push(Arc::clone(spec));
+                }
+            }
+            for spec in trees {
+                let unlinked = self.unlink_cached_arc(&spec);
+                released |= unlinked.lru_slot || unlinked.path_specs;
+            }
+            // Every non-pinned tree for this path has now been unlinked and
+            // the temporary handles dropped before pruning the option pool.
+            self.idle_since.remove(&path);
+        }
+        if released {
+            self.prune_dead_options();
+        }
+    }
+
+    /// Drop touches recorded by an earlier request. A history-only completion
+    /// never reaches [`Self::note_idle_after_complete`], so this is what keeps
+    /// its loads from counting as the next edit-buffer walk.
+    pub(crate) fn begin_idle_completion(&mut self) {
+        self.idle_touched.clear();
+    }
+
+    /// History indexing calls this around `annotate_history_command`.
+    pub(crate) fn pause_idle_touch(&self) -> IdleTouchPause {
+        IdleTouchPause {
+            flag: Arc::clone(&self.suppress_idle_touch.0),
+            previous: self.suppress_idle_touch.0.swap(true, AtomicOrdering::Relaxed),
+        }
+    }
+
+    fn note_idle_touch_path(&mut self, path: &Path) {
+        if self.suppress_idle_touch.0.load(AtomicOrdering::Relaxed) {
+            return;
+        }
+        self.idle_touched.insert(path.to_path_buf());
+    }
+
+    /// Apply this completion's touched set.
+    ///
+    /// A path the edit buffer returned is marked in use (`None`). A cached
+    /// path it did not return starts the grace once; a grace already running
+    /// keeps its original timestamp. Pinned overlays are not given a deadline.
+    pub(crate) fn note_idle_after_complete(&mut self, now: Instant) {
+        let mut paths = HashSet::new();
+        paths.extend(self.load_spec_cache.keys().cloned());
+        paths.extend(self.path_specs.keys().cloned());
+        for name in self.specs.keys() {
+            if let Some(path) = self.files.get(name.as_str()) {
+                paths.insert(path.clone());
+            }
+        }
+        self.forget_unowned_idle_paths();
+        for path in paths {
+            if self.releasable_arcs_for_path(&path).next().is_none() {
+                self.idle_since.remove(&path);
+                continue;
+            }
+            if self.idle_touched.contains(&path) {
+                self.idle_since.insert(path, None);
+                continue;
+            }
+            if matches!(self.idle_since.get(&path), Some(Some(_))) {
+                continue;
+            }
+            self.idle_since.insert(path, Some(now));
+        }
+        self.idle_touched.clear();
+    }
+
+    /// Earliest moment a pending file may be released. In-use marks and pinned
+    /// overlays are not deadlines. Neither are paths with no cached tree left.
+    pub(crate) fn next_idle_deadline(&self, grace: Duration) -> Option<Instant> {
+        self.idle_since
+            .iter()
+            .filter_map(|(path, since)| {
+                let since = (*since)?;
+                self.releasable_arcs_for_path(path).next()?;
+                since.checked_add(grace)
+            })
+            .min()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn idle_mark(&self, relative: &str) -> Option<Option<Instant>> {
+        let path = idle_path(relative)?;
+        self.idle_since.get(&path).copied()
     }
 
     fn prune_dead_options(&mut self) {
@@ -1075,6 +1299,11 @@ impl Registry {
     fn ensure_loaded(&mut self, name: &str) {
         if let Some(spec) = self.specs.get(name).cloned() {
             self.touch_loaded(&spec);
+            if !self.is_pinned_name(name)
+                && let Some(path) = self.files.get(name).cloned()
+            {
+                self.note_idle_touch_path(&path);
+            }
             return;
         }
         let Some(path) = self.files.get(name).cloned() else {
@@ -1108,6 +1337,7 @@ impl Registry {
                     }
                 }
                 self.insert_loaded(spec, Some(&path));
+                self.note_idle_touch_path(&path);
             },
             Err(error) => {
                 // A missing/different generation must not look like an
@@ -1179,6 +1409,7 @@ impl Registry {
         };
         if let Some(spec) = self.load_spec_cache.get(&relative_path).cloned() {
             self.touch_loaded(&spec);
+            self.note_idle_touch_path(&relative_path);
             return Some(spec);
         }
         // Share the command LRU entry when it is the file this path names.
@@ -1188,6 +1419,7 @@ impl Registry {
         if let Some(name) = command_name {
             if !self.is_pinned_name(&name) {
                 if let Some(spec) = self.get_arc(&name) {
+                    self.note_idle_touch_path(&relative_path);
                     return Some(spec);
                 }
             }
@@ -1219,6 +1451,7 @@ impl Registry {
                 intern_spec_options(&mut spec, &mut self.option_pool);
                 let spec = Arc::new(spec);
                 self.loaded.push_back(Arc::clone(&spec));
+                self.note_idle_touch_path(&relative_path);
                 self.load_spec_cache.insert(relative_path, Arc::clone(&spec));
                 Some(spec)
             },
@@ -1255,6 +1488,7 @@ impl Registry {
         let relative = relative.trim().trim_start_matches("./");
         let relative_path = safe_relative_path(relative)?;
         if let Some(spec) = self.path_specs.get(&relative_path).cloned() {
+            self.note_idle_touch_path(&relative_path);
             return Some(spec);
         }
         let files = self.files.clone();
@@ -1277,6 +1511,7 @@ impl Registry {
                 spec.shrink_to_fit();
                 intern_spec_options(&mut spec, &mut self.option_pool);
                 let spec = Arc::new(spec);
+                self.note_idle_touch_path(&relative_path);
                 self.path_specs.insert(relative_path, spec.clone());
                 Some(spec)
             },
@@ -1627,6 +1862,20 @@ fn safe_relative_path(relative: &str) -> Option<PathBuf> {
     Some(path.to_path_buf())
 }
 
+#[cfg(test)]
+fn idle_path(relative: &str) -> Option<PathBuf> {
+    let relative = relative.trim().trim_start_matches("./");
+    if relative.is_empty() || relative.contains('\\') {
+        return None;
+    }
+    let relative = if relative.ends_with(".json") {
+        relative.to_string()
+    } else {
+        format!("{relative}.json")
+    };
+    safe_relative_path(&relative)
+}
+
 fn resolve_reference_path(root: &Path, files: &HashMap<Arc<str>, PathBuf>, reference: &str) -> Option<PathBuf> {
     let reference = reference.trim().trim_start_matches("./");
     if reference.is_empty() || reference.contains('\\') {
@@ -1953,6 +2202,9 @@ fn load_snapshot_file(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Weak;
+    use std::time::{Duration, Instant};
+
     use super::*;
 
     fn write_spec(dir: &Path, name: &str, body: &str) {
@@ -3475,5 +3727,611 @@ mod tests {
         let old = spec.find_subcommand("old").expect("stub");
         assert!(matches!(old.load_spec, Some(LoadSpec::Path(ref path)) if path == "heroku/old"));
         assert!(old.find_subcommand("list").is_none());
+    }
+
+    fn past_grace(now: Instant) -> Instant {
+        now.checked_sub(SPEC_IDLE_GRACE).expect("grace fits in the clock")
+    }
+
+    #[test]
+    fn idle_release_drops_only_the_expired_file() {
+        assert_eq!(SPEC_IDLE_GRACE, Duration::from_secs(25));
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "alpha",
+            r#"{"names":["alpha"],"subcommands":[{"names":["one"]}]}"#,
+        );
+        write_spec(
+            dir.path(),
+            "beta",
+            r#"{"names":["beta"],"subcommands":[{"names":["two"]}]}"#,
+        );
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{"files":{"alpha":"alpha.json","beta":"beta.json"}}"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let alpha = registry.get_arc("alpha").unwrap();
+        let beta = registry.get_arc("beta").unwrap();
+        let now = Instant::now();
+        registry.set_idle_since("beta", Some(past_grace(now)));
+        registry.release_idle(now, SPEC_IDLE_GRACE);
+
+        assert!(registry.is_cached("alpha"));
+        assert!(Arc::ptr_eq(&alpha, &registry.get_arc("alpha").unwrap()));
+        assert!(!registry.is_cached("beta"));
+        assert!(registry.cached_load_spec("beta").is_none());
+        assert_eq!(registry.loaded_spec_count(), 1);
+        assert!(registry.loaded.iter().all(|spec| !Arc::ptr_eq(spec, &beta)));
+        drop(beta);
+    }
+
+    #[test]
+    fn idle_release_keeps_the_parent_stub_and_reloads_a_new_child_arc() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "tool",
+            r#"{"names":["tool"],"subcommands":[{"names":["child"],"loadSpec":"child"}]}"#,
+        );
+        write_spec(
+            dir.path(),
+            "child",
+            r#"{"names":["child"],"subcommands":[{"names":["leaf"]}]}"#,
+        );
+        fs::write(dir.path().join("index.json"), r#"{"files":{"tool":"tool.json"}}"#).unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let parent = registry.get_arc("tool").unwrap();
+        let child = registry.load_referenced_spec("child").unwrap();
+        assert!(registry.cached_load_spec("child").is_some());
+        assert!(parent.find_subcommand("child").unwrap().load_spec.is_some());
+
+        let now = Instant::now();
+        registry.set_idle_since("child.json", Some(past_grace(now)));
+        registry.release_idle(now, SPEC_IDLE_GRACE);
+
+        assert!(Arc::ptr_eq(&parent, &registry.get_arc("tool").unwrap()));
+        let stub = registry
+            .get_arc("tool")
+            .unwrap()
+            .find_subcommand("child")
+            .unwrap()
+            .clone();
+        assert!(matches!(stub.load_spec, Some(LoadSpec::Path(ref path)) if path == "child"));
+        assert!(registry.cached_load_spec("child").is_none());
+        assert!(registry.loaded.iter().all(|spec| !Arc::ptr_eq(spec, &child)));
+
+        let reloaded = registry.load_referenced_spec("child").unwrap();
+        assert!(!Arc::ptr_eq(&child, &reloaded));
+        assert!(reloaded.find_subcommand("leaf").is_some());
+    }
+
+    #[test]
+    fn command_path_idle_release_drops_the_shared_lru_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "tool",
+            r#"{"names":["tool"],"subcommands":[{"names":["run"]}]}"#,
+        );
+        fs::write(dir.path().join("index.json"), r#"{"files":{"tool":"tool.json"}}"#).unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let shared = registry.load_referenced_spec("tool").unwrap();
+        assert!(registry.cached_load_spec("tool").is_none());
+        assert!(registry.is_cached("tool"));
+
+        let now = Instant::now();
+        registry.set_idle_since("tool", Some(past_grace(now)));
+        registry.release_idle(now, SPEC_IDLE_GRACE);
+
+        assert!(!registry.is_cached("tool"));
+        assert!(registry.cached_load_spec("tool").is_none());
+        assert!(registry.loaded.iter().all(|spec| !Arc::ptr_eq(spec, &shared)));
+        let reloaded = registry.get_arc("tool").unwrap();
+        assert!(!Arc::ptr_eq(&shared, &reloaded));
+        assert!(reloaded.find_subcommand("run").is_some());
+    }
+
+    fn idle_identity_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(dir.path(), "tool", r#"{"names":["tool"],"description":"bundled"}"#);
+        fs::write(dir.path().join("index.json"), r#"{"files":{"tool":"tool.json"}}"#).unwrap();
+        dir
+    }
+
+    #[test]
+    fn idle_release_drops_ordinary_and_versioned_trees_for_the_same_path() {
+        let dir = idle_identity_fixture();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let ordinary = registry.get_arc("tool").unwrap();
+        let versioned = registry.load_relative_spec("tool.json", "tool").unwrap();
+        assert!(!Arc::ptr_eq(&ordinary, &versioned));
+        let ordinary_weak = Arc::downgrade(&ordinary);
+        let versioned_weak = Arc::downgrade(&versioned);
+        drop((ordinary, versioned));
+        registry.begin_idle_completion();
+        let now = Instant::now();
+        registry.note_idle_after_complete(now);
+
+        registry.release_idle(now + SPEC_IDLE_GRACE, SPEC_IDLE_GRACE);
+
+        assert!(!registry.is_cached("tool"));
+        assert!(registry.cached_versioned_spec("tool.json").is_none());
+        assert_eq!(registry.loaded_spec_count(), 0);
+        assert!(registry.idle_mark("tool").is_none());
+        assert!(registry.next_idle_deadline(SPEC_IDLE_GRACE).is_none());
+        assert!(ordinary_weak.upgrade().is_none());
+        assert!(versioned_weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn pinned_command_does_not_renew_its_bundled_load_spec() {
+        let dir = idle_identity_fixture();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        registry.overlay_spec(
+            Spec {
+                names: vec!["tool".into()],
+                description: "overlay".into(),
+                ..Spec::default()
+            },
+            OverlayMode::Replace,
+        );
+        let bundled = registry.load_referenced_spec("tool").unwrap();
+        assert_eq!(bundled.description, "bundled");
+        let bundled_weak = Arc::downgrade(&bundled);
+        drop(bundled);
+        let now = Instant::now();
+        registry.note_idle_after_complete(now);
+        assert_eq!(registry.idle_mark("tool"), Some(None));
+
+        registry.begin_idle_completion();
+        let pinned = registry.get_arc("tool").unwrap();
+        assert_eq!(pinned.description, "overlay");
+        registry.note_idle_after_complete(now);
+        assert_eq!(registry.idle_mark("tool"), Some(Some(now)));
+        registry.begin_idle_completion();
+        registry.get_arc("tool").unwrap();
+        registry.note_idle_after_complete(now + Duration::from_secs(5));
+        assert_eq!(registry.idle_mark("tool"), Some(Some(now)));
+
+        registry.release_idle(now + SPEC_IDLE_GRACE, SPEC_IDLE_GRACE);
+        assert!(registry.cached_load_spec("tool").is_none());
+        assert!(bundled_weak.upgrade().is_none());
+        assert!(Arc::ptr_eq(&pinned, &registry.get_arc("tool").unwrap()));
+    }
+
+    #[test]
+    fn lru_eviction_keeps_the_sibling_versioned_trees_original_deadline() {
+        let dir = idle_identity_fixture();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        registry.overlay_spec(
+            Spec {
+                names: vec!["tool".into()],
+                ..Spec::default()
+            },
+            OverlayMode::Replace,
+        );
+        // A pinned command makes the ordinary file use load_spec_cache,
+        // which used to hide its versioned sibling when forgetting a mark.
+        registry.load_referenced_spec("tool").unwrap();
+        let versioned = registry.load_relative_spec("tool.json", "tool").unwrap();
+        let versioned_weak = Arc::downgrade(&versioned);
+        drop(versioned);
+        registry.begin_idle_completion();
+        let now = Instant::now();
+        registry.note_idle_after_complete(now);
+
+        registry.evict_oldest_spec();
+
+        assert!(registry.is_cached("tool"));
+        assert!(registry.cached_load_spec("tool").is_none());
+        assert!(registry.cached_versioned_spec("tool.json").is_some());
+        assert_eq!(registry.idle_mark("tool"), Some(Some(now)));
+        assert_eq!(
+            registry.next_idle_deadline(SPEC_IDLE_GRACE),
+            Some(now + SPEC_IDLE_GRACE)
+        );
+        registry.release_idle(now + SPEC_IDLE_GRACE, SPEC_IDLE_GRACE);
+        assert!(registry.cached_versioned_spec("tool.json").is_none());
+        assert!(versioned_weak.upgrade().is_none());
+        assert!(registry.idle_mark("tool").is_none());
+    }
+
+    #[test]
+    fn idle_release_checks_all_cached_aliases_despite_a_pinned_alias() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(dir.path(), "tool", r#"{"names":["tool","alias","other"]}"#);
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{"files":{"tool":"tool.json","alias":"tool.json","other":"tool.json"}}"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let bundled = registry.get_arc("tool").unwrap();
+        assert!(Arc::ptr_eq(&bundled, &registry.get_arc("alias").unwrap()));
+        assert!(Arc::ptr_eq(&bundled, &registry.get_arc("other").unwrap()));
+        let bundled_weak = Arc::downgrade(&bundled);
+        drop(bundled);
+        registry.overlay_spec(
+            Spec {
+                names: vec!["tool".into()],
+                ..Spec::default()
+            },
+            OverlayMode::Replace,
+        );
+        registry.begin_idle_completion();
+        let pinned = registry.get_arc("tool").unwrap();
+        let now = Instant::now();
+        registry.note_idle_after_complete(now);
+        assert_eq!(registry.idle_mark("tool"), Some(Some(now)));
+        assert_eq!(
+            registry.next_idle_deadline(SPEC_IDLE_GRACE),
+            Some(now + SPEC_IDLE_GRACE)
+        );
+
+        registry.release_idle(now + SPEC_IDLE_GRACE, SPEC_IDLE_GRACE);
+
+        assert!(!registry.is_cached("alias"));
+        assert!(!registry.is_cached("other"));
+        assert!(bundled_weak.upgrade().is_none());
+        assert_eq!(registry.loaded_spec_count(), 0);
+        assert!(registry.idle_mark("tool").is_none());
+        assert!(Arc::ptr_eq(&pinned, &registry.get_arc("tool").unwrap()));
+    }
+
+    #[test]
+    fn idle_release_leaves_pinned_overlays() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(dir.path(), "tool", r#"{"names":["tool"],"description":"bundled"}"#);
+        fs::write(dir.path().join("index.json"), r#"{"files":{"tool":"tool.json"}}"#).unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        registry.get("tool").unwrap();
+        registry.overlay_spec(
+            Spec {
+                names: vec!["tool".into()],
+                description: "overlay".into(),
+                ..Spec::default()
+            },
+            OverlayMode::Replace,
+        );
+        let pinned = registry.get_arc("tool").unwrap();
+        assert_eq!(pinned.description, "overlay");
+
+        let now = Instant::now();
+        registry.set_idle_since("tool.json", Some(past_grace(now)));
+        registry.release_idle(now, SPEC_IDLE_GRACE);
+        let after = registry.get_arc("tool").unwrap();
+        assert!(Arc::ptr_eq(&pinned, &after));
+        assert_eq!(after.description, "overlay");
+    }
+
+    #[test]
+    fn idle_release_drops_option_bodies_with_the_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "tool",
+            r#"{"names":["tool"],"options":[{"names":["--flag"],"description":"flag"}]}"#,
+        );
+        fs::write(dir.path().join("index.json"), r#"{"files":{"tool":"tool.json"}}"#).unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        registry.get("tool").unwrap();
+        let weaks: Vec<Weak<OptionSpec>> = registry
+            .option_pool
+            .values()
+            .flat_map(|bucket| bucket.iter().cloned())
+            .collect();
+        assert!(!weaks.is_empty());
+        assert!(weaks.iter().all(|weak| weak.strong_count() > 0));
+
+        let now = Instant::now();
+        registry.set_idle_since("tool", Some(past_grace(now)));
+        registry.release_idle(now, SPEC_IDLE_GRACE);
+
+        assert!(weaks.iter().all(|weak| weak.strong_count() == 0));
+        assert!(registry.option_pool.is_empty());
+    }
+
+    #[test]
+    fn idle_release_drops_versioned_files_and_keeps_the_detected_version() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("tool")).unwrap();
+        fs::write(
+            dir.path().join("tool/1.0.0.json"),
+            r#"{"names":["tool"],"subcommands":[{"names":["old"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{
+              "files":{"tool":"tool/1.0.0.json"},
+              "versioned":{
+                "tool":{
+                  "command":["tool","--version"],
+                  "parse":"after-first-space",
+                  "fallback":"1.0.0",
+                  "files":{"1.0.0":"tool/1.0.0.json"}
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let _guard = crate::process::mock::install(vec![crate::process::mock::ExecRule {
+            command: Some("tool".into()),
+            args: Some(vec!["--version".into()]),
+            stdout: "tool 1.0.0".into(),
+            ..crate::process::mock::ExecRule::default()
+        }]);
+        registry.get_versioned_arc("tool", "/", Duration::from_secs(5)).unwrap();
+        let version = registry.version_cache.get("tool").cloned();
+        assert!(version.is_some());
+        assert!(registry.cached_versioned_spec("tool/1.0.0.json").is_some());
+
+        let now = Instant::now();
+        registry.set_idle_since("tool/1.0.0.json", Some(past_grace(now)));
+        registry.release_idle(now, SPEC_IDLE_GRACE);
+
+        assert!(registry.cached_versioned_spec("tool/1.0.0.json").is_none());
+        assert_eq!(registry.version_cache.get("tool").cloned(), version);
+    }
+
+    #[test]
+    fn idle_release_waits_out_the_grace_and_ignores_an_active_mark() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(dir.path(), "tool", r#"{"names":["tool"]}"#);
+        fs::write(dir.path().join("index.json"), r#"{"files":{"tool":"tool.json"}}"#).unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        registry.get("tool").unwrap();
+        let now = Instant::now();
+
+        registry.set_idle_since("tool", Some(now));
+        registry.release_idle(now, SPEC_IDLE_GRACE);
+        assert!(registry.is_cached("tool"));
+
+        let within = now.checked_sub(Duration::from_secs(24)).expect("24s fits in the clock");
+        registry.set_idle_since("tool", Some(within));
+        registry.release_idle(now, SPEC_IDLE_GRACE);
+        assert!(registry.is_cached("tool"));
+
+        registry.set_idle_since("tool", None);
+        registry.release_idle(now + Duration::from_secs(3_600), SPEC_IDLE_GRACE);
+        assert!(registry.is_cached("tool"));
+    }
+
+    #[test]
+    fn inserted_specs_without_a_path_are_not_idle_released() {
+        let mut registry = Registry::new();
+        registry.insert(Spec {
+            names: vec!["solo".into()],
+            ..Spec::default()
+        });
+        let now = Instant::now();
+        registry.set_idle_since("solo.json", Some(past_grace(now)));
+        registry.release_idle(now, SPEC_IDLE_GRACE);
+        assert!(registry.is_cached("solo"));
+    }
+
+    #[test]
+    fn lru_eviction_forgets_an_idle_mark_before_the_file_is_reloaded() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..49 {
+            write_spec(dir.path(), &format!("cmd{i}"), &format!(r#"{{"names":["cmd{i}"]}}"#));
+        }
+        let mut files = String::from("{\"files\":{");
+        for i in 0..49 {
+            if i > 0 {
+                files.push(',');
+            }
+            files.push_str(&format!("\"cmd{i}\":\"cmd{i}.json\""));
+        }
+        files.push_str("}}");
+        fs::write(dir.path().join("index.json"), files).unwrap();
+
+        let mut registry = Registry::load(dir.path()).unwrap();
+        registry.get("cmd0").unwrap();
+        let now = Instant::now();
+        registry.set_idle_since("cmd0", Some(past_grace(now)));
+        for i in 1..49 {
+            assert!(registry.get(&format!("cmd{i}")).is_some());
+        }
+        assert!(!registry.is_cached("cmd0"));
+        assert!(!registry.idle_since.contains_key(Path::new("cmd0.json")));
+
+        let reloaded = registry.get_arc("cmd0").unwrap();
+        registry.release_idle(now, SPEC_IDLE_GRACE);
+        assert!(Arc::ptr_eq(&reloaded, &registry.get_arc("cmd0").unwrap()));
+    }
+
+    #[test]
+    fn lru_eviction_of_a_path_only_load_spec_forgets_its_idle_mark() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..48 {
+            write_spec(dir.path(), &format!("cmd{i}"), &format!(r#"{{"names":["cmd{i}"]}}"#));
+        }
+        fs::create_dir_all(dir.path().join("gcloud")).unwrap();
+        fs::write(
+            dir.path().join("gcloud/compute.json"),
+            r#"{"names":["compute"],"subcommands":[{"names":["instances"]}]}"#,
+        )
+        .unwrap();
+        let mut files = String::from("{\"files\":{");
+        for i in 0..48 {
+            if i > 0 {
+                files.push(',');
+            }
+            files.push_str(&format!("\"cmd{i}\":\"cmd{i}.json\""));
+        }
+        files.push_str("}}");
+        fs::write(dir.path().join("index.json"), files).unwrap();
+
+        let mut registry = Registry::load(dir.path()).unwrap();
+        for i in 0..48 {
+            assert!(registry.get(&format!("cmd{i}")).is_some());
+        }
+        registry.load_referenced_spec("gcloud/compute").unwrap();
+        let now = Instant::now();
+        registry.set_idle_since("gcloud/compute.json", Some(past_grace(now)));
+        for i in 1..48 {
+            assert!(registry.get(&format!("cmd{i}")).is_some());
+        }
+        assert!(registry.get("cmd0").is_some());
+        assert!(registry.cached_load_spec("gcloud/compute").is_none());
+        assert!(!registry.idle_since.contains_key(Path::new("gcloud/compute.json")));
+
+        let reloaded = registry.load_referenced_spec("gcloud/compute").unwrap();
+        registry.release_idle(now, SPEC_IDLE_GRACE);
+        let still = registry.cached_load_spec("gcloud/compute").unwrap();
+        assert!(Arc::ptr_eq(&reloaded, &still));
+        assert!(still.find_subcommand("instances").is_some());
+    }
+
+    #[test]
+    fn idle_release_keeps_an_option_body_still_held_by_another_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let option = r#"{"names":["--same"],"description":"one"}"#;
+        write_spec(
+            dir.path(),
+            "alpha",
+            &format!(r#"{{"names":["alpha"],"options":[{option}]}}"#),
+        );
+        write_spec(
+            dir.path(),
+            "beta",
+            &format!(r#"{{"names":["beta"],"options":[{option}]}}"#),
+        );
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{"files":{"alpha":"alpha.json","beta":"beta.json"}}"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        let alpha = registry.get_arc("alpha").unwrap();
+        let beta = registry.get_arc("beta").unwrap();
+        assert!(Arc::ptr_eq(&alpha.options[0], &beta.options[0]));
+        drop(beta);
+
+        let now = Instant::now();
+        registry.set_idle_since("beta", Some(past_grace(now)));
+        registry.release_idle(now, SPEC_IDLE_GRACE);
+
+        assert!(!registry.is_cached("beta"));
+        assert!(Arc::ptr_eq(&alpha, &registry.get_arc("alpha").unwrap()));
+        assert!(Arc::ptr_eq(
+            &alpha.options[0],
+            &registry.get_arc("alpha").unwrap().options[0]
+        ));
+        let still_shared = Arc::downgrade(&alpha.options[0]);
+        assert!(registry.option_pool.values().any(|bucket| {
+            bucket
+                .iter()
+                .any(|weak| weak.ptr_eq(&still_shared) && weak.strong_count() > 0)
+        }));
+    }
+
+    #[test]
+    fn idle_note_keeps_a_running_grace_and_a_pause_does_not_count_as_use() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(dir.path(), "alpha", r#"{"names":["alpha"]}"#);
+        write_spec(dir.path(), "beta", r#"{"names":["beta"],"description":"bundled"}"#);
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{"files":{"alpha":"alpha.json","beta":"beta.json"}}"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        registry.get("alpha").unwrap();
+        registry.get("beta").unwrap();
+        registry.begin_idle_completion();
+        registry.get("alpha").unwrap();
+        {
+            let _outer = registry.pause_idle_touch();
+            {
+                let _inner = registry.pause_idle_touch();
+                registry.get("beta").unwrap();
+            }
+            registry.get("beta").unwrap();
+        }
+        let mut cloned = registry.clone();
+        cloned.begin_idle_completion();
+        cloned.get("beta").unwrap();
+        cloned.note_idle_after_complete(Instant::now());
+        assert_eq!(cloned.idle_mark("beta"), Some(None));
+        let now = Instant::now();
+        registry.note_idle_after_complete(now);
+        assert_eq!(registry.idle_mark("alpha"), Some(None));
+        assert_eq!(registry.idle_mark("beta"), Some(Some(now)));
+        assert!(registry.is_cached("beta"));
+
+        let later = now + Duration::from_secs(5);
+        registry.begin_idle_completion();
+        registry.get("alpha").unwrap();
+        registry.note_idle_after_complete(later);
+        assert_eq!(registry.idle_mark("alpha"), Some(None));
+        assert_eq!(registry.idle_mark("beta"), Some(Some(now)));
+
+        registry.overlay_spec(
+            Spec {
+                names: vec!["beta".into()],
+                description: "overlay".into(),
+                ..Spec::default()
+            },
+            OverlayMode::Replace,
+        );
+        registry.begin_idle_completion();
+        registry.note_idle_after_complete(later + Duration::from_secs(5));
+        assert_eq!(registry.idle_mark("beta"), None);
+        let pinned = registry.get_arc("beta").unwrap();
+        registry.release_idle(later + SPEC_IDLE_GRACE, SPEC_IDLE_GRACE);
+        assert!(Arc::ptr_eq(&pinned, &registry.get_arc("beta").unwrap()));
+        assert_eq!(registry.get("beta").unwrap().description, "overlay");
+    }
+
+    #[test]
+    fn next_idle_deadline_uses_the_earliest_pending_mark_and_skips_pins() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(dir.path(), "alpha", r#"{"names":["alpha"]}"#);
+        write_spec(dir.path(), "beta", r#"{"names":["beta"]}"#);
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{"files":{"alpha":"alpha.json","beta":"beta.json"}}"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(dir.path()).unwrap();
+        registry.get("alpha").unwrap();
+        registry.get("beta").unwrap();
+        let now = Instant::now();
+        registry.set_idle_since("alpha", None);
+        registry.set_idle_since("beta", Some(now));
+        // An earlier deadline without a cached tree must not wake the worker.
+        registry.set_idle_since("ghost", Some(past_grace(now)));
+        assert_eq!(
+            registry.next_idle_deadline(SPEC_IDLE_GRACE),
+            Some(now + SPEC_IDLE_GRACE)
+        );
+
+        registry.set_idle_since("alpha", Some(now + Duration::from_secs(10)));
+        assert_eq!(
+            registry.next_idle_deadline(SPEC_IDLE_GRACE),
+            Some(now + SPEC_IDLE_GRACE)
+        );
+
+        registry.overlay_spec(
+            Spec {
+                names: vec!["beta".into()],
+                description: "overlay".into(),
+                ..Spec::default()
+            },
+            OverlayMode::Replace,
+        );
+        assert_eq!(
+            registry.next_idle_deadline(SPEC_IDLE_GRACE),
+            Some(now + Duration::from_secs(10) + SPEC_IDLE_GRACE)
+        );
+        registry.set_idle_since("alpha", None);
+        assert_eq!(registry.idle_mark("ghost"), Some(Some(past_grace(now))));
+        assert_eq!(registry.next_idle_deadline(SPEC_IDLE_GRACE), None);
     }
 }

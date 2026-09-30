@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 // Not `tokio::sync::oneshot`. The desktop awaits the reply on GPUI's foreground
@@ -49,6 +49,17 @@ enum JobKind {
     /// `ftab hook clear-autocomplete-cache`: drop every cached spec and
     /// generator result before the next completion runs.
     ClearCaches,
+    #[cfg(test)]
+    InspectIdle {
+        relative: String,
+        reply: oneshot::Sender<IdleFileState>,
+    },
+}
+
+#[cfg(test)]
+struct IdleFileState {
+    cached: bool,
+    mark: Option<Option<Instant>>,
 }
 
 // A completion attempt can legitimately spend the legacy 5s script timeout
@@ -117,15 +128,28 @@ type AttemptResult = Result<(Engine, anyhow::Result<CompleteResult>), AttemptFai
 
 impl EngineClient {
     pub fn spawn(specs_dir: PathBuf) -> anyhow::Result<Self> {
-        Self::spawn_supervised(specs_dir, None)
+        Self::spawn_supervised(specs_dir, None, crate::ir::SPEC_IDLE_GRACE)
     }
 
     #[cfg(test)]
     fn spawn_with_timeout(specs_dir: PathBuf, attempt_timeout: Duration) -> anyhow::Result<Self> {
-        Self::spawn_supervised(specs_dir, Some(attempt_timeout))
+        Self::spawn_supervised(specs_dir, Some(attempt_timeout), crate::ir::SPEC_IDLE_GRACE)
     }
 
-    fn spawn_supervised(specs_dir: PathBuf, fixed_attempt_timeout: Option<Duration>) -> anyhow::Result<Self> {
+    #[cfg(test)]
+    fn spawn_with_idle_grace(
+        specs_dir: PathBuf,
+        attempt_timeout: Duration,
+        idle_grace: Duration,
+    ) -> anyhow::Result<Self> {
+        Self::spawn_supervised(specs_dir, Some(attempt_timeout), idle_grace)
+    }
+
+    fn spawn_supervised(
+        specs_dir: PathBuf,
+        fixed_attempt_timeout: Option<Duration>,
+        idle_grace: Duration,
+    ) -> anyhow::Result<Self> {
         let (tx, rx) = mpsc::channel::<Job>();
         let supervisor_specs_dir = specs_dir.clone();
         let acceptance = Arc::new(Mutex::new(AcceptanceIndex::load()));
@@ -144,7 +168,19 @@ impl EngineClient {
                 // attempt does not re-walk the specs directory. It is cloned,
                 // never handed out, so a poisoned attempt cannot corrupt it.
                 let mut registry_template: Option<Registry> = None;
-                while let Ok(first) = rx.recv() {
+                loop {
+                    let first = match wait_for_engine_job(&rx, engine.as_ref(), idle_grace) {
+                        Ok(job) => job,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            // No queued completion. The attempt thread is not
+                            // holding this engine, so the deadline may release.
+                            if let Some(engine) = engine.as_mut() {
+                                engine.release_idle_specs(Instant::now(), idle_grace);
+                            }
+                            continue;
+                        },
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    };
                     let first = match first.kind {
                         JobKind::RecordAcceptance {
                             root_command,
@@ -176,6 +212,11 @@ impl EngineClient {
                         },
                         JobKind::ClearCaches => {
                             clear_caches(&supervisor_specs_dir, &mut engine, &mut registry_template);
+                            continue;
+                        },
+                        #[cfg(test)]
+                        JobKind::InspectIdle { relative, reply } => {
+                            let _ = reply.send(idle_file_state(engine.as_ref(), &relative));
                             continue;
                         },
                         JobKind::Complete { request, reply } => Job {
@@ -215,6 +256,10 @@ impl EngineClient {
                         SideEffect::ClearCaches => {
                             clear_caches(&supervisor_specs_dir, &mut engine, &mut registry_template);
                         },
+                        #[cfg(test)]
+                        SideEffect::InspectIdle { relative, reply } => {
+                            let _ = reply.send(idle_file_state(engine.as_ref(), &relative));
+                        },
                     });
                     let JobKind::Complete { request, reply } = latest.kind else {
                         unreachable!("drain_to_latest returns a completion job");
@@ -241,7 +286,12 @@ impl EngineClient {
                     let attempt_timeout = fixed_attempt_timeout.unwrap_or_else(engine_attempt_timeout);
                     let attempt_context = attempt_log_context(&request);
                     match run_engine_attempt(current_engine, request, attempt_timeout) {
-                        Ok((next_engine, result)) => {
+                        Ok((mut next_engine, result)) => {
+                            // `complete` already stamped idle marks. A mark from
+                            // this attempt is younger than the grace, so this
+                            // only releases files whose grace elapsed while the
+                            // attempt held the engine.
+                            next_engine.release_idle_specs(Instant::now(), idle_grace);
                             engine = Some(next_engine);
                             let _ = reply.send(result);
                         },
@@ -364,6 +414,20 @@ impl EngineClient {
             })
             .map_err(|_err| anyhow!("engine thread is gone"))
     }
+
+    #[cfg(test)]
+    fn inspect_idle(&self, relative: &str) -> anyhow::Result<IdleFileState> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Job {
+                kind: JobKind::InspectIdle {
+                    relative: relative.to_string(),
+                    reply,
+                },
+            })
+            .map_err(|_err| anyhow!("engine thread is gone"))?;
+        futures::executor::block_on(rx).map_err(|_err| anyhow!("engine dropped the reply"))
+    }
 }
 
 /// A queued job that is not a completion: applied in order while draining.
@@ -379,6 +443,11 @@ enum SideEffect {
         timestamp: u64,
     },
     ClearCaches,
+    #[cfg(test)]
+    InspectIdle {
+        relative: String,
+        reply: oneshot::Sender<IdleFileState>,
+    },
 }
 
 fn clear_caches(specs_dir: &Path, engine: &mut Option<Engine>, registry_template: &mut Option<Registry>) {
@@ -572,6 +641,10 @@ where
                 timestamp,
             }),
             JobKind::ClearCaches => on_side_effect(SideEffect::ClearCaches),
+            #[cfg(test)]
+            JobKind::InspectIdle { relative, reply } => {
+                on_side_effect(SideEffect::InspectIdle { relative, reply });
+            },
             JobKind::Complete { request, reply } => {
                 // A newer request makes the current one irrelevant, but its
                 // caller is still waiting on the reply channel. Finish it
@@ -585,6 +658,34 @@ where
         }
     }
     job
+}
+
+/// Block until the next job, or until the earliest idle deadline.
+/// A job already queued is returned without waiting out the grace.
+fn wait_for_engine_job(
+    rx: &mpsc::Receiver<Job>,
+    engine: Option<&Engine>,
+    grace: Duration,
+) -> Result<Job, mpsc::RecvTimeoutError> {
+    let Some(deadline) = engine.and_then(|engine| engine.next_idle_deadline(grace)) else {
+        return rx.recv().map_err(|_disconnected| mpsc::RecvTimeoutError::Disconnected);
+    };
+    let timeout = deadline.saturating_duration_since(Instant::now());
+    rx.recv_timeout(timeout)
+}
+
+#[cfg(test)]
+fn idle_file_state(engine: Option<&Engine>, relative: &str) -> IdleFileState {
+    match engine {
+        Some(engine) => {
+            let (cached, mark) = engine.idle_file_state(relative);
+            IdleFileState { cached, mark }
+        },
+        None => IdleFileState {
+            cached: false,
+            mark: None,
+        },
+    }
 }
 
 pub fn default_specs_dir() -> PathBuf {
@@ -792,6 +893,7 @@ mod tests {
             } => records.push((root_command, accepted_name)),
             SideEffect::RecordScopedAcceptance { .. } => unreachable!("no scoped acceptance in this test"),
             SideEffect::ClearCaches => unreachable!("no cache clear in this test"),
+            SideEffect::InspectIdle { .. } => unreachable!("no idle inspect in this test"),
         });
         assert_eq!(records, vec![("git".into(), "status".into())]);
         let JobKind::Complete { request, .. } = latest.kind else {
@@ -836,7 +938,9 @@ mod tests {
                 accepted_name,
                 timestamp,
             } => records.push((scope, accepted_name, timestamp)),
-            SideEffect::RecordAcceptance { .. } | SideEffect::ClearCaches => unreachable!(),
+            SideEffect::RecordAcceptance { .. } | SideEffect::ClearCaches | SideEffect::InspectIdle { .. } => {
+                unreachable!()
+            },
         });
         assert_eq!(records, vec![(scope.clone(), "feature".into(), timestamp)]);
         assert!(matches!(latest.kind, JobKind::Complete { .. }));
@@ -1285,6 +1389,104 @@ mod tests {
         let (_, result) = run_engine_attempt(fresh_engine, CompleteRequest::default(), Duration::from_secs(1))
             .expect("fresh attempt should run after a panic");
         assert!(result.is_ok());
+    }
+
+    fn write_idle_specs(dir: &std::path::Path) {
+        std::fs::write(
+            dir.join("tool.json"),
+            r#"{"names":["tool"],"subcommands":[{"names":["child"],"loadSpec":"child"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("child.json"), r#"{"names":["child"],"description":"nested"}"#).unwrap();
+        std::fs::write(
+            dir.join("git.json"),
+            r#"{"names":["git"],"subcommands":[{"names":["status"]}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("index.json"),
+            r#"{"files":{"tool":"tool.json","git":"git.json"}}"#,
+        )
+        .unwrap();
+    }
+
+    fn complete_buf(client: &EngineClient, buffer: &str) {
+        client
+            .complete_blocking(CompleteRequest {
+                buffer: buffer.into(),
+                cwd: "/".into(),
+                include_history: false,
+                ..CompleteRequest::default()
+            })
+            .expect("complete");
+    }
+
+    #[test]
+    fn supervisor_releases_an_idle_file_without_another_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        write_idle_specs(dir.path());
+        let grace = Duration::from_millis(200);
+        let client =
+            EngineClient::spawn_with_idle_grace(dir.path().to_path_buf(), WATCHDOG_UNDER_TEST, grace).expect("spawn");
+        complete_buf(&client, "tool child ");
+        complete_buf(&client, "git status");
+        let pending = client.inspect_idle("child").expect("inspect");
+        assert!(pending.cached, "the grace keeps the child");
+        assert!(pending.mark.expect("tracked").is_some(), "git status starts the grace");
+
+        // Stay quiet so the supervisor's own deadline fires. An inspect in
+        // this window would be a job and would restart the wait.
+        thread::sleep(grace + Duration::from_millis(80));
+        let mut released = client.inspect_idle("child").expect("inspect");
+        let started = Instant::now();
+        while released.cached {
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "supervisor did not release the idle child"
+            );
+            thread::sleep(Duration::from_millis(30));
+            released = client.inspect_idle("child").expect("inspect");
+        }
+        assert!(released.mark.is_none());
+    }
+
+    #[test]
+    fn completion_during_the_grace_runs_and_clears_the_idle_mark() {
+        let dir = tempfile::tempdir().unwrap();
+        write_idle_specs(dir.path());
+        let client =
+            EngineClient::spawn_with_idle_grace(dir.path().to_path_buf(), WATCHDOG_UNDER_TEST, Duration::from_secs(5))
+                .expect("spawn");
+        complete_buf(&client, "tool child ");
+        complete_buf(&client, "git status");
+        let started = Instant::now();
+        complete_buf(&client, "tool child ");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "a queued completion waited out the grace"
+        );
+        let state = client.inspect_idle("child").expect("inspect");
+        assert!(state.cached);
+        assert_eq!(state.mark, Some(None));
+    }
+
+    #[test]
+    fn clear_caches_drops_a_pending_idle_file() {
+        let dir = tempfile::tempdir().unwrap();
+        write_idle_specs(dir.path());
+        let client =
+            EngineClient::spawn_with_idle_grace(dir.path().to_path_buf(), WATCHDOG_UNDER_TEST, Duration::from_secs(5))
+                .expect("spawn");
+        complete_buf(&client, "tool child ");
+        complete_buf(&client, "git status");
+        let pending = client.inspect_idle("child").expect("inspect");
+        assert!(pending.cached);
+        assert!(pending.mark.expect("tracked").is_some());
+
+        client.clear_caches().expect("clear");
+        let state = client.inspect_idle("child").expect("inspect");
+        assert!(!state.cached);
+        assert!(state.mark.is_none());
     }
 
     #[test]

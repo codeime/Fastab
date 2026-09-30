@@ -479,6 +479,24 @@ impl Engine {
         let _ = self.clear_caches_and_report();
     }
 
+    /// Release expired idle specs after the worker has regained the engine.
+    pub(crate) fn release_idle_specs(&mut self, now: std::time::Instant, grace: std::time::Duration) {
+        self.registry.release_idle(now, grace);
+    }
+
+    /// Earliest idle-spec deadline for the worker to wait on.
+    pub(crate) fn next_idle_deadline(&self, grace: std::time::Duration) -> Option<std::time::Instant> {
+        self.registry.next_idle_deadline(grace)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn idle_file_state(&self, relative: &str) -> (bool, Option<Option<std::time::Instant>>) {
+        (
+            self.registry.cached_load_spec(relative).is_some(),
+            self.registry.idle_mark(relative),
+        )
+    }
+
     /// Same reset as [`Self::clear_caches`], with an indication that the
     /// canonical directory was successfully reopened. The worker uses this
     /// to avoid discarding its last good registry during an install rename
@@ -587,6 +605,7 @@ impl Engine {
     }
 
     fn complete_with_thread_session(&mut self, mut request: CompleteRequest) -> anyhow::Result<CompleteResult> {
+        self.registry.begin_idle_completion();
         let buffer = lookup::completion_buffer(&request.buffer, request.cursor);
         let (tokens, ends_with_space) = lookup::tokenize(buffer);
 
@@ -689,6 +708,7 @@ impl Engine {
             }
         }
         crate::public_ai::finalize_ranked_candidates(&mut result);
+        self.registry.note_idle_after_complete(std::time::Instant::now());
         Ok(result)
     }
 }
@@ -720,6 +740,7 @@ mod tests {
     use super::*;
     use serde::Deserialize;
     use std::fs;
+    use std::time::Duration;
 
     #[derive(Debug, Deserialize)]
     struct Phase1Golden {
@@ -1989,5 +2010,734 @@ mod tests {
             "{:?}",
             result.suggestions
         );
+    }
+
+    fn idle_tool_dir() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "tool",
+            r#"{
+              "names":["tool"],
+              "args":[{"name":"query","templates":["history"]}],
+              "subcommands":[{"names":["child"],"loadSpec":"child"}]
+            }"#,
+        );
+        write_spec(
+            dir.path(),
+            "child",
+            r#"{"names":["child"],"args":[{"name":"value","templates":["history"]}]}"#,
+        );
+        write_spec(
+            dir.path(),
+            "git",
+            r#"{"names":["git"],"subcommands":[{"names":["status"]}]}"#,
+        );
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{"files":{"tool":"tool.json","git":"git.json"}}"#,
+        )
+        .unwrap();
+        dir
+    }
+
+    fn complete_buffer(engine: &mut Engine, buffer: &str) {
+        engine
+            .complete(CompleteRequest {
+                buffer: buffer.into(),
+                cwd: "/".into(),
+                ..CompleteRequest::default()
+            })
+            .expect("complete");
+    }
+
+    #[test]
+    fn history_index_starts_the_child_grace_without_dropping_it() {
+        let _lock = engine_lock();
+        let dir = idle_tool_dir();
+        let frecency = Frecency::from_commands([("tool child value".into(), 40)]);
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), frecency).expect("engine");
+        complete_buffer(&mut engine, "tool ");
+
+        let child = engine.registry.cached_load_spec("child").expect("child cached");
+        let marked = engine
+            .registry
+            .idle_mark("child")
+            .expect("child is tracked")
+            .expect("child grace has a start");
+        assert_eq!(engine.registry.idle_mark("tool"), Some(None));
+
+        complete_buffer(&mut engine, "tool ");
+        let still = engine.registry.cached_load_spec("child").expect("child stays cached");
+        assert!(Arc::ptr_eq(&child, &still));
+        assert_eq!(engine.registry.idle_mark("child"), Some(Some(marked)));
+        let released_child = Arc::downgrade(&child);
+        drop(child);
+        drop(still);
+
+        engine
+            .registry
+            .release_idle(marked + crate::ir::SPEC_IDLE_GRACE, crate::ir::SPEC_IDLE_GRACE);
+        assert!(engine.registry.cached_load_spec("child").is_none());
+        assert!(released_child.upgrade().is_none());
+        let history = Arc::clone(&engine.history);
+        let values = history.arg_values(
+            &mut engine.registry,
+            None,
+            None,
+            &[crate::history::ArgSlot {
+                root: "tool".into(),
+                path: vec!["child".into()],
+                option: None,
+                index: 0,
+            }],
+        );
+        assert_eq!(values, vec!["value".to_string()]);
+    }
+
+    #[test]
+    fn buffer_walk_into_a_child_clears_its_idle_mark() {
+        let _lock = engine_lock();
+        let dir = idle_tool_dir();
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).expect("engine");
+        complete_buffer(&mut engine, "tool child ");
+        assert!(engine.registry.cached_load_spec("child").is_some());
+        assert_eq!(engine.registry.idle_mark("child"), Some(None));
+    }
+
+    #[test]
+    fn leaving_a_child_starts_its_grace_and_keeps_the_arc() {
+        let _lock = engine_lock();
+        let dir = idle_tool_dir();
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).expect("engine");
+        complete_buffer(&mut engine, "tool child ");
+        let child = engine.registry.cached_load_spec("child").expect("child");
+        complete_buffer(&mut engine, "git status");
+        let still = engine
+            .registry
+            .cached_load_spec("child")
+            .expect("child stays for the grace");
+        assert!(Arc::ptr_eq(&child, &still));
+        let marked = engine
+            .registry
+            .idle_mark("child")
+            .expect("leaving the child starts the grace")
+            .expect("the grace has a start");
+        engine
+            .registry
+            .release_idle(marked + Duration::from_secs(24), crate::ir::SPEC_IDLE_GRACE);
+        assert!(Arc::ptr_eq(
+            &child,
+            &engine.registry.cached_load_spec("child").expect("24s keeps the child")
+        ));
+    }
+
+    #[test]
+    fn history_prefix_starts_grace_instead_of_keeping_the_file_in_use() {
+        let _lock = engine_lock();
+        let dir = idle_tool_dir();
+        write_spec(dir.path(), "sudo", r#"{"names":["sudo"]}"#);
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{"files":{"tool":"tool.json","git":"git.json","sudo":"sudo.json"}}"#,
+        )
+        .unwrap();
+        let frecency = Frecency::from_commands([("tool child value".into(), 40), ("sudo tool extra".into(), 30)]);
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), frecency).expect("engine");
+        complete_buffer(&mut engine, "tool ");
+
+        assert!(engine.registry.is_cached("sudo"));
+        let marked = engine
+            .registry
+            .idle_mark("sudo")
+            .expect("a history prefix is tracked")
+            .expect("a history prefix starts the grace");
+        assert_eq!(engine.registry.idle_mark("tool"), Some(None));
+
+        complete_buffer(&mut engine, "tool ");
+        assert_eq!(engine.registry.idle_mark("sudo"), Some(Some(marked)));
+        assert!(engine.registry.is_cached("sudo"));
+    }
+
+    #[test]
+    fn history_only_does_not_move_an_idle_mark() {
+        let _lock = engine_lock();
+        let dir = idle_tool_dir();
+        let frecency = Frecency::from_commands([("tool child value".into(), 40)]);
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), frecency).expect("engine");
+        complete_buffer(&mut engine, "tool ");
+        let marked = engine
+            .registry
+            .idle_mark("child")
+            .expect("child is tracked")
+            .expect("child grace has a start");
+        engine
+            .complete(CompleteRequest {
+                buffer: "tool child ".into(),
+                cwd: "/".into(),
+                history_only: true,
+                ..CompleteRequest::default()
+            })
+            .expect("history only walks into the child");
+        assert_eq!(engine.registry.idle_mark("child"), Some(Some(marked)));
+        assert!(engine.registry.cached_load_spec("child").is_some());
+    }
+
+    #[test]
+    fn history_only_preserves_active_specs_without_touching_the_next_completion() {
+        let _lock = engine_lock();
+        let dir = idle_tool_dir();
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).expect("engine");
+        complete_buffer(&mut engine, "tool child ");
+        assert_eq!(engine.registry.idle_mark("child"), Some(None));
+
+        for buffer in ["git status", "tool child "] {
+            engine
+                .complete(CompleteRequest {
+                    buffer: buffer.into(),
+                    cwd: "/".into(),
+                    history_only: true,
+                    ..CompleteRequest::default()
+                })
+                .expect("history only");
+            assert_eq!(engine.registry.idle_mark("child"), Some(None));
+            assert_eq!(engine.next_idle_deadline(crate::ir::SPEC_IDLE_GRACE), None);
+        }
+
+        // The history-only child walk must not count as a touch in this
+        // ordinary completion, which leaves the child and starts its grace.
+        complete_buffer(&mut engine, "git status");
+        let marked = engine
+            .registry
+            .idle_mark("child")
+            .expect("child is tracked")
+            .expect("ordinary completion starts the child grace");
+        assert_eq!(engine.registry.idle_mark("git"), Some(None));
+        assert_eq!(
+            engine.next_idle_deadline(crate::ir::SPEC_IDLE_GRACE),
+            Some(marked + crate::ir::SPEC_IDLE_GRACE)
+        );
+        assert!(engine.registry.cached_load_spec("child").is_some());
+    }
+
+    fn quiet_settings() -> impl Drop {
+        fastab_settings::settings::install_override(fastab_settings::settings::Settings::from_slice(&[
+            ("autocomplete.history.disableLoading", serde_json::json!(true)),
+            ("autocomplete.sortMethod", serde_json::json!("default")),
+            ("autocomplete.hideAutoExecuteSuggestion", serde_json::json!(true)),
+        ]))
+    }
+
+    fn complete_listed(engine: &mut Engine, buffer: &str) -> CompleteResult {
+        engine
+            .complete(CompleteRequest {
+                buffer: buffer.into(),
+                cwd: "/".into(),
+                include_history: false,
+                ..CompleteRequest::default()
+            })
+            .expect("complete")
+    }
+
+    #[test]
+    fn reload_after_idle_keeps_suggestion_rows_and_uses_a_new_arc() {
+        let _lock = engine_lock();
+        let _settings = quiet_settings();
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "tool",
+            r#"{
+              "names":["tool"],
+              "subcommands":[
+                {"names":["child"],"description":"Stub child","loadSpec":"child"},
+                {"names":["stay"],"description":"Stays on the parent","priority":30}
+              ]
+            }"#,
+        );
+        write_spec(
+            dir.path(),
+            "child",
+            r#"{
+              "names":["child"],
+              "description":"Loaded child",
+              "subcommands":[
+                {
+                  "names":["alpha"],
+                  "description":"First item",
+                  "priority":40,
+                  "insertValue":"alpha-now",
+                  "shouldAddSpace":true,
+                  "args":[{"name":"file","isOptional":true}]
+                },
+                {
+                  "names":["secret"],
+                  "description":"Hidden item",
+                  "hidden":true,
+                  "priority":10,
+                  "insertValue":"secret-now"
+                },
+                {
+                  "names":["zeta"],
+                  "description":"Last item",
+                  "priority":80,
+                  "shouldAddSpace":false,
+                  "args":[{"name":"target"}]
+                }
+              ],
+              "options":[
+                {
+                  "names":["--verbose"],
+                  "description":"Talk more",
+                  "priority":60,
+                  "args":[{"name":"level","isOptional":true}]
+                }
+              ]
+            }"#,
+        );
+        write_spec(
+            dir.path(),
+            "git",
+            r#"{"names":["git"],"subcommands":[{"names":["status"]}]}"#,
+        );
+        fs::write(
+            dir.path().join("index.json"),
+            r#"{"files":{"tool":"tool.json","git":"git.json"}}"#,
+        )
+        .unwrap();
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).expect("engine");
+
+        let parent_before = complete_listed(&mut engine, "tool ").suggestions;
+        assert!(engine.registry.cached_load_spec("child").is_none());
+        assert!(
+            parent_before
+                .iter()
+                .any(|row| row.name == "child" && row.description == "Stub child"),
+            "{parent_before:?}"
+        );
+        assert!(
+            parent_before
+                .iter()
+                .all(|row| row.name != "alpha" && row.name != "zeta" && row.name != "secret"),
+            "{parent_before:?}"
+        );
+
+        let entered = complete_listed(&mut engine, "tool child ");
+        let entered_rows = entered.suggestions.clone();
+        assert!(
+            entered_rows.iter().any(|row| {
+                row.name == "alpha"
+                    && row.priority == 40
+                    && row.args_hint == "[file]"
+                    && row.should_add_space
+                    && row.insert_value.as_deref() == Some("alpha-now")
+            }),
+            "{entered_rows:?}"
+        );
+        assert!(
+            entered_rows.iter().any(|row| row.name == "zeta"
+                && row.priority == 80
+                && row.args_hint == "<target>"
+                && !row.should_add_space
+                && row.insert_value.is_none()),
+            "{entered_rows:?}"
+        );
+        assert!(
+            entered_rows
+                .iter()
+                .any(|row| row.name == "--verbose" && row.priority == 60 && row.args_hint == "[level]"),
+            "{entered_rows:?}"
+        );
+        assert!(entered_rows.iter().all(|row| !row.hidden), "{entered_rows:?}");
+        let child = engine.registry.cached_load_spec("child").expect("child loaded");
+
+        let hidden = complete_listed(&mut engine, "tool child secret");
+        let hidden_rows = hidden.suggestions.clone();
+        assert!(
+            hidden_rows.iter().any(|row| row.name == "secret"
+                && row.hidden
+                && row.priority == 10
+                && row.insert_value.as_deref() == Some("secret-now")),
+            "{hidden_rows:?}"
+        );
+
+        let git = complete_listed(&mut engine, "git status");
+        assert!(git.suggestions.iter().any(|row| row.name == "status"), "{git:?}");
+        let git_arc = engine.registry.get_arc("git").expect("git");
+        let marked = engine
+            .registry
+            .idle_mark("child")
+            .expect("leaving the child starts the grace")
+            .expect("the grace has a start");
+        engine
+            .registry
+            .release_idle(marked + crate::ir::SPEC_IDLE_GRACE, crate::ir::SPEC_IDLE_GRACE);
+
+        assert!(engine.registry.cached_load_spec("child").is_none());
+        assert!(!engine.registry.is_cached("tool"));
+        assert!(Arc::ptr_eq(
+            &git_arc,
+            &engine.registry.get_arc("git").expect("git stays")
+        ));
+
+        let parent_after = complete_listed(&mut engine, "tool ").suggestions;
+        assert_eq!(parent_after, parent_before);
+        assert!(
+            engine.registry.cached_load_spec("child").is_none(),
+            "the parent menu must keep using the stub"
+        );
+
+        let reloaded = complete_listed(&mut engine, "tool child ");
+        let reloaded_arc = engine.registry.cached_load_spec("child").expect("child reloaded");
+        assert!(!Arc::ptr_eq(&child, &reloaded_arc));
+        assert_eq!(reloaded.suggestions, entered_rows);
+
+        let hidden_again = complete_listed(&mut engine, "tool child secret");
+        assert_eq!(hidden_again.suggestions, hidden_rows);
+        assert!(Arc::ptr_eq(
+            &reloaded_arc,
+            &engine
+                .registry
+                .cached_load_spec("child")
+                .expect("hidden query hits the reloaded arc")
+        ));
+    }
+
+    #[test]
+    fn idle_release_leaves_public_ai_stubs_excluded() {
+        let _lock = engine_lock();
+        let _settings = quiet_settings();
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("gcloud")).unwrap();
+        fs::write(
+            dir.path().join("gcloud.json"),
+            r#"{
+              "names":["gcloud"],
+              "subcommands":[
+                {"names":["compute"],"description":"Compute","loadSpec":"gcloud/compute"},
+                {"names":["sql"],"description":"SQL","loadSpec":"gcloud/sql"},
+                {"names":["config"],"description":"Config","subcommands":[
+                  {"names":["list"],"description":"List"},
+                  {"names":["get"],"description":"Get"}
+                ]},
+                {"names":["auth"],"description":"Auth","subcommands":[
+                  {"names":["login"],"description":"Login"},
+                  {"names":["logout"],"description":"Logout"}
+                ]}
+              ]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("gcloud/compute.json"),
+            r#"{
+              "names":["compute"],
+              "subcommands":[
+                {"names":["instances"],"description":"Instances"},
+                {"names":["disks"],"description":"Disks"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("gcloud/sql.json"),
+            r#"{"names":["sql"],"subcommands":[{"names":["backups"]}]}"#,
+        )
+        .unwrap();
+        fs::write(dir.path().join("index.json"), r#"{"files":{"gcloud":"gcloud.json"}}"#).unwrap();
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).expect("engine");
+        engine.registry.trust_public_ai_fixture_for_test();
+
+        let ai = |engine: &mut Engine, buffer: &str| {
+            engine
+                .complete(CompleteRequest {
+                    buffer: buffer.into(),
+                    cwd: "/".into(),
+                    include_history: false,
+                    include_public_ai: true,
+                    ..CompleteRequest::default()
+                })
+                .expect("complete")
+        };
+
+        let menu = ai(&mut engine, "gcloud ");
+        assert!(menu.public_ai_context.is_some(), "{menu:?}");
+        for name in ["config", "auth"] {
+            assert!(
+                menu.suggestions
+                    .iter()
+                    .find(|row| row.name == name)
+                    .is_some_and(|row| row.public_ai_candidate.is_some()),
+                "{name}: {menu:?}"
+            );
+        }
+        for name in ["compute", "sql"] {
+            assert!(
+                menu.suggestions
+                    .iter()
+                    .find(|row| row.name == name)
+                    .is_some_and(|row| row.public_ai_candidate.is_none()),
+                "{name}: {menu:?}"
+            );
+        }
+        assert!(engine.registry.cached_load_spec("gcloud/compute").is_none());
+        assert!(engine.registry.cached_load_spec("gcloud/sql").is_none());
+
+        let typing = ai(&mut engine, "gcloud comp");
+        assert!(
+            typing
+                .suggestions
+                .iter()
+                .find(|row| row.name == "compute")
+                .is_some_and(|row| row.public_ai_candidate.is_none())
+        );
+        assert!(engine.registry.cached_load_spec("gcloud/compute").is_none());
+
+        let config = ai(&mut engine, "gcloud config ");
+        assert!(config.public_ai_context.is_some(), "{config:?}");
+        for name in ["list", "get"] {
+            assert!(
+                config
+                    .suggestions
+                    .iter()
+                    .find(|row| row.name == name)
+                    .is_some_and(|row| row.public_ai_candidate.is_some()),
+                "{name}: {config:?}"
+            );
+        }
+        assert!(engine.registry.cached_load_spec("gcloud/compute").is_none());
+
+        let entered = ai(&mut engine, "gcloud compute ");
+        assert!(entered.public_ai_context.is_none(), "{entered:?}");
+        let entered_rows = entered.suggestions.clone();
+        for name in ["instances", "disks"] {
+            assert!(
+                entered
+                    .suggestions
+                    .iter()
+                    .find(|row| row.name == name)
+                    .is_some_and(|row| row.public_ai_candidate.is_none()),
+                "{name}: {entered:?}"
+            );
+        }
+        let compute = engine
+            .registry
+            .cached_load_spec("gcloud/compute")
+            .expect("compute file");
+        assert!(!compute.meta.ai_resolved_reference);
+        assert!(engine.registry.cached_load_spec("gcloud/sql").is_none());
+        let parent = engine.registry.get_arc("gcloud").expect("gcloud");
+
+        let _back = ai(&mut engine, "gcloud ");
+        let marked = engine
+            .registry
+            .idle_mark("gcloud/compute")
+            .expect("leaving compute starts the grace")
+            .expect("the grace has a start");
+        assert_eq!(engine.registry.idle_mark("gcloud"), Some(None));
+        engine
+            .registry
+            .release_idle(marked + crate::ir::SPEC_IDLE_GRACE, crate::ir::SPEC_IDLE_GRACE);
+
+        assert!(engine.registry.cached_load_spec("gcloud/compute").is_none());
+        assert!(Arc::ptr_eq(
+            &parent,
+            &engine.registry.get_arc("gcloud").expect("parent stays")
+        ));
+        let stub = engine
+            .registry
+            .get_arc("gcloud")
+            .expect("gcloud")
+            .find_subcommand("compute")
+            .expect("stub")
+            .clone();
+        assert!(!stub.meta.ai_resolved_reference);
+        assert!(matches!(stub.load_spec, Some(crate::ir::LoadSpec::Path(ref path)) if path == "gcloud/compute"));
+
+        let menu_after = ai(&mut engine, "gcloud ");
+        assert_eq!(menu_after.suggestions, menu.suggestions);
+        for name in ["config", "auth"] {
+            assert!(
+                menu_after
+                    .suggestions
+                    .iter()
+                    .find(|row| row.name == name)
+                    .is_some_and(|row| row.public_ai_candidate.is_some()),
+                "{name}: {menu_after:?}"
+            );
+        }
+        for name in ["compute", "sql"] {
+            assert!(
+                menu_after
+                    .suggestions
+                    .iter()
+                    .find(|row| row.name == name)
+                    .is_some_and(|row| row.public_ai_candidate.is_none()),
+                "{name}: {menu_after:?}"
+            );
+        }
+        assert!(
+            engine.registry.cached_load_spec("gcloud/compute").is_none(),
+            "the parent menu must not read the released child back"
+        );
+
+        let entered_again = ai(&mut engine, "gcloud compute ");
+        assert!(entered_again.public_ai_context.is_none(), "{entered_again:?}");
+        assert_eq!(entered_again.suggestions, entered_rows);
+        for name in ["instances", "disks"] {
+            assert!(
+                entered_again
+                    .suggestions
+                    .iter()
+                    .find(|row| row.name == name)
+                    .is_some_and(|row| row.public_ai_candidate.is_none()),
+                "{name}: {entered_again:?}"
+            );
+        }
+        let reloaded = engine
+            .registry
+            .cached_load_spec("gcloud/compute")
+            .expect("compute reloaded");
+        assert!(!Arc::ptr_eq(&compute, &reloaded));
+        assert!(!reloaded.meta.ai_resolved_reference);
+        assert!(Arc::ptr_eq(
+            &parent,
+            &engine.registry.get_arc("gcloud").expect("parent arc")
+        ));
+        let stub = engine
+            .registry
+            .get_arc("gcloud")
+            .expect("gcloud")
+            .find_subcommand("compute")
+            .expect("stub")
+            .clone();
+        assert!(!stub.meta.ai_resolved_reference);
+        assert!(matches!(stub.load_spec, Some(crate::ir::LoadSpec::Path(ref path)) if path == "gcloud/compute"));
+
+        let root = engine.registry.get_arc("gcloud").expect("gcloud");
+        let mut tokens = vec!["gcloud".to_string(), "compute".to_string()];
+        let walked = lookup::resolve_context(root, &mut tokens, true, "", "", Some(&mut engine.registry));
+        assert!(walked.spec.meta.ai_resolved_reference);
+        assert!(!Arc::ptr_eq(&reloaded, &walked.spec));
+        let stub = engine
+            .registry
+            .get_arc("gcloud")
+            .expect("gcloud")
+            .find_subcommand("compute")
+            .expect("stub")
+            .clone();
+        assert!(!stub.meta.ai_resolved_reference);
+    }
+
+    /// Bytes from `footprint --noCategories -f bytes -p <pid>`, the same field
+    /// `scripts/memory-usage.sh` records. This test binary has no mimalloc.
+    fn phys_footprint_bytes() -> u64 {
+        let output = std::process::Command::new("footprint")
+            .args(["--noCategories", "-f", "bytes", "-p", &std::process::id().to_string()])
+            .output()
+            .expect("footprint");
+        assert!(
+            output.status.success(),
+            "footprint exited {:?}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8_lossy(&output.stdout);
+        text.lines()
+            .find_map(|line| {
+                let rest = line.split("Footprint:").nth(1)?;
+                rest.split_whitespace().next()?.parse::<u64>().ok()
+            })
+            .unwrap_or_else(|| panic!("footprint output had no Footprint byte count:\n{text}"))
+    }
+
+    fn assert_gcloud_compute_stub(engine: &mut Engine) {
+        assert!(engine.registry.is_cached("gcloud"));
+        assert!(!engine.registry.is_cached("compute"));
+        assert!(engine.registry.cached_load_spec("gcloud/compute").is_none());
+        assert!(engine.registry.idle_mark("gcloud/compute").is_none());
+        let parent = engine.registry.get_arc("gcloud").expect("gcloud");
+        let stub = parent.find_subcommand("compute").expect("compute stub").clone();
+        drop(parent);
+        assert!(!stub.meta.ai_resolved_reference);
+        assert!(matches!(
+            &stub.load_spec,
+            Some(crate::ir::LoadSpec::Path(path)) if path == "gcloud/compute"
+        ));
+    }
+
+    fn leave_gcloud_compute_and_release(engine: &mut Engine) {
+        drop(complete_listed(engine, "gcloud "));
+        let marked = engine
+            .registry
+            .idle_mark("gcloud/compute")
+            .expect("leaving compute starts the grace")
+            .expect("the grace has a start");
+        assert_eq!(engine.registry.idle_mark("gcloud"), Some(None));
+        engine
+            .registry
+            .release_idle(marked + crate::ir::SPEC_IDLE_GRACE, crate::ir::SPEC_IDLE_GRACE);
+        assert_gcloud_compute_stub(engine);
+    }
+
+    /// Default `cargo test` skips this so the suite does not parse bundled
+    /// `gcloud/compute.json`.
+    #[test]
+    #[ignore = "parses bundle/specs-ir/gcloud/compute.json"]
+    fn compute_json_idle_release_footprint() {
+        let _lock = engine_lock();
+        let _settings = quiet_settings();
+        let specs = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bundle/specs-ir");
+        assert!(specs.join("gcloud/compute.json").is_file(), "{}", specs.display());
+
+        let mut engine = Engine::new_with_frecency(specs, Frecency::default()).expect("engine");
+        let menu = complete_listed(&mut engine, "gcloud ");
+        assert!(menu.suggestions.iter().any(|row| row.name == "compute"));
+        assert!(engine.registry.cached_load_spec("gcloud/compute").is_none());
+        drop(menu);
+        let footprint_menu = phys_footprint_bytes();
+
+        let entered = complete_listed(&mut engine, "gcloud compute ");
+        let entered_rows = entered.suggestions.clone();
+        assert!(
+            entered_rows.iter().any(|row| row.name == "instances"),
+            "compute menu had {} rows",
+            entered_rows.len()
+        );
+        drop(entered);
+        let allocated_bytes = {
+            let resident = engine
+                .registry
+                .cached_load_spec("gcloud/compute")
+                .expect("compute loaded");
+            assert!(!resident.meta.ai_resolved_reference);
+            assert!(!engine.registry.is_cached("compute"));
+            resident.allocated_bytes()
+        };
+        let footprint_held = phys_footprint_bytes();
+        leave_gcloud_compute_and_release(&mut engine);
+        let footprint_released = phys_footprint_bytes();
+        let returned = footprint_held as i64 - footprint_released as i64;
+        println!(
+            "COMPUTE_IDLE rows={} allocated_bytes={allocated_bytes} footprint_menu={footprint_menu} footprint_held={footprint_held} footprint_released={footprint_released} returned={returned}",
+            entered_rows.len()
+        );
+
+        let reloaded = complete_listed(&mut engine, "gcloud compute ");
+        assert_eq!(reloaded.suggestions, entered_rows);
+        let previous = engine
+            .registry
+            .cached_load_spec("gcloud/compute")
+            .expect("compute reloaded");
+        assert!(!previous.meta.ai_resolved_reference);
+        drop(reloaded);
+        leave_gcloud_compute_and_release(&mut engine);
+        let again = complete_listed(&mut engine, "gcloud compute ");
+        let renewed = engine
+            .registry
+            .cached_load_spec("gcloud/compute")
+            .expect("compute reloaded again");
+        assert!(!Arc::ptr_eq(&previous, &renewed));
+        assert_eq!(again.suggestions, entered_rows);
     }
 }

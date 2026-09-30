@@ -268,6 +268,9 @@ fn build_index(
     aliases: Option<&str>,
     shell: Option<&str>,
 ) -> SlotIndex {
+    // The whole build is a side load, including the line's first token.
+    // `sudo git …` leaves `sudo` on the grace clock; only the edit buffer keeps a file in use.
+    let _pause = registry.pause_idle_touch();
     let mut index: SlotIndex = HashMap::new();
     let aliases = aliases.map(|raw| crate::lookup::parse_alias_map(raw, shell));
     for line in lines {
