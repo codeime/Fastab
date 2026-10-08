@@ -1,7 +1,8 @@
 //! Own dynamically generated file icons without GPUI's process-wide asset cache.
 //!
 //! Both indexes are bounded. PNG content, rather than its filesystem path, owns
-//! the decoded image so aliases cannot evict one another's atlas entry.
+//! the decoded image so aliases cannot evict one another's atlas entry. The
+//! shared idle task also retires the hidden native window, including its atlas.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
@@ -31,13 +32,19 @@ pub(super) struct FileIconCache {
     images: HashMap<u64, CachedIcon>,
     batch: HashSet<u64>,
     clock: u64,
+    idle_generation: u64,
     idle_task: Option<Task<()>>,
 }
 
 impl FileIconCache {
     pub(super) fn begin_batch(&mut self) {
-        self.idle_task.take();
+        self.cancel_idle();
         self.batch.clear();
+    }
+
+    pub(super) fn cancel_idle(&mut self) {
+        self.idle_generation = self.idle_generation.wrapping_add(1);
+        self.idle_task.take();
     }
 
     pub(super) fn lookup(
@@ -166,24 +173,37 @@ impl FileIconCache {
         slot: Arc<Mutex<Option<OverlayHandle>>>,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.images.is_empty() {
-            return;
-        }
+        // Even an overlay with only text and bundled icons owns a renderer.
+        // Every hide starts a fresh grace period, including after a brief show.
+        self.cancel_idle();
+        let generation = self.idle_generation;
         self.idle_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(IDLE_TIMEOUT).await;
             let _ = this.update(cx, |cache, cx| {
+                if cache.idle_generation != generation {
+                    return;
+                }
                 let Some(state) = state.upgrade() else { return };
                 if state.read(cx).visible {
                     return;
+                }
+                let handle = *slot.lock().unwrap_or_else(|err| err.into_inner());
+                if let Some(handle) = handle {
+                    // Invalidate queued AppKit positioning before dropping the
+                    // native window those requests address. Window destruction
+                    // releases its scenes, renderer and atlas together.
+                    let _ = fastab_gpui::park_overlay_handle(&handle, cx);
+                    let _ = gpui::AnyWindowHandle::from(handle).update(cx, |_, window, _| {
+                        window.remove_window();
+                    });
+                    super::clear_overlay_handle_if(&slot, handle);
                 }
                 cache.paths.clear();
                 for entry in cache.images.values_mut() {
                     entry.cached = false;
                 }
-                // Hidden rows can be restored by Tab, so keep only those small
-                // decoded images. The hidden scene no longer needs any tiles.
-                let all_images = cache.images.values().map(|entry| entry.image.clone()).collect();
-                release_atlas_images(all_images, &slot, cx);
+                // Tab recreates a window from this same state, so retain just
+                // the small decoded images referenced by the kept rows.
                 drop(cache.take_retired(&row_images(&state, cx)));
                 cache.batch.clear();
             });
@@ -229,7 +249,7 @@ fn release_atlas_images(images: Vec<Arc<RenderImage>>, slot: &Mutex<Option<Overl
         // A typed WindowHandle::update would lease SuggestionList while draw
         // needs to update that same root entity. Only borrow the window here.
         let _ = gpui::AnyWindowHandle::from(handle).update(cx, |_, window, cx| {
-            // This runs from desktop events or the idle task, after the rows'
+            // This runs from desktop events, after the rows'
             // entity update has returned, never from a render/paint callback.
             // Rebuild the CPU scene before removing tiles it previously used.
             // draw does not present; the hidden root is an empty div. Already
@@ -246,12 +266,62 @@ fn release_atlas_images(images: Vec<Arc<RenderImage>>, slot: &Mutex<Option<Overl
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::AppContext as _;
 
     fn png(value: u8) -> Vec<u8> {
         let image = image::RgbaImage::from_pixel(32, 32, image::Rgba([value, 31, 63, 255]));
         let mut bytes = Cursor::new(Vec::new());
         image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
         bytes.into_inner()
+    }
+
+    #[gpui::test]
+    fn idle_grace_restarts_and_preserves_only_images_in_kept_rows(cx: &mut gpui::TestAppContext) {
+        let slot = Arc::new(Mutex::new(None));
+        let (cache, state, unused, kept) = cx.update(|cx| {
+            let state = cx.new(|_| OverlayState::new());
+            let cache = cx.new(|_| FileIconCache::default());
+            let (unused, kept) = cache.update(cx, |cache, cx| {
+                let unused = cache.insert_png(PathBuf::from("unused"), png(1)).unwrap();
+                let kept = cache.insert_png(PathBuf::from("kept"), png(2)).unwrap();
+                state.update(cx, |state, _| {
+                    state.items.push(fastab_gpui::SuggestionItem {
+                        name: "kept".into(),
+                        icon_png: Some(kept.clone()),
+                        ..Default::default()
+                    });
+                });
+                cache.schedule_idle(state.downgrade(), slot.clone(), cx);
+                (Arc::downgrade(&unused), Arc::downgrade(&kept))
+            });
+            (cache, state, unused, kept)
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(6));
+        // Showing cancels the old idle period. Hiding again starts a new one.
+        cx.update(|cx| cache.update(cx, |cache, _| cache.cancel_idle()));
+        cx.executor().advance_clock(Duration::from_secs(6));
+        cx.run_until_parked();
+        assert!(unused.upgrade().is_some());
+        cx.update(|cx| {
+            cache.update(cx, |cache, cx| {
+                cache.schedule_idle(state.downgrade(), slot.clone(), cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(9));
+        cx.run_until_parked();
+        assert!(unused.upgrade().is_some(), "a new hide gets the full ten seconds");
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert!(unused.upgrade().is_none());
+        assert!(kept.upgrade().is_some(), "Tab still owns the kept row's decoded image");
+        cx.update(|cx| {
+            assert!(cache.read(cx).paths.is_empty());
+            state.update(cx, |state, _| state.items.clear());
+            cache.update(cx, |cache, cx| cache.finish_batch(&state, &slot, cx));
+        });
+        assert!(kept.upgrade().is_none());
     }
 
     #[test]

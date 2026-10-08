@@ -202,6 +202,9 @@ impl OverlayController {
     }
 
     fn ensure_window(&mut self, cx: &mut App) -> Option<OverlayHandle> {
+        if self.state.read(cx).visible {
+            self.file_icons.update(cx, |icons, _| icons.cancel_idle());
+        }
         ensure_overlay_window(&self.handle, &self.state, cx)
     }
 
@@ -432,11 +435,9 @@ impl OverlayController {
             self.completion_display = CompletionDisplayState::Idle;
             self.recomplete(cx);
         }
-        let needs_window = {
-            let overlay = self.state.read(cx);
-            overlay.visible || overlay.loading || overlay.has_current_arg()
-        };
-        if !needs_window {
+        // Kept argument hints do not make a hidden overlay visible. In
+        // particular, a caret update must not recreate its retired window.
+        if !self.state.read(cx).visible {
             return;
         }
         let positioned = self.ensure_window(cx).is_some_and(|handle| {
@@ -454,11 +455,7 @@ impl OverlayController {
     }
 
     fn relayout(&mut self, cx: &mut App) -> bool {
-        let needs_window = {
-            let overlay = self.state.read(cx);
-            overlay.visible || overlay.loading || overlay.has_current_arg()
-        };
-        if !needs_window {
+        if !self.state.read(cx).visible {
             return false;
         }
         let Some(handle) = self.ensure_window(cx) else {
@@ -2875,6 +2872,38 @@ fn screen_edges_containing(screens: &[(f64, f64, f64, f64)], x: f64, y: f64) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn hidden_argument_hints_do_not_recreate_an_idle_overlay(cx: &mut gpui::TestAppContext) {
+        let _settings = fastab_settings::settings::install_override(fastab_settings::Settings::new_fake());
+        let specs = tempfile::tempdir().unwrap();
+        let engine = EngineClient::spawn(specs.path().to_path_buf()).unwrap();
+        let (proxy, _events) = crate::event_loop::channel();
+        let platform = Arc::new(PlatformState::new(proxy.clone()));
+        let mut overlay = cx.update(|cx| {
+            let mut overlay =
+                OverlayController::start(cx, engine, proxy, Arc::new(FigtermState::new()), platform.clone()).unwrap();
+            overlay.state.update(cx, |state, _| {
+                state.set_current_arg("path", "Choose a path");
+            });
+            overlay.hide_until_shown(cx);
+            overlay
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(11));
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert!(overlay.handle.lock().unwrap().is_none());
+            overlay.apply_position(
+                WindowPosition::Absolute(Position::Logical(LogicalPosition::new(100.0, 100.0))),
+                &platform,
+                cx,
+            );
+            assert!(!overlay.relayout(cx));
+            assert!(overlay.handle.lock().unwrap().is_none());
+            assert!(overlay.state.read(cx).has_current_arg());
+        });
+    }
 
     #[gpui::test]
     fn caret_and_input_lifecycle_release_engine_resources(cx: &mut gpui::TestAppContext) {

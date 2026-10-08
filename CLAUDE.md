@@ -140,7 +140,7 @@ The caret sender is one `std` thread that coalesces queued frames to the newest,
 
 The overlay and settings window are GPUI views, not WebViews. Do not reintroduce `wry` / WKWebView for either surface.
 
-- **Overlay** — `crates/fastab_gpui` renders the list; `crates/fastab_desktop/src/overlay.rs` owns completion requests, insertion, intercept flags, and caret placement. The window is parked with `orderOut` when hidden (last size kept). Caret coordinates are Quartz (top-left, origin at the primary display). Convert to Cocoa with `NSScreen.screens[0]`, **not** `mainScreen` — `mainScreen` is the focused display and breaks external-monitor placement.
+- **Overlay** — `crates/fastab_gpui` renders the list; `crates/fastab_desktop/src/overlay.rs` owns completion requests, insertion, intercept flags, and caret placement. The window is parked with `orderOut` immediately when hidden, then removed after 10 seconds idle to release its renderer and atlas. The shared overlay state keeps restorable rows; the next visible completion or explicit Show recreates the window. Hidden caret updates must not create a window merely because an argument hint remains. Caret coordinates are Quartz (top-left, origin at the primary display). Convert to Cocoa with `NSScreen.screens[0]`, **not** `mainScreen` — `mainScreen` is the focused display and breaks external-monitor placement.
 - **Settings** — `crates/fastab_desktop/src/settings_ui.rs`. Appearance / Behavior / About, plus a permission gate. Language key is still `dashboard.language` (`system`, `en`, `zh-CN`).
 - **Host** — `crates/fastab_desktop/src/gpui_host.rs` runs one `NSApplication` for overlay + settings + tray.
 
