@@ -9,6 +9,10 @@
 - fix: preserve release notifications across cancelled session switches, allow expiry under a busy control queue, and remove unreachable trees after explicit replacement. Settings refreshes no longer resubmit input from an ended session.
 - fix: invalidate cached history argument indexes when aliases or the shell change, and reject late indexes built for another context.
 - fix: bound xterm Accessibility caret searches with one shared deadline and per-window failure backoff; reject stale focus/window results and clear unavailable caret positions.
+- fix: retire completion resources when the popup is hidden or cannot be positioned, cancelling work and starting the 10-second release grace while allowing pending generators to finish before retiring an empty result.
+- fix: queue terminal input before requesting caret updates, wait for a valid caret before submitting completion, and resume once when positioning recovers. Focus changes, window destruction and ended input discard retryable input so stale commands cannot reappear.
+- fix: clean up remote IPC sessions and pending replies after writer failures, including when the read connection remains open.
+- change: add numeric engine resource diagnostics and Otty Accessibility caret failure diagnostics. Verification covers source tests and review; a new installed build and real Otty completion behavior still need verification.
 
 ## v0.0.4
 

@@ -2,7 +2,7 @@
 
 日期：2026-09-30。代码基线：`1f8d6f0b`（v0.0.5）。
 
-状态：S0–S9 全部实现并完成逐步 review/fix、两位 Astra 交叉复核及最终验证。本文同时保存实施细节、逐步 review/fix 记录和最终验收证据；未取得证据的项目不得标为已关闭。
+状态：S0–S9 的 2026-09-30 实施已关闭；2026-10-08 安装版反馈触发的追加修复见末节。本文保存各轮实际证据，末节的显示状态契约覆盖早期“隐藏不结束资源使用”的约定；未取得证据的项目不得标为已关闭。
 
 ## 目标与范围
 
@@ -256,3 +256,32 @@ cargo run --release --locked -p fastab_engine --example resource-replay -- bundl
 ### v0.0.5 同版本交付准备（2026-09-30）
 
 上述“未提交、推送或发版”描述各轮审查结束时的状态。用户随后授权按内容提交、推送并重新打包 0.0.5。本次交付按规格加载性能、Engine 生命周期、桌面输入结束与 IPC、AX 光标查询、持续回放与 CI、文档及发布说明六组提交；Cargo 与网站版本均保持 0.0.5，中英文更新日志同步修改现有版本条目。推送使用远端旧引用的精确 lease，原子更新 main 与 v0.0.5；交付时另行核对新提交对应的构建状态及 DMG 资产，不以旧资产或仅已触发工作流视为打包完成。
+
+### 安装版反馈后的追加修复（2026-10-08）
+
+用户反馈清空输入或执行后超过 10 秒内存仍高，且 Otty 有时不出提示。本轮基线为 `5c138588`，安装版为 0.0.5（2026-09-30 构建），Otty 1.5.4，macOS 27.0。以下区分已确认的代码缺口与尚未验证的安装体验。
+
+**研究证据。** 当前安装版通过合成 IPC 输入 `gcloud compute `，桌面 `phys_footprint` 约从 58.8 MiB 升到 107.2 MiB，输入结束后约 10 秒降到 64.6 MiB，说明释放路径能够生效。另一次真实 Otty 场景清空后仍约 104 MiB；前后 heap/vmmap 显示 live heap 仅增加约 3.1 MiB，而 IOSurface 增加约 24.5 MiB、malloc dirty/swap 碎片约增加 16.8 MiB。该轮有窗口显示变化，不能把整个物理内存增量归为规格泄漏。AXUIElement 数量约 14→24，没有重现早期的大量 AX 对象泄漏。真实进程占用与 registry 估算字节应分别观察。
+
+**1. 把资源使用与显示状态接起来。** 原 `hide`/`dismiss` 只丢弃旧 UI 结果，普通补全仍可运行；非空但无法定位的输入可无限保持规格 active。现改为：
+
+- 没有有效 caret 时保存最新输入，暂不提交 Engine；首次有效位置恢复一次，重复位置不重提。
+- `RemoteHook::edit_buffer` 必须先入队 `GpuiOverlayBuffer`，再请求 AX/IME 刷新。旧顺序中，快速 caret 回复可能先到，随后新 session 的 buffer 将它清掉，又没有周期性定位重试，停在等待状态直到下次输入。真实 socket→protobuf→hook→事件队列回归固定新顺序，同时覆盖空白输入不请求定位及断开通知归属。
+- 隐藏、Esc、禁用、插入后抑制、布局重试耗尽和会话切换结束原会话资源使用；用原有 session-aware `EndInput` 协作取消工作并启动 10 秒宽限，保留字符串候选供显式 Show。
+- 临时 caret 查询失败允许自动恢复；真正窗口/面板焦点变化、窗口销毁及输入结束会清掉可重试旧输入，不能在新位置复活。窗口销毁事件携带清空时捕获的 epoch，消费端核对当前身份，避免旧事件误清新窗口。
+- Tab-only 或空候选的最终结果可结束资源使用；有 `pending_generators` 的有效中间结果必须继续 debounce。独立 review 发现过早按 invisible 退休会取消唯一动态建议来源，已修正为仅终轮退休。
+- 焦点失效条件在 host 与 platform 复用，覆盖 Otty AX、Terminal/iTerm、xterm；IME-only 的元素通知仍按原规则处理。
+
+**2. 写入失败也必须关闭连接。** remote writer 已经发出 `bad_connection` 通知，但主循环没有消费。新增 select 分支进入原统一清理，删除会话、取消 pending response 并发送关闭通知。真实 Unix socket 回归保留客户端读方向连接，通过关闭服务端写半部制造写错，防止测试被 EOF 清理路径伪装成通过。
+
+**3. 让安装版资源与 Otty 失败可诊断。** `ftab _ dump-state engine` 经 GPUI 转交现有 worker，返回纯数值的 registry/hook/history/请求统计，不创建 Engine、不读 shell 正文、不在 GPUI 前台等待 Tokio。IPC 1.5 秒超时；已取消诊断跳过快照。CLI 严格按数字 schema 解析并重编码，旧桌面误返回 shell 状态时拒绝打印；未知协议组件也拒绝。服务端错误保留可读原因。`ftab _ dump-state platform` 的 `ax_caret` 记录 Otty AX 查询阶段、固定失败类别、错误码、耗时和身份；其他 caret 路径只记录 route。读取诊断本身不重新查询 AX。保留原 PID/窗口/零长度选区/预算检查，不放宽坐标有效性规则，不增加窗口矩形兜底。
+
+**验收范围。** 以下测试与静态审查针对源代码。未替换当前安装版，没有把缺少 Fastab overlay 的 Otty 单应用截图当作充分证据，也没有据此宣称已确定或修复 Otty AX 定位失败的具体原因。新构建安装后仍需结合上述两个诊断入口核对真实输入、光标失败阶段和 registry 归零时刻；进程总水位同时包含 UI、GPU、缓存与分配器保留页。
+
+**Review/fix 与最终验证。** GPT-6 Astra ultra 交叉复核发现并修复了空结果 pending 误取消、普通 AX 终端面板切换遗漏、销毁窗口输入可复活、输入/光标入队次序四个问题；实际改动再次独立复核，无剩余阻断发现。
+
+- 最终相关单测：desktop **213**、engine **480**（2 项原有忽略）、CLI **37**（3 项原有忽略）、remote IPC **6**、macos-utils **33**、local IPC **12** 通过，合计 **781**。local IPC 的旧 socket listener 测试被沙箱阻止 bind，在允许临时 Unix socket 的同一隔离工作区重跑通过。另行扩大运行的旧 CLI 集成测试中，2 项读取用户 local-state 数据库因沙箱 `Operation not permitted` 未通过；没有为它们改写用户数据库或宣称全量集成测试通过。
+- GPUI 生命周期回归验证无 caret 时零提交/零初始化、有效位置恢复一次、Esc 不自动恢复、Show 可重提、会话切换和强焦点失效后旧规格归零。动态生成器用真实脚本和真实 debounce 事件验证普通模式结果到达 host；Tab-only 还验证 UI 行及 EndInput 清空。GPUI TestWindow 没有 NSWindow，因此普通模式末次 native 渲染不在该测试验收内。
+- 红绿验证：临时撤销 writer 通知分支后，真实 socket 回归在 3 秒清理期限失败，恢复后通过；临时恢复过早 invisible 退休后，普通/Tab-only 两个真实 debounce 回归均失败，恢复后均通过。仅改临时副本，源工作区保持最终修复。
+- 六个相关 crate 的 `cargo clippy --locked ... -- -D warnings` 通过；desktop/remote IPC/local IPC 的 `--tests` Clippy 也通过。新代码中的错误映射 lint、CLI 错误库引用及协议字段名问题均已修正。rustfmt、`git diff --check` 通过。
+- 为保留未跟踪且缺 manifest 的 `crates/fig_input_method/`，Cargo 在临时验证工作区执行；所有本次变更文件逐字节与源工作区核对一致，bundle/scripts 使用真实目录以保持 provenance 检查。最终日志为 `/tmp/fastab-resource-desktop-final-tests.log`、`/tmp/fastab-resource-unit-tests.log`、`/tmp/fastab-resource-platform-ipc-tests.log`、`/tmp/fastab-resource-clippy.log`、`/tmp/fastab-resource-test-clippy.log`；红绿日志为 `/tmp/fastab-writer-{red,green}.log`、`/tmp/fastab-pending-{red,green}.log`。以上是修复完成时的验收记录。随后用户授权按内容提交、推送并重新打包 0.0.5；版本号保持不变，更新现有发布说明并以远端旧引用的精确 lease 原子推送 main 与 v0.0.5。
