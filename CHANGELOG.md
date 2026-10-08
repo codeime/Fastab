@@ -15,6 +15,10 @@
 - change: add numeric engine resource diagnostics and Otty Accessibility caret failure diagnostics. Verification covers source tests and review; a new installed build and real Otty completion behavior still need verification.
 - fix: release idle Metal instance buffers when native windows close, and prevent late GPU completions from refilling the retired pool while other windows continue rendering.
 - fix: avoid a reentrant window-focus deadlock when opening Settings alongside the completion popup.
+- fix: release window renderers and Metal surfaces when Settings closes even if macOS retains its native view; discard late callbacks and stop closed-window drag loops without interrupting other windows or in-flight GPU work.
+- fix: bound decoded file icons, retire unused icons after 10 seconds hidden, and remove stale Metal atlas entries safely without invalidating in-flight GPU reads.
+- fix: reuse a display refresh clock across windows and release retired frame subscriptions instead of accumulating native objects on each window cycle.
+- fix: balance native text and window-string ownership, handle optional text-query outputs, and prevent closed permission-guide tasks from joining a reopened guide.
 
 ## v0.0.4
 

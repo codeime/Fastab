@@ -317,3 +317,66 @@ cargo run --release --locked -p fastab_engine --example resource-replay -- bundl
 - 生产源回归：desktop **213**、fastab_gpui **109** 项通过。探针入口已从验证副本恢复，未写入产品入口。
 - 两个产品 crate 的 `cargo clippy --locked --all-targets -- -D warnings`、第三方声明 `--check` 与 `git diff --check` 通过。
 - 临时证据：`/tmp/fastab-settings-{path-baseline,patched}-{1,2,3}.log`、`/tmp/fastab-settings-{baseline,patched}-vmmap.txt`、`/tmp/fastab-settings-metal-tests.log`、`/tmp/fastab-settings-stress-{sample.txt,fixed.log}`、`/tmp/fastab-allocator-pressure-relief-evidence.md`、`/tmp/fastab-settings-production-tests.log`。
+
+## 2026-10-08：原生视图被保留时的关窗释放
+
+**新增现场。** 安装版 `a343180a` 的另一个冷启动进程（PID 62233）实测为 **23.2 MiB**，补全引擎尚未初始化。打开并关闭设置后，`GPUIWindow` 已消失，但两个 `GPUIView` 和 `CAMetalLayer` 仍在；引擎计数始终为零。引用图确认 `NSNotificationCenter → block → strong capture GPUIView`。它指向 AppKit 的视图通知机制，尚不能确定具体通知名或通知未解除的原因，不能直接给系统 observer 添加注销代码。
+
+这与上一节 PID 38134 的无窗口/无 layer 现场不同。取样工具额外激活过设置，本次诊断进程升至约 95 MiB，不能把它当作用户原先 40 多 MiB 的等价复现，也不能由该数推导修复后的固定内存目标。
+
+**释放缺口。** `GPUIView` 的 ivar 持有 `Arc<Mutex<MacWindowState>>`，而后者持有完整的 renderer。原来的 `MacWindow::drop` 调用空的 `MetalRenderer::destroy()`，实际释放要等到视图 `dealloc`。前一轮缓冲池修复也在 renderer 的 `Drop` 上，因而无法覆盖“窗口已关闭、视图仍被系统持有”的路径。字体和系统缓存的应用级生命周期是另一项成本，不与这条缺口混为一谈。
+
+**实现与验收范围。**
+
+1. 以 GPUI 逻辑窗口销毁作为图形资源释放边界，关闭后即使原生视图仍存活，也不能继续持有 renderer 和绘图 surface；先标记关闭并取出资源，再在窗口状态锁外调用可能重入的 AppKit 清理。
+2. 已排队的绘制、尺寸、焦点、输入和拖拽回调遇到关闭状态应终止；回调执行期间发生关闭时，不能在返回后把 handler/callback 或 display link 写回旧窗口。
+3. 已提交的 GPU 命令保持资源有效直到执行完毕，旧 generation 的 buffer 不重新进入共享池；其他活窗口和重新打开的设置继续正常绘制。补全窗口的 `orderOut` 隐藏不等于销毁。
+4. 验证主动保留已关闭的原生视图这一场景，做同配置旧版/修复版对照，以 layer 解绑、真实 GPU 对象与 surface 回收为主要证据，footprint 作为辅助。再做多窗口压力、产品回归和独立 GPT-6 Astra ultra review/fix。原生探针不替代新安装包的真实终端验收。
+
+**已实施与 review/fix。** `MacWindowState.renderer` 改为可取出的资源；`MacWindow::drop` 先标记关闭、取出 renderer、display link 和所有回调，再解锁、停止帧回调、清除 first responder、拆除 layer 并移出视图，立即释放 renderer。关闭状态会阻止迟到回调访问原生窗口或恢复 handler；拖拽循环在窗口关闭、状态弱引用失效时退出。独立审查发现“原生回调内部关窗，拆除视图后可能过早释放接收者”的风险，修为将空视图保留到延迟 native close 结束，GPU 资源仍在当前关闭流程释放。最终 GPT-6 Astra ultra 复审没有剩余可操作发现。
+
+**真实原生对照。** 临时探针调用生产设置 open/close，显式保活每个已关闭的 `NSView`，但不持有其 window/layer；另一个补全窗口持续绘制。旧版与修复版都使用同一 debug 构建配置和 `MTL_DEBUG_LAYER=1`，每轮关闭并刷新存活窗口后等待 2 秒再取样，3 轮累计请求 180 次补全窗口刷新。
+
+| 关闭设置并继续保活旧视图 | 旧版 footprint | 修复版 footprint |
+| --- | --- | --- |
+| 第 1 轮 | 71.0 MiB | 40.6 MiB |
+| 第 2 轮 | 95.4 MiB | 41.3 MiB |
+| 第 3 轮 | 122.4 MiB | 41.5 MiB |
+
+第 3 轮两组都仍有 4 个 `GPUIView`（3 个故意保留的旧设置视图和 1 个活补全视图）。旧版有 **4 个 CAMetalLayer、79.2 MiB IOSurface resident**；修复版只有活补全窗口的 **1 个 CAMetalLayer、5808 KiB IOSurface resident**，与该探针补全窗口的基线相同。旧版的关闭断言失败 6 次，修复版为 0；存活补全窗口和重新打开的设置均保持有效绘图层。这是关闭后的图形资源回收证据，**不是完整安装版空闲 20 MiB 的承诺**。
+
+**其余验证。**
+
+- 4 项真实 Metal 测试通过。新增共享事件控制已提交命令，关闭 renderer 时 GPU 尚未完成；放行后验证真实写入结果与旧 buffer 不回池。失败时 RAII 与独立 500ms CPU 截止机制会放行事件，避免测试自身卡住 GPU；截止机制抢先放行会使测试失败。
+- 4 轮原生 `displayLayer:` 回调内关闭自身窗口通过，交替使用外部保活/不保活接收者。每轮确认 GPUI handle 移除、下一帧闭包捕获释放、该帧不再执行；保活视图再收到绘制和 backing-properties 回调后也没有恢复 Metal layer。该探针不声称覆盖 IME 输入 handler 内关闭。
+- 生产入口恢复后，`fastab_desktop` **213**、`fastab_gpui` **109** 项测试通过。验证使用前述临时副本，保留原工作区不相关未跟踪内容；没有替换已安装应用或重启输入法。
+- 两个产品 crate 的 `cargo clippy --locked --all-targets -- -D warnings`、workspace `cargo fmt --all --check` 和 `git diff --check` 通过。
+- 证据：`/tmp/fastab-retained-{baseline,fixed}-evidence/`、`/tmp/fastab-retained-callback-evidence/run.log`、`/tmp/fastab-retained-metal-tests.log`、`/tmp/fastab-retained-production-tests.log`。探针源为 `/tmp/fastab-settings-retained-view-probe.rs`、`/tmp/fastab-settings-callback-close-probe.rs`。
+## 2026-10-08：关联资源生命周期的复核与修复
+
+本轮覆盖上一轮审计确认的五条路径，不以进程总占用下降多少作为单一验收标准；分别检查对象引用、缓存边界、纹理索引和迟到任务。安装版与 IME 不参与探针，所有原生实验在临时验证副本运行。
+
+1. **帧刷新订阅。** 原实现每次重建窗口 display link 都遗留一个 `CVDisplayLink` 和一个 dispatch source，之前三轮开关设置的采样从 3 个增加到 9 个。直接删除 `mem::forget` 并不安全：上游 [Zed #60696](https://github.com/zed-industries/zed/pull/60696) 记录了 `CVDisplayLinkStop` 与系统后台线程退出之间的竞争。采用每显示器复用一个进程生命周期时钟、窗口单独订阅的方案；退订后取消并释放窗口 source，创建失败、启动失败和重复停止都必须闭环。验收重点是反复开关后的对象数稳定，以及没有窗口订阅时停止计时；不是承诺系统时钟对象零常驻。
+2. **动态文件图标。** 旧 64 项限制只约束路径到 PNG 的缓存，GPUI `App.loading_assets` 仍保留不同 PNG 内容的解码结果。原生探针加载 96 份不同 PNG 后，关闭窗口并删除全部源图标，仍有 96 个解码图像；显式移除 asset 后降至 0。改用补全模块直接持有的有界解码缓存，避免落入全局 asset cache；相同内容共用图像，并保护当前建议批次。淘汰时必须先更新绘制内容，再清理旧图像的 atlas 条目；隐藏路径也须覆盖。
+3. **Metal 图集删除。** 两个 key 共用纹理时，原 `remove(A)` 减少计数却保留 A 的索引；再删除 B 后，A 指向已释放的槽位。修为先移除映射，且每个 key 只减少一次计数。验证共享纹理、重复删除、重建和真实纹理内容；不立即复用单个 tile 区域，避免覆盖 GPU 在途读取。此前产品没有主动调用 `drop_image`，这属于图标回收启用前必须修正的底层缺陷。
+4. **原生文本查询。** `NSTextInputClient` 返回的 attributed substring 使用 +0 约定，原 `alloc/init` 少了 autorelease；其可选 `actualRange` 输出也可能为空。修复释放、空指针处理和输出赋值，并清理相同模式的显示器编号与 tabbing identifier 字符串。Foundation 测试直接读取 UTF-16 范围，并比较 autorelease pool 排空前后的引用计数；不访问真实用户输入。`bounds_for_range` 接口没有调整范围输出；firstRect 在调用方请求 `actualRange` 时，先用既有文本查询取得规范化范围，再查询几何位置并回填相同范围，避免越界或 UTF-16 中间边界被截断后仍回填原请求；未扩展公共接口。
+5. **权限引导旧任务。** 关闭 A 后立即打开 B，旧 timer 仅检查一个 active 布尔值，会误认为自己仍有效。等待窗口与周期定位任务都携带会话 epoch，旧任务不得续订；Grant 按钮只通过 `repair()` 启动引导，去掉第二个排队启动。测试只操作独立生命周期状态，不打开系统设置、不修改 TCC。
+
+每项实现后做定向回归，再以真实设置窗口压力、Metal API validation、产品测试和独立 GPT-6 Astra ultra 审查收尾。图标缓存问题和小型 native 对象泄漏不等于首次打开设置的全部内存差额；字体、系统框架及分配器仍可能保留稳定的应用级开销。
+
+**实施与 review/fix。** 上述五项已落地。动态图标路径与内容各限 64 项；PNG 输入最多 4 MiB、1024×1024，解码分配预算 8 MiB，保留像素最长边 64。不能把 NSImage 的 32 点大小当成 PNG 像素尺寸保证。隐藏 10 秒后清理动态图集，只保留仍可由 Tab 恢复的有界建议行；清空行后全部解码图像释放。
+
+原生图标探针补出了静态审查遗漏的重入问题：typed `WindowHandle::update` 会先借出列表根实体，再调用 `Window::draw` 会二次借用它。生产回收路径现改为 `AnyWindowHandle::update`，只借窗口，重建 scene 完成后再删除 atlas。独立 Astra 复审重新核对了根实体、图标缓存实体、建议状态与窗口锁的借用边界。
+
+**已验证的运行证据。**
+
+- 原生图标探针实际使用生产缓存和 overlay，12 批 × 8 张不同 PNG：存活解码对象从 8 增至 64 后保持 64；清空行、隐藏并等待真实 10 秒任务后为 0；再次显示 8 张并收到原生帧回调。`MTL_DEBUG_LAYER=1`，`RESULT failures=0`，日志 `/tmp/fastab-file-icon-runtime-fixed.log`。
+- 10 轮原生 Settings 开关，主动保留每轮关闭后的 NSView，另一个补全窗口持续刷新。各采样点 `CVDisplayLink` 总数恒为 2、`CAMetalLayer` 恒为 1、IOSurface resident 恒为 5808 KiB；释放保活引用后 `GPUIView` 回到 1。该测试保留了活跃补全窗口，不能当作无窗口空闲占用。
+- 为区分应用订阅与系统 source，第二轮只在临时验证副本为 source 注册/finalizer 加计数：共注册 **23** 个，**23** 个均执行 native finalizer。每次关设置后剩 **1** 个补全窗口订阅，最后关闭补全窗口后为 **0**。证据 `/tmp/fastab-resource-ten-cycle-instrumented-evidence/summary.json`，`RESOURCE_RESULT success=true`；计数代码未写入产品。
+- 全进程 dispatch source 仍从基线 67 变为释放保活视图后的 83，因此没有把该总数写成“所有系统对象都已回收”。已证明 Fastab 帧订阅完全释放，其余变化不由这组计数归因。带计数的 debug 探针，第 1/5/10 轮关窗 footprint 约为 40.1/40.8/41.8 MiB，不承诺安装版回到 20 MiB。
+- 7 项真实 Metal 测试通过，覆盖 renderer 缓冲池、共享纹理删除、96 轮纹理槽复用，以及已提交 GPU 读取跨 atlas 删除/替换后仍返回旧像素；另外 5 项 GCD/registry 生命周期和 2 项 Foundation 测试通过。
+- 产品回归首轮 desktop 216、fastab_gpui 109、macos-utils 34 项，共 359 项通过；三个 crate 的 all-targets Clippy `-D warnings` 通过。扩大到上游其他 macOS 测试时，未修改的 clipboard 测试因沙箱不可访问 AppKit 服务而中止；未扩大权限重跑会修改剪贴板的无关测试，针对本轮改动的验证单独完成。
+
+**最终复审。** 图标重绘借用与 firstRect 范围回填均经过修复后的独立 Astra 复核，没有剩余可操作发现。图标 4 项回归、Foundation 2 项回归再次通过；最终产品 359 项回归、Clippy、格式检查及正式入口构建通过。验证副本的 Rust 源码、manifest 与 lockfile 已逐字节核对，生产二进制不含临时探针入口或 source 计数标记。最终日志为 `/tmp/fastab-resource-final-tests.log`、`/tmp/fastab-resource-final-clippy.log`、`/tmp/fastab-resource-final-fmt.log`、`/tmp/fastab-resource-production-build.log`。
+
+以上仍不替代新安装包在真实终端、外屏切换/拔插、睡眠唤醒、输入法组合输入及权限引导 UI 上的验收。本节验收完成时尚未安装或发布；随后用户授权按内容提交、推送并更新同一 `v0.0.5` 标签触发重打包。版本号保持不变，标签更新以远端旧引用的精确 lease 保护。
