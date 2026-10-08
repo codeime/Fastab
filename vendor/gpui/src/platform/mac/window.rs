@@ -1,3 +1,6 @@
+// Modified by Fastab: release window state before synchronous AppKit focus
+// callbacks. See FASTAB_PATCHES.md at the root of this vendored crate.
+
 use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
 use crate::{
     AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalPaths, FileDropEvent,
@@ -33,6 +36,7 @@ use objc::{
     class,
     declare::ClassDecl,
     msg_send,
+    rc::StrongPtr,
     runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
@@ -1975,7 +1979,7 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.lock();
+    let lock = window_state.lock();
     let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
 
     // When opening a pop-up while the application isn't active, Cocoa sends a spurious
@@ -1989,7 +1993,11 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     // the spurious `becomeKeyWindow` event and helps us work around that bug.
     if selector == sel!(windowDidBecomeKey:) && !is_active {
         unsafe {
-            let _: () = msg_send![lock.native_window, resignKeyWindow];
+            // AppKit can synchronously send windowDidResignKey: back into this
+            // callback. Keep the window alive, but release its state lock first.
+            let native_window = StrongPtr::retain(lock.native_window);
+            drop(lock);
+            let _: () = msg_send![*native_window, resignKeyWindow];
             return;
         }
     }

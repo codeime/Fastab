@@ -28,6 +28,14 @@ Fastab changes `src/platform/mac/metal_renderer.rs`:
 - Three tests use real Metal allocations and command completion to cover late
   returns, reopening after buffer growth, and another renderer surviving a close.
 
+Fastab also changes `src/platform/mac/window.rs`:
+
+- The spurious `windowDidBecomeKey:` workaround retains the native window and
+  releases the window-state mutex before calling `resignKeyWindow`. AppKit can
+  synchronously deliver `windowDidResignKey:` from that call, which reenters the
+  same callback and otherwise deadlocks on the mutex. The retained window stays
+  alive through the call; normal activation and frame-request paths are unchanged.
+
 The root `[patch.crates-io]` applies this copy to all GPUI consumers. Other
 `gpui_*` crates retain their registry dependencies. Font identities, text caches,
 rendering primitives and buffer allocation policy are unchanged.
