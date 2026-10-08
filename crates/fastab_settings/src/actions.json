@@ -12,8 +12,7 @@
     "name": "Insert common prefix",
     "description": "Insert shared prefix of available suggestions. Shake if there's no common prefix.",
     "category": "Insertion",
-    "availability": "WHEN_FOCUSED",
-    "defaultBindings": ["tab"]
+    "availability": "WHEN_FOCUSED"
   },
   {
     "identifier": "insertCommonPrefixOrNavigateDown",
@@ -25,9 +24,10 @@
   {
     "identifier": "insertCommonPrefixOrInsertSelected",
     "name": "Insert common prefix or insert selected",
-    "description": "Insert shared prefix of available suggestions. Insert currently selected suggestion if there's not common prefix.",
+    "description": "Insert shared prefix of available suggestions. Insert the selected non-action suggestion if the prefix cannot be extended.",
     "category": "Insertion",
-    "availability": "WHEN_FOCUSED"
+    "availability": "WHEN_FOCUSED",
+    "defaultBindings": ["tab"]
   },
   {
     "identifier": "insertSelectedAndExecute",

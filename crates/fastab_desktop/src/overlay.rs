@@ -7,6 +7,10 @@ mod file_icons;
 #[path = "overlay/pending_tests.rs"]
 mod pending_tests;
 
+#[cfg(test)]
+#[path = "overlay/tab_tests.rs"]
+mod tab_tests;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -1091,7 +1095,19 @@ impl OverlayController {
             "insertSelected" => self.insert_selected(false, figterm_state, cx),
             "insertCommonPrefixOrInsertSelected" => {
                 if !self.insert_common_prefix(figterm_state, cx) {
-                    self.insert_selected(false, figterm_state, cx);
+                    // A multi-row action has no common prefix by design.
+                    // Falling back to it would turn Tab into execution when
+                    // an exact command's auto-execute row carries a newline.
+                    let can_accept = self
+                        .state
+                        .read(cx)
+                        .selected_item()
+                        .is_some_and(|item| !matches!(item.kind.as_str(), "auto-execute" | "special"));
+                    if can_accept {
+                        self.insert_selected(false, figterm_state, cx);
+                    } else {
+                        self.shake(cx);
+                    }
                 }
             },
             "insertSelectedAndExecute" => self.insert_selected(true, figterm_state, cx),
@@ -2659,7 +2675,7 @@ fn select_suggestion_index(n: usize, len: usize) -> Option<usize> {
 
 const DEFAULT_OVERLAY_BINDINGS: &[(&str, &[&str])] = &[
     ("insertSelected", &["enter"]),
-    ("insertCommonPrefix", &["tab"]),
+    ("insertCommonPrefixOrInsertSelected", &["tab"]),
     ("hideAutocomplete", &["esc"]),
     ("navigateUp", &["shift+tab", "up", "control+p"]),
     ("navigateDown", &["down", "control+n"]),
@@ -4054,6 +4070,21 @@ mod tests {
 
     #[test]
     fn user_keybindings_are_appended_after_defaults() {
+        // Desktop replaces the terminal's initial key map when the list is
+        // shown. Both defaults must agree or Tab silently changes behavior.
+        let defaults = merge_overlay_actions(DEFAULT_OVERLAY_BINDINGS, KeyBindings(Vec::new()));
+        let desktop_tab = defaults
+            .iter()
+            .rev()
+            .find(|action| action.bindings.iter().any(|binding| binding == "tab"))
+            .expect("desktop Tab binding");
+        let terminal_tab = KeyBindings::load_hardcoded()
+            .into_iter()
+            .rev()
+            .find(|binding| binding.binding == "tab")
+            .expect("terminal Tab binding");
+        assert_eq!(desktop_tab.identifier, "insertCommonPrefixOrInsertSelected");
+        assert_eq!(desktop_tab.identifier, terminal_tab.identifier);
         let user = KeyBindings(vec![
             KeyBinding {
                 identifier: "increaseSize".into(),
