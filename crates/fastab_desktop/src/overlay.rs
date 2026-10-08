@@ -2,6 +2,10 @@
 
 pub(crate) mod ai;
 
+#[cfg(test)]
+#[path = "overlay/pending_tests.rs"]
+mod pending_tests;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -48,6 +52,13 @@ struct LastInput {
     cwd: String,
     cursor: u32,
     session_id: Uuid,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CompletionDisplayState {
+    Idle,
+    Requested,
+    WaitingForCaret,
 }
 
 /// How long a request may run before `···` replaces the list. Fig's
@@ -101,6 +112,7 @@ pub struct OverlayController {
     platform_state: Arc<PlatformState>,
     last_position: Arc<Mutex<Option<WindowPosition>>>,
     last_input: Arc<Mutex<Option<LastInput>>>,
+    completion_display: CompletionDisplayState,
     /// Buffer we expect the shell to report back after our own insertion.
     /// Stands in for the legacy `justInserted` flag, which kept the paste
     /// heuristic from mistaking an accepted completion for a paste.
@@ -177,6 +189,7 @@ impl OverlayController {
             platform_state,
             last_position: Arc::new(Mutex::new(None)),
             last_input: Arc::new(Mutex::new(None)),
+            completion_display: CompletionDisplayState::Idle,
             self_insertion: Arc::new(Mutex::new(None)),
             proxy,
             jev: ai::JevRuntime::default(),
@@ -306,6 +319,13 @@ impl OverlayController {
         self.engine.diagnostics()
     }
 
+    fn retire_completion(&mut self) {
+        self.completion_display = CompletionDisplayState::Idle;
+        if let Some(session) = self.current_session() {
+            self.notify_input_ended(session);
+        }
+    }
+
     pub fn set_enabled(&mut self, enabled: bool, cx: &mut App) {
         self.enabled = enabled && gpui_overlay_enabled();
         if !self.enabled {
@@ -314,6 +334,7 @@ impl OverlayController {
     }
 
     pub fn hide(&mut self, cx: &mut App) {
+        self.retire_completion();
         self.cancel_jev(cx);
         self.bump_generation();
         self.take_loading_owner();
@@ -331,7 +352,7 @@ impl OverlayController {
             // Settings refreshes must not resubmit an ended buffer. The next
             // real input event will establish a new buffer for this session.
             self.forget_last_input();
-            self.hide(cx);
+            self.dismiss(cx);
         }
     }
 
@@ -342,6 +363,7 @@ impl OverlayController {
     }
 
     pub fn hide_until_shown(&mut self, cx: &mut App) {
+        self.retire_completion();
         self.cancel_jev(cx);
         // Hiding is a cancellation boundary too. Otherwise an in-flight
         // completion can repopulate hidden state and later be shown as stale.
@@ -366,6 +388,7 @@ impl OverlayController {
     }
 
     pub fn dismiss(&mut self, cx: &mut App) {
+        self.retire_completion();
         self.cancel_jev(cx);
         self.bump_generation();
         self.take_loading_owner();
@@ -382,12 +405,28 @@ impl OverlayController {
     }
 
     pub fn clear_caret_position(&mut self, cx: &mut App) {
+        let resume = self.completion_display != CompletionDisplayState::Idle;
         *self.last_position.lock().unwrap_or_else(|err| err.into_inner()) = None;
         self.hide(cx);
+        if resume {
+            self.completion_display = CompletionDisplayState::WaitingForCaret;
+        }
+    }
+
+    /// A caret from another window/pane cannot resume the previous input.
+    /// The next real buffer event establishes the newly focused session.
+    pub fn invalidate_caret_for_focus_change(&mut self, cx: &mut App) {
+        self.forget_last_input();
+        *self.last_position.lock().unwrap_or_else(|err| err.into_inner()) = None;
+        self.dismiss(cx);
     }
 
     pub fn apply_position(&mut self, position: WindowPosition, platform_state: &PlatformState, cx: &mut App) {
         *self.last_position.lock().unwrap_or_else(|err| err.into_inner()) = Some(position);
+        if self.completion_display == CompletionDisplayState::WaitingForCaret && self.enabled {
+            self.completion_display = CompletionDisplayState::Idle;
+            self.recomplete(cx);
+        }
         let needs_window = {
             let overlay = self.state.read(cx);
             overlay.visible || overlay.loading || overlay.has_current_arg()
@@ -505,6 +544,7 @@ impl OverlayController {
             self.schedule_layout_retry(generation, token, next_attempt, cx);
         } else {
             self.cancel_layout_retry();
+            self.hide(cx);
             warn!(
                 attempts = LAYOUT_RETRY_DELAYS_MS.len(),
                 "overlay native window remained unavailable after bounded relayout retries"
@@ -559,6 +599,13 @@ impl OverlayController {
     }
 
     fn show_kept_items(&mut self, cx: &mut App) {
+        // Hidden rows contain strings, not spec ownership. Explicitly showing
+        // them may need to resume generators retired with the hidden input.
+        if self.completion_display == CompletionDisplayState::Idle {
+            self.state
+                .update(cx, |overlay, _cx| overlay.suppress_until_shown = false);
+            self.recomplete(cx);
+        }
         let can_show = {
             let overlay = self.state.read(cx);
             !overlay.items.is_empty() || overlay.loading || overlay.has_current_arg()
@@ -609,6 +656,9 @@ impl OverlayController {
             force,
             loading_threshold,
         } = options;
+        if self.current_session().is_some_and(|current| current != session_id) {
+            self.retire_completion();
+        }
         let switched_session = self.set_session(session_id);
         if switched_session {
             // Do not expose rows, one-shot insertion state, or a caret from
@@ -676,7 +726,7 @@ impl OverlayController {
             suppress
         });
         if suppress_insert_update {
-            self.park_window(cx);
+            self.hide(cx);
             self.sync_intercept(&figterm_state, cx);
             return;
         }
@@ -712,7 +762,22 @@ impl OverlayController {
             self.sync_intercept(&figterm_state, cx);
         }
 
+        // A buffer can precede the caret event in the host queue. Keep only
+        // its latest text while positioning is unavailable; applying a valid
+        // caret resumes it once, without loading specs or running scripts here.
+        if self
+            .last_position
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .is_none()
+        {
+            self.hide(cx);
+            self.completion_display = CompletionDisplayState::WaitingForCaret;
+            return;
+        }
+
         let generation = self.bump_generation();
+        self.completion_display = CompletionDisplayState::Requested;
         self.take_loading_owner();
         self.clear_stale_loading(cx);
         let (fuzzy, history_only, include_history, suggest_first_token) = {
@@ -882,6 +947,14 @@ impl OverlayController {
             cx,
         );
         self.update_layout_retry(positioned, cx);
+        if !self.state.read(cx).visible && pending.is_none() {
+            // Esc/Tab-only mode can keep useful rows without pinning the
+            // registry. A pending generator must finish first: an initially
+            // empty list can be waiting for its only source of suggestions.
+            self.retire_completion();
+            self.cancel_jev(cx);
+            return;
+        }
         self.schedule_jev(ai_candidates, cx);
         if let Some(delay_ms) = pending {
             let generation = self.generation.load(Ordering::Relaxed);
@@ -2832,7 +2905,7 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    fn ended_input_cannot_be_reactivated_by_settings_refresh(cx: &mut gpui::TestAppContext) {
+    fn caret_and_input_lifecycle_release_engine_resources(cx: &mut gpui::TestAppContext) {
         // Settings overrides are thread-local, but EngineClient has real
         // worker threads. Isolate their process-wide settings from both the
         // user's custom history commands and concurrently running UI tests.
@@ -2841,7 +2914,7 @@ mod tests {
             let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
                 .args([
                     "--exact",
-                    "overlay::tests::ended_input_cannot_be_reactivated_by_settings_refresh",
+                    "overlay::tests::caret_and_input_lifecycle_release_engine_resources",
                     "--nocapture",
                 ])
                 .env(CHILD, "1")
@@ -2892,7 +2965,7 @@ mod tests {
         let platform_state = Arc::new(PlatformState::new(proxy.clone()));
         let mut overlay = cx.update(|cx| {
             let mut overlay =
-                OverlayController::start(cx, engine.clone(), proxy, figterm_state.clone(), platform_state)
+                OverlayController::start(cx, engine.clone(), proxy, figterm_state.clone(), platform_state.clone())
                     .expect("controller");
             // The headless test does not depend on the test binary's AX grant.
             overlay.enabled = true;
@@ -2909,8 +2982,39 @@ mod tests {
             overlay.recomplete(cx);
         };
         let snapshot = || futures::executor::block_on(engine.diagnostics()).expect("diagnostics");
+        let wait_for_release = || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            while snapshot()
+                .engine
+                .expect("initialized engine")
+                .registry
+                .cached_file_count
+                != 0
+            {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "hidden input must release its spec"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let position = WindowPosition::Absolute(Position::Logical(LogicalPosition::new(100.0, 100.0)));
 
         cx.update(|cx| complete_input(&mut overlay, cx));
+        cx.update(|cx| {
+            refresh_settings(&mut overlay, cx);
+            complete_input(&mut overlay, cx);
+        });
+        let waiting = snapshot();
+        assert_eq!(waiting.requests.submitted, 0, "no caret must not start completion work");
+        assert!(
+            waiting.engine.is_none(),
+            "waiting for a caret must not initialize the engine"
+        );
+        cx.update(|cx| {
+            overlay.apply_position(position, &platform_state, cx);
+            overlay.apply_position(position, &platform_state, cx);
+        });
         assert_eq!(snapshot().requests.completed, 1);
 
         // Ending a background session and ordinary hiding must retain the
@@ -2933,20 +3037,7 @@ mod tests {
             refresh_settings(&mut overlay, cx);
         });
         assert_eq!(snapshot().requests.submitted, 3, "ended input must not be resubmitted");
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        while snapshot()
-            .engine
-            .expect("initialized engine")
-            .registry
-            .cached_file_count
-            != 0
-        {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "ended input must release its spec"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        wait_for_release();
 
         // pre-exec keeps the UUID: a new real buffer, even with identical
         // text, must be allowed to complete and establish the next input.
@@ -2958,6 +3049,56 @@ mod tests {
             resumed.engine.expect("initialized engine").registry.cached_file_count,
             1
         );
+
+        // Losing the caret releases the same nonempty input. A new caret
+        // resumes it exactly once, even if the terminal repeats its location.
+        cx.update(|cx| overlay.clear_caret_position(cx));
+        wait_for_release();
+        cx.update(|cx| {
+            overlay.apply_position(position, &platform_state, cx);
+            overlay.apply_position(position, &platform_state, cx);
+        });
+        assert_eq!(snapshot().requests.completed, 5);
+
+        // An explicit Esc cancels that automatic resume; only explicit Show
+        // may recompute retained input after the spec has been released.
+        cx.update(|cx| {
+            overlay.clear_caret_position(cx);
+            overlay.hide_until_shown(cx);
+            overlay.apply_position(position, &platform_state, cx);
+        });
+        wait_for_release();
+        assert_eq!(snapshot().requests.submitted, 5);
+        cx.update(|cx| overlay.show(cx));
+        assert_eq!(snapshot().requests.completed, 6);
+
+        // Switching to a session with no caret must still retire the old
+        // owner, even though no new request is submitted to the worker.
+        let next_session = Uuid::new_v4();
+        cx.update(|cx| {
+            overlay.complete_buffer(
+                "tool ".into(),
+                String::new(),
+                5,
+                next_session,
+                figterm_state.clone(),
+                cx,
+            );
+        });
+        wait_for_release();
+        assert_eq!(snapshot().requests.submitted, 6);
+        cx.update(|cx| overlay.apply_position(position, &platform_state, cx));
+        assert_eq!(snapshot().requests.completed, 7);
+
+        // A focus change is stronger than a transient missing caret. A caret
+        // from another pane and a settings refresh cannot revive old input.
+        cx.update(|cx| {
+            overlay.invalidate_caret_for_focus_change(cx);
+            overlay.apply_position(position, &platform_state, cx);
+            refresh_settings(&mut overlay, cx);
+        });
+        wait_for_release();
+        assert_eq!(snapshot().requests.submitted, 7);
     }
 
     #[test]

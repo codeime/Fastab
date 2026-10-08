@@ -190,6 +190,8 @@ pub enum WindowEvent {
         cache_identity: Option<(i32, u32)>,
         epoch: u64,
         position: Option<WindowPosition>,
+        /// The owning window was destroyed; a later caret must not resume its input.
+        invalidate_input: bool,
     },
     UpdateWindowGeometry {
         position: Option<WindowPosition>,

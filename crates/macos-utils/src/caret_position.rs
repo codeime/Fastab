@@ -23,6 +23,54 @@ pub struct CaretPosition {
     pub height: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaretQueryFailure {
+    AxError,
+    DeadlineExceeded,
+    TimeoutConfiguration,
+    RejectedValue,
+}
+
+impl CaretQueryFailure {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AxError => "ax_error",
+            Self::DeadlineExceeded => "deadline_exceeded",
+            Self::TimeoutConfiguration => "timeout_configuration",
+            Self::RejectedValue => "rejected_value",
+        }
+    }
+}
+
+/// Only fixed stage names and AX error codes; never selected text or AX descriptions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaretQueryError {
+    pub stage: &'static str,
+    pub failure: CaretQueryFailure,
+    pub ax_error: Option<accessibility_sys::AXError>,
+}
+
+impl CaretQueryError {
+    fn rejected(stage: &'static str) -> Self {
+        Self {
+            stage,
+            failure: CaretQueryFailure::RejectedValue,
+            ax_error: None,
+        }
+    }
+
+    fn attribute(stage: &'static str, error: accessibility::Error) -> Self {
+        Self {
+            stage,
+            failure: CaretQueryFailure::AxError,
+            ax_error: match error {
+                accessibility::Error::Ax(code) => Some(code),
+                accessibility::Error::NotFound => None,
+            },
+        }
+    }
+}
+
 const INVALID_CARET_POSITION: CaretPosition = CaretPosition {
     valid: false,
     x: 0.0,
@@ -44,73 +92,109 @@ pub unsafe fn get_caret_position(extend_range: bool) -> CaretPosition {
         },
     };
 
-    caret_for_element(&focused_element, extend_range, false, None)
+    caret_for_element(&focused_element, extend_range, false, None).unwrap_or_else(|error| {
+        debug!(?error, "caret query failed");
+        INVALID_CARET_POSITION
+    })
 }
 
 /// Read a terminal text area's actual insertion point, never a window-relative
 /// estimate. The caller must check that `pid` is still frontmost after this call.
 #[allow(clippy::missing_safety_doc)]
-pub unsafe fn get_terminal_caret_position(pid: pid_t, window_id: CGWindowID) -> CaretPosition {
+pub unsafe fn get_terminal_caret_position(pid: pid_t, window_id: CGWindowID) -> Result<CaretPosition, CaretQueryError> {
     let deadline = Instant::now() + Duration::from_millis(250);
     let application = AXUIElement::application(pid);
     macro_rules! query {
-        ($element:expr, $work:expr) => {{
-            if !prepare_ax_query($element, Some(deadline)) {
-                return INVALID_CARET_POSITION;
-            }
-            match $work {
-                Ok(value) => value,
-                Err(_) => return INVALID_CARET_POSITION,
-            }
+        ($stage:literal, $element:expr, $work:expr) => {{
+            prepare_ax_query($element, Some(deadline), $stage)?;
+            $work.map_err(|error| CaretQueryError::attribute($stage, error))?
         }};
     }
     let focused_window = query!(
+        "focused_window",
         &application,
         application.attribute(&AXAttribute::new(&CFString::new(kAXFocusedWindowAttribute)))
     );
     let Some(focused_window) = focused_window.downcast_into::<AXUIElement>() else {
-        return INVALID_CARET_POSITION;
+        return Err(CaretQueryError::rejected("focused_window_type"));
     };
-    let focused_element = query!(&application, application.attribute(&AXAttribute::focused_ui()));
+    let focused_element = query!(
+        "focused_element",
+        &application,
+        application.attribute(&AXAttribute::focused_ui())
+    );
     let actual_window_id = query!(
+        "window_id",
         &focused_window,
-        ax_call(|id| _AXUIElementGetWindow(focused_window.as_concrete_TypeRef(), id))
+        ax_call(|id| _AXUIElementGetWindow(focused_window.as_concrete_TypeRef(), id)).map_err(accessibility::Error::Ax)
     );
     let element_pid = query!(
+        "element_pid",
         &focused_element,
-        ax_call(|id| AXUIElementGetPid(focused_element.as_concrete_TypeRef(), id))
+        ax_call(|id| AXUIElementGetPid(focused_element.as_concrete_TypeRef(), id)).map_err(accessibility::Error::Ax)
     );
-    let element_window = query!(&focused_element, focused_element.attribute(&AXAttribute::window()));
-    let role = query!(&focused_element, focused_element.attribute(&AXAttribute::role()));
-    if actual_window_id != window_id
-        || element_pid != pid
-        || element_window != focused_window
-        || role != kAXTextAreaRole
-    {
-        return INVALID_CARET_POSITION;
+    let element_window = query!(
+        "element_window",
+        &focused_element,
+        focused_element.attribute(&AXAttribute::window())
+    );
+    let role = query!(
+        "element_role",
+        &focused_element,
+        focused_element.attribute(&AXAttribute::role())
+    );
+    if actual_window_id != window_id {
+        return Err(CaretQueryError::rejected("window_identity"));
+    }
+    if element_pid != pid {
+        return Err(CaretQueryError::rejected("element_process_identity"));
+    }
+    if element_window != focused_window {
+        return Err(CaretQueryError::rejected("element_window_identity"));
+    }
+    if role != kAXTextAreaRole {
+        return Err(CaretQueryError::rejected("terminal_text_area_role"));
     }
     // Zero-length AXBoundsForRange addresses the insertion point. Expanding it
     // to the next character can fail at the viewport end or read another line.
-    let caret = caret_for_element(&focused_element, false, true, Some(deadline));
-    let still_focused = query!(&application, application.attribute(&AXAttribute::focused_ui()));
+    let caret = caret_for_element(&focused_element, false, true, Some(deadline))?;
+    let still_focused = query!(
+        "focused_element_recheck",
+        &application,
+        application.attribute(&AXAttribute::focused_ui())
+    );
     if still_focused != focused_element {
-        return INVALID_CARET_POSITION;
+        return Err(CaretQueryError::rejected("focused_element_changed"));
     }
-    caret
+    Ok(caret)
 }
 
-fn prepare_ax_query(element: &AXUIElement, deadline: Option<Instant>) -> bool {
+fn prepare_ax_query(
+    element: &AXUIElement,
+    deadline: Option<Instant>,
+    stage: &'static str,
+) -> Result<(), CaretQueryError> {
     let Some(deadline) = deadline else {
-        return true;
+        return Ok(());
     };
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining.is_zero() {
-        return false;
+        return Err(CaretQueryError {
+            stage,
+            failure: CaretQueryFailure::DeadlineExceeded,
+            ax_error: None,
+        });
     }
     // One budget covers all remote AX reads, not a fresh 250 ms per attribute.
-    unsafe {
-        AXUIElementSetMessagingTimeout(element.as_concrete_TypeRef(), remaining.as_secs_f32())
-            == accessibility_sys::kAXErrorSuccess
+    let code = unsafe { AXUIElementSetMessagingTimeout(element.as_concrete_TypeRef(), remaining.as_secs_f32()) };
+    if code == accessibility_sys::kAXErrorSuccess {
+        Ok(())
+    } else {
+        Err(CaretQueryError {
+            stage,
+            failure: CaretQueryFailure::TimeoutConfiguration,
+            ax_error: Some(code),
+        })
     }
 }
 
@@ -123,10 +207,8 @@ unsafe fn caret_for_element(
     extend_range: bool,
     require_insertion_point: bool,
     deadline: Option<Instant>,
-) -> CaretPosition {
-    if !prepare_ax_query(focused_element, deadline) {
-        return INVALID_CARET_POSITION;
-    }
+) -> Result<CaretPosition, CaretQueryError> {
+    prepare_ax_query(focused_element, deadline, "selected_range")?;
 
     // Get the selected range value
     let selected_range_value: CFType = match focused_element.attribute(&AXAttribute::selected_range()) {
@@ -134,7 +216,7 @@ unsafe fn caret_for_element(
         Err(err) => {
             debug!(%err, "selected range is not available for caret tracking");
 
-            return INVALID_CARET_POSITION;
+            return Err(CaretQueryError::attribute("selected_range", err));
         },
     };
 
@@ -151,18 +233,18 @@ unsafe fn caret_for_element(
         Ok(selected_text_range) => selected_text_range,
         Err(err) => {
             debug!("Couldn't get selected text range, did types match {:?}", err);
-            return INVALID_CARET_POSITION;
+            return Err(CaretQueryError::rejected("selected_range_type"));
         },
     };
 
     if require_insertion_point && !valid_terminal_insertion_range(selected_text_range) {
-        return INVALID_CARET_POSITION;
+        return Err(CaretQueryError::rejected("insertion_range"));
     }
 
     // https://linear.app/fig/issue/ENG-109/ - autocomplete-popup-shows-when-copying-and-pasting-in-terminal
     if selected_text_range.length > 1 {
         debug!("selectedRange length > 1");
-        return INVALID_CARET_POSITION;
+        return Err(CaretQueryError::rejected("selection_length"));
     }
 
     // Owned so the `AXValueCreate` (+1) is released with the frame. Runs once per
@@ -172,7 +254,7 @@ unsafe fn caret_for_element(
         let created = AXValueCreate(kAXValueTypeCFRange, &updated_range as *const _ as *const c_void);
         if created.is_null() {
             debug!("Couldn't build the one-character range for caret bounds");
-            return INVALID_CARET_POSITION;
+            return Err(CaretQueryError::rejected("extended_range_creation"));
         }
         Some(AXValue::wrap_under_create_rule(created))
     } else {
@@ -183,9 +265,7 @@ unsafe fn caret_for_element(
         None => selected_range_value.as_concrete_TypeRef(),
     };
 
-    if !prepare_ax_query(focused_element, deadline) {
-        return INVALID_CARET_POSITION;
-    }
+    prepare_ax_query(focused_element, deadline, "range_bounds")?;
     let select_bounds_result = ax_call(|x: *mut CFTypeRef| {
         AXUIElementCopyParameterizedAttributeValue(
             focused_element.as_concrete_TypeRef(),
@@ -200,7 +280,10 @@ unsafe fn caret_for_element(
         Ok(select_bounds) => AXValue::wrap_under_create_rule(select_bounds as AXValueRef),
         Err(err) => {
             debug!("Selected bounds error, error code {:?}", err);
-            return INVALID_CARET_POSITION;
+            return Err(CaretQueryError::attribute(
+                "range_bounds",
+                accessibility::Error::Ax(err),
+            ));
         },
     };
 
@@ -212,7 +295,7 @@ unsafe fn caret_for_element(
         Ok(select_rect) => select_rect,
         Err(err) => {
             debug!("Couldn't get selected range, did types match {:?}", err);
-            return INVALID_CARET_POSITION;
+            return Err(CaretQueryError::rejected("range_bounds_type"));
         },
     };
     // Sanity check: prevents flashing autocomplete in bottom corner
@@ -220,7 +303,7 @@ unsafe fn caret_for_element(
         || (select_rect.size.width == 0.0 && select_rect.size.height == 0.0)
     {
         debug!("Prevents flashing autocomplete in bottom corner");
-        return INVALID_CARET_POSITION;
+        return Err(CaretQueryError::rejected("caret_bounds"));
     }
 
     // Tauri uses Quartz coordinates (don't need to convert coordinates to Cocoa like macos)
@@ -231,7 +314,7 @@ unsafe fn caret_for_element(
         height: select_rect.size.height,
     };
     debug!("Got position {result:?}");
-    result
+    Ok(result)
 }
 
 fn valid_caret_bounds(rect: CGRect) -> bool {
@@ -247,6 +330,15 @@ fn valid_caret_bounds(rect: CGRect) -> bool {
 mod tests {
     use super::*;
     use core_graphics::geometry::{CGPoint, CGSize};
+
+    #[test]
+    fn expired_query_budget_reports_the_unattempted_stage() {
+        let application = AXUIElement::application(std::process::id() as pid_t);
+        let error = prepare_ax_query(&application, Some(Instant::now()), "range_bounds").unwrap_err();
+        assert_eq!(error.stage, "range_bounds");
+        assert_eq!(error.failure, CaretQueryFailure::DeadlineExceeded);
+        assert_eq!(error.ax_error, None);
+    }
 
     #[test]
     fn terminal_caret_requires_an_insertion_point_not_selected_text() {

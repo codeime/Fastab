@@ -149,12 +149,12 @@ impl DesktopHost {
                     {
                         return;
                     }
-                    self.overlay.clear_caret_position(cx);
+                    self.overlay.invalidate_caret_for_focus_change(cx);
                 }
                 #[cfg(target_os = "macos")]
                 if let crate::platform::PlatformBoundEvent::FocusedElementChanged { app, element } = &native_event {
                     if (crate::platform::prefers_ax_caret_for_app(app)
-                        || macos_utils::window_server::XTERM_BUNDLE_IDS.contains(&app.bundle_id.as_str()))
+                        || crate::platform::hide_overlay_on_element_change(&app.bundle_id))
                         && macos_utils::window_server::is_frontmost_application(app)
                     {
                         // A same-process notification can outlive its window or
@@ -169,7 +169,7 @@ impl DesktopHost {
                         {
                             return;
                         }
-                        self.overlay.clear_caret_position(cx);
+                        self.overlay.invalidate_caret_for_focus_change(cx);
                     }
                 }
                 if let Err(err) = self.platform_state.handle(
@@ -295,6 +295,7 @@ impl DesktopHost {
                     cache_identity,
                     epoch,
                     position,
+                    invalidate_input,
                 } => {
                     if !macos_utils::window_server::is_frontmost_application(&app)
                         || self.platform_state.inner().caret_cache_identity() != cache_identity
@@ -302,7 +303,9 @@ impl DesktopHost {
                     {
                         return;
                     }
-                    if let Some(position) = position {
+                    if invalidate_input {
+                        self.overlay.invalidate_caret_for_focus_change(cx);
+                    } else if let Some(position) = position {
                         self.overlay.apply_position(position, &self.platform_state, cx);
                     } else {
                         self.overlay.clear_caret_position(cx);

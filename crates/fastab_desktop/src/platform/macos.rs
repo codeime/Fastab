@@ -19,7 +19,7 @@ use fastab_proto::fig::{AccessibilityChangeNotification, Notification, Notificat
 use fastab_proto::local::caret_position_hook::Origin;
 use fastab_util::Terminal;
 use macos_utils::accessibility::accessibility_is_enabled;
-use macos_utils::caret_position::{CaretPosition, get_caret_position, get_terminal_caret_position};
+use macos_utils::caret_position::{CaretPosition, CaretQueryError, get_caret_position, get_terminal_caret_position};
 use macos_utils::window_server::{AX_MESSAGING_TIMEOUT_SECONDS, ApplicationSpecifier, CGWindowLevelForKey, UIElement};
 use macos_utils::{NotificationCenter, WindowServer, WindowServerEvent};
 use objc::runtime::{BOOL, Class};
@@ -55,7 +55,7 @@ fn should_refresh_x_term_cache(bundle_id: &str) -> bool {
 /// rather than a pane switch we should park the list for. No built-in terminal
 /// is both IME and xterm; that guard is for a custom terminal declaring both,
 /// where the AX pane switch is the real signal.
-fn hide_overlay_on_element_change(bundle_id: &str) -> bool {
+pub(crate) fn hide_overlay_on_element_change(bundle_id: &str) -> bool {
     !matches!(
         Terminal::from_bundle_id(bundle_id),
         Some(terminal) if terminal.supports_macos_input_method() && !terminal.is_xterm()
@@ -168,6 +168,7 @@ fn set_global_ax_messaging_timeout() {
 
 #[derive(Debug, Serialize)]
 pub struct PlatformStateImpl {
+    ax_caret: Mutex<AxCaretDiagnostics>,
     #[serde(skip)]
     proxy: EventLoopProxy,
     #[serde(skip)]
@@ -180,6 +181,80 @@ pub struct PlatformStateImpl {
     caret_epoch: AtomicU64,
     #[serde(skip)]
     enabled_epoch: AtomicU64,
+}
+
+/// Returned by the existing platform state dump without performing an AX query.
+/// Values are bounded metadata; no AX text, descriptions, or geometry is retained.
+#[derive(Debug, Serialize)]
+struct AxCaretDiagnostics {
+    position_refreshes: u64,
+    last_route: &'static str,
+    queries: u64,
+    successes: u64,
+    failures: u64,
+    throttled: u64,
+    missing_window: u64,
+    discarded: u64,
+    last_query: Option<AxCaretQueryDiagnostic>,
+}
+
+impl Default for AxCaretDiagnostics {
+    fn default() -> Self {
+        Self {
+            position_refreshes: 0,
+            last_route: "not_requested",
+            queries: 0,
+            successes: 0,
+            failures: 0,
+            throttled: 0,
+            missing_window: 0,
+            discarded: 0,
+            last_query: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct AxCaretQueryDiagnostic {
+    pid: pid_t,
+    window_id: CGWindowID,
+    epoch: u64,
+    elapsed_us: u64,
+    disposition: &'static str,
+    failure_stage: Option<&'static str>,
+    failure_reason: Option<&'static str>,
+    ax_error: Option<AXError>,
+}
+
+impl AxCaretDiagnostics {
+    fn record_query(
+        &mut self,
+        query: CaretQueryIdentity,
+        elapsed: Duration,
+        result: &Result<CaretPosition, CaretQueryError>,
+        disposition: &'static str,
+    ) {
+        self.queries = self.queries.saturating_add(1);
+        if result.is_ok() {
+            self.successes = self.successes.saturating_add(1);
+        } else {
+            self.failures = self.failures.saturating_add(1);
+        }
+        if disposition != "emitted" {
+            self.discarded = self.discarded.saturating_add(1);
+        }
+        let failure = result.as_ref().err();
+        self.last_query = Some(AxCaretQueryDiagnostic {
+            pid: query.pid,
+            window_id: query.window_id,
+            epoch: query.epoch,
+            elapsed_us: elapsed.as_micros().min(u64::MAX as u128) as u64,
+            disposition,
+            failure_stage: failure.map(|error| error.stage),
+            failure_reason: failure.map(|error| error.failure.as_str()),
+            ax_error: failure.and_then(|error| error.ax_error),
+        });
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -367,6 +442,7 @@ impl PlatformStateImpl {
     pub(super) fn new(proxy: EventLoopProxy) -> Self {
         let focused_window: Option<PlatformWindowImpl> = None;
         Self {
+            ax_caret: Mutex::new(AxCaretDiagnostics::default()),
             proxy,
             focused_window: Mutex::new(focused_window),
             last_window_recovery_failure: Mutex::new(None),
@@ -760,20 +836,22 @@ impl PlatformStateImpl {
                 }
                 let is_frontmost = macos_utils::window_server::is_frontmost_application(&app);
                 let mut focused = self.focused_window.lock().unwrap();
-                let mut cleared = false;
+                let mut cleared_epoch = None;
                 if let Some(focused_window) = focused.as_ref() {
                     if focused_window.pid == app.pid
                         && focused_window.bundle_id() == app.bundle_id
                         && focused_window.window_id == tracked_window_id
                     {
                         focused.take();
-                        self.caret_epoch.fetch_add(1, Ordering::Relaxed);
-                        cleared = true;
+                        cleared_epoch = Some(self.caret_epoch.fetch_add(1, Ordering::Relaxed).wrapping_add(1));
                     }
                 }
                 drop(focused);
-                if cleared && is_frontmost {
-                    self.send_terminal_caret(app, None);
+                if let Some(epoch) = cleared_epoch.filter(|_| is_frontmost) {
+                    // Capture the invalidated identity under the same lock as
+                    // the clear; a later focus must not stamp this old event
+                    // with its new window/epoch and revive the closed input.
+                    self.send_terminal_caret_snapshot(app, None, epoch, None, true);
                 }
                 Ok(())
             },
@@ -922,7 +1000,7 @@ impl PlatformStateImpl {
                 self.caret_epoch(),
             )
         };
-        self.send_terminal_caret_snapshot(app, identity, epoch, position);
+        self.send_terminal_caret_snapshot(app, identity, epoch, position, false);
     }
 
     fn send_terminal_caret_snapshot(
@@ -931,6 +1009,7 @@ impl PlatformStateImpl {
         cache_identity: Option<(i32, u32)>,
         epoch: u64,
         position: Option<WindowPosition>,
+        invalidate_input: bool,
     ) {
         self.proxy
             .send_event(Event::WindowEvent {
@@ -940,6 +1019,7 @@ impl PlatformStateImpl {
                     cache_identity,
                     epoch,
                     position,
+                    invalidate_input,
                 },
             })
             .ok();
@@ -951,7 +1031,7 @@ impl PlatformStateImpl {
         query: CaretQueryIdentity,
         position: Option<WindowPosition>,
     ) {
-        self.send_terminal_caret_snapshot(app, Some((query.pid, query.window_id)), query.epoch, position);
+        self.send_terminal_caret_snapshot(app, Some((query.pid, query.window_id)), query.epoch, position, false);
     }
 
     fn refresh_ax_terminal_caret(&self, app: ApplicationSpecifier) {
@@ -967,6 +1047,9 @@ impl PlatformStateImpl {
                 })
         };
         let Some(query) = query else {
+            let mut diagnostics = self.ax_caret.lock().unwrap();
+            diagnostics.missing_window = diagnostics.missing_window.saturating_add(1);
+            drop(diagnostics);
             self.send_terminal_caret(app, None);
             return;
         };
@@ -975,20 +1058,33 @@ impl PlatformStateImpl {
             &app,
             Instant::now(),
         ) {
+            let mut diagnostics = self.ax_caret.lock().unwrap();
+            diagnostics.throttled = diagnostics.throttled.saturating_add(1);
+            drop(diagnostics);
             self.send_terminal_caret_for_query(app, query, None);
             return;
         }
+        let started = Instant::now();
         let caret = unsafe { get_terminal_caret_position(query.pid, query.window_id) };
+        let elapsed = started.elapsed();
         if !macos_utils::window_server::is_frontmost_application(&app) {
+            self.ax_caret
+                .lock()
+                .unwrap()
+                .record_query(query, elapsed, &caret, "stale_application");
             return;
         }
         let (identity, epoch, position) = {
             let mut focused = self.focused_window.lock().unwrap();
             let identity = focused.as_ref().map(|window| (window.pid, window.window_id));
             if !caret_query_matches(query, identity, self.caret_epoch()) {
+                self.ax_caret
+                    .lock()
+                    .unwrap()
+                    .record_query(query, elapsed, &caret, "stale_window");
                 return;
             }
-            if caret.valid {
+            if let Ok(caret) = &caret {
                 self.last_ax_caret_failure.lock().unwrap().take();
                 (
                     identity,
@@ -1006,13 +1102,25 @@ impl PlatformStateImpl {
                 (None, epoch, None)
             }
         };
-        self.send_terminal_caret_snapshot(app, identity, epoch, position);
+        self.ax_caret
+            .lock()
+            .unwrap()
+            .record_query(query, elapsed, &caret, "emitted");
+        self.send_terminal_caret_snapshot(app, identity, epoch, position, false);
     }
 
     fn refresh_window_position(&self) -> anyhow::Result<()> {
         let ax_app = macos_utils::window_server::frontmost_application().filter(prefers_ax_caret_for_app);
+        {
+            let mut diagnostics = self.ax_caret.lock().unwrap();
+            diagnostics.position_refreshes = diagnostics.position_refreshes.saturating_add(1);
+            diagnostics.last_route = if ax_app.is_some() { "otty_ax" } else { "unresolved" };
+        }
         if !self.recover_focused_terminal_window() {
             if let Some(app) = ax_app {
+                let mut diagnostics = self.ax_caret.lock().unwrap();
+                diagnostics.missing_window = diagnostics.missing_window.saturating_add(1);
+                drop(diagnostics);
                 self.send_terminal_caret(app, None);
             }
             return Ok(());
@@ -1040,6 +1148,13 @@ impl PlatformStateImpl {
             .is_some_and(|t| t.supports_macos_input_method());
 
         let is_xterm = current_terminal.is_some_and(|t| t.is_xterm());
+        self.ax_caret.lock().unwrap().last_route = if is_xterm {
+            "xterm_ax"
+        } else if supports_ime {
+            "ime"
+        } else {
+            "ax"
+        };
 
         if is_xterm {
             let app = ApplicationSpecifier {
@@ -1158,6 +1273,38 @@ mod tests {
         recovery_is_throttled, should_refresh_x_term_cache, window_focus_events,
         x_term_cache_update_for_focused_element,
     };
+
+    #[test]
+    fn platform_dump_reports_ax_query_failure_without_requerying() {
+        let (proxy, _events) = crate::event_loop::channel();
+        let state = super::PlatformStateImpl::new(proxy);
+        let error = super::CaretQueryError {
+            stage: "range_bounds",
+            failure: macos_utils::caret_position::CaretQueryFailure::AxError,
+            ax_error: Some(accessibility_sys::kAXErrorParameterizedAttributeUnsupported),
+        };
+        state.ax_caret.lock().unwrap().record_query(
+            super::CaretQueryIdentity {
+                pid: 42,
+                window_id: 7,
+                epoch: 3,
+            },
+            std::time::Duration::from_micros(150),
+            &Err(error),
+            "emitted",
+        );
+        let dump = serde_json::to_value(&state).unwrap();
+        assert_eq!(dump["ax_caret"]["queries"], 1);
+        assert_eq!(dump["ax_caret"]["failures"], 1);
+        assert_eq!(dump["ax_caret"]["last_query"]["failure_stage"], "range_bounds");
+        assert_eq!(dump["ax_caret"]["last_query"]["failure_reason"], "ax_error");
+        assert_eq!(dump["ax_caret"]["last_query"]["ax_error"], error.ax_error.unwrap());
+        assert_eq!(
+            state.ax_caret.lock().unwrap().queries,
+            1,
+            "reading the dump must not query AX"
+        );
+    }
 
     fn test_app() -> ApplicationSpecifier {
         ApplicationSpecifier {

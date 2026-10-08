@@ -120,11 +120,6 @@ impl fastab_remote_ipc::RemoteHookHandler for RemoteHook {
 
         let empty_edit_buffer = hook.text.trim().is_empty();
 
-        if !empty_edit_buffer {
-            self.proxy
-                .send_event(Event::PlatformBoundEvent(PlatformBoundEvent::EditBufferChanged))?;
-        }
-
         let cwd = figterm_state
             .with(&session_id, |session| {
                 session
@@ -140,6 +135,14 @@ impl fastab_remote_ipc::RemoteHookHandler for RemoteHook {
             cursor: hook.cursor.max(0) as u32,
             session_id,
         })?;
+
+        // Establish the buffer's session before asking AX/IME for its caret.
+        // Otherwise a fast caret reply can reach the host before this buffer,
+        // then be discarded when the new session clears the previous caret.
+        if !empty_edit_buffer {
+            self.proxy
+                .send_event(Event::PlatformBoundEvent(PlatformBoundEvent::EditBufferChanged))?;
+        }
 
         Ok(None)
     }
@@ -299,5 +302,101 @@ impl fastab_remote_ipc::RemoteHookHandler for RemoteHook {
         })?;
 
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fastab_ipc::SendMessage;
+    use fastab_proto::local::ShellContext;
+    use fastab_proto::remote::{Hostbound, hostbound};
+    use tokio::net::UnixStream;
+
+    async fn next_event(events: &flume::Receiver<Event>) -> Event {
+        tokio::time::timeout(Duration::from_secs(3), events.recv_async())
+            .await
+            .expect("desktop event deadline")
+            .expect("desktop event")
+    }
+
+    #[tokio::test]
+    async fn edit_buffers_reach_overlay_before_caret_refresh() {
+        let state = Arc::new(FigtermState::new());
+        let (proxy, events) = crate::event_loop::channel();
+        let hook = RemoteHook {
+            notifications_state: Arc::new(WebviewNotificationsState::default()),
+            proxy,
+        };
+        let mut session_ids = Vec::new();
+        // Real handshakes exercise distinct session owners even for the same
+        // shell ID, followed by the production hook and desktop event queue.
+        for empty_buffer in ["", " \t "] {
+            let (mut client, server) = UnixStream::pair().unwrap();
+            let server = tokio::spawn(fastab_remote_ipc::remote::handle_remote_ipc(
+                server,
+                state.clone(),
+                hook.clone(),
+            ));
+            client
+                .send_message(Hostbound {
+                    packet: Some(hostbound::Packet::Handshake(hostbound::Handshake {
+                        id: "same-shell".into(),
+                        secret: "fixture".into(),
+                        parent_id: None,
+                    })),
+                })
+                .await
+                .unwrap();
+            assert!(matches!(next_event(&events).await, Event::JevContextChanged));
+            let session_id = state.inner.lock().most_recent.unwrap();
+            assert!(!session_ids.contains(&session_id));
+            session_ids.push(session_id);
+
+            for text in ["tool ", empty_buffer] {
+                client
+                    .send_message(Hostbound {
+                        packet: Some(hostbound::Packet::Request(hostbound::Request {
+                            request: Some(hostbound::request::Request::EditBuffer(EditBufferHook {
+                                context: Some(ShellContext {
+                                    current_working_directory: Some("/fixture".into()),
+                                    ..Default::default()
+                                }),
+                                text: text.into(),
+                                cursor: text.len() as i64,
+                                ..Default::default()
+                            })),
+                            nonce: None,
+                        })),
+                    })
+                    .await
+                    .unwrap();
+                assert!(matches!(
+                    next_event(&events).await,
+                    Event::GpuiOverlayBuffer { buffer, cwd, cursor, session_id: owner }
+                        if buffer == text && cwd == "/fixture" && cursor == text.len() as u32 && owner == session_id
+                ));
+                if !text.trim().is_empty() {
+                    assert!(matches!(
+                        next_event(&events).await,
+                        Event::PlatformBoundEvent(PlatformBoundEvent::EditBufferChanged)
+                    ));
+                }
+            }
+
+            drop(client);
+            tokio::time::timeout(Duration::from_secs(3), server)
+                .await
+                .expect("connection cleanup deadline")
+                .unwrap();
+            // Empty/whitespace buffers must not request another caret. The
+            // next queued event is the connection's authenticated end-input.
+            assert!(matches!(
+                next_event(&events).await,
+                Event::GpuiOverlayEndInput { session_id: owner } if owner == session_id
+            ));
+            assert!(matches!(next_event(&events).await, Event::JevContextChanged));
+            assert!(events.is_empty());
+        }
     }
 }
