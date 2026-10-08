@@ -380,3 +380,36 @@ cargo run --release --locked -p fastab_engine --example resource-replay -- bundl
 **最终复审。** 图标重绘借用与 firstRect 范围回填均经过修复后的独立 Astra 复核，没有剩余可操作发现。图标 4 项回归、Foundation 2 项回归再次通过；最终产品 359 项回归、Clippy、格式检查及正式入口构建通过。验证副本的 Rust 源码、manifest 与 lockfile 已逐字节核对，生产二进制不含临时探针入口或 source 计数标记。最终日志为 `/tmp/fastab-resource-final-tests.log`、`/tmp/fastab-resource-final-clippy.log`、`/tmp/fastab-resource-final-fmt.log`、`/tmp/fastab-resource-production-build.log`。
 
 以上仍不替代新安装包在真实终端、外屏切换/拔插、睡眠唤醒、输入法组合输入及权限引导 UI 上的验收。本节验收完成时尚未安装或发布；随后用户授权按内容提交、推送并更新同一 `v0.0.5` 标签触发重打包。版本号保持不变，标签更新以远端旧引用的精确 lease 保护。
+
+
+## 2026-10-08：安装后残留与 Tab 路径的再次深入检查
+
+**现场证据。** 安装版 PID 33758 的 `phys_footprint` 为 46.5 MiB、峰值 54.5 MiB，AX 权限为 true；当前输入为空。`ftab _ dump-state engine` 的规格文件数、idle 文件数与规格估算字节均为 0，仅一条 216-byte 脚本输出和约 6.6 KiB 历史数据。原生采样仅有一个 `GPUIView`、一个 `CAMetalLayer` 和一个 `CVDisplayLink`；IOAccelerator graphics resident 为 9168 KiB，IOSurface resident 为 1600 KiB。因此这次占用不能归因于已关闭 Settings 的渲染器累积，也不能当成规格未释放。证据为 `/tmp/fastab-installed-33758-heap.txt`、`/tmp/fastab-installed-33758-vmmap.txt`。安装包仅报告 0.0.5，构建 hash/date 均为空，不能仅凭版本号证明某次同版本重打包的 SHA。
+
+**历史补全首次加载缺口。** `history_only` 会为了 fuzzy 策略读取规格；原实现只清除 touched，worker 又不把历史请求设为活动资源所有者。因此冷 Engine 第一次只查询历史时，新树既没有 deadline，随后的 EndInput 也不能启动回收。独立真实 bundle 回放中，100 ms 测试宽限后仍有两份缓存、零份 idle 和 null deadline。修复复用 idle checkpoint：已有路径的 active/idle 状态和旧时间原样恢复，仅给此次新加载路径记返回时间；仍不接管普通输入 owner。
+
+修复后，默认 10 秒真实 `gcloud compute` 回放的 cached/idle 为 2/2、deadline 约 9999 ms；EndInput 后等 11 秒归零，独立 debug 进程 footprint 54.2→26.7 MiB。跨会话回放为 A 普通 compute 2/0 → B 历史 git 3/1 → End B 后 2/0 → End A 后 0/0，证明 B 不会释放 A 的活动树。两次均只有一次 Engine 初始化，无失败、watchdog 或 panic；不是安装版占用承诺。证据 `/tmp/fastab-history-only-default-grace-fixed.log`、`/tmp/fastab-history-only-owner-fixed.log`。新增小规格真实加载、Weak 引用释放与 worker 定时回归，引擎全量 482 通过、2 项大 fixture 忽略。
+
+**Tab 行为与协议。** 现场无 `autocomplete.keybindings` 覆盖。旧默认 `insertCommonPrefix` 在候选没有更长公共前缀时只 shake；这是既有行为，未证明属于本轮回收回归。新默认使用已有 `insertCommonPrefixOrInsertSelected`：可扩展时先补公共前缀，否则接受选中的普通候选；多候选中的执行型条目保留保护。独立审查发现桌面 `DEFAULT_OVERLAY_BINDINGS` 会通过 `override_actions=true` 覆盖终端初始映射，因此两端同时修改；既有用户覆盖仍排在默认之后。默认一致性与覆盖顺序纳入现有回归。
+
+另一个可复现的条件缺陷是实际收到 CSI-u `ESC[9u` 时，解析结果为 `Char('\t')`，真实 KeyInterceptor 无法匹配 Tab。仅规范化功能码 9/13/27/127 为 Tab/Enter/Escape/Backspace，保留修饰键、原始字节及其它控制字符的既有区别；CSI-u 模式仍使用原有重编码转发，不能声称所有模式逐字透传。parser→interceptor 回归在旧代码上明确失败，新代码通过。现场 CSI-u 配置未开启，因此没有把此缺陷认定为用户此次现象的根因。
+
+
+**隐藏窗口资源回收。** 原先 `orderOut` 只隐藏窗口，renderer、图集、路径纹理和共享实例缓冲仍常驻。现在先立即 park，隐藏满 10 秒后作废排队的原生定位请求、通过 `AnyWindowHandle` 移除窗口并清空 handle；保留同一个 OverlayState 和当前行引用的小图，下一次显示再创建。显示/新结果取消旧 timer，每次隐藏重新获得完整宽限；没有动态图标也启动回收。独立复审又发现隐藏态残留的 `current_arg` 会让 caret/relayout 重建窗口却不再计时，已将这些创建入口限制为 visible，隐藏时仍更新 last_position。虚拟时钟覆盖期限重置、小图归属和隐藏参数提示不重建。
+
+同一原生 Controller 探针对照均启用 `MTL_DEBUG_LAYER=1`；主动持有旧 NSView，覆盖无动态图标、保留图片的行、设置同时打开、真实帧回调、隐藏后的 caret 更新、Tab 恢复及 `insertCommonPrefixOrInsertSelected` 到 Figterm InsertText。两版最终均 `RESULT failures=0`。
+
+| 隐藏 11 秒后的状态 | 修改前 | 修改后 |
+| --- | --- | --- |
+| 无设置窗口的 footprint | 26.58 MiB | 17.38 MiB |
+| 无设置窗口的 Metal layer / IOSurface resident | 1 / 1120 KiB | 0 / 0 KiB |
+| 设置仍打开时的 footprint | 61.64 MiB | 55.41 MiB |
+| 设置仍打开时的 Metal layer | 2 | 1，设置继续收到真实帧回调 |
+
+原生同步重建阶段约 17.5–18.4 ms，修改前重用约 0.8–2.1 ms；这不是端到端按键延迟。最终关闭所有窗口并释放探针保活引用，两版 GPUIView / CAMetalLayer 都为 0；footprint 约 26.55 / 27.05 MiB，仍有应用级字体、框架和分配器开销。探针是 debug 独立进程，不能承诺当前安装版必回到 20 MiB。首次探针基线因设置打开时序漏到一次帧回调而未通过；修正为先稳定 overlay、单独打开/聚焦 Settings 后，两版使用完全相同的动作及断言重跑通过，没有放宽断言。证据 `/tmp/fastab-idle-overlay-{baseline2,fixed2}-evidence/`、`/tmp/fastab-deep-idle-window-comparison.json`。
+
+**最终验证范围。** 引擎 482、desktop 218、GPUI 109、term/settings 77，共 886 项通过；原有 3 项忽略测试未计入。engine/term/settings 生产目标 Clippy `-D warnings` 通过，desktop/GPUI/term/settings 的 all-targets Clippy 通过，格式及 diff 检查通过。扩大 engine all-targets 时有 4 个既有测试辅助代码 lint（大枚举、Option<Option>、默认值后赋值、已打开安全文件的 read_to_end），本轮未修改这些无关辅助实现。根 workspace 的无关未跟踪 `crates/fig_input_method` 缺少 manifest，验证在源码一致的临时副本中完成；首次引擎运行因副本的路径/脚本符号链接使 4 个基线测试失败，补齐真实文件并使用规范化路径后全量通过。验证过程中磁盘不足，只清理了可重建的 Cargo debug incremental cache；未删除源码或未跟踪工作。正式 main、manifest 与 lockfile 已恢复，生产入口重新构建，探针和临时计数未进入产品。本轮未安装、提交或推送。
+
+**追加审查修复：Tab 回退的执行保护。** 后续只读复审发现，直接将默认 Tab 绑定到已有回退动作，会绕过多候选 `auto-execute` / `special` 的公共前缀保护：显示执行建议时，`git status` 等精确匹配的置顶行带有 `\n`，回退接受会执行当前命令。现场当前隐藏执行建议，掩盖了这个默认配置下的回归。修复仅限制公共前缀失败后的回退接受，判断当前选中行；普通行仍可回退，拒绝的动作行保持列表和选择并提供 shake 反馈。保留此前单候选 `Full` 接受、显式 Enter 和 execute 的行为，没有修改通用插入函数。
+
+新增 headless GPUI Controller → FigtermCommand 回归，实际检查插入消息，覆盖两种动作类型、非零选择索引、同一列表随后按 Enter、单候选只插入一次、混排普通候选、前缀扩展与回退、空列表和显式 execute。测试不连接用户 PTY，也不写用户接受记录。旧 handler 明确红测，修复后通过；desktop 全量更新为 219 项通过，desktop all-targets Clippy `-D warnings`、格式及 diff 检查通过，测试源码与工作区逐字节一致。Astra 独立复审未发现剩余可操作问题。证据为 `/tmp/fastab-tab-action-guard-{red,green,desktop-tests,clippy}.log`。本次未重跑无改动的引擎/GPUI 全量或原生内存探针，也未安装、提交或推送。

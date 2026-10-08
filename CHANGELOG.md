@@ -19,6 +19,10 @@
 - fix: bound decoded file icons, retire unused icons after 10 seconds hidden, and remove stale Metal atlas entries safely without invalidating in-flight GPU reads.
 - fix: reuse a display refresh clock across windows and release retired frame subscriptions instead of accumulating native objects on each window cycle.
 - fix: balance native text and window-string ownership, handle optional text-query outputs, and prevent closed permission-guide tasks from joining a reopened guide.
+- fix: release specs first loaded by history-only completion after the idle grace, preserving existing input ownership and release deadlines.
+- change: Tab extends a shared prefix when possible, then accepts the selected non-action suggestion when no further prefix can be inserted; multi-row execution actions retain their Tab guard, and custom bindings still take precedence.
+- fix: recognize CSI-u Tab, Enter, Escape and Backspace sequences as functional keys so configured completion actions can intercept them.
+- change: release the completion window and its renderer after 10 seconds hidden, retaining suggestions for on-demand restoration; hidden caret updates no longer recreate a window just because an argument hint remains.
 
 ## v0.0.4
 
