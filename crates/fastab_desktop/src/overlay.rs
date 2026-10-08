@@ -1,13 +1,13 @@
 //! GPUI overlay controller: suggestion list, caret placement, key actions, engine.
 
 pub(crate) mod ai;
+mod file_icons;
 
 #[cfg(test)]
 #[path = "overlay/pending_tests.rs"]
 mod pending_tests;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -119,6 +119,7 @@ pub struct OverlayController {
     self_insertion: Arc<Mutex<Option<String>>>,
     proxy: EventLoopProxy,
     jev: ai::JevRuntime,
+    file_icons: Entity<file_icons::FileIconCache>,
     _ai_observer: gpui::Subscription,
 }
 
@@ -193,6 +194,7 @@ impl OverlayController {
             self_insertion: Arc::new(Mutex::new(None)),
             proxy,
             jev: ai::JevRuntime::default(),
+            file_icons: cx.new(|_| file_icons::FileIconCache::default()),
             _ai_observer: ai_observer,
         };
         controller.reload_jev(cx);
@@ -206,6 +208,9 @@ impl OverlayController {
     fn park_window(&self, cx: &mut App) {
         self.cancel_layout_retry();
         let _ = park_overlay_slot(&self.handle, cx);
+        self.file_icons.update(cx, |icons, cx| {
+            icons.schedule_idle(self.state.downgrade(), self.handle.clone(), cx);
+        });
     }
 
     fn cancel_layout_retry(&self) {
@@ -935,17 +940,26 @@ impl OverlayController {
                 .then_some(complete.debounce_ms.unwrap_or(200).max(0) as u64)
         });
         let ai_candidates = result.as_ref().ok().and_then(|complete| self.prepare_jev(complete));
-        let positioned = apply_complete_result(
-            self.state.clone(),
-            &self.handle,
-            result,
-            session_id,
-            &self.figterm_state,
-            cwd,
-            &self.last_position,
-            &self.platform_state,
-            cx,
-        );
+        let positioned = self.file_icons.update(cx, |icons, cx| {
+            icons.begin_batch();
+            let positioned = apply_complete_result(
+                self.state.clone(),
+                &self.handle,
+                result,
+                session_id,
+                &self.figterm_state,
+                cwd,
+                &self.last_position,
+                &self.platform_state,
+                icons,
+                cx,
+            );
+            icons.finish_batch(&self.state, &self.handle, cx);
+            if !self.state.read(cx).visible {
+                icons.schedule_idle(self.state.downgrade(), self.handle.clone(), cx);
+            }
+            positioned
+        });
         self.update_layout_retry(positioned, cx);
         if !self.state.read(cx).visible && pending.is_none() {
             // Esc/Tab-only mode can keep useful rows without pinning the
@@ -1669,6 +1683,7 @@ fn apply_complete_result(
     cwd: &str,
     last_position: &Mutex<Option<WindowPosition>>,
     platform_state: &PlatformState,
+    file_icons: &mut file_icons::FileIconCache,
     cx: &mut App,
 ) -> bool {
     match result {
@@ -1685,7 +1700,7 @@ fn apply_complete_result(
                 .suggestions
                 .into_iter()
                 .map(|s| SuggestionItem {
-                    icon_png: file_icon_png(cwd, &s.name, &s.kind, &mut uncached_icons),
+                    icon_png: file_icons.lookup(cwd, &s.name, &s.kind, &mut uncached_icons),
                     name: s.name,
                     description: s.description,
                     kind: s.kind,
@@ -1881,49 +1896,6 @@ fn layout_overlay(
         // the last valid position when there is one, otherwise stay hidden.
         let _ = park_overlay_slot(window_slot, cx);
         false
-    }
-}
-
-const MAX_UNCACHED_FILE_ICONS: usize = 8;
-
-fn file_icon_png(cwd: &str, name: &str, kind: &str, uncached: &mut usize) -> Option<Arc<gpui::Image>> {
-    if kind != "file" && kind != "folder" {
-        return None;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        use std::collections::HashMap;
-        use std::sync::OnceLock;
-        static CACHE: OnceLock<Mutex<HashMap<String, Arc<gpui::Image>>>> = OnceLock::new();
-        let mut path = PathBuf::from(if cwd.is_empty() { "." } else { cwd });
-        path.push(name.trim_end_matches('/'));
-        let key = path.display().to_string();
-        let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-        if let Ok(guard) = cache.lock() {
-            if let Some(image) = guard.get(&key) {
-                return Some(image.clone());
-            }
-        }
-        if *uncached >= MAX_UNCACHED_FILE_ICONS {
-            return None;
-        }
-        *uncached += 1;
-        let bytes = unsafe { macos_utils::image::png_for_path(&path) }?;
-        let image = Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, bytes));
-        if let Ok(mut guard) = cache.lock() {
-            if guard.len() >= 64 {
-                if let Some(old) = guard.keys().next().cloned() {
-                    guard.remove(&old);
-                }
-            }
-            guard.insert(key, image.clone());
-        }
-        Some(image)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (cwd, name, uncached);
-        None
     }
 }
 

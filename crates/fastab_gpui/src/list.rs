@@ -1,9 +1,9 @@
 use gpui::prelude::*;
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, BoxShadow, Context, Entity, FontWeight, HighlightStyle, Image,
-    InteractiveElement, IntoElement, ListSizingBehavior, ParentElement, Render, Rgba, ScrollHandle, ScrollStrategy,
-    StatefulInteractiveElement, Styled, StyledText, UnderlineStyle, UniformListScrollHandle, Window, div, hsla, point,
-    px, rgb, uniform_list,
+    Animation, AnimationExt as _, AnyElement, BoxShadow, Context, Entity, FontWeight, HighlightStyle,
+    InteractiveElement, IntoElement, ListSizingBehavior, ParentElement, Render, RenderImage, Rgba, ScrollHandle,
+    ScrollStrategy, StatefulInteractiveElement, Styled, StyledText, UnderlineStyle, UniformListScrollHandle, Window,
+    div, hsla, point, px, rgb, uniform_list,
 };
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
@@ -104,7 +104,7 @@ pub struct SuggestionItem {
     /// including when an empty cwd prevents a durable scope.
     pub argument_value: bool,
     pub acceptance_scope: Option<String>,
-    pub icon_png: Option<Arc<Image>>,
+    pub icon_png: Option<Arc<RenderImage>>,
 }
 
 /// Match the WebView's `updateSuggestions` identity exactly. Presentation-only
@@ -1405,7 +1405,7 @@ fn click_insert_for(item: &SuggestionItem, raw_search_term: &str) -> ClickInsert
     }
 }
 
-fn row_icon(kind: &str, png: Option<Arc<Image>>, icon_identifier: Option<&str>, size: f32) -> impl IntoElement {
+fn row_icon(kind: &str, png: Option<Arc<RenderImage>>, icon_identifier: Option<&str>, size: f32) -> impl IntoElement {
     if let Some(icon) = icon_identifier.and_then(|identifier| identifier_icon_element(identifier, size)) {
         return icon;
     }

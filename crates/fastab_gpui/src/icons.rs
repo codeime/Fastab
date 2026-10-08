@@ -291,7 +291,7 @@ pub fn named_icon_element(kind: &str, size: f32) -> gpui::Img {
         .object_fit(ObjectFit::Contain)
 }
 
-pub fn png_icon_element(image: Arc<Image>, size: f32) -> gpui::Img {
+pub fn png_icon_element(image: Arc<gpui::RenderImage>, size: f32) -> gpui::Img {
     img(image)
         .w(px(size))
         .h(px(size))
