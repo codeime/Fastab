@@ -1402,7 +1402,19 @@ mod instance_buffer_pool_tests {
         pool: Arc<Mutex<InstanceBufferPool>>,
         buffer: InstanceBuffer,
     ) -> (metal::CommandBuffer, mpsc::Receiver<(bool, u8)>) {
+        encode_buffer_completion_after_event(renderer, pool, buffer, None)
+    }
+
+    fn encode_buffer_completion_after_event(
+        renderer: &MetalRenderer,
+        pool: Arc<Mutex<InstanceBufferPool>>,
+        buffer: InstanceBuffer,
+        event: Option<&metal::SharedEventRef>,
+    ) -> (metal::CommandBuffer, mpsc::Receiver<(bool, u8)>) {
         let command = renderer.command_queue.new_command_buffer().to_owned();
+        if let Some(event) = event {
+            command.encode_wait_for_event(event, 1);
+        }
         let encoder = command.new_blit_command_encoder();
         encoder.fill_buffer(&buffer.metal_buffer, NSRange::new(0, 4), 0x5a);
         encoder.synchronize_resource(&buffer.metal_buffer);
@@ -1455,6 +1467,87 @@ mod instance_buffer_pool_tests {
             drop(renderer);
             assert!(pool.lock().buffers.is_empty());
             finish_buffer_completion(completion, false);
+            assert!(pool.lock().buffers.is_empty());
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a Metal-capable macOS host"]
+    fn committed_gpu_work_finishes_without_recaching_after_renderer_closes() {
+        // Always unblock the GPU, including assertions and timeout unwinds.
+        struct ReleaseGate {
+            event: metal::SharedEvent,
+            release_deadline: mpsc::Sender<()>,
+        }
+
+        impl Drop for ReleaseGate {
+            fn drop(&mut self) {
+                self.event.set_signaled_value(1);
+                let _ = self.release_deadline.send(());
+            }
+        }
+
+        objc::rc::autoreleasepool(|| {
+            let pool = Arc::new(Mutex::new(InstanceBufferPool::default()));
+            let renderer = MetalRenderer::new(pool.clone());
+            let pending = pool.lock().acquire(&renderer.device);
+            let idle = pool.lock().acquire(&renderer.device);
+            assert!(pool.lock().release(idle).is_none());
+            let event = renderer.device.new_shared_event();
+            assert_eq!(event.signaled_value(), 0);
+            let (command, completed_rx) = encode_buffer_completion_after_event(
+                &renderer,
+                pool.clone(),
+                pending,
+                Some(&event),
+            );
+            // A separate CPU deadline also opens the gate if renderer teardown
+            // blocks. This must fire well before the GPU's own hang watchdog.
+            let deadline_event = event.to_owned();
+            let (release_deadline, deadline_rx) = mpsc::channel();
+            let deadline = std::thread::spawn(move || {
+                let timed_out = matches!(
+                    deadline_rx.recv_timeout(Duration::from_millis(500)),
+                    Err(mpsc::RecvTimeoutError::Timeout)
+                );
+                deadline_event.set_signaled_value(1);
+                timed_out
+            });
+            // Declared after the command so an unwind signals before releasing
+            // the outstanding command and its queue.
+            let gate = ReleaseGate {
+                event,
+                release_deadline,
+            };
+
+            command.commit();
+            // Do not wait for a scheduled callback: some drivers delay it while
+            // the shared-event wait is pending, until their GPU timeout fires.
+            assert!(matches!(
+                command.status(),
+                metal::MTLCommandBufferStatus::Committed | metal::MTLCommandBufferStatus::Scheduled
+            ));
+            assert_eq!(completed_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
+
+            // The command is already committed, but its fill cannot run until
+            // the CPU signals the shared event. Close with that work in flight.
+            drop(renderer);
+            assert!(pool.lock().buffers.is_empty());
+            assert_eq!(gate.event.signaled_value(), 0);
+            assert_eq!(completed_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
+            drop(gate);
+            assert!(
+                !deadline.join().expect("Metal gate deadline thread panicked"),
+                "Renderer teardown exceeded the gate deadline"
+            );
+
+            assert_eq!(
+                completed_rx
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("Committed Metal work did not finish after opening the gate"),
+                (false, 0x5a),
+            );
+            assert_eq!(command.status(), metal::MTLCommandBufferStatus::Completed);
             assert!(pool.lock().buffers.is_empty());
         });
     }

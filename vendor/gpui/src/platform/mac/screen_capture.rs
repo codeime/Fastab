@@ -7,7 +7,7 @@ use anyhow::{Result, anyhow};
 use block::ConcreteBlock;
 use cocoa::{
     base::{YES, id, nil},
-    foundation::{NSArray, NSString},
+    foundation::NSArray,
 };
 use collections::HashMap;
 use core_foundation::base::TCFType;
@@ -28,7 +28,7 @@ use objc::{
 };
 use std::{cell::RefCell, ffi::c_void, mem, ptr, rc::Rc};
 
-use super::NSStringExt;
+use super::{NSStringExt, ns_string};
 
 #[derive(Clone)]
 pub struct MacScreenCaptureSource {
@@ -195,7 +195,7 @@ unsafe fn screen_id_to_human_label() -> HashMap<CGDirectDisplayID, ScreenMeta> {
     let screens: id = msg_send![class!(NSScreen), screens];
     let count: usize = msg_send![screens, count];
     let mut map = HashMap::default();
-    let screen_number_key = unsafe { NSString::alloc(nil).init_str("NSScreenNumber") };
+    let screen_number_key = unsafe { ns_string("NSScreenNumber") };
     for i in 0..count {
         let screen: id = msg_send![screens, objectAtIndex: i];
         let device_desc: id = msg_send![screen, deviceDescription];

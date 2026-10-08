@@ -1,10 +1,7 @@
+use super::ns_string;
 use crate::{Bounds, DisplayId, Pixels, PlatformDisplay, px, size};
 use anyhow::Result;
-use cocoa::{
-    appkit::NSScreen,
-    base::{id, nil},
-    foundation::{NSDictionary, NSString},
-};
+use cocoa::{appkit::NSScreen, base::nil, foundation::NSDictionary};
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
 use core_graphics::display::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList};
 use objc::{msg_send, sel, sel_impl};
@@ -35,7 +32,7 @@ impl MacDisplay {
             let screens = NSScreen::screens(nil);
             let screen = cocoa::foundation::NSArray::objectAtIndex(screens, 0);
             let device_description = NSScreen::deviceDescription(screen);
-            let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
+            let screen_number_key = ns_string("NSScreenNumber");
             let screen_number = device_description.objectForKey_(screen_number_key);
             let screen_number: CGDirectDisplayID = msg_send![screen_number, unsignedIntegerValue];
             Self(screen_number)
