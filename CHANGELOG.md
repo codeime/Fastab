@@ -13,6 +13,8 @@
 - fix: queue terminal input before requesting caret updates, wait for a valid caret before submitting completion, and resume once when positioning recovers. Focus changes, window destruction and ended input discard retryable input so stale commands cannot reappear.
 - fix: clean up remote IPC sessions and pending replies after writer failures, including when the read connection remains open.
 - change: add numeric engine resource diagnostics and Otty Accessibility caret failure diagnostics. Verification covers source tests and review; a new installed build and real Otty completion behavior still need verification.
+- fix: release idle Metal instance buffers when native windows close, and prevent late GPU completions from refilling the retired pool while other windows continue rendering.
+- fix: avoid a reentrant window-focus deadlock when opening Settings alongside the completion popup.
 
 ## v0.0.4
 

@@ -285,3 +285,35 @@ cargo run --release --locked -p fastab_engine --example resource-replay -- bundl
 - 红绿验证：临时撤销 writer 通知分支后，真实 socket 回归在 3 秒清理期限失败，恢复后通过；临时恢复过早 invisible 退休后，普通/Tab-only 两个真实 debounce 回归均失败，恢复后均通过。仅改临时副本，源工作区保持最终修复。
 - 六个相关 crate 的 `cargo clippy --locked ... -- -D warnings` 通过；desktop/remote IPC/local IPC 的 `--tests` Clippy 也通过。新代码中的错误映射 lint、CLI 错误库引用及协议字段名问题均已修正。rustfmt、`git diff --check` 通过。
 - 为保留未跟踪且缺 manifest 的 `crates/fig_input_method/`，Cargo 在临时验证工作区执行；所有本次变更文件逐字节与源工作区核对一致，bundle/scripts 使用真实目录以保持 provenance 检查。最终日志为 `/tmp/fastab-resource-desktop-final-tests.log`、`/tmp/fastab-resource-unit-tests.log`、`/tmp/fastab-resource-platform-ipc-tests.log`、`/tmp/fastab-resource-clippy.log`、`/tmp/fastab-resource-test-clippy.log`；红绿日志为 `/tmp/fastab-writer-{red,green}.log`、`/tmp/fastab-pending-{red,green}.log`。以上是修复完成时的验收记录。随后用户授权按内容提交、推送并重新打包 0.0.5；版本号保持不变，更新现有发布说明并以远端旧引用的精确 lease 原子推送 main 与 v0.0.5。
+
+## 2026-10-08：设置关闭后的真实内存与原生窗口回收
+
+**现场口径修正。** 本轮开始时，安装版 desktop PID 38134 的 `phys_footprint` 为 **41.1 MiB**（峰值 75.0 MiB），IME 为 8.5 MiB。`ftab _ dump-state engine` 返回 `engine=null`，提交数与引擎初始化数均为 0；`heap` 没有存活的 `GPUIWindow` / `CAMetalLayer`，`vmmap` 的 IOSurface resident 为 0。因此这次不是规格树仍在使用，也不是设置窗口没有销毁。前文约 19–20 MiB 是独立引擎回放进程，不能作为完整桌面应用的空闲承诺。
+
+**检查与决策。** 设置关闭后，GPUI 的应用级 `renderer_context` 仍持有 `InstanceBufferPool`。该池每块默认 2 MiB，GPU 完成后归还，没有随窗口销毁释放的出口。字体 ID、字体表和文本缓存仍被共享布局引用，本轮不清空。现场 malloc 的约 8.2 MiB 碎片也不等于可归还字节数。
+
+另试验公开的 `malloc_zone_pressure_relief(NULL, 0)`，但本机 macOS 27.0（26A428）的默认 zone 与 objc zone 回调直接执行 ARM64 `mov x0, #0; ret`；调用返回 0、耗时亚微秒量级。三轮原生设置窗口对照未建立可重复的回收收益，已撤销这条候选路径，没有加入无效的延迟回收任务。此结论只适用于本机已检查的 zone，不泛化到所有 macOS 或自定义分配器。
+
+**已实施。** 固定 vendor 的 crates.io GPUI 0.2.2，保留发布包许可证和依赖，根 `[patch.crates-io]` 统一覆盖所有消费者，详见 [依赖补丁说明](../vendor/gpui/FASTAB_PATCHES.md)。
+
+1. `MetalRenderer::drop` 取出应用级池内的闲置 buffer，在解锁后释放，保留增长后的 buffer 大小。
+2. pool 和借出的 buffer 带 generation。关闭或扩容使旧 generation 失效；GPU 完成前仍持有 buffer，完成后旧 buffer 直接释放，不能把清空的池重新填回。其他活窗口可继续绘制并使用新一代缓存。
+3. 真实原生窗口压力验证额外复现了 GPUI 既存的焦点死锁：`window_did_change_key_status` 持有窗口状态 mutex 调用 `resignKeyWindow`，系统同步发送 resign 通知再次取同一把锁。该阻塞发生在首个设置窗口打开、任何 renderer 销毁之前。现先用 `StrongPtr` 保活原生窗口、释放 mutex，再调用 AppKit，正常激活与绘制分支保持原样。
+4. 更新 Cargo.lock 与第三方声明收集器，使本地 GPUI 仍计入 `THIRD_PARTY_NOTICES.txt`；声明正文无须改写。vendor 不属于产品 workspace members，不把上游完整测试集带入常规 CI。
+
+**测量与边界。** 探针直接使用生产 `settings_ui::open_settings_window` / `close_settings` 和原生 GPUI；只在临时副本替换入口，不启动安装、登录项、IME 或桌面 IPC，未替换 `/Applications/Fastab.app`。同一 debug 配置启动后等待 2 秒、打开设置 4 秒，关闭后在 1/3/10/30 秒以 `proc_pid_rusage` 采集进程 footprint。没有用引擎回放替代 UI 测量。
+
+| 原生窗口独立进程，3 轮 | 关闭后 1 秒 | 关闭后 30 秒 |
+| --- | --- | --- |
+| 原始 renderer，同样使用 path 依赖构建 | 25.69–26.25 MiB | 24.14–25.67 MiB |
+| 回收补丁 | 21.41–21.55 MiB | 19.66–21.55 MiB |
+
+最初 registry 与 path 的 profile 指纹不同，故补做了原始 renderer 的 path 构建对照。即便如此，各组打开窗口时的峰值和分配器自然回收仍有差异，**不把总 footprint 差全部归因于清池**。相同原生窗口场景的 `vmmap` 明确显示：关闭后 `IOAccelerator (graphics)` 从 **2432 KiB 降到 384 KiB，减少 2 MiB**。这是当前可以明确归因的回收证据；不承诺完整安装版会从 41 MiB 变成 20 MiB。
+
+**Review/fix 与验证。** GPT-6 Astra ultra 代理分工实现、独立审阅 Metal 池与焦点回调修复。审查发现第三方声明过滤本地依赖的问题，已修正；最终静态审查没有剩余可操作发现。
+
+- 3 项真实 Metal 测试在 `MTL_DEBUG_LAYER=1` 下通过：旧 GPU 完成不能回灌、扩容后重开可复用、另一 renderer 的在途 buffer 保持有效。测试实际提交 fill/synchronize 命令，完成回调读取结果，不是模拟计数。
+- 同一原生压力探针修复前卡在第一轮；修复后完成 **12 次设置打开/关闭、360 次补全窗口刷新请求**，Metal API validation 无错误，正常退出。它验证原生窗口和渲染资源寿命，不替代真实终端输入验收。
+- 生产源回归：desktop **213**、fastab_gpui **109** 项通过。探针入口已从验证副本恢复，未写入产品入口。
+- 两个产品 crate 的 `cargo clippy --locked --all-targets -- -D warnings`、第三方声明 `--check` 与 `git diff --check` 通过。
+- 临时证据：`/tmp/fastab-settings-{path-baseline,patched}-{1,2,3}.log`、`/tmp/fastab-settings-{baseline,patched}-vmmap.txt`、`/tmp/fastab-settings-metal-tests.log`、`/tmp/fastab-settings-stress-{sample.txt,fixed.log}`、`/tmp/fastab-allocator-pressure-relief-evidence.md`、`/tmp/fastab-settings-production-tests.log`。
