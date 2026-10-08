@@ -82,6 +82,12 @@ pub async fn handle_remote_ipc(
                 debug!("Connection closed");
                 break;
             }
+            _ = bad_connection.notified() => {
+                // A failed writer does not necessarily close the peer's write
+                // half. Retire the session even if the reader is still waiting.
+                debug!("Connection writer failed");
+                break;
+            }
             message = reader.recv_message::<Hostbound>() => match message {
                 Ok(Some(message)) => {
                     trace!(?message, "Received remote message");
@@ -540,6 +546,81 @@ mod lifecycle_tests {
             .await
             .unwrap()
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn write_failure_closes_session_while_read_half_remains_open() {
+        let state = Arc::new(FigtermState::new());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (client, server) = UnixStream::pair().unwrap();
+        let server = server.into_std().unwrap();
+        // Closing a peer's read half reports EPIPE on Linux but silently drops
+        // outgoing bytes on macOS. Shut down this real socket's write half via
+        // a duplicate handle to exercise the same write failure on both.
+        let write_shutdown = server.try_clone().unwrap();
+        let server = tokio::spawn(handle_remote_ipc(
+            UnixStream::from_std(server).unwrap(),
+            state.clone(),
+            Hook(tx),
+        ));
+        let mut client = BufferedReader::new(client);
+        client
+            .send_message(Hostbound {
+                packet: Some(hostbound::Packet::Handshake(hostbound::Handshake {
+                    id: "write-failure".into(),
+                    secret: "fixture".into(),
+                    parent_id: None,
+                })),
+            })
+            .await
+            .unwrap();
+        let Lifecycle::Changed(ids) = next_event(&mut rx).await else {
+            panic!("expected authenticated session")
+        };
+        let [id] = ids.as_slice() else {
+            panic!("expected one session")
+        };
+        let id = *id;
+        // Wait for the handshake reply so ordinary output is verified before
+        // the failure, ignoring the periodic ping that can arrive first.
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                match client.recv_message::<Clientbound>().await.unwrap().unwrap().packet {
+                    Some(clientbound::Packet::HandshakeResponse(response)) => {
+                        assert!(response.success);
+                        break;
+                    },
+                    Some(clientbound::Packet::Ping(())) => {},
+                    packet => panic!("unexpected handshake packet: {packet:?}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        write_shutdown.shutdown(std::net::Shutdown::Write).unwrap();
+        let (command, response) = FigtermCommand::run_process("fixture".into(), vec![], None, vec![], None);
+        state
+            .with(&id, |session| session.sender.send(command).unwrap())
+            .unwrap();
+
+        assert!(matches!(next_event(&mut rx).await, Lifecycle::Closed(closed) if closed == id));
+        assert!(matches!(next_event(&mut rx).await, Lifecycle::Changed(ids) if ids.is_empty()));
+        assert!(state.get(&id).is_none());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(3), response)
+                .await
+                .unwrap()
+                .is_err()
+        );
+        tokio::time::timeout(Duration::from_secs(3), server)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(rx.try_recv().is_err());
+        // Keep the peer alive until cleanup finishes: EOF on the read side
+        // cannot be what released the session and its pending response.
+        drop(client);
     }
 
     #[tokio::test]
