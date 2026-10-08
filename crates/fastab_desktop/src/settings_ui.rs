@@ -1915,16 +1915,12 @@ fn permission_gate_page(
                         this.on_mouse_down(MouseButton::Left, move |_e, _w, cx| {
                             entity_row.update(cx, |this, cx| {
                                 this.repairing = Some(id);
+                                // repair() owns starting the Accessibility guide. A second
+                                // queued start here could reopen a card the user just closed.
                                 this.permission_merge.active_repair_generation =
                                     Some(permissions::spawn_repair(&this.proxy, id));
                                 this.gate.error = None;
                                 cx.notify();
-                                #[cfg(target_os = "macos")]
-                                if id == PermId::Accessibility {
-                                    dispatch::Queue::main().exec_async(move || {
-                                        macos_utils::accessibility::begin_accessibility_guide(Some(zh));
-                                    });
-                                }
                             });
                         })
                     }),
@@ -2812,20 +2808,6 @@ mod tests {
             "Fix All must let repair() check Accessibility before opening System Settings"
         );
         assert!(body.contains("spawn_repair_all"));
-    }
-
-    #[test]
-    fn grant_button_starts_the_accessibility_guide() {
-        let production = include_str!("settings_ui.rs")
-            .rsplit_once("mod tests {")
-            .map(|(src, _)| src)
-            .expect("production source");
-        assert!(production.contains("begin_accessibility_guide"));
-        assert!(production.contains("exec_async"));
-        assert!(production.contains("Grant Accessibility"));
-        assert!(production.contains("授予辅助功能权限"));
-        assert!(production.contains("accessibility_permission_hint"));
-        assert!(!production.contains("prompt_for_accessibility("));
     }
 
     #[test]

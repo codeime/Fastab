@@ -5,7 +5,7 @@
 
 use std::ffi::CStr;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Mutex, Once, OnceLock};
 use std::time::Duration;
 
@@ -66,7 +66,40 @@ const NS_VISUAL_EFFECT_STATE_ACTIVE: i64 = 1;
 const NS_FONT_WEIGHT_SEMIBOLD: f64 = 0.3;
 const NS_FONT_WEIGHT_REGULAR: f64 = 0.0;
 
-static GUIDE_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// Odd epochs are active; closing advances to an even epoch. Delayed callbacks
+/// keep their epoch so reopening cannot revive a previous guide's polling loop.
+struct GuideLifecycle(AtomicU64);
+
+impl GuideLifecycle {
+    const fn new() -> Self {
+        Self(AtomicU64::new(0))
+    }
+
+    fn is_active(&self) -> bool {
+        self.0.load(Ordering::SeqCst) & 1 != 0
+    }
+
+    fn begin(&self) -> Option<u64> {
+        self.0
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |epoch| {
+                (epoch & 1 == 0).then(|| epoch.wrapping_add(1))
+            })
+            .ok()
+            .map(|epoch| epoch.wrapping_add(1))
+    }
+
+    fn is_current(&self, epoch: u64) -> bool {
+        epoch & 1 != 0 && self.0.load(Ordering::SeqCst) == epoch
+    }
+
+    fn dismiss(&self) {
+        let _ = self.0.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |epoch| {
+            (epoch & 1 != 0).then(|| epoch.wrapping_add(1))
+        });
+    }
+}
+
+static GUIDE: GuideLifecycle = GuideLifecycle::new();
 static DRAGGING: AtomicBool = AtomicBool::new(false);
 static SETTINGS_MISSING: AtomicU8 = AtomicU8::new(0);
 /// -1 system locale, 0 English, 1 Chinese.
@@ -75,7 +108,7 @@ static PANEL: Mutex<Option<usize>> = Mutex::new(None);
 static REGISTER_CLASSES: Once = Once::new();
 
 pub fn accessibility_guide_is_active() -> bool {
-    GUIDE_ACTIVE.load(Ordering::SeqCst)
+    GUIDE.is_active()
 }
 
 /// Open the Accessibility pane and dock a drag-to-grant card beside it.
@@ -96,14 +129,14 @@ fn start_guide(prefer_zh: Option<bool>) {
         dismiss_guide();
         return;
     }
-    if GUIDE_ACTIVE.load(Ordering::SeqCst) {
+    let Some(epoch) = GUIDE.begin() else {
         if let Some(panel) = panel_ptr() {
             unsafe {
                 let _: () = msg_send![panel, orderFrontRegardless];
             }
         }
         return;
-    }
+    };
 
     PREFER_ZH.store(
         match prefer_zh {
@@ -113,21 +146,20 @@ fn start_guide(prefer_zh: Option<bool>) {
         },
         Ordering::SeqCst,
     );
-    GUIDE_ACTIVE.store(true, Ordering::SeqCst);
     // A cdhash-stale grant stays in the list with the switch on, but this
     // process is not trusted. Drop our row so the current binary can be dragged in.
     clear_stale_accessibility_row();
     open_accessibility();
-    wait_for_settings(0, None);
+    wait_for_settings(epoch, 0, None);
 }
 
-fn wait_for_settings(attempt: u8, last: Option<(f64, f64, f64, f64)>) {
-    if !GUIDE_ACTIVE.load(Ordering::SeqCst) {
+fn wait_for_settings(epoch: u64, attempt: u8, last: Option<(f64, f64, f64, f64)>) {
+    if !GUIDE.is_current(epoch) {
         return;
     }
     if DRAGGING.load(Ordering::SeqCst) {
         dispatch::Queue::main().exec_after(Duration::from_millis(50), move || {
-            wait_for_settings(attempt, last);
+            wait_for_settings(epoch, attempt, last);
         });
         return;
     }
@@ -137,7 +169,7 @@ fn wait_for_settings(attempt: u8, last: Option<(f64, f64, f64, f64)>) {
     }
     let current = settings_window_cocoa();
     if let Some(settings) = settings_ready_to_dock(current, last, attempt) {
-        show_card_beside_settings(settings);
+        show_card_beside_settings(epoch, settings);
         return;
     }
     if current.is_none() && last.is_none() && attempt >= 120 {
@@ -145,7 +177,7 @@ fn wait_for_settings(attempt: u8, last: Option<(f64, f64, f64, f64)>) {
         return;
     }
     dispatch::Queue::main().exec_after(Duration::from_millis(50), move || {
-        wait_for_settings(attempt.saturating_add(1), current.or(last));
+        wait_for_settings(epoch, attempt.saturating_add(1), current.or(last));
     });
 }
 
@@ -164,8 +196,8 @@ fn settings_ready_to_dock(
     if attempt >= 120 { last } else { None }
 }
 
-fn show_card_beside_settings(settings: (f64, f64, f64, f64)) {
-    if !GUIDE_ACTIVE.load(Ordering::SeqCst) {
+fn show_card_beside_settings(epoch: u64, settings: (f64, f64, f64, f64)) {
+    if !GUIDE.is_current(epoch) {
         return;
     }
     let screen = screen_containing(settings.0 + settings.2 / 2.0, settings.1 + settings.3 / 2.0);
@@ -180,11 +212,11 @@ fn show_card_beside_settings(settings: (f64, f64, f64, f64)) {
         }
         update_arrow(points_right);
     }
-    schedule_tick();
+    schedule_tick(epoch);
 }
 
 fn present_card_at(origin: NSPoint, points_right: bool) {
-    if !GUIDE_ACTIVE.load(Ordering::SeqCst) {
+    if !GUIDE.is_active() {
         return;
     }
     if panel_ptr().is_some() {
@@ -892,7 +924,7 @@ extern "C" fn drag_ended(_this: &Object, _sel: Sel, _session: id, _point: NSPoin
 
 fn finish_drag() {
     DRAGGING.store(false, Ordering::SeqCst);
-    if GUIDE_ACTIVE.load(Ordering::SeqCst) && accessibility_is_enabled() {
+    if GUIDE.is_active() && accessibility_is_enabled() {
         dismiss_guide();
     }
 }
@@ -952,13 +984,13 @@ extern "C" fn close_guide(_this: &Object, _sel: Sel, _sender: id) {
     dismiss_guide();
 }
 
-fn schedule_tick() {
-    dispatch::Queue::main().exec_after(Duration::from_millis(40), || {
-        if !GUIDE_ACTIVE.load(Ordering::SeqCst) {
+fn schedule_tick(epoch: u64) {
+    dispatch::Queue::main().exec_after(Duration::from_millis(40), move || {
+        if !GUIDE.is_current(epoch) {
             return;
         }
         if DRAGGING.load(Ordering::SeqCst) {
-            schedule_tick();
+            schedule_tick(epoch);
             return;
         }
         if accessibility_is_enabled() {
@@ -989,12 +1021,12 @@ fn schedule_tick() {
                 }
             },
         }
-        schedule_tick();
+        schedule_tick(epoch);
     });
 }
 
 fn dismiss_guide() {
-    GUIDE_ACTIVE.store(false, Ordering::SeqCst);
+    GUIDE.dismiss();
     DRAGGING.store(false, Ordering::SeqCst);
     SETTINGS_MISSING.store(0, Ordering::SeqCst);
     ARROW_DIRECTION.store(0, Ordering::SeqCst);
@@ -1334,6 +1366,32 @@ mod tests {
     use core_graphics::geometry::{CGPoint, CGSize};
 
     #[test]
+    fn guide_reopening_does_not_revive_previous_delayed_callbacks() {
+        let guide = GuideLifecycle::new();
+        assert!(!guide.is_active());
+        let first = guide.begin().unwrap();
+        assert!(guide.is_current(first));
+        assert_eq!(guide.begin(), None, "repeat Grant must keep one polling loop");
+        assert!(guide.is_current(first));
+
+        guide.dismiss();
+        assert!(!guide.is_active());
+        assert!(!guide.is_current(first));
+        let second = guide.begin().unwrap();
+        assert!(guide.is_active());
+        assert!(guide.is_current(second));
+        assert!(!guide.is_current(first), "old wait/tick must stop after reopening");
+
+        guide.dismiss();
+        guide.dismiss();
+        assert!(!guide.is_current(second));
+        let third = guide.begin().unwrap();
+        assert!(guide.is_current(third));
+        assert!(!guide.is_current(first));
+        assert!(!guide.is_current(second));
+    }
+
+    #[test]
     fn docks_to_the_right_when_the_list_side_does_not_fit() {
         let settings = (100.0, 80.0, 700.0, 600.0);
         let screen = (0.0, 0.0, 1440.0, 900.0);
@@ -1417,7 +1475,7 @@ mod tests {
         );
         assert!(start.contains("wait_for_settings"));
         let reentry = start
-            .split("GUIDE_ACTIVE")
+            .split("GUIDE.begin()")
             .nth(1)
             .and_then(|rest| rest.split("PREFER_ZH").next())
             .expect("already-active path");
