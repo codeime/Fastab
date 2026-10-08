@@ -10,6 +10,8 @@ pub enum Error {
     Recv(#[from] RecvError),
     #[error("timeout")]
     Timeout,
+    #[error("desktop command failed: {message}")]
+    Command { exit_code: Option<i32>, message: String },
     #[error(transparent)]
     Dir(#[from] fastab_util::directories::DirectoryError),
     #[error(transparent)]

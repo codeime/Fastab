@@ -1,7 +1,7 @@
 //! Numeric resource snapshots. Counters are cumulative for one Engine lifetime.
 
 /// One hook cache map, measured without expiring entries or exposing keys.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CacheMapDiagnostics {
     pub entries: usize,
     /// Estimated retained payload bytes, not allocator usage or process footprint.
@@ -17,7 +17,7 @@ pub struct CacheMapDiagnostics {
 }
 
 /// Independently locked snapshots of the three per-engine hook maps.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HookDiagnostics {
     pub suggestions: CacheMapDiagnostics,
     pub script_output: CacheMapDiagnostics,
@@ -25,7 +25,7 @@ pub struct HookDiagnostics {
 }
 
 /// Parsed file resources; counts deduplicate paths, bytes deduplicate live trees.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RegistryDiagnostics {
     /// Unpinned file paths participating in idle release (aliases count once).
     pub cached_file_count: usize,
@@ -35,7 +35,7 @@ pub struct RegistryDiagnostics {
     pub next_deadline_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HistoryDiagnostics {
     pub line_count: usize,
     pub index_count: usize,
@@ -43,7 +43,7 @@ pub struct HistoryDiagnostics {
     pub allocated_bytes: usize,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EngineDiagnostics {
     pub registry: RegistryDiagnostics,
     pub hooks: HookDiagnostics,
@@ -52,7 +52,7 @@ pub struct EngineDiagnostics {
 
 /// Worker lifetime counters. `cancelled` includes jobs skipped before execution;
 /// `failed` includes initialization failures, watchdog timeouts and panics.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RequestDiagnostics {
     pub submitted: u64,
     pub started: u64,
@@ -64,7 +64,7 @@ pub struct RequestDiagnostics {
     pub panics: u64,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EngineClientDiagnostics {
     pub engine: Option<EngineDiagnostics>,
     pub requests: RequestDiagnostics,

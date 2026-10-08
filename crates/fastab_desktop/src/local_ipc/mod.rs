@@ -150,12 +150,16 @@ async fn handle_local_ipc<Ctx>(
                             LogLevel(command) => commands::log_level(command),
                             Login(_) => commands::login(&proxy).await,
                             Logout(_) => commands::logout(&proxy).await,
-                            DumpState(command) => commands::dump_state(
-                                command,
-                                &figterm_state,
-                                &webview_notifications_state,
-                                &platform_state,
-                            ),
+                            DumpState(command) => {
+                                commands::dump_state(
+                                    command,
+                                    &figterm_state,
+                                    &webview_notifications_state,
+                                    &platform_state,
+                                    &proxy,
+                                )
+                                .await
+                            },
                             ConnectToIbus(_) => commands::connect_to_ibus(proxy.clone(), &platform_state).await,
                             BundleMetadata(_) => commands::bundle_metadata(&ctx.context_arc()).await,
                             Update(_) => {

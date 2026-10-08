@@ -299,6 +299,13 @@ impl OverlayController {
         }
     }
 
+    pub(crate) fn engine_diagnostics(
+        &self,
+    ) -> impl std::future::Future<Output = anyhow::Result<fastab_engine::EngineClientDiagnostics>> + Send + 'static
+    {
+        self.engine.diagnostics()
+    }
+
     pub fn set_enabled(&mut self, enabled: bool, cx: &mut App) {
         self.enabled = enabled && gpui_overlay_enabled();
         if !self.enabled {

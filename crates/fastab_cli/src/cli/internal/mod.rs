@@ -96,6 +96,8 @@ pub enum StateComponent {
     Figterm,
     WebNotifications,
     Platform,
+    /// Numeric completion resources and worker counters; no shell content.
+    Engine,
 }
 
 #[derive(Debug, PartialEq, Eq, Subcommand)]
@@ -660,11 +662,17 @@ impl InternalSubcommand {
                     StateComponent::Figterm => StateCommandType::DumpStateFigterm,
                     StateComponent::WebNotifications => StateCommandType::DumpStateWebNotifications,
                     StateComponent::Platform => StateCommandType::DumpStatePlatform,
+                    StateComponent::Engine => StateCommandType::DumpStateEngine,
                 })
                 .await
                 .context("Failed to send dump state command")?;
 
-                println!("{}", state.json);
+                let json = if component == StateComponent::Engine {
+                    validated_engine_diagnostics_json(&state.json)?
+                } else {
+                    state.json
+                };
+                println!("{json}");
                 Ok(ExitCode::SUCCESS)
             },
             InternalSubcommand::FinishUpdate {
@@ -839,6 +847,16 @@ async fn remove_data_dir(ctx: Arc<OsContext>, force: bool) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+fn validated_engine_diagnostics_json(json: &str) -> Result<String> {
+    // Old desktop versions default unknown dump components to Figterm. Never
+    // print that response, or unknown fields from a newer response, as numeric
+    // resource diagnostics. Re-encode only the shared numeric snapshot schema.
+    let snapshot: fastab_engine::EngineClientDiagnostics = serde_json::from_str(json).map_err(|_schema_error| {
+        eyre::eyre!("The running desktop app does not support this engine resource diagnostics format")
+    })?;
+    Ok(serde_json::to_string_pretty(&snapshot)?)
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -849,6 +867,41 @@ mod tests {
     pub struct MockCli {
         #[command(subcommand)]
         pub subcommand: InternalSubcommand,
+    }
+
+    #[test]
+    fn engine_diagnostics_only_prints_the_numeric_snapshot_schema() {
+        let snapshot = fastab_engine::EngineClientDiagnostics {
+            engine: Some(fastab_engine::EngineDiagnostics::default()),
+            requests: fastab_engine::RequestDiagnostics {
+                submitted: 7,
+                ..Default::default()
+            },
+        };
+        let mut response = serde_json::to_value(snapshot).expect("snapshot JSON");
+        response["unexpected_shell_content"] = serde_json::json!("private command");
+        let output = validated_engine_diagnostics_json(&response.to_string()).expect("numeric output");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&output).expect("output JSON"),
+            serde_json::to_value(snapshot).expect("numeric snapshot")
+        );
+
+        response["requests"]["submitted"] = serde_json::json!("private command");
+        let error = validated_engine_diagnostics_json(&response.to_string()).expect_err("reject nonnumeric data");
+        assert!(!error.to_string().contains("private command"));
+    }
+
+    #[test]
+    fn engine_diagnostics_rejects_old_desktop_shell_state_response() {
+        let response = serde_json::json!({
+            "linked_sessions": {"example": {"buffer": "private command", "cwd": "/private/path"}},
+            "most_recent": "example",
+        });
+        let error = validated_engine_diagnostics_json(&response.to_string()).expect_err("reject legacy response");
+        assert_eq!(
+            error.to_string(),
+            "The running desktop app does not support this engine resource diagnostics format"
+        );
     }
 
     #[test]

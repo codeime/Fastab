@@ -320,6 +320,11 @@ impl EngineClient {
                             continue;
                         },
                         JobKind::Diagnostics { reply } => {
+                            // A timed-out IPC caller no longer needs this queued
+                            // snapshot. Do not walk caches or lock counters for it.
+                            if reply.is_canceled() {
+                                continue;
+                            }
                             let snapshot = EngineClientDiagnostics {
                                 engine: engine.as_ref().map(|engine| engine.diagnostics_with_grace(idle_grace)),
                                 requests: worker_submission
@@ -983,6 +988,39 @@ mod tests {
         let token = newer.token.clone();
         drop(newer);
         assert!(token.is_cancelled(), "even an unpolled task cancels its own work");
+    }
+
+    #[test]
+    fn cancelled_diagnostics_do_not_read_counters_or_block_the_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = EngineClient::spawn(dir.path().to_path_buf()).unwrap();
+        // A diagnostic which still gathers its snapshot would block on this
+        // counter lock. The worker must instead reach the following real job.
+        let counters = client.submission.lock().unwrap();
+        let (reply, receiver) = oneshot::channel();
+        drop(receiver);
+        client
+            .tx
+            .send(Job {
+                kind: JobKind::Diagnostics { reply },
+            })
+            .unwrap();
+        let (done, received) = mpsc::channel();
+        let observer = client.clone();
+        let observer = thread::spawn(move || {
+            done.send(observer.inspect_idle("unused.json")).unwrap();
+        });
+        let observed = received.recv_timeout(Duration::from_secs(2));
+        // Release the lock before asserting so even a regression can shut down
+        // both threads instead of leaving a blocked worker behind.
+        drop(counters);
+        observer.join().unwrap();
+        assert!(!observed.expect("cancelled diagnostic must not block").unwrap().cached);
+        assert_eq!(
+            futures::executor::block_on(client.diagnostics()).unwrap(),
+            EngineClientDiagnostics::default(),
+            "diagnostics must leave the lazy engine and request counts untouched"
+        );
     }
 
     #[test]

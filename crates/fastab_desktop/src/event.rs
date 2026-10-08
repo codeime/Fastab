@@ -46,6 +46,11 @@ pub enum Event {
     /// Fresh permission check for the native settings gate.
     PermissionSnapshot(crate::permissions::PermissionSnapshot),
 
+    /// Read-only resource counters from the existing completion worker.
+    EngineDiagnostics {
+        reply: futures::channel::oneshot::Sender<anyhow::Result<fastab_engine::EngineClientDiagnostics>>,
+    },
+
     /// Headless engine input for the GPUI overlay.
     GpuiOverlayBuffer {
         buffer: String,

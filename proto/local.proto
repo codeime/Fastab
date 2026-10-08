@@ -159,6 +159,7 @@ message DumpStateCommand {
     TYPE_DUMP_STATE_FIGTERM = 0;
     TYPE_DUMP_STATE_WEB_NOTIFICATIONS = 1;
     TYPE_DUMP_STATE_PLATFORM = 2;
+    TYPE_DUMP_STATE_ENGINE = 3;
   }
 
   Type type = 1;

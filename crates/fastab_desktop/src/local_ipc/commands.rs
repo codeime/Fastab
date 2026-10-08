@@ -1,4 +1,5 @@
 use std::sync::Mutex;
+use std::time::Duration;
 
 use fastab_os_shim::{Context, ContextArcProvider, ContextProvider};
 use fastab_proto::local::command_response::Response as CommandResponseTypes;
@@ -251,13 +252,20 @@ pub async fn logout(proxy: &EventLoopProxy) -> LocalResult {
     Ok(LocalResponse::Success(None))
 }
 
-pub fn dump_state(
+pub async fn dump_state(
     command: DumpStateCommand,
     figterm_state: &FigtermState,
     webview_notifications_state: &WebviewNotificationsState,
     platform_state: &PlatformState,
+    proxy: &EventLoopProxy,
 ) -> LocalResult {
-    let json = match command.r#type() {
+    // Prost's enum accessor maps unknown values to zero (Figterm), which can
+    // reveal shell state when a newer client asks for an unsupported component.
+    let component = DumpStateType::try_from(command.r#type).map_err(|_invalid_component| LocalResponse::Error {
+        code: None,
+        message: Some("Unsupported dump-state component".to_owned()),
+    })?;
+    let json = match component {
         DumpStateType::DumpStateFigterm => {
             serde_json::to_string_pretty(&figterm_state).unwrap_or_else(|err| format!("unable to dump: {err}"))
         },
@@ -266,11 +274,36 @@ pub fn dump_state(
         DumpStateType::DumpStatePlatform => {
             serde_json::to_string_pretty(&platform_state).unwrap_or_else(|err| format!("unable to dump: {err}"))
         },
+        DumpStateType::DumpStateEngine => {
+            // Leave time for the existing CLI's two-second response timeout.
+            engine_diagnostics_json(proxy, Duration::from_millis(1500)).await?
+        },
     };
 
     LocalResult::Ok(LocalResponse::Message(Box::new(CommandResponseTypes::DumpState(
         DumpStateResponse { json },
     ))))
+}
+
+async fn engine_diagnostics_json(proxy: &EventLoopProxy, timeout: Duration) -> Result<String, LocalResponse> {
+    let (reply, receiver) = futures::channel::oneshot::channel();
+    proxy
+        .send_event(Event::EngineDiagnostics { reply })
+        .map_err(|_disconnected| engine_diagnostics_error("Desktop event loop is unavailable"))?;
+    let snapshot = tokio::time::timeout(timeout, receiver)
+        .await
+        .map_err(|_timeout| engine_diagnostics_error("Engine resource diagnostics timed out"))?
+        .map_err(|_cancelled| engine_diagnostics_error("Desktop dropped the engine resource diagnostics request"))?
+        .map_err(|_engine_error| engine_diagnostics_error("Engine resource diagnostics are unavailable"))?;
+    serde_json::to_string_pretty(&snapshot)
+        .map_err(|_serialization_error| engine_diagnostics_error("Unable to serialize engine resource diagnostics"))
+}
+
+fn engine_diagnostics_error(message: &str) -> LocalResponse {
+    LocalResponse::Error {
+        code: None,
+        message: Some(message.to_owned()),
+    }
 }
 
 #[allow(unused_variables)]
@@ -305,5 +338,79 @@ pub async fn bundle_metadata(ctx: &Context) -> LocalResult {
             code: None,
             message: Some(format!("Failed to get the bundled metadata: {err:?}")),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use fastab_engine::{EngineClient, EngineClientDiagnostics};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn engine_dump_reads_the_existing_worker_without_initializing_it() {
+        let dir = tempfile::tempdir().expect("temporary specs directory");
+        let engine = EngineClient::spawn(dir.path().to_path_buf()).expect("lazy worker");
+        let (proxy, events) = crate::event_loop::channel();
+        let figterm = FigtermState::new();
+        let notifications = WebviewNotificationsState::default();
+        let platform = PlatformState::new(proxy.clone());
+        let serve = async {
+            let Event::EngineDiagnostics { reply } = events.recv_async().await.expect("diagnostic event") else {
+                panic!("expected a read-only engine diagnostic request");
+            };
+            let _ = reply.send(engine.diagnostics().await);
+        };
+        let request = dump_state(
+            DumpStateCommand {
+                r#type: DumpStateType::DumpStateEngine.into(),
+            },
+            &figterm,
+            &notifications,
+            &platform,
+            &proxy,
+        );
+        let (response, ()) = tokio::join!(request, serve);
+        let Ok(LocalResponse::Message(response)) = response else {
+            panic!("expected a diagnostics response");
+        };
+        let CommandResponseTypes::DumpState(response) = *response else {
+            panic!("expected dump-state response");
+        };
+        let snapshot: EngineClientDiagnostics = serde_json::from_str(&response.json).expect("numeric snapshot");
+        assert_eq!(snapshot, EngineClientDiagnostics::default());
+    }
+
+    #[tokio::test]
+    async fn unknown_dump_component_never_falls_back_to_shell_state() {
+        let (proxy, events) = crate::event_loop::channel();
+        let response = dump_state(
+            DumpStateCommand { r#type: i32::MAX },
+            &FigtermState::new(),
+            &WebviewNotificationsState::default(),
+            &PlatformState::new(proxy.clone()),
+            &proxy,
+        )
+        .await;
+        assert!(matches!(response, Err(LocalResponse::Error { .. })));
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn engine_diagnostic_timeout_cancels_the_pending_reply() {
+        let (proxy, events) = crate::event_loop::channel();
+        let response = engine_diagnostics_json(&proxy, Duration::from_millis(10)).await;
+        assert!(matches!(response, Err(LocalResponse::Error { .. })));
+        let Event::EngineDiagnostics { reply } = events.try_recv().expect("pending diagnostic event") else {
+            panic!("expected diagnostics");
+        };
+        assert!(reply.is_canceled());
+
+        drop(events);
+        assert!(
+            engine_diagnostics_json(&proxy, Duration::from_millis(10))
+                .await
+                .is_err()
+        );
     }
 }

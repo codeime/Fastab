@@ -111,6 +111,21 @@ impl DesktopHost {
                     crate::settings_ui::apply_permission_snapshot(handle, snapshot, cx);
                 }
             },
+            Event::EngineDiagnostics { mut reply } => {
+                if reply.is_canceled() {
+                    return;
+                }
+                let diagnostics = self.overlay.engine_diagnostics();
+                // GPUI only submits the read-only job. Wait off the foreground
+                // executor and stop waiting if the IPC deadline expires.
+                tokio::spawn(async move {
+                    let snapshot = tokio::select! {
+                        snapshot = diagnostics => snapshot,
+                        _ = reply.cancellation() => return,
+                    };
+                    let _ = reply.send(snapshot);
+                });
+            },
             Event::SetTrayVisible(visible) => {
                 if let Err(err) = self.tray.set_visible(visible) {
                     error!(%err, "Failed to set tray visible");
