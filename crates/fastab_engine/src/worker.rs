@@ -1134,6 +1134,54 @@ mod tests {
     }
 
     #[test]
+    fn cold_history_only_session_releases_specs_after_input_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        write_idle_specs(dir.path());
+        std::fs::write(
+            dir.path().join("child.json"),
+            r#"{"names":["child"],"filterStrategy":"prefix"}"#,
+        )
+        .unwrap();
+        let client = EngineClient::spawn_with_idle_grace(
+            dir.path().to_path_buf(),
+            WATCHDOG_UNDER_TEST,
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        let result = futures::executor::block_on(client.complete_for_session(
+            SessionId::new(1),
+            CompleteRequest {
+                buffer: "tool child ".into(),
+                cwd: dir.path().display().to_string(),
+                fuzzy: true,
+                history_only: true,
+                ..CompleteRequest::default()
+            },
+        ))
+        .unwrap();
+        assert!(
+            !result.fuzzy,
+            "history-only must really load the child's filter strategy"
+        );
+        client.end_input(SessionId::new(1)).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let snapshot = futures::executor::block_on(client.diagnostics()).unwrap();
+            assert_eq!(snapshot.requests.engine_initializations, 1);
+            assert_eq!(snapshot.requests.completed, 1);
+            if snapshot.engine.unwrap().registry.cached_file_count == 0 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "history-only files never started their idle grace"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
     fn background_end_and_repeated_end_cannot_change_current_input_or_restart_grace() {
         let dir = tempfile::tempdir().unwrap();
         write_idle_specs(dir.path());

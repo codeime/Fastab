@@ -642,14 +642,17 @@ impl Engine {
             if result.is_ok() && !history_only {
                 self.registry.note_idle_after_complete(std::time::Instant::now());
             } else {
-                self.registry.begin_idle_completion();
+                // History-only still loads specs to resolve fuzzy matching.
+                // It cannot take ownership of earlier active files, but new
+                // files must not be left without an idle deadline.
+                self.registry.restore_idle_checkpoint(&idle, std::time::Instant::now());
             }
             result
         }) {
             Ok(result) => result,
             Err(cancelled) => {
                 crate::generate::take_pending_generators();
-                self.registry.restore_cancelled_idle(idle, std::time::Instant::now());
+                self.registry.restore_idle_checkpoint(&idle, std::time::Instant::now());
                 Err(cancelled.into())
             },
         }
@@ -2262,6 +2265,38 @@ mod tests {
     }
 
     #[test]
+    fn cold_history_only_loads_release_without_an_ordinary_completion() {
+        let _lock = engine_lock();
+        let dir = idle_tool_dir();
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).expect("engine");
+        engine
+            .complete(CompleteRequest {
+                buffer: "tool child ".into(),
+                cwd: "/".into(),
+                history_only: true,
+                ..CompleteRequest::default()
+            })
+            .expect("history only walks into the child");
+
+        let marked = engine
+            .registry
+            .idle_mark("child")
+            .expect("new child is tracked")
+            .expect("history-only cannot leave a new child active");
+        assert_eq!(engine.registry.idle_mark("tool"), Some(Some(marked)));
+        let child = engine.registry.cached_load_spec("child").expect("child is cached");
+        let weak = Arc::downgrade(&child);
+        drop(child);
+
+        engine
+            .registry
+            .release_idle(marked + crate::ir::SPEC_IDLE_GRACE, crate::ir::SPEC_IDLE_GRACE);
+        assert!(!engine.registry.is_cached("tool"));
+        assert!(engine.registry.cached_load_spec("child").is_none());
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
     fn history_only_does_not_move_an_idle_mark() {
         let _lock = engine_lock();
         let dir = idle_tool_dir();
@@ -2293,6 +2328,7 @@ mod tests {
         complete_buffer(&mut engine, "tool child ");
         assert_eq!(engine.registry.idle_mark("child"), Some(None));
 
+        let mut git_mark = None;
         for buffer in ["git status", "tool child "] {
             engine
                 .complete(CompleteRequest {
@@ -2303,7 +2339,17 @@ mod tests {
                 })
                 .expect("history only");
             assert_eq!(engine.registry.idle_mark("child"), Some(None));
-            assert_eq!(engine.next_idle_deadline(crate::ir::SPEC_IDLE_GRACE), None);
+            assert_eq!(engine.registry.idle_mark("tool"), Some(None));
+            let marked = engine
+                .registry
+                .idle_mark("git")
+                .expect("new history-only root is tracked")
+                .expect("new history-only root has a grace clock");
+            assert_eq!(*git_mark.get_or_insert(marked), marked);
+            assert_eq!(
+                engine.next_idle_deadline(crate::ir::SPEC_IDLE_GRACE),
+                Some(marked + crate::ir::SPEC_IDLE_GRACE)
+            );
         }
 
         // The history-only child walk must not count as a touch in this

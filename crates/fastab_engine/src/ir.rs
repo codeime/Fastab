@@ -1370,7 +1370,9 @@ impl Registry {
         )
     }
 
-    pub(crate) fn restore_cancelled_idle(&mut self, checkpoint: IdleCheckpoint, now: Instant) {
+    /// Preserve earlier input ownership and grace clocks, but give files loaded
+    /// by a cancelled or history-only completion their own release deadline.
+    pub(crate) fn restore_idle_checkpoint(&mut self, checkpoint: &IdleCheckpoint, now: Instant) {
         self.forget_unowned_idle_paths();
         for path in self.cached_file_paths() {
             match checkpoint.0.get(&path) {
@@ -2786,7 +2788,7 @@ mod tests {
         let weak = Arc::downgrade(&new);
         drop(new);
         let cancelled = original + Duration::from_secs(2);
-        registry.restore_cancelled_idle(checkpoint, cancelled);
+        registry.restore_idle_checkpoint(&checkpoint, cancelled);
         assert_eq!(registry.idle_mark("old"), Some(Some(original)));
         assert_eq!(registry.idle_mark("active"), Some(None));
         assert_eq!(registry.idle_mark("new"), Some(Some(cancelled)));
