@@ -1125,12 +1125,22 @@ impl InputParser {
         // `CSI u` encodings for the ascii range;
         // see http://www.leonerd.org.uk/hacks/fixterms/
         for c in 0..=0x7fu8 {
+            // These CSI-u codepoints identify functional keys. Keep the
+            // other controls as characters: legacy aliases such as LF for
+            // Enter and BS for Backspace do not apply to this encoding.
+            let key_code = match c {
+                b'\t' => KeyCode::Tab,
+                b'\r' => KeyCode::Enter,
+                0x1b => KeyCode::Escape,
+                0x7f => KeyCode::Backspace,
+                _ => KeyCode::Char(c as char),
+            };
             for (suffix, modifiers) in modifier_combos_including_meta() {
                 let key = format!("\x1b[{c}{suffix}u");
                 map.insert(
                     key,
                     InputEvent::Key(KeyEvent {
-                        key: KeyCode::Char(c as char),
+                        key: key_code,
                         modifiers: *modifiers,
                     }),
                 );
@@ -1702,6 +1712,80 @@ mod test {
             ],
             inputs
         );
+    }
+
+    #[test]
+    fn csi_u_functional_keys_reach_the_interceptor() {
+        use crate::interceptor::KeyInterceptor;
+        use fastab_proto::figterm::Action;
+
+        let mut interceptor = KeyInterceptor::new();
+        interceptor.load_key_intercepts().unwrap();
+        interceptor.set_actions(
+            &[
+                Action {
+                    identifier: "hideAutocomplete".into(),
+                    bindings: vec!["backspace".into()],
+                },
+                Action {
+                    identifier: "insertSelected".into(),
+                    bindings: vec!["control+enter".into()],
+                },
+                Action {
+                    identifier: "insertCommonPrefix".into(),
+                    bindings: vec!["control+tab".into()],
+                },
+            ],
+            false,
+        );
+        interceptor.set_intercept(true);
+        interceptor.set_window_visible(true);
+
+        let mut parser = InputParser::new();
+        for (bytes, action) in [
+            ("\x1b[9u", "insertCommonPrefixOrInsertSelected"),
+            ("\x1b[9;1u", "insertCommonPrefixOrInsertSelected"),
+            ("\x1b[9;2u", "navigateUp"),
+            ("\x1b[9;5u", "insertCommonPrefix"),
+            ("\x1b[13u", "insertSelected"),
+            ("\x1b[13;5u", "insertSelected"),
+            ("\x1b[27u", "hideAutocomplete"),
+            ("\x1b[127u", "hideAutocomplete"),
+        ] {
+            let mut events = Vec::new();
+            parser.parse(bytes.as_bytes(), |raw, event| events.push((raw, event)), false);
+            let [(raw, InputEvent::Key(key))] = events.as_slice() else {
+                panic!("expected one key for {bytes:?}, got {events:?}");
+            };
+            assert_eq!(
+                interceptor.intercept_key(key).as_deref(),
+                Some(action),
+                "{bytes:?}: {key:?}"
+            );
+            // Unbound input is forwarded using these original bytes. Parsing
+            // a functional identity must not rewrite the terminal's encoding.
+            assert_eq!(raw.as_deref(), Some(bytes.as_bytes()));
+        }
+    }
+
+    #[test]
+    fn csi_u_keeps_other_controls_distinct_from_legacy_aliases() {
+        let mut parser = InputParser::new();
+        for (bytes, key, modifiers) in [
+            ("\x08", KeyCode::Backspace, Modifiers::NONE),
+            ("\n", KeyCode::Enter, Modifiers::NONE),
+            ("\x03", KeyCode::Char('C'), Modifiers::CTRL),
+            ("\x1b[8u", KeyCode::Char('\x08'), Modifiers::NONE),
+            ("\x1b[10u", KeyCode::Char('\n'), Modifiers::NONE),
+            ("\x1b[3u", KeyCode::Char('\x03'), Modifiers::NONE),
+            ("\x1b[104;5u", KeyCode::Char('h'), Modifiers::CTRL),
+        ] {
+            assert_eq!(
+                parser.parse_as_vec(bytes.as_bytes()),
+                vec![InputEvent::Key(KeyEvent { key, modifiers })],
+                "{bytes:?}"
+            );
+        }
     }
 
     #[test]
