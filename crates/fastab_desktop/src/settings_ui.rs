@@ -239,8 +239,7 @@ impl Render for SettingsWindow {
                             Section::Ai => self
                                 .ai
                                 .as_ref()
-                                .map(|ai| ai.clone().into_any_element())
-                                .unwrap_or_else(|| div().into_any_element()),
+                                .map_or_else(|| div().into_any_element(), |ai| ai.clone().into_any_element()),
                             Section::About => about_page(zh, chrome, entity, self.copied_doctor).into_any_element(),
                         }),
                 ),

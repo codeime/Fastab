@@ -217,7 +217,7 @@ fn file_sha256(path: &std::path::Path) -> std::io::Result<[u8; 32]> {
 
     let mut file = std::fs::File::open(path)?;
     let mut digest = Sha256::new();
-    let mut buffer = [0; 64 * 1024];
+    let mut buffer = vec![0; 64 * 1024].into_boxed_slice();
     loop {
         let read = file.read(&mut buffer)?;
         if read == 0 {
