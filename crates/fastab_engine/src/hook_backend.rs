@@ -49,6 +49,24 @@ impl NativeHooks {
             });
         Self { catalog }
     }
+
+    pub(crate) fn diagnostics(&self) -> crate::diagnostics::HookCatalogDiagnostics {
+        let Some(catalog) = self.catalog.as_ref() else {
+            return crate::diagnostics::HookCatalogDiagnostics {
+                load_attempted: true,
+                ..Default::default()
+            };
+        };
+        let (descriptor_count, parsed_descriptor_count) = catalog.descriptor_counts();
+        crate::diagnostics::HookCatalogDiagnostics {
+            load_attempted: true,
+            loaded: true,
+            typed_entries: catalog.hooks.len(),
+            adapter_entries: catalog.adapters.len(),
+            descriptor_count,
+            parsed_descriptor_count,
+        }
+    }
 }
 
 fn read_sidecar(specs_dir: &Path, snapshot: Option<&DirectorySnapshot>, relative: &str) -> Option<Vec<u8>> {

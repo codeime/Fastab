@@ -873,6 +873,17 @@ impl RuntimeTypedHookCatalog {
     pub(crate) fn parsed_descriptor_count(&self) -> usize {
         self.hooks.values().filter(|descriptor| descriptor.is_parsed()).count()
     }
+
+    pub(crate) fn descriptor_counts(&self) -> (usize, usize) {
+        let mut seen = std::collections::HashSet::new();
+        let mut parsed = 0;
+        for descriptor in self.hooks.values() {
+            if seen.insert(Arc::as_ptr(&descriptor.shared)) && descriptor.is_parsed() {
+                parsed += 1;
+            }
+        }
+        (seen.len(), parsed)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -4728,6 +4739,8 @@ mod tests {
         assert_eq!(again.parsed_descriptor_count(), 0);
         assert_eq!(catalog, again);
         assert_eq!(again.parsed_descriptor_count(), 0);
+        assert_eq!(catalog.into_runtime().descriptor_counts(), (2, 1));
+        assert_eq!(again.into_runtime().descriptor_counts(), (2, 0));
     }
 
     #[test]

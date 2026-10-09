@@ -357,7 +357,7 @@ pub fn ranking_root_command(buffer: &str, cursor: Option<u32>) -> String {
 pub struct Engine {
     specs_dir: PathBuf,
     registry: Registry,
-    native: Arc<NativeHooks>,
+    native: Option<Arc<NativeHooks>>,
     hook_cache: Arc<crate::hook_cache::HookCache>,
     frecency: Frecency,
     acceptance: Arc<Mutex<rank::AcceptanceIndex>>,
@@ -368,10 +368,12 @@ pub struct Engine {
     history: Arc<crate::history::HistoryStore>,
     /// Generator cache that has to survive the per-request attempt thread.
     generator_session: crate::generate::GeneratorSession,
-    /// Hook results belong to the current normal input. History-only and
+    /// Hook results and the native catalog belong to the current normal input. History-only and
     /// cancelled attempts cannot acquire ownership or renew an idle deadline.
     hook_cache_active: bool,
     hook_cache_idle_since: Option<std::time::Instant>,
+    /// Shares the hook result owner, but has a deadline even with empty caches.
+    native_idle_since: Option<std::time::Instant>,
 }
 
 impl Engine {
@@ -420,7 +422,7 @@ impl Engine {
         Self {
             specs_dir: specs_dir.to_path_buf(),
             registry,
-            native,
+            native: Some(native),
             hook_cache: crate::hook_cache::HookCache::new(),
             frecency: Frecency::default(),
             acceptance,
@@ -430,6 +432,9 @@ impl Engine {
             generator_session: crate::generate::GeneratorSession::default(),
             hook_cache_active: false,
             hook_cache_idle_since: None,
+            // Construction can race cancellation before complete's first
+            // check. Until a normal result commits, this owner is idle.
+            native_idle_since: Some(std::time::Instant::now()),
         }
     }
 
@@ -466,7 +471,13 @@ impl Engine {
     }
 
     fn rebind_hosts(&mut self, registry: &Registry) {
-        self.native = Arc::new(NativeHooks::load(&self.specs_dir, registry.snapshot().as_ref()));
+        self.native = Some(Arc::new(NativeHooks::load(
+            &self.specs_dir,
+            registry.snapshot().as_ref(),
+        )));
+        // Refresh can be followed by an immediate cancellation before the
+        // attempt's settlement path. Preserve any existing grace clock.
+        self.note_idle_native(std::time::Instant::now());
         // A new spec generation clears data, not this Engine's lifetime counters.
         self.hook_cache.clear();
     }
@@ -474,11 +485,13 @@ impl Engine {
     /// The current input explicitly ended. Preserve running grace clocks;
     /// ending twice must not keep an otherwise idle tree alive.
     pub(crate) fn end_input(&mut self) {
+        let now = std::time::Instant::now();
         self.generator_session = crate::generate::GeneratorSession::default();
         self.hook_cache_active = false;
-        self.note_idle_hook_cache(false, std::time::Instant::now());
+        self.note_idle_hook_cache(false, now);
+        self.note_idle_native(now);
         self.registry.begin_idle_completion();
-        self.registry.note_idle_after_complete(std::time::Instant::now());
+        self.registry.note_idle_after_complete(now);
     }
 
     /// Read numeric resources without loading, refreshing, or touching caches.
@@ -490,6 +503,10 @@ impl Engine {
         crate::diagnostics::EngineDiagnostics {
             registry: self.registry.diagnostics(std::time::Instant::now(), grace),
             hooks: self.hook_cache.diagnostics(),
+            hook_catalog: self
+                .native
+                .as_ref()
+                .map_or_else(Default::default, |native| native.diagnostics()),
             history: self.history.diagnostics(),
         }
     }
@@ -509,7 +526,7 @@ impl Engine {
         let _ = self.clear_caches_and_report();
     }
 
-    /// Release expired specs and hook results after the worker regains Engine.
+    /// Release expired specs, hook results and the catalog once the worker regains Engine.
     pub(crate) fn release_idle_specs(&mut self, now: std::time::Instant, grace: std::time::Duration) {
         self.registry.release_idle(now, grace);
         if !self.hook_cache_active
@@ -520,6 +537,14 @@ impl Engine {
             self.hook_cache.clear();
             self.hook_cache_idle_since = None;
         }
+        if !self.hook_cache_active
+            && self
+                .native_idle_since
+                .is_some_and(|since| now.saturating_duration_since(since) >= grace)
+        {
+            self.native = None;
+            self.native_idle_since = None;
+        }
     }
 
     /// Earliest resource deadline, including hooks when no spec remains cached.
@@ -528,10 +553,15 @@ impl Engine {
             .then_some(self.hook_cache_idle_since)
             .flatten()
             .and_then(|since| since.checked_add(grace));
+        let native_deadline = (!self.hook_cache_active && self.native.is_some())
+            .then_some(self.native_idle_since)
+            .flatten()
+            .and_then(|since| since.checked_add(grace));
         self.registry
             .next_idle_deadline(grace)
             .into_iter()
             .chain(hook_deadline)
+            .chain(native_deadline)
             .min()
     }
 
@@ -540,6 +570,22 @@ impl Engine {
         {
             self.hook_cache_idle_since = Some(now);
         }
+    }
+
+    fn note_idle_native(&mut self, now: std::time::Instant) {
+        if !self.hook_cache_active && self.native.is_some() && self.native_idle_since.is_none() {
+            self.native_idle_since = Some(now);
+        }
+    }
+
+    /// Called only in the completion attempt, after generation refresh. The
+    /// snapshot verifies the re-read; a missing/rejected catalog stays loaded
+    /// as an empty owner rather than retrying every keystroke.
+    fn ensure_native(&mut self) -> Arc<NativeHooks> {
+        Arc::clone(
+            self.native
+                .get_or_insert_with(|| Arc::new(NativeHooks::load(&self.specs_dir, self.registry.snapshot().as_ref()))),
+        )
     }
 
     #[cfg(test)]
@@ -569,6 +615,8 @@ impl Engine {
                 self.rebind_hosts(&registry);
                 self.registry = registry;
                 self.hook_cache_active = false;
+                self.native_idle_since = None;
+                self.note_idle_native(std::time::Instant::now());
                 true
             },
             Err(err) => {
@@ -676,9 +724,11 @@ impl Engine {
             if result.is_ok() && !history_only {
                 self.hook_cache_active = true;
                 self.hook_cache_idle_since = None;
+                self.native_idle_since = None;
                 self.registry.note_idle_after_complete(std::time::Instant::now());
             } else {
                 self.note_idle_hook_cache(hook_cache_was_empty, std::time::Instant::now());
+                self.note_idle_native(std::time::Instant::now());
                 // History-only still loads specs to resolve fuzzy matching.
                 // It cannot take ownership of earlier active files, but new
                 // files must not be left without an idle deadline.
@@ -690,6 +740,7 @@ impl Engine {
             Err(cancelled) => {
                 crate::generate::take_pending_generators();
                 self.note_idle_hook_cache(hook_cache_was_empty, std::time::Instant::now());
+                self.note_idle_native(std::time::Instant::now());
                 self.registry.restore_idle_checkpoint(&idle, std::time::Instant::now());
                 Err(cancelled.into())
             },
@@ -757,7 +808,7 @@ impl Engine {
             });
         }
         let mut result = {
-            let _native = hook_backend::bind_native(Arc::clone(&self.native));
+            let _native = hook_backend::bind_native(self.ensure_native());
             let shell = ShellContext {
                 current_process: request.current_process.clone().unwrap_or_default(),
                 environment_variables: std::mem::take(&mut request.environment_variables),
@@ -925,6 +976,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).unwrap();
         let now = std::time::Instant::now();
+        engine.release_idle_specs(now, Duration::ZERO);
         let grace = Duration::from_secs(10);
         engine.hook_cache_idle_since = Some(now - Duration::from_secs(100));
         let was_empty = engine.hook_cache.is_empty();
@@ -964,6 +1016,160 @@ mod tests {
             "hooks": { id: entry }
         });
         fs::write(dir.join("typed-hooks.json"), format!("{catalog}\n")).unwrap();
+    }
+
+    #[test]
+    fn catalog_idle_grace_survives_history_repeated_end_and_cancel_without_cached_results() {
+        let dir = tempfile::tempdir().unwrap();
+        write_typed_custom(dir.path(), "demo#custom#0", "result");
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).unwrap();
+        engine.complete(CompleteRequest::default()).unwrap();
+        let grace = Duration::from_secs(10);
+        assert_eq!(engine.diagnostics().registry.cached_file_count, 0);
+        assert!(engine.hook_cache.is_empty());
+        assert!(engine.diagnostics().hook_catalog.loaded);
+        assert!(engine.next_idle_deadline(grace).is_none());
+        engine.end_input();
+        let deadline = engine.next_idle_deadline(grace).expect("catalog alone has a deadline");
+        engine
+            .complete(CompleteRequest {
+                history_only: true,
+                ..CompleteRequest::default()
+            })
+            .unwrap();
+        engine.end_input();
+        {
+            let token = crate::cancellation::CancellationToken::new();
+            token.cancel();
+            let _scope = crate::cancellation::enter(token);
+            assert!(engine.complete(CompleteRequest::default()).is_err());
+        }
+        assert_eq!(engine.next_idle_deadline(grace), Some(deadline));
+        engine.release_idle_specs(deadline - Duration::from_millis(1), grace);
+        assert!(engine.diagnostics().hook_catalog.loaded);
+        engine.release_idle_specs(deadline, grace);
+        assert_eq!(engine.diagnostics().hook_catalog, Default::default());
+        assert!(engine.next_idle_deadline(grace).is_none());
+    }
+
+    #[test]
+    fn idle_catalog_owner_is_dropped_and_typed_completion_reloads_the_same_result() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "demo",
+            r#"{"names":["demo"],"args":[{"jsCustom":"demo#custom#0"}]}"#,
+        );
+        write_typed_custom(dir.path(), "demo#custom#0", "result");
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).unwrap();
+        let request = CompleteRequest {
+            buffer: "demo ".into(),
+            cwd: dir.path().display().to_string(),
+            include_history: false,
+            ..CompleteRequest::default()
+        };
+        let before = engine.complete(request.clone()).unwrap();
+        assert!(before.suggestions.iter().any(|row| row.name == "result"));
+        assert_eq!(engine.diagnostics().hook_catalog.parsed_descriptor_count, 1);
+        let old_owner = Arc::downgrade(engine.native.as_ref().unwrap());
+        engine.end_input();
+        let grace = Duration::from_secs(10);
+        engine.release_idle_specs(engine.next_idle_deadline(grace).unwrap(), grace);
+        assert!(
+            old_owner.upgrade().is_none(),
+            "no descriptor owner survives the idle release"
+        );
+        assert!(!engine.diagnostics().hook_catalog.load_attempted);
+        engine
+            .complete(CompleteRequest {
+                history_only: true,
+                ..request.clone()
+            })
+            .unwrap();
+        assert!(
+            !engine.diagnostics().hook_catalog.load_attempted,
+            "history does not reload hooks"
+        );
+        let after = engine.complete(request).unwrap();
+        assert_eq!(after.suggestions, before.suggestions);
+        assert_eq!(engine.diagnostics().hook_catalog.parsed_descriptor_count, 1);
+        assert!(engine.next_idle_deadline(grace).is_none());
+    }
+
+    #[test]
+    fn idle_catalog_reload_verifies_the_snapshot_before_accepting_changed_sidecar_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        write_spec(
+            dir.path(),
+            "demo",
+            r#"{"names":["demo"],"args":[{"jsCustom":"demo#custom#0"}]}"#,
+        );
+        write_typed_custom(dir.path(), "demo#custom#0", "from-A");
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).unwrap();
+        let request = CompleteRequest {
+            buffer: "demo ".into(),
+            cwd: dir.path().display().to_string(),
+            include_history: false,
+            ..CompleteRequest::default()
+        };
+        assert!(
+            engine
+                .complete(request.clone())
+                .unwrap()
+                .suggestions
+                .iter()
+                .any(|row| row.name == "from-A")
+        );
+        engine.end_input();
+        let grace = Duration::from_secs(10);
+        engine.release_idle_specs(engine.next_idle_deadline(grace).unwrap(), grace);
+        write_typed_custom(dir.path(), "demo#custom#0", "from-B");
+        let rejected = engine.complete(request.clone()).unwrap();
+        assert!(
+            !rejected
+                .suggestions
+                .iter()
+                .any(|row| row.name == "from-A" || row.name == "from-B")
+        );
+        assert!(engine.diagnostics().hook_catalog.load_attempted);
+        assert!(!engine.diagnostics().hook_catalog.loaded);
+        assert!(
+            engine.registry.needs_refresh(),
+            "sidecar digest mismatch marks the generation stale"
+        );
+        let refreshed = engine.complete(request).unwrap();
+        assert!(refreshed.suggestions.iter().any(|row| row.name == "from-B"));
+        assert!(engine.diagnostics().hook_catalog.loaded);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_ownerless_generation_rebind_also_schedules_catalog_release() {
+        let root = tempfile::tempdir().unwrap();
+        let live = root.path().join("live");
+        fs::create_dir_all(&live).unwrap();
+        write_typed_custom(&live, "demo#custom#0", "from-A");
+        let mut engine = Engine::new_with_frecency(live.clone(), Frecency::default()).unwrap();
+        engine.release_idle_specs(std::time::Instant::now(), Duration::ZERO);
+        assert!(!engine.diagnostics().hook_catalog.load_attempted);
+        fs::rename(&live, root.path().join("old")).unwrap();
+        fs::create_dir_all(&live).unwrap();
+        write_typed_custom(&live, "demo#custom#0", "from-B");
+        engine.refresh_specs_generation();
+        assert!(engine.diagnostics().hook_catalog.loaded);
+        let grace = Duration::from_secs(10);
+        let deadline = engine
+            .next_idle_deadline(grace)
+            .expect("ownerless new generation is idle");
+        {
+            let token = crate::cancellation::CancellationToken::new();
+            token.cancel();
+            let _scope = crate::cancellation::enter(token);
+            assert!(engine.complete(CompleteRequest::default()).is_err());
+        }
+        assert_eq!(engine.next_idle_deadline(grace), Some(deadline));
+        engine.release_idle_specs(deadline, grace);
+        assert!(!engine.diagnostics().hook_catalog.load_attempted);
     }
 
     #[cfg(unix)]
@@ -1056,7 +1262,7 @@ mod tests {
 
         assert!(engine.registry.get_arc("demo").is_none());
         let stale = {
-            let _bound = crate::hook_backend::bind_native(std::sync::Arc::clone(&engine.native));
+            let _bound = crate::hook_backend::bind_native(std::sync::Arc::clone(engine.native.as_ref().unwrap()));
             crate::hook_backend::dispatch_custom(
                 "demo#custom#0",
                 &[],
@@ -1147,7 +1353,7 @@ mod tests {
         let demo = engine.registry.get_arc("demo").expect("same spec bytes");
         assert_eq!(demo.names, vec!["demo"]);
         let hook = {
-            let _bound = crate::hook_backend::bind_native(std::sync::Arc::clone(&engine.native));
+            let _bound = crate::hook_backend::bind_native(std::sync::Arc::clone(engine.native.as_ref().unwrap()));
             crate::hook_backend::dispatch_custom(
                 "demo#custom#0",
                 &[],

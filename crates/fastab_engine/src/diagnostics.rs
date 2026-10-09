@@ -25,6 +25,18 @@ pub struct HookDiagnostics {
     pub specs: CacheMapDiagnostics,
 }
 
+/// Native catalog ownership and deduplicated descriptor counts; no parsing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HookCatalogDiagnostics {
+    /// Distinguishes an idle/unloaded owner from a missing or rejected sidecar.
+    pub load_attempted: bool,
+    pub loaded: bool,
+    pub typed_entries: usize,
+    pub adapter_entries: usize,
+    pub descriptor_count: usize,
+    pub parsed_descriptor_count: usize,
+}
+
 /// Parsed file resources; counts deduplicate paths, bytes deduplicate live trees.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RegistryDiagnostics {
@@ -48,6 +60,8 @@ pub struct HistoryDiagnostics {
 pub struct EngineDiagnostics {
     pub registry: RegistryDiagnostics,
     pub hooks: HookDiagnostics,
+    #[serde(default)]
+    pub hook_catalog: HookCatalogDiagnostics,
     pub history: HistoryDiagnostics,
 }
 
@@ -69,4 +83,15 @@ pub struct RequestDiagnostics {
 pub struct EngineClientDiagnostics {
     pub engine: Option<EngineDiagnostics>,
     pub requests: RequestDiagnostics,
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn engine_snapshots_without_catalog_counts_still_deserialize() {
+        let mut legacy = serde_json::to_value(super::EngineDiagnostics::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("hook_catalog");
+        let restored: super::EngineDiagnostics = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored.hook_catalog, Default::default());
+    }
 }

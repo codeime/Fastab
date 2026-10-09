@@ -1879,6 +1879,25 @@ mod tests {
         .unwrap();
     }
 
+    fn write_catalog_fixture(dir: &std::path::Path) {
+        let (id, entry) = crate::hook_backend::test_typed_entry(
+            "tool#custom#0",
+            "custom",
+            serde_json::json!({"op": "array", "items": []}),
+        );
+        std::fs::write(
+            dir.join("typed-hooks.json"),
+            serde_json::json!({
+                "version": 1,
+                "kind": "typed-hook-expressions",
+                "contracts": crate::hook_backend::test_sidecar_contracts(),
+                "hooks": {id: entry}
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+
     fn complete_buf(client: &EngineClient, buffer: &str) {
         client
             .complete_blocking(CompleteRequest {
@@ -1973,6 +1992,63 @@ mod tests {
         assert!(engine.next_idle_deadline(grace).is_none());
     }
 
+    #[test]
+    fn catalog_wakes_idle_maintenance_without_any_spec_or_hook_result_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        write_catalog_fixture(dir.path());
+        let engine = Engine::from_registry(
+            dir.path(),
+            Registry::new(),
+            Arc::new(Mutex::new(AcceptanceIndex::default())),
+        );
+        let (mut engine, result) = run_engine_attempt(engine, CompleteRequest::default(), WATCHDOG_UNDER_TEST).unwrap();
+        assert!(result.is_ok());
+        assert!(engine.diagnostics().hook_catalog.loaded);
+        assert_eq!(engine.diagnostics().hook_catalog.descriptor_count, 1);
+        assert_eq!(engine.diagnostics().registry.cached_file_count, 0);
+        assert_eq!(engine.diagnostics().hooks, Default::default());
+        engine.end_input();
+        let grace = Duration::from_millis(20);
+        let (tx, rx) = mpsc::channel();
+        let (done, received) = mpsc::channel();
+        let waiter = thread::spawn(move || {
+            let result = wait_for_engine_job(&rx, Some(&engine), grace);
+            let _ = done.send((result, engine));
+        });
+        let observed = received.recv_timeout(Duration::from_secs(2));
+        drop(tx);
+        waiter.join().unwrap();
+        let (result, mut engine) = observed.expect("catalog-only deadline must wake the worker");
+        assert!(matches!(result, Err(mpsc::RecvTimeoutError::Timeout)));
+        engine.release_idle_specs(Instant::now(), grace);
+        assert!(!engine.diagnostics().hook_catalog.load_attempted);
+        assert!(engine.next_idle_deadline(grace).is_none());
+    }
+
+    #[test]
+    fn cancelling_before_the_first_attempt_keeps_a_catalog_release_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        write_catalog_fixture(dir.path());
+        let engine = Engine::from_registry(
+            dir.path(),
+            Registry::new(),
+            Arc::new(Mutex::new(AcceptanceIndex::default())),
+        );
+        let token = CancellationToken::new();
+        token.cancel();
+        let (mut engine, result) =
+            run_engine_attempt_with_token(engine, CompleteRequest::default(), WATCHDOG_UNDER_TEST, token).unwrap();
+        assert!(result.unwrap_err().is::<CompletionCancelled>());
+        assert!(engine.diagnostics().hook_catalog.loaded);
+        let grace = Duration::from_secs(10);
+        let deadline = engine
+            .next_idle_deadline(grace)
+            .expect("cancelled cold catalog is idle");
+        engine.release_idle_specs(deadline, grace);
+        assert!(!engine.diagnostics().hook_catalog.load_attempted);
+        assert!(engine.next_idle_deadline(grace).is_none());
+    }
+
     #[cfg(unix)]
     #[test]
     fn cancelling_the_first_input_releases_results_cached_before_cancellation() {
@@ -2026,6 +2102,7 @@ mod tests {
     fn cached_hooks_follow_committed_session_across_history_and_cancelled_submission() {
         let dir = tempfile::tempdir().unwrap();
         slow_fixture(dir.path());
+        write_catalog_fixture(dir.path());
         std::fs::write(
             dir.path().join("fast.json"),
             r#"{
@@ -2054,6 +2131,15 @@ mod tests {
                 .entries,
             1
         );
+        assert!(
+            futures::executor::block_on(client.diagnostics())
+                .unwrap()
+                .engine
+                .unwrap()
+                .hook_catalog
+                .loaded,
+            "a history-only session cannot end the committed catalog owner"
+        );
         let abandoned = client.complete_for_session(SessionId::new(2), fixture_request(dir.path(), "slow "));
         await_fixture_start(dir.path());
         drop(abandoned);
@@ -2063,6 +2149,7 @@ mod tests {
             let snapshot = futures::executor::block_on(client.diagnostics()).unwrap();
             if snapshot.engine.unwrap().hooks.script_output.entries == 0 {
                 assert_eq!(snapshot.requests.engine_initializations, 1);
+                assert!(!snapshot.engine.unwrap().hook_catalog.load_attempted);
                 break;
             }
             assert!(
