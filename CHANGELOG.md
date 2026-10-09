@@ -2,6 +2,8 @@
 
 ## v0.0.5
 
+- change: release rebuildable application-wide image and text caches after the last native window closes, preserving font identities and safely retiring buffers returned by older work.
+- change: unload typed-hook descriptors and adapter bindings after the input's 10-second idle grace, reload them through the verified spec snapshot on demand, and expose catalog ownership in engine diagnostics.
 - change: rename the PTY executable and new process titles to `fterm`; keep `fastabterm` compatibility entry points for existing shell integrations, with the Rust crate still named `fastab_term`.
 - change: release unused parsed spec trees after a 10-second grace, including when the input is cleared, executed, or its terminal disconnects. Re-entering a command reloads its specs on demand with the same suggestion content and order.
 - change: cooperatively cancel superseded completions and their scripts, reuse the engine, and prevent cancelled work from publishing incomplete cache or generator state.
