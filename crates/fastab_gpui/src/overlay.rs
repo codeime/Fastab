@@ -301,6 +301,24 @@ impl OverlayState {
         self.has_changed_index = false;
     }
 
+    /// Return storage left by an ended input after the idle grace period.
+    /// Nonempty rows and parser context still belong to explicit Tab recovery.
+    pub fn release_empty_capacity(&mut self) {
+        if self.items.is_empty() {
+            self.items.shrink_to_fit();
+        }
+        for text in [
+            &mut self.search_term,
+            &mut self.match_term,
+            &mut self.current_arg_name,
+            &mut self.current_arg_description,
+        ] {
+            if text.is_empty() {
+                text.shrink_to_fit();
+            }
+        }
+    }
+
     pub fn invalidate_ai(&mut self) {
         self.invalidate_ai_request();
         let Some(from) = self.ai_promoted_from.take() else {

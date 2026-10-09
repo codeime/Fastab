@@ -605,6 +605,21 @@ impl OverlayController {
     }
 
     fn show_kept_items(&mut self, cx: &mut App) {
+        if self
+            .last_position
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .is_none()
+        {
+            // A Show key can already be in transit when the caret disappears.
+            // Keep the request for the next valid caret without marking a
+            // parked window visible and cancelling its idle retirement.
+            self.hide(cx);
+            self.state
+                .update(cx, |overlay, _cx| overlay.suppress_until_shown = false);
+            self.completion_display = CompletionDisplayState::WaitingForCaret;
+            return;
+        }
         // Hidden rows contain strings, not spec ownership. Explicitly showing
         // them may need to resume generators retired with the hidden input.
         if self.completion_display == CompletionDisplayState::Idle {

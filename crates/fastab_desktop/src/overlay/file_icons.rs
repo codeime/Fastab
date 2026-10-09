@@ -174,7 +174,11 @@ impl FileIconCache {
         cx: &mut Context<'_, Self>,
     ) {
         // Even an overlay with only text and bundled icons owns a renderer.
-        // Every hide starts a fresh grace period, including after a brief show.
+        // Repeated hidden input/focus events must not postpone its retirement.
+        // Showing or beginning a new result batch cancels this grace period.
+        if self.idle_task.is_some() {
+            return;
+        }
         self.cancel_idle();
         let generation = self.idle_generation;
         self.idle_task = Some(cx.spawn(async move |this, cx| {
@@ -182,6 +186,11 @@ impl FileIconCache {
             let _ = this.update(cx, |cache, cx| {
                 if cache.idle_generation != generation {
                     return;
+                }
+                // Release the completed task's slot even if state disappeared
+                // or became visible, so the next hide can start a new period.
+                if let Some(task) = cache.idle_task.take() {
+                    task.detach();
                 }
                 let Some(state) = state.upgrade() else { return };
                 if state.read(cx).visible {
@@ -206,6 +215,7 @@ impl FileIconCache {
                 // the small decoded images referenced by the kept rows.
                 drop(cache.take_retired(&row_images(&state, cx)));
                 cache.batch.clear();
+                state.update(cx, |state, _| state.release_empty_capacity());
             });
         }));
     }
@@ -285,11 +295,17 @@ mod tests {
                 let unused = cache.insert_png(PathBuf::from("unused"), png(1)).unwrap();
                 let kept = cache.insert_png(PathBuf::from("kept"), png(2)).unwrap();
                 state.update(cx, |state, _| {
+                    // A large prior result must remain intact while Tab can
+                    // restore it, then release its backing storage on idle.
+                    state.items.reserve(10_000);
                     state.items.push(fastab_gpui::SuggestionItem {
                         name: "kept".into(),
                         icon_png: Some(kept.clone()),
                         ..Default::default()
                     });
+                    state.search_term = "kept search".into();
+                    state.match_term = "kept match".into();
+                    state.set_current_arg("kept argument", "kept argument description");
                 });
                 cache.schedule_idle(state.downgrade(), slot.clone(), cx);
                 (Arc::downgrade(&unused), Arc::downgrade(&kept))
@@ -318,10 +334,120 @@ mod tests {
         assert!(kept.upgrade().is_some(), "Tab still owns the kept row's decoded image");
         cx.update(|cx| {
             assert!(cache.read(cx).paths.is_empty());
-            state.update(cx, |state, _| state.items.clear());
+            assert!(cache.read(cx).idle_task.is_none());
+            state.update(cx, |state, _| {
+                assert_eq!(state.items[0].name, "kept");
+                assert_eq!(state.search_term, "kept search");
+                assert_eq!(state.match_term, "kept match");
+                assert_eq!(state.current_arg_name, "kept argument");
+                assert_eq!(state.current_arg_description, "kept argument description");
+                assert!(state.items.capacity() >= 10_000);
+                state.dismiss();
+            });
             cache.update(cx, |cache, cx| cache.finish_batch(&state, &slot, cx));
         });
         assert!(kept.upgrade().is_none());
+
+        // Completing one grace period must not block a later independent one.
+        let next = cx.update(|cx| {
+            cache.update(cx, |cache, cx| {
+                let image = cache.insert_png(PathBuf::from("next"), png(3)).unwrap();
+                cache.schedule_idle(state.downgrade(), slot.clone(), cx);
+                Arc::downgrade(&image)
+            })
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(9));
+        cx.run_until_parked();
+        assert!(next.upgrade().is_some());
+        cx.update(|cx| {
+            let state = state.read(cx);
+            assert!(state.items.is_empty() && state.items.capacity() >= 10_000);
+            assert!(state.search_term.is_empty() && state.search_term.capacity() > 0);
+            assert!(state.match_term.is_empty() && state.match_term.capacity() > 0);
+            assert!(state.current_arg_name.is_empty() && state.current_arg_name.capacity() > 0);
+            assert!(state.current_arg_description.is_empty() && state.current_arg_description.capacity() > 0);
+        });
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert!(next.upgrade().is_none());
+        cx.update(|cx| {
+            let state = state.read(cx);
+            assert_eq!(state.items.capacity(), 0);
+            assert_eq!(state.search_term.capacity(), 0);
+            assert_eq!(state.match_term.capacity(), 0);
+            assert_eq!(state.current_arg_name.capacity(), 0);
+            assert_eq!(state.current_arg_description.capacity(), 0);
+        });
+    }
+
+    #[gpui::test]
+    fn repeated_hides_keep_the_original_idle_deadline(cx: &mut gpui::TestAppContext) {
+        let slot = Arc::new(Mutex::new(None));
+        let (cache, state, image) = cx.update(|cx| {
+            let state = cx.new(|_| OverlayState::new());
+            let cache = cx.new(|_| FileIconCache::default());
+            let image = cache.update(cx, |cache, cx| {
+                let image = cache.insert_png(PathBuf::from("unused"), png(1)).unwrap();
+                cache.schedule_idle(state.downgrade(), slot.clone(), cx);
+                Arc::downgrade(&image)
+            });
+            (cache, state, image)
+        });
+        cx.run_until_parked();
+        for elapsed in [6, 3] {
+            cx.executor().advance_clock(Duration::from_secs(elapsed));
+            cx.run_until_parked();
+            assert!(image.upgrade().is_some());
+            cx.update(|cx| {
+                cache.update(cx, |cache, cx| {
+                    cache.schedule_idle(state.downgrade(), slot.clone(), cx);
+                });
+            });
+            cx.run_until_parked();
+        }
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert!(
+            image.upgrade().is_none(),
+            "repeated hides still retire at the first deadline"
+        );
+    }
+
+    #[gpui::test]
+    fn an_idle_task_that_skips_retirement_can_be_scheduled_again(cx: &mut gpui::TestAppContext) {
+        for keep_visible_state in [false, true] {
+            let slot = Arc::new(Mutex::new(None));
+            let (cache, state, image) = cx.update(|cx| {
+                let state = cx.new(|_| OverlayState::new());
+                let cache = cx.new(|_| FileIconCache::default());
+                let image = cache.update(cx, |cache, cx| {
+                    let image = cache.insert_png(PathBuf::from("unused"), png(1)).unwrap();
+                    cache.schedule_idle(state.downgrade(), slot.clone(), cx);
+                    Arc::downgrade(&image)
+                });
+                state.update(cx, |state, _| state.visible = true);
+                (cache, keep_visible_state.then_some(state), image)
+            });
+            cx.run_until_parked();
+            cx.executor().advance_clock(IDLE_TIMEOUT);
+            cx.run_until_parked();
+            assert!(image.upgrade().is_some(), "missing or visible state skips retirement");
+            let state = cx.update(|cx| {
+                assert!(cache.read(cx).idle_task.is_none());
+                let state = state.unwrap_or_else(|| cx.new(|_| OverlayState::new()));
+                state.update(cx, |state, _| state.visible = false);
+                cache.update(cx, |cache, cx| {
+                    cache.schedule_idle(state.downgrade(), slot.clone(), cx);
+                });
+                state
+            });
+            cx.run_until_parked();
+            cx.executor().advance_clock(IDLE_TIMEOUT);
+            cx.run_until_parked();
+            assert!(image.upgrade().is_none());
+            drop(state);
+        }
     }
 
     #[test]
