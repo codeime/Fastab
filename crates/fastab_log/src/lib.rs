@@ -5,13 +5,16 @@ use std::sync::Mutex;
 use thiserror::Error;
 use tracing::info;
 use tracing::level_filters::LevelFilter;
-use tracing_appender::non_blocking::WorkerGuard;
+use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::filter::Directive;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, Registry, fmt};
 
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 const DEFAULT_FILTER: LevelFilter = LevelFilter::ERROR;
+// Slots stay allocated even when empty. The upstream 128,000-slot default
+// costs about 3.9 MiB per writer on arm64; file + stdout need only 256 KiB here.
+const BUFFERED_LINES_LIMIT: usize = 4096;
 
 static Q_LOG_LEVEL_GLOBAL: Mutex<Option<String>> = Mutex::new(None);
 static MAX_LEVEL: Mutex<Option<LevelFilter>> = Mutex::new(None);
@@ -48,6 +51,15 @@ pub struct LogArgs<T: AsRef<Path>> {
 pub struct LogGuard {
     _file_guard: Option<WorkerGuard>,
     _stdout_guard: Option<WorkerGuard>,
+}
+
+fn non_blocking_writer(writer: impl std::io::Write + Send + 'static) -> (NonBlocking, WorkerGuard) {
+    NonBlockingBuilder::default()
+        .buffered_lines_limit(BUFFERED_LINES_LIMIT)
+        // Never block the UI or PTY on a slow log sink; retain the existing
+        // lossy behavior while bounding the permanently allocated queue.
+        .lossy(true)
+        .finish(writer)
 }
 
 /// Initialize our application level logging using the given LogArgs.
@@ -97,7 +109,7 @@ pub fn initialize_logging<T: AsRef<Path>>(args: LogArgs<T>) -> Result<LogGuard, 
                 }
             }
 
-            let (non_blocking, guard) = tracing_appender::non_blocking(file);
+            let (non_blocking, guard) = non_blocking_writer(file);
             let file_layer = fmt::layer().with_line_number(true).with_writer(non_blocking);
 
             (Some(file_layer), Some(guard))
@@ -107,7 +119,7 @@ pub fn initialize_logging<T: AsRef<Path>>(args: LogArgs<T>) -> Result<LogGuard, 
 
     // If we log to stdout, we need to add this layer to our logger.
     let (stdout_layer, _stdout_guard) = if args.log_to_stdout {
-        let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stdout());
+        let (non_blocking, guard) = non_blocking_writer(std::io::stdout());
         let stdout_layer = fmt::layer().with_line_number(true).with_writer(non_blocking);
         (Some(stdout_layer), Some(guard))
     } else {
@@ -206,11 +218,60 @@ fn create_filter_layer() -> EnvFilter {
 #[cfg(test)]
 mod tests {
     use std::fs::read_to_string;
+    use std::io::{self, Write};
+    use std::sync::mpsc;
     use std::time::Duration;
 
     use tracing::{debug, error, trace, warn};
 
     use super::*;
+
+    #[test]
+    fn bounded_writer_drops_overflow_without_waiting_for_the_sink() {
+        struct GatedWriter {
+            started: Option<mpsc::Sender<()>>,
+            release: mpsc::Receiver<()>,
+        }
+
+        impl Write for GatedWriter {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                if let Some(started) = self.started.take() {
+                    let _ = started.send(());
+                    // Dropping the sender also releases this gate on failure.
+                    let _ = self.release.recv();
+                }
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (mut writer, guard) = non_blocking_writer(GatedWriter {
+            started: Some(started_tx),
+            release: release_rx,
+        });
+        writer.write_all(b"hold sink").unwrap();
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let (done_tx, done_rx) = mpsc::channel();
+        let producer = std::thread::spawn(move || {
+            for _ in 0..=BUFFERED_LINES_LIMIT {
+                writer.write_all(b"queued line").unwrap();
+            }
+            let _ = done_tx.send(writer.error_counter().dropped_lines());
+        });
+        let dropped = done_rx.recv_timeout(Duration::from_secs(5));
+        // Release before asserting or joining, even if a regression changed
+        // the queue to blocking mode and the producer timed out above.
+        let _ = release_tx.send(());
+        producer.join().unwrap();
+        drop(guard);
+        assert_eq!(dropped.unwrap(), 1);
+    }
 
     #[test]
     fn test_logging() {
