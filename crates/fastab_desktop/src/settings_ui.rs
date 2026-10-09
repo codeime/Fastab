@@ -45,6 +45,9 @@ const SETTINGS_TITLE_LEFT: f32 = SETTINGS_TRAFFIC_LIGHT_X + SETTINGS_TRAFFIC_LIG
 const SETTINGS_TITLE_Y_OFFSET: f32 = 3.0;
 const WIN_W: f32 = 820.0;
 const WIN_H: f32 = 640.0;
+// Temporarily hide the AI settings surface without changing saved AI consent
+// or configuration. Avoid constructing its credential/save tasks while hidden.
+const AI_SETTINGS_VISIBLE: bool = false;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Section {
@@ -122,12 +125,18 @@ pub struct SettingsWindow {
     permission_merge: PermissionMergeState,
     copied_doctor: bool,
     theme_controls: ThemeControls,
-    ai: Entity<ai::AiSettings>,
+    ai: Option<Entity<ai::AiSettings>>,
 }
 
 pub type SettingsHandle = WindowHandle<SettingsWindow>;
 
 impl SettingsWindow {
+    fn clear_ai_draft(&mut self, cx: &mut Context<'_, Self>) {
+        if let Some(ai) = &self.ai {
+            ai.update(cx, |ai, cx| ai.clear_draft(cx));
+        }
+    }
+
     fn zh() -> bool {
         locale_is_zh()
     }
@@ -227,7 +236,11 @@ impl Render for SettingsWindow {
                                 behavior_page(zh, chrome, entity, self.gate.input_method, self.repairing)
                                     .into_any_element()
                             },
-                            Section::Ai => self.ai.clone().into_any_element(),
+                            Section::Ai => self
+                                .ai
+                                .as_ref()
+                                .map(|ai| ai.clone().into_any_element())
+                                .unwrap_or_else(|| div().into_any_element()),
                             Section::About => about_page(zh, chrome, entity, self.copied_doctor).into_any_element(),
                         }),
                 ),
@@ -273,6 +286,9 @@ fn sidebar(section: Section, zh: bool, chrome: Chrome, entity: Entity<SettingsWi
     ];
     let mut nav = div().flex().flex_col().mt(px(14.)).px(px(12.)).gap(px(5.));
     for (id, label) in items {
+        if id == Section::Ai && !AI_SETTINGS_VISIBLE {
+            continue;
+        }
         let active = section == id;
         let entity = entity.clone();
         nav = nav.child(
@@ -315,7 +331,7 @@ fn sidebar(section: Section, zh: bool, chrome: Chrome, entity: Entity<SettingsWi
                 .on_mouse_down(MouseButton::Left, move |_e, _w, cx| {
                     entity.update(cx, |this, cx| {
                         if this.section != id {
-                            this.ai.update(cx, |ai, cx| ai.clear_draft(cx));
+                            this.clear_ai_draft(cx);
                         }
                         this.section = id;
                         this.theme_controls.menu = None;
@@ -2163,12 +2179,12 @@ pub fn open_settings_window(cx: &mut App, proxy: EventLoopProxy) -> anyhow::Resu
                 permission_merge: PermissionMergeState::default(),
                 copied_doctor: false,
                 theme_controls: ThemeControls::new(cx),
-                ai: cx.new(|cx| ai::AiSettings::new(proxy.clone(), cx)),
+                ai: AI_SETTINGS_VISIBLE.then(|| cx.new(|cx| ai::AiSettings::new(proxy.clone(), cx))),
             });
             let weak = entity.downgrade();
             window.on_window_should_close(cx, move |_window, cx| {
                 let _ = weak.update(cx, |this, cx| {
-                    this.ai.update(cx, |ai, cx| ai.clear_draft(cx));
+                    this.clear_ai_draft(cx);
                 });
                 close_proxy
                     .send_event(Event::WindowEvent {
@@ -2381,7 +2397,7 @@ pub fn focus_settings(handle: &SettingsHandle, cx: &mut App) -> bool {
 pub fn close_settings(handle: &SettingsHandle, cx: &mut App) {
     handle
         .update(cx, |view, window, cx| {
-            view.ai.update(cx, |ai, cx| ai.clear_draft(cx));
+            view.clear_ai_draft(cx);
             window.remove_window();
         })
         .ok();
@@ -2394,7 +2410,11 @@ fn settings_section_from_path(path: &str) -> Section {
     if path.contains("behavior") || path.contains("autocomplete") {
         Section::Behavior
     } else if path.contains("jev") || path.ends_with("/ai") || path == "ai" {
-        Section::Ai
+        if AI_SETTINGS_VISIBLE {
+            Section::Ai
+        } else {
+            Section::Appearance
+        }
     } else if path.contains("about") || path.contains("help") || path.contains("troubleshoot") {
         Section::About
     } else {
@@ -2407,7 +2427,7 @@ pub fn set_settings_section(handle: &SettingsHandle, path: &str, cx: &mut App) {
     handle
         .update(cx, |view, _window, cx| {
             if view.section != section {
-                view.ai.update(cx, |ai, cx| ai.clear_draft(cx));
+                view.clear_ai_draft(cx);
             }
             view.section = section;
             view.theme_controls.menu = None;
@@ -2458,8 +2478,8 @@ mod tests {
         assert_eq!(settings_section_from_path("/preferences"), Section::Appearance);
         assert_eq!(settings_section_from_path("/behavior"), Section::Behavior);
         assert_eq!(settings_section_from_path("/autocomplete"), Section::Behavior);
-        assert_eq!(settings_section_from_path("/ai"), Section::Ai);
-        assert_eq!(settings_section_from_path("/jev"), Section::Ai);
+        assert_eq!(settings_section_from_path("/ai"), Section::Appearance);
+        assert_eq!(settings_section_from_path("/jev"), Section::Appearance);
         assert_eq!(settings_section_from_path("/about"), Section::About);
         assert_eq!(settings_section_from_path("/help"), Section::About);
         assert_eq!(settings_section_from_path("/troubleshooting"), Section::About);
