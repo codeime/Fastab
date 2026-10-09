@@ -17,6 +17,10 @@ use crate::runtime::Suggestion;
 /// maps without bound. Wholesale clearing at the cap is fine: entries are
 /// cheap to regenerate and the cap is far above one session's working set.
 const MAX_CACHE_ENTRIES: usize = 512;
+/// Bound payload as well as entry count: script results can each retain 256 KiB.
+/// Each of the three maps gets this budget; an oversized result is still served
+/// to its caller, but is not retained for another request.
+const MAX_CACHE_BYTES: usize = 4 * 1024 * 1024;
 
 thread_local! {
     static CURRENT: std::cell::RefCell<Option<Arc<HookCache>>> = const { std::cell::RefCell::new(None) };
@@ -54,6 +58,7 @@ struct CacheCounters {
 
 struct CacheMap<T> {
     entries: HashMap<String, T>,
+    allocated_bytes: usize,
     counters: CacheCounters,
 }
 
@@ -61,6 +66,7 @@ impl<T> Default for CacheMap<T> {
     fn default() -> Self {
         Self {
             entries: HashMap::new(),
+            allocated_bytes: 0,
             counters: CacheCounters::default(),
         }
     }
@@ -68,30 +74,98 @@ impl<T> Default for CacheMap<T> {
 
 impl<T> CacheMap<T> {
     fn clear(&mut self) {
-        self.entries.clear();
+        self.entries = HashMap::new();
+        self.allocated_bytes = 0;
     }
 
-    fn insert(&mut self, key: String, value: T) {
-        if self.entries.len() >= MAX_CACHE_ENTRIES && !self.entries.contains_key(&key) {
-            self.entries.clear();
-            self.counters.capacity_clears = self.counters.capacity_clears.saturating_add(1);
-        }
-        self.entries.insert(key, value);
-    }
-
-    fn diagnostics(&self, payload_bytes: impl Fn(&T) -> usize) -> CacheMapDiagnostics {
+    fn diagnostics(&self) -> CacheMapDiagnostics {
         CacheMapDiagnostics {
             entries: self.entries.len(),
-            allocated_bytes: self
-                .entries
-                .iter()
-                .map(|(key, value)| std::mem::size_of::<String>() + key.len() + payload_bytes(value))
-                .sum(),
+            allocated_bytes: self.allocated_bytes,
             hits: self.counters.hits,
             misses: self.counters.misses,
             expired_removals: self.counters.expired_removals,
             capacity_clears: self.counters.capacity_clears,
         }
+    }
+}
+
+trait CachePayload {
+    fn heap_bytes(&self) -> usize;
+}
+
+impl CachePayload for String {
+    fn heap_bytes(&self) -> usize {
+        self.capacity()
+    }
+}
+
+impl CachePayload for Vec<Suggestion> {
+    fn heap_bytes(&self) -> usize {
+        self.capacity() * std::mem::size_of::<Suggestion>() + self.iter().map(suggestion_heap).sum::<usize>()
+    }
+}
+
+impl CachePayload for Spec {
+    fn heap_bytes(&self) -> usize {
+        self.allocated_bytes() - std::mem::size_of::<Self>()
+    }
+}
+
+impl<T: CachePayload> CachePayload for CacheEntry<T> {
+    fn heap_bytes(&self) -> usize {
+        self.value.heap_bytes()
+    }
+}
+
+fn suggestion_heap(suggestion: &Suggestion) -> usize {
+    suggestion.name.capacity()
+        + suggestion.description.capacity()
+        + suggestion.kind.capacity()
+        + suggestion.args_hint.capacity()
+        + suggestion.insert_value.as_ref().map_or(0, String::capacity)
+        + suggestion.display_name.as_ref().map_or(0, String::capacity)
+        + suggestion.primary_name.as_ref().map_or(0, String::capacity)
+        + suggestion.separator_to_add.as_ref().map_or(0, String::capacity)
+        + suggestion.icon.as_ref().map_or(0, String::capacity)
+        + suggestion.original_type.as_ref().map_or(0, String::capacity)
+        + suggestion.query_term.as_ref().map_or(0, String::capacity)
+        + suggestion.acceptance_scope.as_ref().map_or(0, String::capacity)
+        + suggestion.public_ai_candidate.as_ref().map_or(0, |candidate| {
+            candidate.name.capacity() + candidate.description.capacity()
+        })
+        + suggestion.alias_names.capacity() * std::mem::size_of::<String>()
+        + suggestion.alias_names.iter().map(String::capacity).sum::<usize>()
+}
+
+impl<T: CachePayload> CacheMap<T> {
+    fn entry_bytes(key: &String, value: &T) -> usize {
+        std::mem::size_of::<String>() + key.capacity() + std::mem::size_of::<T>() + value.heap_bytes()
+    }
+
+    fn remove(&mut self, key: &str) {
+        if let Some((key, value)) = self.entries.remove_entry(key) {
+            self.allocated_bytes -= Self::entry_bytes(&key, &value);
+            if self.entries.is_empty() {
+                self.clear();
+            }
+        }
+    }
+
+    fn insert(&mut self, key: String, value: T) {
+        // Remove a replaced value before applying either budget. An oversized
+        // replacement must not leave its older value available for later hits.
+        self.remove(&key);
+        let bytes = Self::entry_bytes(&key, &value);
+        if bytes > MAX_CACHE_BYTES {
+            return;
+        }
+        if self.entries.len() >= MAX_CACHE_ENTRIES || self.allocated_bytes + bytes > MAX_CACHE_BYTES {
+            self.clear();
+            self.counters.capacity_clears = self.counters.capacity_clears.saturating_add(1);
+        }
+        self.allocated_bytes += bytes;
+        self.entries.insert(key, value);
     }
 }
 
@@ -139,49 +213,46 @@ impl HookCache {
         self.spec_cache.lock().unwrap_or_else(|err| err.into_inner()).clear();
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        let suggestions_empty = self
+            .suggestion_cache
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .entries
+            .is_empty();
+        let scripts_empty = self
+            .script_output_cache
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .entries
+            .is_empty();
+        let specs_empty = self
+            .spec_cache
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .entries
+            .is_empty();
+        suggestions_empty && scripts_empty && specs_empty
+    }
+
     /// Take each map's snapshot under its own lock, without nesting locks or
     /// expiring entries. TTL belongs to the caller's lookup policy.
     pub(crate) fn diagnostics(&self) -> HookDiagnostics {
-        fn suggestion_heap(suggestion: &Suggestion) -> usize {
-            suggestion.name.len()
-                + suggestion.description.len()
-                + suggestion.kind.len()
-                + suggestion.args_hint.len()
-                + suggestion.insert_value.as_ref().map_or(0, String::len)
-                + suggestion.display_name.as_ref().map_or(0, String::len)
-                + suggestion.primary_name.as_ref().map_or(0, String::len)
-                + suggestion.separator_to_add.as_ref().map_or(0, String::len)
-                + suggestion.icon.as_ref().map_or(0, String::len)
-                + suggestion.original_type.as_ref().map_or(0, String::len)
-                + suggestion.query_term.as_ref().map_or(0, String::len)
-                + suggestion.acceptance_scope.as_ref().map_or(0, String::len)
-                + suggestion
-                    .public_ai_candidate
-                    .as_ref()
-                    .map_or(0, |candidate| candidate.name.len() + candidate.description.len())
-                + suggestion.alias_names.capacity() * std::mem::size_of::<String>()
-                + suggestion.alias_names.iter().map(String::len).sum::<usize>()
-        }
-
         let suggestions = self
             .suggestion_cache
             .lock()
             .unwrap_or_else(|err| err.into_inner())
-            .diagnostics(|entry| {
-                std::mem::size_of::<CacheEntry<Vec<Suggestion>>>()
-                    + entry.value.capacity() * std::mem::size_of::<Suggestion>()
-                    + entry.value.iter().map(suggestion_heap).sum::<usize>()
-            });
+            .diagnostics();
         let script_output = self
             .script_output_cache
             .lock()
             .unwrap_or_else(|err| err.into_inner())
-            .diagnostics(|entry| std::mem::size_of::<CacheEntry<String>>() + entry.value.len());
+            .diagnostics();
         let specs = self
             .spec_cache
             .lock()
             .unwrap_or_else(|err| err.into_inner())
-            .diagnostics(Spec::allocated_bytes);
+            .diagnostics();
         HookDiagnostics {
             suggestions,
             script_output,
@@ -272,7 +343,11 @@ fn owned_cache_policy(arg: &ArgSpec) -> Option<OwnedCachePolicy> {
     })
 }
 
-fn cache_get<T: Clone>(cache: &Mutex<CacheMap<CacheEntry<T>>>, key: &str, policy: CachePolicy) -> Option<T> {
+fn cache_get<T: Clone + CachePayload>(
+    cache: &Mutex<CacheMap<CacheEntry<T>>>,
+    key: &str,
+    policy: CachePolicy,
+) -> Option<T> {
     crate::cancellation::commit_if_active(|| {
         let mut cache = cache.lock().unwrap_or_else(|err| err.into_inner());
         let expired = cache
@@ -280,7 +355,7 @@ fn cache_get<T: Clone>(cache: &Mutex<CacheMap<CacheEntry<T>>>, key: &str, policy
             .get(key)
             .is_some_and(|entry| policy.ttl.is_some_and(|ttl| entry.fetched_at.elapsed() > ttl));
         if expired {
-            cache.entries.remove(key);
+            cache.remove(key);
             cache.counters.expired_removals = cache.counters.expired_removals.saturating_add(1);
         }
         let value = cache.entries.get(key).map(|entry| entry.value.clone());
@@ -295,7 +370,7 @@ fn cache_get<T: Clone>(cache: &Mutex<CacheMap<CacheEntry<T>>>, key: &str, policy
     .flatten()
 }
 
-fn cache_put<T>(cache: &Mutex<CacheMap<CacheEntry<T>>>, key: String, value: T) {
+fn cache_put<T: CachePayload>(cache: &Mutex<CacheMap<CacheEntry<T>>>, key: String, value: T) {
     let _ = crate::cancellation::commit_if_active(|| {
         let mut cache = cache.lock().unwrap_or_else(|err| err.into_inner());
         cache.insert(
@@ -308,7 +383,7 @@ fn cache_put<T>(cache: &Mutex<CacheMap<CacheEntry<T>>>, key: String, value: T) {
     });
 }
 
-fn run_cached<T: Clone + Default>(
+fn run_cached<T: Clone + Default + CachePayload>(
     cache: &Mutex<CacheMap<CacheEntry<T>>>,
     arg: &ArgSpec,
     cwd: &str,
@@ -556,18 +631,74 @@ mod tests {
     fn replacement_at_capacity_preserves_other_entries_and_counts_only_overflow() {
         let mut map = CacheMap::default();
         for index in 0..MAX_CACHE_ENTRIES {
-            map.insert(index.to_string(), index);
+            map.insert(index.to_string(), index.to_string());
         }
-        map.insert("0".into(), 99);
+        map.insert("0".into(), "99".into());
         assert_eq!(map.entries.len(), MAX_CACHE_ENTRIES);
-        assert_eq!(map.entries["1"], 1);
+        assert_eq!(map.entries["1"], "1");
         assert_eq!(map.counters.capacity_clears, 0);
-        map.insert("overflow".into(), 1);
+        map.insert("overflow".into(), "1".into());
         assert_eq!(map.entries.len(), 1);
         assert_eq!(map.counters.capacity_clears, 1);
         map.clear();
         assert!(map.entries.is_empty());
+        assert_eq!(map.entries.capacity(), 0);
+        assert_eq!(map.allocated_bytes, 0);
         assert_eq!(map.counters.capacity_clears, 1);
+    }
+
+    #[test]
+    fn byte_budget_counts_spare_capacity_and_rejects_oversized_replacements() {
+        let mut map = CacheMap::default();
+        let mut first = String::with_capacity(MAX_CACHE_BYTES / 2);
+        first.push('a');
+        let expected = CacheMap::<String>::entry_bytes(&"first".to_owned(), &first);
+        map.insert("first".into(), first);
+        assert_eq!(map.allocated_bytes, expected);
+        assert!(map.allocated_bytes > MAX_CACHE_BYTES / 2);
+        map.insert("second".into(), String::with_capacity(MAX_CACHE_BYTES / 2));
+        assert!(!map.entries.contains_key("first"));
+        assert_eq!(map.entries.len(), 1);
+        assert_eq!(map.counters.capacity_clears, 1);
+        assert!(map.allocated_bytes <= MAX_CACHE_BYTES);
+        map.insert("second".into(), String::with_capacity(MAX_CACHE_BYTES));
+        assert!(
+            map.entries.is_empty(),
+            "an oversized replacement cannot leave a stale hit"
+        );
+        assert_eq!(map.allocated_bytes, 0);
+        map.insert("small".into(), "value".into());
+        let before = map.allocated_bytes;
+        map.insert("small".into(), "v".into());
+        assert_eq!(map.allocated_bytes, before - 4);
+        map.remove("small");
+        assert_eq!(map.allocated_bytes, 0);
+    }
+
+    #[test]
+    fn all_hook_maps_serve_but_do_not_retain_oversized_payloads() {
+        let cache = HookCache::new();
+        let _bound = cache.bind();
+        let arg = ArgSpec {
+            cache_strategy: Some("max-age".into()),
+            ..ArgSpec::default()
+        };
+        let script = cached_script_output(&arg, "", "large", || "x".repeat(MAX_CACHE_BYTES));
+        assert_eq!(script.len(), MAX_CACHE_BYTES);
+        let rows = cached_suggestions(&arg, "", "custom", "large", || {
+            vec![Suggestion::new("row", "x".repeat(MAX_CACHE_BYTES), "arg")]
+        });
+        assert_eq!(rows[0].description.len(), MAX_CACHE_BYTES);
+        let spec = cached_spec("large", || {
+            Some(Spec {
+                description: "x".repeat(MAX_CACHE_BYTES),
+                ..Spec::default()
+            })
+        })
+        .unwrap();
+        assert_eq!(spec.description.len(), MAX_CACHE_BYTES);
+        assert!(cache.is_empty());
+        assert_eq!(cache.allocated_bytes(), 0);
     }
 
     #[test]

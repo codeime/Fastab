@@ -5,8 +5,9 @@
 pub struct CacheMapDiagnostics {
     pub entries: usize,
     /// Estimated retained payload bytes, not allocator usage or process footprint.
-    /// Omits map nodes, string spare capacity and allocator overhead. Shared
-    /// option Arcs may be counted again across separate cached spec entries.
+    /// Counts owned string/vector capacity for script and suggestion results;
+    /// specs use the registry's tree estimate. Omits map nodes and allocator
+    /// overhead. Shared option Arcs can be counted across separate spec entries.
     pub allocated_bytes: usize,
     pub hits: u64,
     pub misses: u64,

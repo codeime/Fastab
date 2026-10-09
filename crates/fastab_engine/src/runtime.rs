@@ -368,6 +368,10 @@ pub struct Engine {
     history: Arc<crate::history::HistoryStore>,
     /// Generator cache that has to survive the per-request attempt thread.
     generator_session: crate::generate::GeneratorSession,
+    /// Hook results belong to the current normal input. History-only and
+    /// cancelled attempts cannot acquire ownership or renew an idle deadline.
+    hook_cache_active: bool,
+    hook_cache_idle_since: Option<std::time::Instant>,
 }
 
 impl Engine {
@@ -424,6 +428,8 @@ impl Engine {
             history_source: None,
             history: Arc::default(),
             generator_session: crate::generate::GeneratorSession::default(),
+            hook_cache_active: false,
+            hook_cache_idle_since: None,
         }
     }
 
@@ -469,6 +475,8 @@ impl Engine {
     /// ending twice must not keep an otherwise idle tree alive.
     pub(crate) fn end_input(&mut self) {
         self.generator_session = crate::generate::GeneratorSession::default();
+        self.hook_cache_active = false;
+        self.note_idle_hook_cache(false, std::time::Instant::now());
         self.registry.begin_idle_completion();
         self.registry.note_idle_after_complete(std::time::Instant::now());
     }
@@ -501,14 +509,37 @@ impl Engine {
         let _ = self.clear_caches_and_report();
     }
 
-    /// Release expired idle specs after the worker has regained the engine.
+    /// Release expired specs and hook results after the worker regains Engine.
     pub(crate) fn release_idle_specs(&mut self, now: std::time::Instant, grace: std::time::Duration) {
         self.registry.release_idle(now, grace);
+        if !self.hook_cache_active
+            && self
+                .hook_cache_idle_since
+                .is_some_and(|since| now.saturating_duration_since(since) >= grace)
+        {
+            self.hook_cache.clear();
+            self.hook_cache_idle_since = None;
+        }
     }
 
-    /// Earliest idle-spec deadline for the worker to wait on.
+    /// Earliest resource deadline, including hooks when no spec remains cached.
     pub(crate) fn next_idle_deadline(&self, grace: std::time::Duration) -> Option<std::time::Instant> {
-        self.registry.next_idle_deadline(grace)
+        let hook_deadline = (!self.hook_cache_active && !self.hook_cache.is_empty())
+            .then_some(self.hook_cache_idle_since)
+            .flatten()
+            .and_then(|since| since.checked_add(grace));
+        self.registry
+            .next_idle_deadline(grace)
+            .into_iter()
+            .chain(hook_deadline)
+            .min()
+    }
+
+    fn note_idle_hook_cache(&mut self, was_empty: bool, now: std::time::Instant) {
+        if !self.hook_cache_active && !self.hook_cache.is_empty() && (was_empty || self.hook_cache_idle_since.is_none())
+        {
+            self.hook_cache_idle_since = Some(now);
+        }
     }
 
     #[cfg(test)]
@@ -527,6 +558,7 @@ impl Engine {
     /// window.
     pub(crate) fn clear_caches_and_report(&mut self) -> bool {
         self.hook_cache.clear();
+        self.hook_cache_idle_since = None;
         self.generator_session = crate::generate::GeneratorSession::default();
         self.history = Arc::default();
         match Self::load_registry(&self.specs_dir) {
@@ -536,6 +568,7 @@ impl Engine {
                 // observe different trees.
                 self.rebind_hosts(&registry);
                 self.registry = registry;
+                self.hook_cache_active = false;
                 true
             },
             Err(err) => {
@@ -632,6 +665,7 @@ impl Engine {
         self.refresh_specs_generation();
         crate::cancellation::check()?;
         let idle = self.registry.checkpoint_idle();
+        let hook_cache_was_empty = self.hook_cache.is_empty();
         let history_only = request.history_only;
         crate::generate::take_pending_generators();
         crate::generate::install_session(std::mem::take(&mut self.generator_session));
@@ -640,8 +674,11 @@ impl Engine {
         match crate::cancellation::finish_if_active(|| {
             self.generator_session = session;
             if result.is_ok() && !history_only {
+                self.hook_cache_active = true;
+                self.hook_cache_idle_since = None;
                 self.registry.note_idle_after_complete(std::time::Instant::now());
             } else {
+                self.note_idle_hook_cache(hook_cache_was_empty, std::time::Instant::now());
                 // History-only still loads specs to resolve fuzzy matching.
                 // It cannot take ownership of earlier active files, but new
                 // files must not be left without an idle deadline.
@@ -652,6 +689,7 @@ impl Engine {
             Ok(result) => result,
             Err(cancelled) => {
                 crate::generate::take_pending_generators();
+                self.note_idle_hook_cache(hook_cache_was_empty, std::time::Instant::now());
                 self.registry.restore_idle_checkpoint(&idle, std::time::Instant::now());
                 Err(cancelled.into())
             },
@@ -831,6 +869,80 @@ mod tests {
 
         let registry = Engine::load_registry(root.path()).expect("an existing fixture directory is valid");
         assert!(registry.is_empty());
+    }
+
+    fn populate_hook_results(engine: &Engine) {
+        let _bound = engine.hook_cache.bind();
+        let arg = crate::ir::ArgSpec {
+            cache_strategy: Some("max-age".into()),
+            ..crate::ir::ArgSpec::default()
+        };
+        crate::hook_cache::cached_script_output(&arg, "", "script", || "output".into());
+        crate::hook_cache::cached_suggestions(&arg, "", "custom", "rows", || {
+            vec![Suggestion::new("result", "", "arg")]
+        });
+        crate::hook_cache::cached_spec("spec", || Some(crate::ir::Spec::default()));
+    }
+
+    #[test]
+    fn hook_idle_grace_survives_history_and_repeated_end_without_a_spec_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).unwrap();
+        engine.complete(CompleteRequest::default()).unwrap();
+        populate_hook_results(&engine);
+        let grace = Duration::from_secs(10);
+        assert!(engine.registry.next_idle_deadline(grace).is_none());
+        assert!(
+            engine.next_idle_deadline(grace).is_none(),
+            "normal input still owns the hook results"
+        );
+        engine.end_input();
+        let deadline = engine.next_idle_deadline(grace).unwrap();
+        engine
+            .complete(CompleteRequest {
+                history_only: true,
+                ..CompleteRequest::default()
+            })
+            .unwrap();
+        engine.end_input();
+        assert_eq!(engine.next_idle_deadline(grace), Some(deadline));
+        engine.release_idle_specs(deadline - Duration::from_millis(1), grace);
+        assert!(!engine.hook_cache.is_empty());
+        engine.release_idle_specs(deadline, grace);
+        assert!(engine.hook_cache.is_empty());
+        assert!(engine.next_idle_deadline(grace).is_none());
+        for stats in [
+            engine.diagnostics().hooks.suggestions,
+            engine.diagnostics().hooks.script_output,
+            engine.diagnostics().hooks.specs,
+        ] {
+            assert_eq!((stats.entries, stats.allocated_bytes, stats.misses), (0, 0, 1));
+        }
+    }
+
+    #[test]
+    fn first_unowned_hook_results_get_a_fresh_grace_and_clear_retires_ownership() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::new_with_frecency(dir.path().to_path_buf(), Frecency::default()).unwrap();
+        let now = std::time::Instant::now();
+        let grace = Duration::from_secs(10);
+        engine.hook_cache_idle_since = Some(now - Duration::from_secs(100));
+        let was_empty = engine.hook_cache.is_empty();
+        populate_hook_results(&engine);
+        // This is the same settlement used by history-only, failed and
+        // cancelled attempts: an earlier empty cache has no old owner/deadline.
+        engine.note_idle_hook_cache(was_empty, now);
+        assert_eq!(engine.next_idle_deadline(grace), Some(now + grace));
+        engine.note_idle_hook_cache(false, now + Duration::from_secs(8));
+        assert_eq!(engine.next_idle_deadline(grace), Some(now + grace));
+        engine.complete(CompleteRequest::default()).unwrap();
+        assert!(engine.next_idle_deadline(grace).is_none());
+        assert!(engine.clear_caches_and_report());
+        assert!(
+            !engine.hook_cache_active,
+            "clear-cache also retires the worker's active owner"
+        );
+        assert!(engine.hook_cache_idle_since.is_none());
     }
 
     fn write_typed_custom(dir: &std::path::Path, hook_id: &str, name: &str) {

@@ -46,7 +46,8 @@ impl SessionId {
 
 #[derive(Debug, Clone)]
 pub struct EngineClientOptions {
-    /// Override for controlled resource replay. Normal clients use the default.
+    /// Idle grace for specs and hook results in controlled resource replay.
+    /// Normal clients use the default.
     pub spec_idle_grace: Duration,
 }
 
@@ -783,7 +784,7 @@ fn rebuild_engine(
     Ok(Engine::from_registry(specs_dir, registry, acceptance.clone()))
 }
 
-// Control traffic can keep recv_timeout ready forever. Give expired trees a
+// Control traffic can keep recv_timeout ready forever. Give expired resources a
 // bounded maintenance opportunity without moving a control across a request.
 const MAX_JOBS_WITHOUT_ATTEMPT: usize = 64;
 
@@ -1916,6 +1917,160 @@ mod tests {
             released = client.inspect_idle("child").expect("inspect");
         }
         assert!(released.mark.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hook_results_wake_idle_maintenance_without_any_file_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut registry = Registry::new();
+        registry.insert(
+            serde_json::from_value(serde_json::json!({
+                "names": ["tool"], "args": [{
+                    "cacheStrategy": "max-age", "splitOn": "\n", "script": ["/bin/echo", "cached-result"]
+                }]
+            }))
+            .unwrap(),
+        );
+        let engine = Engine::from_registry(dir.path(), registry, Arc::new(Mutex::new(AcceptanceIndex::default())));
+        let (mut engine, result) = run_engine_attempt(
+            engine,
+            CompleteRequest {
+                buffer: "tool ".into(),
+                cwd: dir.path().display().to_string(),
+                include_history: false,
+                ..CompleteRequest::default()
+            },
+            WATCHDOG_UNDER_TEST,
+        )
+        .unwrap();
+        assert!(
+            result
+                .unwrap()
+                .suggestions
+                .iter()
+                .any(|row| row.name == "cached-result")
+        );
+        assert_eq!(engine.diagnostics().hooks.script_output.entries, 1);
+        assert_eq!(engine.diagnostics().registry.cached_file_count, 0);
+        engine.end_input();
+        let grace = Duration::from_millis(20);
+        let (tx, rx) = mpsc::channel();
+        let (done, received) = mpsc::channel();
+        let waiter = thread::spawn(move || {
+            let result = wait_for_engine_job(&rx, Some(&engine), grace);
+            let _ = done.send((result, engine));
+        });
+        let observed = received.recv_timeout(Duration::from_secs(2));
+        // A missing deadline would block in recv. Disconnect it before failing
+        // the assertion, so a regression cannot leave a waiting test thread.
+        drop(tx);
+        waiter.join().unwrap();
+        let (result, mut engine) = observed.expect("hook-only idle deadline must wake the worker");
+        assert!(matches!(result, Err(mpsc::RecvTimeoutError::Timeout)));
+        engine.release_idle_specs(Instant::now(), grace);
+        assert_eq!(engine.diagnostics().hooks.script_output.entries, 0);
+        assert!(engine.next_idle_deadline(grace).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelling_the_first_input_releases_results_cached_before_cancellation() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("slow.json"),
+            serde_json::json!({
+                "names": ["slow"], "args": [{ "generators": [
+                    {"cacheStrategy": "max-age", "script": ["/bin/echo", "cached-first"]},
+                    {"script": ["/bin/sh", "-c", ": > \"$1\"; while :; do sleep 1; done",
+                        "cancel-cache-fixture", dir.path().join("started")]}
+                ]}]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let grace = Duration::from_millis(200);
+        let client = EngineClient::spawn_with_idle_grace(dir.path().to_path_buf(), WATCHDOG_UNDER_TEST, grace).unwrap();
+        let task = client.complete_for_session(SessionId::new(1), fixture_request(dir.path(), "slow "));
+        await_fixture_start(dir.path());
+        client.end_input(SessionId::new(1)).unwrap();
+        assert!(
+            futures::executor::block_on(task)
+                .unwrap_err()
+                .is::<CompletionCancelled>()
+        );
+        let snapshot = futures::executor::block_on(client.diagnostics()).unwrap();
+        assert_eq!(
+            snapshot.engine.unwrap().hooks.script_output.entries,
+            1,
+            "a newly idle result gets a full grace"
+        );
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let snapshot = futures::executor::block_on(client.diagnostics()).unwrap();
+            if snapshot.engine.unwrap().hooks.script_output.entries == 0 {
+                assert_eq!(snapshot.requests.engine_initializations, 1);
+                assert_eq!(snapshot.requests.cancelled, 1);
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "a cancelled first request left an ownerless hook cache"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cached_hooks_follow_committed_session_across_history_and_cancelled_submission() {
+        let dir = tempfile::tempdir().unwrap();
+        slow_fixture(dir.path());
+        std::fs::write(
+            dir.path().join("fast.json"),
+            r#"{
+            "names":["fast"],"args":[{"cacheStrategy":"max-age","script":["/bin/echo","ready"]}]
+        }"#,
+        )
+        .unwrap();
+        let grace = Duration::from_millis(100);
+        let client = EngineClient::spawn_with_idle_grace(dir.path().to_path_buf(), WATCHDOG_UNDER_TEST, grace).unwrap();
+        futures::executor::block_on(
+            client.complete_for_session(SessionId::new(1), fixture_request(dir.path(), "fast ")),
+        )
+        .unwrap();
+        let mut history = fixture_request(dir.path(), "fast ");
+        history.history_only = true;
+        futures::executor::block_on(client.complete_for_session(SessionId::new(2), history)).unwrap();
+        client.end_input(SessionId::new(2)).unwrap();
+        thread::sleep(grace + Duration::from_millis(20));
+        assert_eq!(
+            futures::executor::block_on(client.diagnostics())
+                .unwrap()
+                .engine
+                .unwrap()
+                .hooks
+                .script_output
+                .entries,
+            1
+        );
+        let abandoned = client.complete_for_session(SessionId::new(2), fixture_request(dir.path(), "slow "));
+        await_fixture_start(dir.path());
+        drop(abandoned);
+        client.end_input(SessionId::new(1)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let snapshot = futures::executor::block_on(client.diagnostics()).unwrap();
+            if snapshot.engine.unwrap().hooks.script_output.entries == 0 {
+                assert_eq!(snapshot.requests.engine_initializations, 1);
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "cancelled newer session swallowed the owner's idle release"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]

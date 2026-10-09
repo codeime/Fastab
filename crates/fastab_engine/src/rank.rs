@@ -1,7 +1,7 @@
 //! Frecency ranking over spec suggestions, plus history command matches.
 
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -21,6 +21,10 @@ const CUSTOM_HISTORY_TIMEOUT: Duration = Duration::from_secs(5);
 /// State key used for the native equivalent of the WebView's recency index.
 /// The value is a JSON object `{ command: { acceptedName: unixMillis } }`.
 pub const ACCEPTANCE_STATE_KEY: &str = "autocomplete.acceptanceRecency";
+const MAX_ACCEPTANCES: usize = 2048;
+const MAX_ACCEPTANCE_BYTES: usize = 256 * 1024;
+const MAX_ACCEPTANCE_ROOT_BYTES: usize = 256;
+const MAX_ACCEPTANCE_NAME_BYTES: usize = 1024;
 /// Separate from the old root-command index so existing settings remain
 /// readable and argument values cannot inherit their global recency.
 pub(crate) const SCOPED_ACCEPTANCE_STATE_KEY: &str = "autocomplete.argumentAcceptanceRecencyV1";
@@ -208,7 +212,8 @@ pub(crate) fn normalize_history_shell(value: Option<&str>) -> HistoryShell {
         return HistoryShell::Unknown;
     };
     let value = value
-        .strip_suffix(" (fastabterm)")
+        .strip_suffix(" (fterm)")
+        .or_else(|| value.strip_suffix(" (fastabterm)"))
         .or_else(|| value.strip_suffix(" (figterm)"))
         .or_else(|| value.strip_suffix(" (ecterm)"))
         .or_else(|| value.strip_suffix(" (qterm)"))
@@ -472,13 +477,154 @@ impl AcceptanceIndex {
     }
 
     pub fn load() -> Self {
-        let mut index: Self = fastab_settings::state::get_value(ACCEPTANCE_STATE_KEY)
+        let loaded: Self = fastab_settings::state::get_value(ACCEPTANCE_STATE_KEY)
             .ok()
             .flatten()
             .and_then(|value| serde_json::from_value(value).ok())
             .unwrap_or_default();
+        let (mut index, pruned) = Self::prune_loaded(loaded);
+        if pruned {
+            index.persist();
+        }
         index.scoped = ScopedAcceptanceIndex::load();
         index
+    }
+
+    /// Consume old allocations instead of cloning an unbounded legacy map.
+    /// Only the newest count-limited candidates survive until the byte pass.
+    fn prune_loaded(loaded: Self) -> (Self, bool) {
+        let Self { entries, scoped } = loaded;
+        let mut newest = BTreeSet::new();
+        let mut timestamps = HashMap::<(Arc<str>, Arc<str>), u64>::new();
+        let mut original_count = 0usize;
+        let mut pruned = false;
+        for (command, names) in entries {
+            original_count = original_count.saturating_add(names.len());
+            pruned |= names.is_empty();
+            let root = command.trim();
+            pruned |= root != command;
+            if root.is_empty() || root.len() > MAX_ACCEPTANCE_ROOT_BYTES {
+                pruned = true;
+                continue;
+            }
+            let root: Arc<str> = Arc::from(root);
+            for (name, timestamp) in names {
+                let trimmed = name.trim();
+                if !valid_acceptance(&root, trimmed) {
+                    pruned = true;
+                    continue;
+                }
+                pruned |= trimmed != name;
+                // Normalize before limiting candidates: alternate whitespace
+                // spellings of one key must not displace distinct acceptances.
+                // Both bounded indexes share the strings, never the old maps.
+                match timestamps.entry((root.clone(), Arc::from(trimmed))) {
+                    std::collections::hash_map::Entry::Occupied(mut entry) => {
+                        pruned = true;
+                        if timestamp > *entry.get() {
+                            let (root, name) = entry.key();
+                            newest.remove(&(*entry.get(), root.clone(), name.clone()));
+                            newest.insert((timestamp, root.clone(), name.clone()));
+                            entry.insert(timestamp);
+                        }
+                    },
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        let (root, name) = entry.key();
+                        newest.insert((timestamp, root.clone(), name.clone()));
+                        entry.insert(timestamp);
+                        if newest.len() > MAX_ACCEPTANCES {
+                            let (_, root, name) = newest.pop_first().expect("candidate set is full");
+                            timestamps.remove(&(root, name));
+                            pruned = true;
+                        }
+                    },
+                }
+            }
+        }
+        drop(timestamps);
+        let mut bounded = Self {
+            scoped,
+            ..Self::default()
+        };
+        for (timestamp, command, name) in newest.into_iter().rev() {
+            bounded.record_at(&command, &name, timestamp);
+        }
+        pruned |= bounded.entry_count() != original_count;
+        (bounded, pruned)
+    }
+
+    fn entry_count(&self) -> usize {
+        self.entries.values().map(HashMap::len).sum()
+    }
+
+    fn estimated_bytes(&self) -> usize {
+        self.entries.iter().fold(0usize, |total, (command, names)| {
+            names
+                .keys()
+                .fold(total.saturating_add(acceptance_root_bytes(command)), |total, name| {
+                    total.saturating_add(acceptance_name_bytes(name))
+                })
+        })
+    }
+
+    fn fits_new_entry(&self, command: &str, name: &str) -> bool {
+        let root_bytes = if self.entries.contains_key(command) {
+            0
+        } else {
+            acceptance_root_bytes(command)
+        };
+        self.entry_count() < MAX_ACCEPTANCES
+            && self.estimated_bytes() + root_bytes + acceptance_name_bytes(name) <= MAX_ACCEPTANCE_BYTES
+    }
+
+    /// Budget the new item alongside every item it is too old to evict before
+    /// making any removals. A large delayed replay must not partially prune
+    /// the index and then discover that it cannot fit without losing new data.
+    fn fits_with_newer_entries(&self, command: &str, name: &str, timestamp: u64) -> bool {
+        let mut count = 1usize;
+        let mut bytes = acceptance_root_bytes(command) + acceptance_name_bytes(name);
+        for (root, names) in &self.entries {
+            let mut charged_root = root == command;
+            for (name, accepted) in names {
+                if *accepted < timestamp {
+                    continue;
+                }
+                if !charged_root {
+                    bytes += acceptance_root_bytes(root);
+                    charged_root = true;
+                }
+                count += 1;
+                bytes += acceptance_name_bytes(name);
+                if count > MAX_ACCEPTANCES || bytes > MAX_ACCEPTANCE_BYTES {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn remove_oldest(&mut self) {
+        let oldest = self
+            .entries
+            .iter()
+            .flat_map(|(command, names)| names.iter().map(move |(name, timestamp)| (command, name, timestamp)))
+            .min_by(|left, right| {
+                left.2
+                    .cmp(right.2)
+                    .then_with(|| left.0.cmp(right.0))
+                    .then_with(|| left.1.cmp(right.1))
+            })
+            .map(|(command, name, _)| (command.clone(), name.clone()));
+        if let Some((command, name)) = oldest {
+            let names = self.entries.get_mut(&command).expect("oldest command exists");
+            names.remove(&name);
+            if names.is_empty() {
+                self.entries.remove(&command);
+                self.entries.shrink_to_fit();
+            } else {
+                names.shrink_to_fit();
+            }
+        }
     }
 
     /// Return the last acceptance time in Unix milliseconds for a command and
@@ -505,8 +651,20 @@ impl AcceptanceIndex {
     pub fn record_at(&mut self, command: &str, name: &str, timestamp: u64) -> bool {
         let command = command.trim();
         let name = name.trim();
-        if command.is_empty() || name.is_empty() || name == "↪" || name == "../" {
+        if !valid_acceptance(command, name) {
             return false;
+        }
+        if let Some(existing) = self.entries.get_mut(command).and_then(|names| names.get_mut(name)) {
+            *existing = (*existing).max(timestamp);
+            return true;
+        }
+        if !self.fits_new_entry(command, name) {
+            if !self.fits_with_newer_entries(command, name, timestamp) {
+                return true;
+            }
+            while !self.fits_new_entry(command, name) {
+                self.remove_oldest();
+            }
         }
         self.entries
             .entry(command.to_string())
@@ -528,7 +686,10 @@ impl AcceptanceIndex {
     }
 
     pub fn persist(&self) {
-        if let Ok(value) = serde_json::to_value(self) {
+        if self.entry_count() <= MAX_ACCEPTANCES
+            && self.estimated_bytes() <= MAX_ACCEPTANCE_BYTES
+            && let Ok(value) = serde_json::to_value(self)
+        {
             let _ = fastab_settings::state::set_value(ACCEPTANCE_STATE_KEY, value);
         }
     }
@@ -541,6 +702,35 @@ impl AcceptanceIndex {
         }
         index
     }
+}
+
+fn valid_acceptance(command: &str, name: &str) -> bool {
+    !command.is_empty()
+        && command.len() <= MAX_ACCEPTANCE_ROOT_BYTES
+        && !name.is_empty()
+        && name.len() <= MAX_ACCEPTANCE_NAME_BYTES
+        && !matches!(name, "↪" | "../")
+}
+
+fn acceptance_string_bytes(value: &str) -> usize {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'"' | b'\\' => 2,
+            0..=0x1f => 6,
+            _ => 1,
+        })
+        .sum()
+}
+
+// Charge conservative map/string bookkeeping and JSON escaping, including
+// room for punctuation and a u64 timestamp. Roots are charged only once.
+fn acceptance_root_bytes(command: &str) -> usize {
+    256 + acceptance_string_bytes(command)
+}
+
+fn acceptance_name_bytes(name: &str) -> usize {
+    96 + acceptance_string_bytes(name)
 }
 
 fn first_word_count(counts: &HashMap<String, usize>, value: &str) -> usize {
@@ -1344,6 +1534,168 @@ mod tests {
     }
 
     #[test]
+    fn legacy_acceptance_evicts_oldest_at_the_count_limit_and_preserves_roots() {
+        let mut index = AcceptanceIndex::default();
+        for number in 0..MAX_ACCEPTANCES {
+            assert!(index.record_at("git", &format!("name-{number}"), number as u64 + 10));
+        }
+        assert_eq!(index.entry_count(), MAX_ACCEPTANCES);
+        assert!(index.estimated_bytes() <= MAX_ACCEPTANCE_BYTES);
+        assert!(index.record_at("docker", "name-0", u64::MAX));
+        assert_eq!(index.entry_count(), MAX_ACCEPTANCES);
+        assert_eq!(index.timestamp("git", "name-0"), None);
+        assert_eq!(index.timestamp("docker", "name-0"), Some(u64::MAX));
+        // An old worker replay cannot reverse an eviction or lower a timestamp.
+        assert!(index.record_at("git", "name-0", 10));
+        assert!(index.record_at("docker", "name-0", 1));
+        assert_eq!(index.timestamp("git", "name-0"), None);
+        assert_eq!(index.timestamp("docker", "name-0"), Some(u64::MAX));
+    }
+
+    #[test]
+    fn legacy_acceptance_byte_budget_includes_json_escaping() {
+        let mut index = AcceptanceIndex::default();
+        let mut old_names = HashMap::new();
+        for number in 0..100 {
+            let name = format!("{number:04}{}", "\0".repeat(MAX_ACCEPTANCE_NAME_BYTES - 4));
+            assert!(index.record_at("git", &name, number));
+            old_names.insert(name, number);
+            assert!(index.estimated_bytes() <= MAX_ACCEPTANCE_BYTES);
+        }
+        assert!(
+            index.entry_count() < 100,
+            "bytes must limit entries before the count cap"
+        );
+        assert!(serde_json::to_vec(&index).unwrap().len() <= MAX_ACCEPTANCE_BYTES);
+        let newest = format!("0099{}", "\0".repeat(MAX_ACCEPTANCE_NAME_BYTES - 4));
+        assert_eq!(index.timestamp("git", &newest), Some(99));
+        let oldest = format!("0000{}", "\0".repeat(MAX_ACCEPTANCE_NAME_BYTES - 4));
+        assert_eq!(index.timestamp("git", &oldest), None);
+        let loaded = AcceptanceIndex {
+            entries: HashMap::from([("git".into(), old_names)]),
+            ..AcceptanceIndex::default()
+        };
+        let (bounded, pruned) = AcceptanceIndex::prune_loaded(loaded);
+        assert!(pruned);
+        assert_eq!(bounded, index, "load must keep the same newest byte-bounded records");
+    }
+
+    #[test]
+    fn legacy_acceptance_rejects_oversize_fields_after_trimming() {
+        let mut index = AcceptanceIndex::default();
+        let root = "r".repeat(MAX_ACCEPTANCE_ROOT_BYTES);
+        let name = "é".repeat(MAX_ACCEPTANCE_NAME_BYTES / 2);
+        assert!(index.record_at(&format!(" {root} "), &format!(" {name} "), 42));
+        assert_eq!(index.timestamp(&root, &name), Some(42));
+        assert!(!index.record_at(&format!("{root}r"), "valid", 43));
+        assert!(!index.record_at("valid", &format!("{name}é"), 43));
+        assert!(!index.record_at("git", " ../ ", 43));
+        assert!(!index.record_at("git", " ↪ ", 43));
+        assert!(!index.record_at(" \t ", "valid", 43));
+        assert!(!index.record_at("git", " \t ", 43));
+        assert_eq!(index.entry_count(), 1);
+    }
+
+    #[test]
+    fn a_large_old_acceptance_cannot_partially_evict_the_index() {
+        let mut index = AcceptanceIndex::default();
+        assert!(index.record_at("git", "old", 1));
+        let mut number = 0;
+        loop {
+            let name = format!("{number:04}{}", "x".repeat(MAX_ACCEPTANCE_NAME_BYTES - 4));
+            if !index.fits_new_entry("git", &name) {
+                break;
+            }
+            assert!(index.record_at("git", &name, 1000 + number));
+            number += 1;
+        }
+        let before = index.clone();
+        let large = "\0".repeat(MAX_ACCEPTANCE_NAME_BYTES);
+        assert!(index.record_at("git", &large, 2));
+        assert_eq!(index, before, "reject before evicting even the one older item");
+    }
+
+    #[test]
+    fn legacy_acceptance_load_keeps_newest_entries_and_releases_old_capacity() {
+        let mut names = HashMap::with_capacity(MAX_ACCEPTANCES * 8);
+        for number in 0..MAX_ACCEPTANCES + 8 {
+            names.insert(format!("name-{number}"), number as u64);
+        }
+        let old_names_capacity = names.capacity();
+        let mut entries = HashMap::with_capacity(MAX_ACCEPTANCES);
+        entries.insert("git".into(), names);
+        let old_roots_capacity = entries.capacity();
+        let loaded = AcceptanceIndex {
+            entries,
+            ..AcceptanceIndex::default()
+        };
+        let (bounded, pruned) = AcceptanceIndex::prune_loaded(loaded);
+        assert!(pruned);
+        assert_eq!(bounded.entry_count(), MAX_ACCEPTANCES);
+        assert_eq!(bounded.timestamp("git", "name-7"), None);
+        assert_eq!(bounded.timestamp("git", "name-8"), Some(8));
+        assert_eq!(
+            bounded.timestamp("git", &format!("name-{}", MAX_ACCEPTANCES + 7)),
+            Some((MAX_ACCEPTANCES + 7) as u64)
+        );
+        assert!(bounded.entries.capacity() < old_roots_capacity);
+        assert!(bounded.entries["git"].capacity() < old_names_capacity);
+        assert!(bounded.estimated_bytes() <= MAX_ACCEPTANCE_BYTES);
+        let (_, needs_another_migration) = AcceptanceIndex::prune_loaded(bounded);
+        assert!(!needs_another_migration);
+    }
+
+    #[test]
+    fn legacy_acceptance_load_preserves_json_shape_and_prunes_invalid_entries() {
+        let value = serde_json::json!({
+            " git ": {" status ": 7, "../": 9, "↪": 11, "": 13},
+            "git": {"status": 10},
+            "docker": {"status": 8},
+            "empty": {},
+        });
+        let mut loaded: AcceptanceIndex = serde_json::from_value(value).unwrap();
+        loaded.entries.insert(
+            "r".repeat(MAX_ACCEPTANCE_ROOT_BYTES + 1),
+            HashMap::from([("valid".into(), 99)]),
+        );
+        loaded
+            .entries
+            .get_mut("git")
+            .unwrap()
+            .insert("n".repeat(MAX_ACCEPTANCE_NAME_BYTES + 1), 99);
+        let (bounded, pruned) = AcceptanceIndex::prune_loaded(loaded);
+        assert!(pruned);
+        assert_eq!(
+            serde_json::to_value(&bounded).unwrap(),
+            serde_json::json!({"git": {"status": 10}, "docker": {"status": 8}})
+        );
+        assert_eq!(bounded.scoped, ScopedAcceptanceIndex::default());
+        let (_, needs_another_migration) = AcceptanceIndex::prune_loaded(bounded);
+        assert!(!needs_another_migration);
+    }
+
+    #[test]
+    fn legacy_acceptance_load_deduplicates_trimmed_keys_before_limiting_candidates() {
+        let mut names = HashMap::new();
+        for number in 0..=MAX_ACCEPTANCES {
+            names.insert(format!("status{}", " ".repeat(number)), number as u64 + 10);
+        }
+        let loaded = AcceptanceIndex {
+            entries: HashMap::from([
+                (" git ".into(), names),
+                ("git".into(), HashMap::from([("status".into(), 9)])),
+                ("docker".into(), HashMap::from([("run".into(), 1)])),
+            ]),
+            ..AcceptanceIndex::default()
+        };
+        let (bounded, pruned) = AcceptanceIndex::prune_loaded(loaded);
+        assert!(pruned);
+        assert_eq!(bounded.entry_count(), 2);
+        assert_eq!(bounded.timestamp("git", "status"), Some(MAX_ACCEPTANCES as u64 + 10));
+        assert_eq!(bounded.timestamp("docker", "run"), Some(1));
+    }
+
+    #[test]
     fn alphabetical_ranking_disables_acceptance_but_deduplicates_stably() {
         let acceptance = AcceptanceIndex::from_entries([("git".into(), "alpha".into(), 2_000_000_000_000)]);
         let mut result = CompleteResult {
@@ -1594,6 +1946,7 @@ mod tests {
     fn history_shell_normalization_accepts_paths_and_figterm_suffixes() {
         assert_eq!(normalize_history_shell(Some("/bin/zsh")), HistoryShell::Zsh);
         assert_eq!(normalize_history_shell(Some("bash (figterm)")), HistoryShell::Bash);
+        assert_eq!(normalize_history_shell(Some("/bin/zsh (fterm)")), HistoryShell::Zsh);
         assert_eq!(normalize_history_shell(Some("zsh (fastabterm)")), HistoryShell::Zsh);
         assert_eq!(normalize_history_shell(Some("bash (ecterm)")), HistoryShell::Bash);
         assert_eq!(normalize_history_shell(Some("/usr/local/bin/fish")), HistoryShell::Fish);

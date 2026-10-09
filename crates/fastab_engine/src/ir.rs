@@ -447,8 +447,8 @@ impl Spec {
     /// Bytes retained by this tree: the struct itself, vector buffers, string
     /// payloads, and each distinct [`OptionSpec`] once. Shared options are not
     /// counted again. String spare capacity and allocator headers are left
-    /// out so the figure does not depend on the allocator. Nothing evicts
-    /// from this number.
+    /// out so the figure does not depend on the allocator. Hook caches use
+    /// this estimate for their payload budget; it is not a total heap limit.
     pub fn allocated_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.heap_bytes(
