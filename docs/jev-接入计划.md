@@ -142,7 +142,7 @@ OpenRouter 响应可增加 `id`、`provider`、`usage.cost`；允许这些已知
 
 401 停止当前配置并清内存 Key；402 停止当前配置并提示账户额度；422 归类为请求拒绝，保留本地结果且不读取错误正文。429/529/503 进入冷却：支持 `Retry-After` 秒数/HTTP 日期及 `retry-after-ms`，无效或缺失默认 30 秒，限定 1 秒至 24 小时。冷却结束不定时补发，下次有效输入才能再次请求；桌面总频率窗口也不因切配置清空。TypeSafe 官方列出相应错误类型，客户端同时归一化 OpenRouter 余额错误，未知错误不冒充 Key 错误。[HTTP API](https://docs.typesafe.ai/api)
 
-这不是内存优化：新增 HTTPS、凭据和快照可能增加 desktop 内存。约束新增驻留资源，同时不向每个 `fastabterm` 或 IME 加入模型/HTTP 依赖，不抵消已完成的 PTY 有界队列改动。
+这不是内存优化：新增 HTTPS、凭据和快照可能增加 desktop 内存。约束新增驻留资源，同时不向每个 `fterm` 或 IME 加入模型/HTTP 依赖，不抵消已完成的 PTY 有界队列改动。
 
 ## 6. 设置与密钥
 

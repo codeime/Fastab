@@ -32,7 +32,7 @@ if [[ "${1:-}" != "--yes" ]]; then
   echo "  • /Applications/${APP_DISPLAY}.app"
   echo "  • ${IME_SYMLINK}"
   echo "  • ${PLIST_PATH}"
-  echo "  • ${LOCAL_BIN}/ftab, fastabterm, and <shell> (fastabterm) copies"
+  echo "  • ${LOCAL_BIN}/ftab, Fastab's fterm/fastabterm links, and <shell> (fterm/fastabterm) copies"
   echo "  • ${APP_SUPPORT}/"
   echo "  • ${CACHE_DIR}/"
   echo "  • ${TMP_ROOT}/ftablog"
@@ -74,7 +74,9 @@ fi
 pkill -x "${APP_NAME}"       2>/dev/null || true
 pkill -f "FastabInputMethod.app/Contents/MacOS/fastab_input_method" 2>/dev/null || true
 pkill -f "FastabInputMethod.app/Contents/MacOS/fig_input_method" 2>/dev/null || true
-pkill -f "fastabterm"        2>/dev/null || true
+# Keep the shorter name scoped to Fastab paths and its rewritten shell titles.
+# A different tool named `fterm` must not be stopped by this uninstaller.
+pkill -f 'Fastab[.]app/Contents/MacOS/(fterm|fastabterm)( |$)|(^|/)(bash|zsh|fish|nu) \((fterm|fastabterm)\)( |$)' 2>/dev/null || true
 sleep 0.5
 
 # ── 3. Remove login item and Fastab LaunchAgent ──────────────────────────────
@@ -106,9 +108,18 @@ rm -rf "$APP_BUNDLE"
 # ── 6. Remove CLI symlinks ─────────────────────────────────────────────────────
 info "Removing CLI symlinks..."
 rm -f "${LOCAL_BIN}/ftab"
-rm -f "${LOCAL_BIN}/fastabterm"
-# Desktop launch copies `zsh (fastabterm)` (and bash / fish / nu) for `exec -a`.
+for name in fterm fastabterm; do
+  link="${LOCAL_BIN}/${name}"
+  if [[ -L "${link}" ]]; then
+    case "$(readlink "${link}")" in
+      "${APP_BUNDLE}/Contents/MacOS/fterm"|"${APP_BUNDLE}/Contents/MacOS/fastabterm") rm -f "${link}" ;;
+    esac
+  fi
+done
+# Desktop launch copies `zsh (fterm)` (and bash / fish / nu) for `exec -a`.
+# Remove copies from both naming generations.
 for shell in bash zsh fish nu; do
+  rm -f "${LOCAL_BIN}/${shell} (fterm)"
   rm -f "${LOCAL_BIN}/${shell} (fastabterm)"
 done
 

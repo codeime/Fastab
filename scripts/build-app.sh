@@ -279,7 +279,9 @@ node "${REPO_DIR}/scripts/build-spec-inputs.mjs" \
   --verify-snapshot "$SPECS_IR_BUILD_SNAPSHOT"
 cp "${BIN_BUILD_SNAPSHOT}/${APP_NAME}" "$MACOS_DIR/"
 cp "${BIN_BUILD_SNAPSHOT}/ftab"        "$MACOS_DIR/"
-cp "${BIN_BUILD_SNAPSHOT}/fastabterm"  "$MACOS_DIR/"
+cp "${BIN_BUILD_SNAPSHOT}/fterm"      "$MACOS_DIR/"
+# Older shell sessions still resolve the previous PTY entry point.
+ln -s fterm "${MACOS_DIR}/fastabterm"
 
 cp themes/*.json                       "${RESOURCES_DIR}/themes/"
 # Only specs-ir ships. bundle/specs is build-time input: it feeds the IR compiler

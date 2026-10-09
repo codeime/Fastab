@@ -35,6 +35,21 @@ impl std::fmt::Display for When {
     }
 }
 
+fn quoted_pty_binary_path(shell: Shell) -> String {
+    // CLI init snapshots must not capture a test runner's machine-specific path.
+    let path = if Env::new().q_init_snapshot_test() {
+        PathBuf::from("/Applications/Fastab.app/Contents/MacOS").join(PTY_BINARY_NAME)
+    } else {
+        fastab_util::current_pty_binary_path().unwrap_or_default()
+    };
+    let path = path.to_string_lossy();
+    match shell {
+        Shell::Bash | Shell::Zsh => format!("'{}'", path.replace('\'', "'\\''")),
+        Shell::Fish => format!("'{}'", path.replace('\\', "\\\\").replace('\'', "\\'")),
+        Shell::Nu => serde_json::to_string(path.as_ref()).unwrap_or_else(|_| "\"\"".into()),
+    }
+}
+
 fn integration_file_name(dotfile_name: &str, when: &When, shell: &Shell) -> String {
     format!(
         "{}.{when}.{shell}",
@@ -170,6 +185,7 @@ impl ShellExt for Shell {
         script
             .replace("{{CLI_BINARY_NAME}}", CLI_BINARY_NAME)
             .replace("{{PTY_BINARY_NAME}}", PTY_BINARY_NAME)
+            .replace("{{PTY_BINARY_PATH}}", &quoted_pty_binary_path(*self))
     }
 }
 
@@ -1485,6 +1501,26 @@ eval "$(ec init zsh pre --rcfile zshrc)""#,
         );
         assert!(!pre.contains(".fig/bin"), "nu pre must not exec Fig's PTY: {pre}");
         assert!(!pre.contains("which figterm"), "nu pre must not look up figterm: {pre}");
+        assert!(
+            pre.contains("{{PTY_BINARY_PATH}}"),
+            "nu pre needs the bundled fallback: {pre}"
+        );
+        assert!(
+            pre.contains("Q_TERM_PATH"),
+            "nu pre must retain explicit PTY overrides: {pre}"
+        );
+        for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Nu] {
+            let pre = shell.get_fig_integration_source(&When::Pre);
+            assert!(!pre.contains("{{PTY_BINARY_PATH}}"), "PTY path must be expanded: {pre}");
+            assert!(
+                !pre.contains("command -v fterm"),
+                "PTY execution must not search PATH: {pre}"
+            );
+            assert!(
+                !pre.contains("which fterm"),
+                "PTY execution must not search PATH: {pre}"
+            );
+        }
         let post = include_str!("scripts/post.nu");
         assert!(
             post.contains("which {{CLI_BINARY_NAME}}"),

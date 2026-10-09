@@ -107,7 +107,7 @@ cd easy-complete
 
 1. 构建 Rust 二进制，并编译打包的补全 spec。
 2. 组装出 `Fastab.app` 并复制到 `/Applications`。
-3. 把 `ftab` 和 `fastabterm` 两个 CLI 软链到 `~/.local/bin`。
+3. 把 `ftab` 和 `fterm` 两个 CLI 软链到 `~/.local/bin`，保留 `fastabterm` 兼容别名供已有 shell 集成使用。
 4. 可在设置中开启**登录时启动**（macOS 13+ 使用系统登录项，macOS 12 回退到 LaunchAgent）。
 5. 配置 shell 集成。`./scripts/install.sh` 还会注册可选输入法（DMG 首次启动不会）。
 6. **辅助功能**需要你在 Fastab 设置里手动授予（必需，见下文）。
@@ -201,11 +201,11 @@ Fastab 由三个相互协作的原生进程组成，通过 Unix 域套接字（P
 | 二进制          | Crate         | 职责                                                                                           |
 | --------------- | ------------- | ---------------------------------------------------------------------------------------------- |
 | `fastab` | `fastab_desktop` | 原生应用宿主——GPUI 补全浮层与设置窗口（不是 WKWebView）、补全引擎工作线程、系统托盘、窗口管理 |
-| `fastabterm`        | `fastab_term`     | 介于 shell 与终端模拟器之间的伪终端；拦截 shell 编辑缓冲区以驱动补全                           |
+| `fterm`        | `fastab_term`     | 介于 shell 与终端模拟器之间的伪终端；拦截 shell 编辑缓冲区以驱动补全                           |
 | `ftab`            | `fastab_cli`      | CLI 入口——`setup`、`integrations`、`diagnostic`、`settings` 等                                 |
 
 Shell 钩子（`.zshrc`、`.bashrc`、fish 配置）在每次提示符和按键时，把 shell 状态（当前目
-录、命令文本、光标位置）回报给 `fastabterm`。在 macOS 上，`fastab_input_method` 辅助应用负责为绕
+录、命令文本、光标位置）回报给 `fterm`。在 macOS 上，`fastab_input_method` 辅助应用负责为绕
 过 PTY 的终端上报光标位置。
 
 **标识符**

@@ -31,9 +31,19 @@ if test -z "$SHOULD_QTERM_LAUNCH"
     set SHOULD_QTERM_LAUNCH $status
 end
 
+# Use the PTY shipped beside Fastab, while retaining explicit overrides.
+set -e _FASTAB_DEFAULT_PTY_PATH
+if not set -q Q_TERM_PATH
+    set Q_TERM_PATH '/Applications/Fastab.app/Contents/MacOS/fterm'
+    set _FASTAB_DEFAULT_PTY_PATH 1
+else if not string match -q '*/*' -- "$Q_TERM_PATH"
+    # Only explicit overrides may resolve a development binary through PATH.
+    set Q_TERM_PATH (command -v -- "$Q_TERM_PATH")
+end
+
 if test -t 1
     and test -z "$PROCESS_LAUNCHED_BY_Q"
-    and command -v fastabterm 1>/dev/null 2>/dev/null
+    and test -x "$Q_TERM_PATH"
     and test "$SHOULD_QTERM_LAUNCH" -eq 0 -o \( "$SHOULD_QTERM_LAUNCH" -eq 2 -a \( -z "$Q_TERM" -o \( -z "$Q_TERM_TMUX" -a -n "$TMUX" \) \) \)
 
     if test -z "$Q_SHELL"
@@ -44,19 +54,17 @@ if test -t 1
         set Q_IS_LOGIN_SHELL 1
     end
 
-    # Do not launch fastabterm in non-interactive shells (like VSCode Tasks)
+    # Do not launch fterm in non-interactive shells (like VSCode Tasks)
     if status --is-interactive
-        set Q_TERM_NAME (command basename "$Q_SHELL")" (fastabterm)"
-        if not set -q Q_TERM_PATH
-            if test -x "$HOME/.local/bin/$Q_TERM_NAME"
-                set Q_TERM_PATH "$HOME/.local/bin/$Q_TERM_NAME"
-            else
-                set Q_TERM_PATH (command -v fastabterm || echo "$HOME/.local/bin/fastabterm")
-            end
+        set Q_TERM_NAME (command basename "$Q_SHELL")" (fterm)"
+        if set -q _FASTAB_DEFAULT_PTY_PATH; and test -x "$HOME/.local/bin/$Q_TERM_NAME"
+            set Q_TERM_PATH "$HOME/.local/bin/$Q_TERM_NAME"
         end
+        set -e _FASTAB_DEFAULT_PTY_PATH
 
         # Need to exec bash because we're using 'exec -a <name>'
         # to set argv[0] and fish's exec doesn't have this option
-        exec bash -c "Q_PARENT=$Q_PARENT Q_SHELL=$Q_SHELL Q_IS_LOGIN_SHELL=$Q_IS_LOGIN_SHELL exec -a \"$Q_TERM_NAME\" \"$Q_TERM_PATH\""
+        exec bash -c 'Q_PARENT="$1" Q_SHELL="$2" Q_IS_LOGIN_SHELL="$3" exec -a "$4" "$5"' -- "$Q_PARENT" "$Q_SHELL" "$Q_IS_LOGIN_SHELL" "$Q_TERM_NAME" "$Q_TERM_PATH"
     end
 end
+set -e _FASTAB_DEFAULT_PTY_PATH

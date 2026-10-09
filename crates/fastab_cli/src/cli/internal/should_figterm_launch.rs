@@ -216,7 +216,7 @@ pub fn should_figterm_launch_exit_status(ctx: &Context, quiet: bool) -> u8 {
         return 1;
     }
 
-    // Already inside ecterm or fastabterm. Nested PTYs are not supported,
+    // Already inside fterm, fastabterm or ecterm. Nested PTYs are not supported,
     // including when Easy Complete is wrapping the same terminal.
     if env.get_os(Q_TERM).is_some() {
         if !quiet {

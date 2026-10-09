@@ -80,7 +80,7 @@
 
 沿用 `docs/memory-goals.md` 和 `docs/lazy-loadspec-plan.md` 里已经冻结的项，这里不重开：
 
-- `fastabterm` 的 `max_scroll_limit` 仍是 1。
+- `fterm` 的 `max_scroll_limit` 仍是 1。
 - `fastab_util` 不链 AppKit。输入法不拉 `fastab_ipc` / tokio / prost。
 - AX 的 `Copy*` / `Create*` 仍走 create rule。
 - Registry LRU 仍是 48，hook 缓存 512，generate LRU 32，历史条数上限不改。

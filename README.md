@@ -112,7 +112,7 @@ The source installer will:
 
 1. Build the Rust binaries and compile bundled completion specs.
 2. Assemble `Fastab.app` and copy it to `/Applications`.
-3. Symlink the `ftab` and `fastabterm` CLIs into `~/.local/bin`.
+3. Symlink the `ftab` and `fterm` CLIs into `~/.local/bin`, keeping `fastabterm` as a compatibility alias for existing shell integrations.
 4. Let you enable **Launch at Login** from Settings (a system Login Item on macOS 13+, with a LaunchAgent fallback on macOS 12).
 5. Set up shell integration. `./scripts/install.sh` also registers the optional input method (DMG first launch does not).
 6. Leave Accessibility for you to grant from Fastab Settings (required — see below).
@@ -216,11 +216,11 @@ sockets (Protobuf messages):
 | Binary          | Crate         | Role                                                                                                                             |
 | --------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `fastab` | `fastab_desktop` | Native app host — GPUI overlay and settings (not WKWebView), completion engine worker, system tray, and window management |
-| `fastabterm`        | `fastab_term`     | Pseudoterminal between your shell and terminal emulator; intercepts the shell edit buffer to drive completions                   |
+| `fterm`        | `fastab_term`     | Pseudoterminal between your shell and terminal emulator; intercepts the shell edit buffer to drive completions                   |
 | `ftab`            | `fastab_cli`      | CLI entry point — `setup`, `integrations`, `diagnostic`, `settings`, and more                                                    |
 
 Shell hooks (`.zshrc`, `.bashrc`, fish config) report shell state — CWD, command text,
-cursor position — back to `fastabterm` on every prompt and keystroke. On macOS, the
+cursor position — back to `fterm` on every prompt and keystroke. On macOS, the
 `fastab_input_method` helper app reports caret position for terminals that bypass the PTY.
 
 **Identifiers**

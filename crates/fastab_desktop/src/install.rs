@@ -169,13 +169,71 @@ async fn symlink(src: impl AsRef<std::path::Path>, dst: impl AsRef<std::path::Pa
     tokio::fs::symlink(src, dst).await
 }
 
+/// Leave unrelated PTY executables and links intact when the short name collides.
+#[cfg(target_os = "macos")]
+async fn symlink_pty(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    match tokio::fs::symlink_metadata(dst).await {
+        Ok(metadata) => {
+            let owned = if metadata.file_type().is_symlink() {
+                let target = tokio::fs::read_link(dst).await?;
+                let target = if target.is_absolute() {
+                    target
+                } else {
+                    dst.parent().unwrap_or_else(|| std::path::Path::new("")).join(target)
+                };
+                fastab_util::is_fastab_pty_path(&target)
+            } else {
+                metadata.is_file()
+                    && fastab_util::Shell::all().iter().any(|shell| {
+                        dst.file_name().is_some_and(|name| {
+                            name == std::ffi::OsStr::new(&format!("{shell} ({})", fastab_util::LEGACY_PTY_BINARY_NAME))
+                        })
+                    })
+            };
+            if !owned {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "PTY path belongs to another executable",
+                ));
+            }
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {},
+        Err(err) => return Err(err),
+    }
+    let staged = dst.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+    tokio::fs::symlink(src, &staged).await?;
+    if let Err(err) = tokio::fs::rename(&staged, dst).await {
+        let _ = tokio::fs::remove_file(&staged).await;
+        return Err(err);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn file_sha256(path: &std::path::Path) -> std::io::Result<[u8; 32]> {
+    use std::io::Read;
+
+    use sha2::{Digest, Sha256};
+
+    let mut file = std::fs::File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(digest.finalize().into());
+        }
+        digest.update(&buffer[..read]);
+    }
+}
+
 #[cfg(target_os = "macos")]
 pub async fn initialize_fig_dir(env: &fastab_os_shim::Env) -> anyhow::Result<()> {
     use std::fs;
 
     use fastab_integrations::shell::ShellExt;
     use fastab_util::Shell;
-    use fastab_util::consts::{CLI_BINARY_NAME, PTY_BINARY_NAME};
+    use fastab_util::consts::{CLI_BINARY_NAME, LEGACY_PTY_BINARY_NAME, PTY_BINARY_NAME};
 
     let local_bin = fastab_util::directories::home_local_bin()?;
     if let Err(err) = fs::create_dir_all(&local_bin) {
@@ -185,45 +243,49 @@ pub async fn initialize_fig_dir(env: &fastab_os_shim::Env) -> anyhow::Result<()>
     // Install figterm to ~/.local/bin
     match get_bundle_path_for_executable(PTY_BINARY_NAME) {
         Some(pty_path) => {
-            let link = local_bin.join(PTY_BINARY_NAME);
-            if let Err(err) = symlink(&pty_path, link).await {
-                error!(%err, "Failed to symlink for {PTY_BINARY_NAME}: {pty_path:?}");
+            for name in [PTY_BINARY_NAME, LEGACY_PTY_BINARY_NAME] {
+                if let Err(err) = symlink_pty(&pty_path, &local_bin.join(name)).await {
+                    error!(%err, "Failed to symlink for {name}: {pty_path:?}");
+                }
             }
 
+            let hash_path = pty_path.clone();
+            let bundle_hash = tokio::task::spawn_blocking(move || file_sha256(&hash_path))
+                .await
+                .ok()
+                .and_then(Result::ok);
             for shell in Shell::all() {
+                // Atomic replacement preserves the old mapped copy and cached
+                // Q_TERM_PATH values remain usable throughout the upgrade.
+                let legacy_wrapper = local_bin.join(format!("{shell} ({LEGACY_PTY_BINARY_NAME})"));
+                if let Err(err) = symlink_pty(&pty_path, &legacy_wrapper).await {
+                    error!(%err, "Failed to symlink legacy PTY wrapper");
+                }
                 let pty_shell_cpy = local_bin.join(format!("{shell} ({PTY_BINARY_NAME})"));
                 let pty_path = pty_path.clone();
 
                 tokio::spawn(async move {
-                    // Check version if copy already exists, this is because everytime a copy is made the first start is
-                    // kinda slow and we want to avoid that
-                    if pty_shell_cpy.exists() {
-                        let output = tokio::process::Command::new(&pty_shell_cpy)
-                            .arg("--version")
-                            .output()
+                    // Version numbers may be reused in development. Compare a
+                    // fixed-buffer digest, with the bundled hash shared by all shells.
+                    if let Some(bundled) = bundle_hash {
+                        let hash_path = pty_shell_cpy.clone();
+                        let installed = tokio::task::spawn_blocking(move || file_sha256(&hash_path))
                             .await
-                            .ok();
-
-                        let version = output
-                            .as_ref()
-                            .and_then(|output| std::str::from_utf8(&output.stdout).ok())
-                            .map(|s| {
-                                match s.strip_prefix(PTY_BINARY_NAME) {
-                                    Some(s) => s,
-                                    None => s,
-                                }
-                                .trim()
-                            });
-
-                        if version == Some(env!("CARGO_PKG_VERSION")) {
+                            .ok()
+                            .and_then(Result::ok);
+                        if installed == Some(bundled) {
                             return;
                         }
                     }
 
-                    if let Err(err) = tokio::fs::remove_file(&pty_shell_cpy).await {
-                        error!(%err, "Failed to remove {PTY_BINARY_NAME} shell {shell:?} copy");
+                    let staged = pty_shell_cpy.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+                    let result = async {
+                        tokio::fs::copy(&pty_path, &staged).await?;
+                        tokio::fs::rename(&staged, &pty_shell_cpy).await
                     }
-                    if let Err(err) = tokio::fs::copy(&pty_path, &pty_shell_cpy).await {
+                    .await;
+                    if let Err(err) = result {
+                        let _ = tokio::fs::remove_file(&staged).await;
                         error!(%err, "Failed to copy {PTY_BINARY_NAME} to {}", pty_shell_cpy.display());
                     }
                 });
@@ -747,6 +809,37 @@ mod test {
         symlink(&src_file_2, &dst_file).await.unwrap();
         assert!(dst_file.exists());
         assert_eq!(std::fs::read_to_string(&dst_file).unwrap(), "content 2");
+
+        let pty = tmp_dir.join("Fastab.app/Contents/MacOS/fterm");
+        std::fs::create_dir_all(pty.parent().unwrap()).unwrap();
+        std::fs::write(&pty, "new PTY").unwrap();
+        let pty_link = tmp_dir.join("fterm");
+        std::fs::write(&pty_link, "foreign tool").unwrap();
+        assert_eq!(
+            symlink_pty(&pty, &pty_link).await.unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::read_to_string(&pty_link).unwrap(), "foreign tool");
+        std::fs::remove_file(&pty_link).unwrap();
+        std::os::unix::fs::symlink(&src_file_1, &pty_link).unwrap();
+        assert_eq!(
+            symlink_pty(&pty, &pty_link).await.unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::read_link(&pty_link).unwrap(), src_file_1);
+        std::fs::remove_file(&pty_link).unwrap();
+        let old_pty = tmp_dir.join("Fastab.app/Contents/MacOS/fastabterm");
+        std::os::unix::fs::symlink(&old_pty, &pty_link).unwrap();
+        symlink_pty(&pty, &pty_link).await.unwrap();
+        assert_eq!(std::fs::read_link(&pty_link).unwrap(), pty);
+
+        let old_wrapper = tmp_dir.join("zsh (fastabterm)");
+        std::fs::write(&old_wrapper, "old PTY copy").unwrap();
+        let mapped_copy = std::fs::File::open(&old_wrapper).unwrap();
+        symlink_pty(&pty, &old_wrapper).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&old_wrapper).unwrap(), "new PTY");
+        // Atomic replacement keeps an already-open old inode alive.
+        assert_eq!(std::io::read_to_string(mapped_copy).unwrap(), "old PTY copy");
     }
 
     #[cfg(target_os = "linux")]

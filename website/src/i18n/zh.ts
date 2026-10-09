@@ -118,8 +118,8 @@ const processesZh: Process[] = [
     role: "原生应用宿主——GPUI 补全浮层与设置窗口（不是 WKWebView）、补全引擎工作线程、系统托盘和窗口管理",
   },
   {
-    bin: "fastabterm",
-    crate: "figterm",
+    bin: "fterm",
+    crate: "fastab_term",
     role: "位于 Shell 与终端模拟器之间的伪终端;拦截 Shell 编辑缓冲区来驱动补全",
   },
   {

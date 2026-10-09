@@ -41,34 +41,49 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Anchored on the installed bundle layout and on cargo's output directories so a
-# `cargo run` build is picked up too. `fastab_term` rewrites its process title to
-# "<shell> (fastabterm)", which is why it is matched on the title rather than a path.
+# Match the installed bundle layout and development output directories.
+# `fastab_term` rewrites its process title to
+# "<shell> (fterm)", which is why it is matched on the title rather than a path.
+# Keep matching the old title while pre-upgrade terminal sessions remain open.
 #
 # The negative match matters: an editor or terminal whose window happens to
 # mention this project shows up in `ps` with "fastab" in its title.
-readonly MATCH='Fastab\.app/Contents/(MacOS/(fastab|ftab)|Helpers/.*fastab_input_method)|target/(dist|release|debug)/(fastab|fastabterm|fastab_input_method|ftab)|\(fastabterm\)'
+readonly MATCH='Fastab\.app/Contents/(MacOS/(fastab|ftab|fterm|fastabterm)|Helpers/.*fastab_input_method)|target/(dist|release|debug)/(fastab|fastabterm|fastab_input_method|ftab)|\((fterm|fastabterm)\)'
 # An editor whose window title mentions this project shows up in `ps` with
 # "fastab" in its command line. The paths above are specific enough on
 # their own, but these are the ones actually seen in the wild.
 readonly EXCLUDE='Cursor Helper|Code Helper|extension-host'
+# The short name alone is ambiguous. Confirm development fterm candidates using
+# their mapped executable, including when argv[0] is relative to another cwd.
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+readonly REPO_ROOT
+readonly DEV_PTY_MATCH='(^|[[:space:]/])fterm([[:space:]]|$)'
 
 collect_pids() {
-    # Snapshot first: taken inside a substitution, the greps below do not exist
-    # yet and so cannot match their own pattern text.
-    local snapshot
+    local snapshot pid command mapped_file
     snapshot=$(ps -Ao pid=,command=)
-    printf '%s\n' "$snapshot" \
-        | grep -Ev "$EXCLUDE" \
-        | grep -E "$MATCH" \
-        | awk '{print $1}'
+    while read -r pid command; do
+        [[ $command =~ $EXCLUDE ]] && continue
+        if [[ $command =~ $MATCH ]]; then
+            printf '%s\n' "$pid"
+        elif [[ $command =~ $DEV_PTY_MATCH ]]; then
+            while IFS= read -r mapped_file; do
+                case "$mapped_file" in
+                    "n$REPO_ROOT/target/debug/fterm"|"n$REPO_ROOT/target/release/fterm"|"n$REPO_ROOT/target/dist/fterm")
+                        printf '%s\n' "$pid"
+                        break
+                        ;;
+                esac
+            done < <(/usr/sbin/lsof -nP -a -p "$pid" -d txt -Fn 2>/dev/null)
+        fi
+    done <<<"$snapshot"
 }
 
 # Turn one `footprint` run into "<pid>\t<name>\t<bytes>\t<peak>" lines.
 #
 # Kept to substr/index rather than a regex with capture groups: macOS ships BWK
 # awk, which has no three-argument match(). Process names can contain spaces
-# ("zsh (fastabterm)"), so field splitting is out too.
+# ("zsh (fterm)"), so field splitting is out too.
 sample() {
     footprint --noCategories -f bytes "$@" 2>/dev/null | awk '
         # "fastab [9070]: 64-bit    Footprint: 85281280 B (16384 ...)"

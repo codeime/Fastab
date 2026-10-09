@@ -24,6 +24,21 @@ file_sha() {
   fi
 }
 
+# Preserve unrelated tools when the shorter PTY name is already in use.
+link_pty_binary() {
+  local name="$1" link="${LOCAL_BIN}/$1"
+  if [ -L "${link}" ]; then
+    case "$(readlink "${link}")" in
+      "${APP_BUNDLE}/Contents/MacOS/fterm"|"${APP_BUNDLE}/Contents/MacOS/fastabterm") ;;
+      *) warn "Keeping existing ${link}; it does not belong to Fastab."; return 0 ;;
+    esac
+  elif [ -e "${link}" ]; then
+    warn "Keeping existing ${link}; it does not belong to Fastab."
+    return 0
+  fi
+  ln -sfn "${APP_BUNDLE}/Contents/MacOS/${name}" "${link}"
+}
+
 process_running() {
   pgrep -x "$1" >/dev/null 2>&1
 }
@@ -132,7 +147,7 @@ info "Installing to /Applications/..."
 DESKTOP_BIN="Contents/MacOS/${APP_NAME}"
 IME_BIN="Contents/Helpers/FastabInputMethod.app/Contents/MacOS/fastab_input_method"
 
-for required in "${DESKTOP_BIN}" "${IME_BIN}"; do
+for required in "${DESKTOP_BIN}" "Contents/MacOS/fterm" "Contents/MacOS/fastabterm" "${IME_BIN}"; do
   if [ ! -f "${STAGING_BUNDLE}/${required}" ]; then
     error "Build produced no ${required}. Refusing to install over the current bundle."
     exit 1
@@ -183,7 +198,8 @@ ditto "${STAGING_BUNDLE}" "${APP_BUNDLE}"
 info "Linking binaries to ${LOCAL_BIN}..."
 mkdir -p "${LOCAL_BIN}"
 ln -sf "/Applications/${APP_DISPLAY}.app/Contents/MacOS/ftab"     "${LOCAL_BIN}/ftab"
-ln -sf "/Applications/${APP_DISPLAY}.app/Contents/MacOS/fastabterm" "${LOCAL_BIN}/fastabterm"
+link_pty_binary fterm
+link_pty_binary fastabterm
 
 # ── 6. Shell integration ───────────────────────────────────────────────────────
 info "Installing shell integration..."

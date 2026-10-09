@@ -1,7 +1,7 @@
 use clap::Parser;
 
 #[derive(Debug, Parser, PartialEq, Eq)]
-#[command(version, about)]
+#[command(name = fastab_util::PTY_BINARY_NAME, version, about)]
 pub struct Cli {
     #[arg(last = true)]
     pub command: Option<Vec<String>>,
@@ -19,10 +19,10 @@ mod tests {
 
     #[test]
     fn test_command() {
-        let cli = Cli::parse_from(["fastabterm"]);
+        let cli = Cli::parse_from(["fterm"]);
         assert_eq!(cli, Cli { command: None });
 
-        let cli = Cli::parse_from(["fastabterm", "--", "exe", "arg1", "arg2"]);
+        let cli = Cli::parse_from(["fterm", "--", "exe", "arg1", "arg2"]);
         assert_eq!(
             cli,
             Cli {

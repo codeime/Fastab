@@ -33,7 +33,7 @@ sign_deep_if_exists() {
 
 sign_deep_if_exists "$APP_PATH/Contents/Frameworks/Sparkle.framework"
 sign_if_exists "$APP_PATH/Contents/MacOS/ftab"
-sign_if_exists "$APP_PATH/Contents/MacOS/ftabterm"
+sign_if_exists "$APP_PATH/Contents/MacOS/fterm"
 sign_if_exists "$APP_PATH/Contents/MacOS/fastab"
 sign_deep_if_exists "$APP_PATH/Contents/Helpers/FastabInputMethod.app"
 codesign "${codesign_args[@]}" "$APP_PATH"

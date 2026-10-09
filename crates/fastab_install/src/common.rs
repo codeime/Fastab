@@ -5,7 +5,7 @@ use fastab_integrations::Integration;
 use fastab_integrations::shell::ShellExt;
 use fastab_integrations::ssh::SshIntegration;
 use fastab_os_shim::{Context, Env};
-use fastab_util::{CLI_BINARY_NAME, PRODUCT_NAME, PTY_BINARY_NAME, Shell, directories};
+use fastab_util::{CLI_BINARY_NAME, LEGACY_PTY_BINARY_NAME, PRODUCT_NAME, PTY_BINARY_NAME, Shell, directories};
 
 use crate::Error;
 
@@ -63,12 +63,28 @@ pub async fn uninstall(components: InstallComponents, ctx: Arc<Context>) -> Resu
         // let folders = [directories::home_local_bin()?, Path::new("/usr/local/bin").into()];
         let folders = [directories::home_local_bin()?];
 
-        let all_binary_names = [CLI_BINARY_NAME, PTY_BINARY_NAME];
-        let pty_names = [PTY_BINARY_NAME];
+        let all_binary_names = [CLI_BINARY_NAME, PTY_BINARY_NAME, LEGACY_PTY_BINARY_NAME];
+        let pty_names = [PTY_BINARY_NAME, LEGACY_PTY_BINARY_NAME];
 
         for folder in folders {
             for binary_name in &all_binary_names {
                 let binary_path = folder.join(binary_name);
+                #[cfg(target_os = "macos")]
+                if pty_names.contains(binary_name) {
+                    // A common short name may belong to another tool. Only
+                    // remove links into our bundle, including stale links.
+                    let owned = tokio::fs::read_link(&binary_path).await.is_ok_and(|target| {
+                        let target = if target.is_absolute() {
+                            target
+                        } else {
+                            folder.join(target)
+                        };
+                        fastab_util::is_fastab_pty_path(&target)
+                    });
+                    if !owned {
+                        continue;
+                    }
+                }
                 remove_binary(binary_path).await;
             }
 

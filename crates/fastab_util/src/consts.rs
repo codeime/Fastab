@@ -15,7 +15,9 @@ pub const TAURI_PRODUCT_NAME: &str = "Fastab";
 
 pub const CLI_BINARY_NAME: &str = "ftab";
 pub const CLI_BINARY_NAME_MINIMAL: &str = "ftab-minimal";
-pub const PTY_BINARY_NAME: &str = "fastabterm";
+pub const PTY_BINARY_NAME: &str = "fterm";
+/// Compatibility name retained for shell hooks loaded before the PTY rename.
+pub const LEGACY_PTY_BINARY_NAME: &str = "fastabterm";
 
 pub const CLI_CRATE_NAME: &str = "fastab_cli";
 

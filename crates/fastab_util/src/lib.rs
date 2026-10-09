@@ -95,6 +95,26 @@ pub fn search_xdg_data_dirs(ext: impl AsRef<std::path::Path>) -> Option<PathBuf>
     None
 }
 
+/// Resolve our PTY beside the invoking Fastab executable, never through PATH.
+/// Installed app binaries and development binaries share their directory.
+pub fn current_pty_binary_path() -> Result<PathBuf, Error> {
+    let mut path = current_exe_origin()?;
+    path.set_file_name(PTY_BINARY_NAME);
+    Ok(path)
+}
+
+/// Whether a path names a PTY shipped inside a Fastab app bundle.
+/// This is lexical so stale links can be replaced even after an app update.
+pub fn is_fastab_pty_path(path: &Path) -> bool {
+    [PTY_BINARY_NAME, LEGACY_PTY_BINARY_NAME].iter().any(|name| {
+        path.ends_with(
+            Path::new(APP_BUNDLE_NAME)
+                .join(consts::macos::BUNDLE_CONTENTS_MACOS_PATH)
+                .join(name),
+        )
+    })
+}
+
 /// Returns the path to the original executable, not the symlink
 pub fn current_exe_origin() -> Result<PathBuf, Error> {
     Ok(std::env::current_exe()?.canonicalize()?)
@@ -165,6 +185,23 @@ mod tests {
     fn test_gen_hex_string() {
         let hex = gen_hex_string();
         assert_eq!(hex.len(), 64);
+    }
+
+    #[test]
+    fn pty_paths_require_our_app_bundle() {
+        assert!(is_fastab_pty_path(Path::new(
+            "/Applications/Fastab.app/Contents/MacOS/fterm"
+        )));
+        assert!(is_fastab_pty_path(Path::new(
+            "/tmp/Fastab.app/Contents/MacOS/fastabterm"
+        )));
+        assert!(!is_fastab_pty_path(Path::new("/usr/local/bin/fterm")));
+        assert!(!is_fastab_pty_path(Path::new(
+            "/Applications/Other.app/Contents/MacOS/fterm"
+        )));
+        assert!(!is_fastab_pty_path(Path::new(
+            "/Applications/Fastab.app/Contents/MacOS/ecterm"
+        )));
     }
 
     #[test]

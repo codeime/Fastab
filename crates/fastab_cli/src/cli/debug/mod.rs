@@ -21,7 +21,8 @@ use fastab_util::consts::APP_BUNDLE_ID;
 use fastab_util::env_var::Q_DEBUG_SHELL;
 use fastab_util::macos::BUNDLE_CONTENTS_MACOS_PATH;
 use fastab_util::{
-    APP_BUNDLE_NAME, APP_PROCESS_NAME, CLI_BINARY_NAME, PRODUCT_NAME, PTY_BINARY_NAME, Shell, directories,
+    APP_BUNDLE_NAME, APP_PROCESS_NAME, CLI_BINARY_NAME, LEGACY_PTY_BINARY_NAME, PRODUCT_NAME, PTY_BINARY_NAME, Shell,
+    directories,
 };
 use owo_colors::OwoColorize;
 use tempfile::{NamedTempFile, TempDir};
@@ -293,15 +294,15 @@ impl DebugSubcommand {
                     let mut files = files.as_ref().clone();
                     let mut paths = Vec::new();
 
-                    if files.iter().any(|f| f == PTY_BINARY_NAME) {
-                        // Remove figterm from the list of files to open
-                        files.retain(|f| f != PTY_BINARY_NAME);
-
-                        // Add figterm*.log to the list of files to open
-                        let pattern = logs_dir.join(format!("{PTY_BINARY_NAME}*.log"));
-                        let globset = glob([pattern.to_str().unwrap()])?;
-                        let qterm_logs = glob_dir(&globset, &logs_dir)?;
-                        paths.extend(qterm_logs);
+                    let pty_names = [PTY_BINARY_NAME, LEGACY_PTY_BINARY_NAME];
+                    if files.iter().any(|f| pty_names.contains(&f.as_str())) {
+                        files.retain(|f| !pty_names.contains(&f.as_str()));
+                        // Include logs from sessions that started before the rename.
+                        for name in pty_names {
+                            let pattern = logs_dir.join(format!("{name}*.log"));
+                            let globset = glob([pattern.to_str().unwrap()])?;
+                            paths.extend(glob_dir(&globset, &logs_dir)?);
+                        }
                     }
 
                     // Push any remaining files to open
@@ -700,7 +701,7 @@ impl DebugSubcommand {
                 let mut profile = NamedTempFile::new()?;
                 let tmp_dir = TempDir::new()?;
 
-                let mut command = Command::new(PTY_BINARY_NAME);
+                let mut command = Command::new(fastab_util::current_pty_binary_path()?);
                 command.env(Q_DEBUG_SHELL, "1").arg("--");
 
                 match Shell::current_shell() {

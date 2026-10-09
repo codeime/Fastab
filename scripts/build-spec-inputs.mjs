@@ -44,7 +44,7 @@ const SNAPSHOT_MANIFEST_KIND = "easy-complete-build-input-snapshot";
 const EXPECTED_BINARIES = new Map([
   ["fastab", join(repoDir, "crates", "fastab_desktop", "Cargo.toml")],
   ["ftab", join(repoDir, "crates", "fastab_cli", "Cargo.toml")],
-  ["fastabterm", join(repoDir, "crates", "fastab_term", "Cargo.toml")],
+  ["fterm", join(repoDir, "crates", "fastab_term", "Cargo.toml")],
   [
     "fastab_input_method",
     join(repoDir, "crates", "fastab_input_method", "Cargo.toml"),

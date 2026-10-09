@@ -39,17 +39,19 @@ if $should_launch {
   let Q_SHELL = ({{CLI_BINARY_NAME}} _ get-shell | complete).stdout
   
   let term_name = $"nu ({{PTY_BINARY_NAME}})"
-  let term_path = if ([$env.HOME ".local" "bin" $term_name] | path join | path exists) {
+  let term_path = if "Q_TERM_PATH" in $env {
+    $env.Q_TERM_PATH
+  } else if ([$env.HOME ".local" "bin" $term_name] | path join | path exists) {
     [$env.HOME ".local" "bin" $term_name] | path join
-  } else if (which {{PTY_BINARY_NAME}} | length) > 0 {
-    which {{PTY_BINARY_NAME}} | first | get path
   } else {
-    [$env.HOME ".local" "bin" "{{PTY_BINARY_NAME}}"] | path join
+    {{PTY_BINARY_PATH}}
   }
 
-  with-env {
-    Q_SHELL: $Q_SHELL
-  } {
-    exec $term_path
+  if ($term_path | path exists) {
+    with-env {
+      Q_SHELL: $Q_SHELL
+    } {
+      exec $term_path
+    }
   }
 }

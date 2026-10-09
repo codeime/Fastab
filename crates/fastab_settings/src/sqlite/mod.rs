@@ -362,7 +362,7 @@ fn protect_database_files(path: &Path) -> std::io::Result<()> {
 
 /// Applied to every pooled connection of the on-disk database.
 ///
-/// fastabterm inserts history rows while the desktop reads them; without WAL a
+/// fterm inserts history rows while the desktop reads them; without WAL a
 /// writer blocks readers for the whole transaction, and without a busy
 /// timeout a contended statement fails immediately with `SQLITE_BUSY`. WAL
 /// lets the reader and writer proceed concurrently, and the busy timeout

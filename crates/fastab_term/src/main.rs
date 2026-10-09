@@ -397,10 +397,11 @@ async fn _should_install_remote_ssh_integration(
     None
 }
 
-/// Process titles from the pre hook are `zsh (fastabterm)`. Sibling PTYs use
-/// `(ecterm)` / `(figterm)` / `(qterm)`. Shell matching must see the inner name.
+/// Process titles from the pre hook are `zsh (fterm)`. Older and sibling PTYs
+/// also wrap shell names; matching must see the inner name.
 fn without_pty_wrapper_suffix(name: &str) -> &str {
-    name.strip_suffix(" (fastabterm)")
+    name.strip_suffix(" (fterm)")
+        .or_else(|| name.strip_suffix(" (fastabterm)"))
         .or_else(|| name.strip_suffix(" (figterm)"))
         .or_else(|| name.strip_suffix(" (ecterm)"))
         .or_else(|| name.strip_suffix(" (qterm)"))
@@ -416,7 +417,7 @@ where
         .chain(USER_ENABLED_SHELLS.iter().map(|s| s.as_str()))
         .any(|s| {
             let shell_raw = term.shell_state().get_context().shell.as_deref();
-            // Nested PTY titles are `zsh (fastabterm)` (and sibling `ecterm` / `figterm`).
+            // Nested PTY titles are `zsh (fterm)` (or an older/sibling PTY name).
             let shell = shell_raw.map(without_pty_wrapper_suffix);
 
             shell == Some(s)
@@ -679,7 +680,7 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
 
     // Two workers is enough for this process: the main loop is one `block_on`,
     // and the rest is I/O (stdin, the figterm listener, remote IPC, history).
-    // The default pool is one thread per core, and `ecterm` multiplies by tab,
+    // The default pool is one thread per core, and `fterm` multiplies by tab,
     // so that was paying for stacks the grid never used.
     let runtime = runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -1210,9 +1211,10 @@ mod tests {
 
     #[test]
     fn pty_wrapper_suffix_is_stripped_for_shell_matching() {
-        assert_eq!(PTY_BINARY_NAME, "fastabterm");
+        assert_eq!(PTY_BINARY_NAME, "fterm");
         assert_eq!(without_pty_wrapper_suffix("zsh"), "zsh");
         assert_eq!(without_pty_wrapper_suffix(&format!("zsh ({PTY_BINARY_NAME})")), "zsh");
+        assert_eq!(without_pty_wrapper_suffix("zsh (fastabterm)"), "zsh");
         assert_eq!(without_pty_wrapper_suffix("bash (ecterm)"), "bash");
         assert_eq!(without_pty_wrapper_suffix("fish (figterm)"), "fish");
         assert_eq!(without_pty_wrapper_suffix("zsh (qterm)"), "zsh");

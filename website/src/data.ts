@@ -356,8 +356,8 @@ export const processes: Process[] = [
     role: "Native app host — GPUI overlay and settings (not WKWebView), completion engine worker, system tray and window management.",
   },
   {
-    bin: "fastabterm",
-    crate: "figterm",
+    bin: "fterm",
+    crate: "fastab_term",
     role: "Pseudoterminal between your shell and emulator; intercepts the shell edit buffer to drive completions.",
   },
   {
