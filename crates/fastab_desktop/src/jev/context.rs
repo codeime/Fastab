@@ -24,6 +24,7 @@ const CONTEXT_TIMEOUT: Duration = Duration::from_millis(200);
 const MAX_STATUS_BYTES: usize = 128 * 1024;
 const MAX_STATUS_ENTRIES: usize = 4096;
 static HISTORY_QUERIES: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(1)));
+static REPOSITORY_QUERIES: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(1)));
 
 /// Git can spawn helpers for submodules. Keep the group leader unreaped until
 /// stdout closes, then kill the entire group if a timeout or output bound drops
@@ -181,12 +182,33 @@ async fn bounded_history_query(
 }
 
 async fn repository_present(cwd: &str) -> Result<bool, ()> {
-    let resolved = tokio::fs::canonicalize(cwd).await.map_err(|_error| ())?;
-    if !tokio::fs::metadata(&resolved).await.map_err(|_error| ())?.is_dir() {
+    let cwd = cwd.to_owned();
+    bounded_repository_query(REPOSITORY_QUERIES.clone(), move || repository_present_local(&cwd)).await
+}
+
+async fn bounded_repository_query(
+    semaphore: Arc<Semaphore>,
+    query: impl FnOnce() -> Result<bool, ()> + Send + 'static,
+) -> Result<bool, ()> {
+    // A context timeout cannot stop filesystem I/O on an unavailable mount.
+    // Reserve before spawning, and keep the slot inside the real blocking work
+    // so cancelled requests cannot fill Tokio's blocking pool or its queue.
+    let permit = semaphore.try_acquire_owned().map_err(|_error| ())?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        query()
+    })
+    .await
+    .map_err(|_error| ())?
+}
+
+fn repository_present_local(cwd: &str) -> Result<bool, ()> {
+    let resolved = std::fs::canonicalize(cwd).map_err(|_error| ())?;
+    if !std::fs::metadata(&resolved).map_err(|_error| ())?.is_dir() {
         return Err(());
     }
     for ancestor in resolved.ancestors() {
-        match tokio::fs::symlink_metadata(ancestor.join(".git")).await {
+        match std::fs::symlink_metadata(ancestor.join(".git")) {
             Ok(_) => return Ok(true),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
             Err(_) => return Err(()),
@@ -471,6 +493,10 @@ mod tests {
 
     use super::*;
 
+    // These integration cases use the process-wide, fail-fast repository gate.
+    // Keep independent test runtimes from contending with each other's probes.
+    static REPOSITORY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     fn insert(history: &History, cwd: &str, command: &str) {
         history
             .insert_command_history(
@@ -575,6 +601,7 @@ mod tests {
 
     #[tokio::test]
     async fn branch_uses_current_repository_and_rejects_non_repository() {
+        let _guard = REPOSITORY_TEST_LOCK.lock().await;
         let repository = tempfile::tempdir().unwrap();
         let git_dir = repository.path().join(".git");
         std::fs::create_dir(&git_dir).unwrap();
@@ -677,6 +704,7 @@ mod tests {
 
     #[tokio::test]
     async fn real_git_status_and_opt_in_serialization_are_bounded_to_boolean_fields() {
+        let _guard = REPOSITORY_TEST_LOCK.lock().await;
         let repository = tempfile::tempdir().unwrap();
         let root = repository.path();
         let cwd = root.to_str().unwrap();
@@ -752,6 +780,7 @@ mod tests {
 
     #[tokio::test]
     async fn repository_detection_follows_an_external_symlink() {
+        let _guard = REPOSITORY_TEST_LOCK.lock().await;
         let repository = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         git_at(repository.path(), &["init", "-q"]);
@@ -808,6 +837,65 @@ mod tests {
         assert!(task.await.unwrap_err().is_cancelled());
         tokio::time::sleep(Duration::from_millis(650)).await;
         assert!(!finished.exists(), "a descendant survived cancelled Git work");
+    }
+
+    async fn assert_repository_query_cancellation_keeps_its_permit(abort: bool) {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let mut query = Box::pin(bounded_repository_query(semaphore.clone(), move || {
+            let _ = started_tx.send(());
+            // Dropping release_tx also unblocks the worker if an assertion fails.
+            let _ = release_rx.recv();
+            Ok(true)
+        }));
+        tokio::select! {
+            result = &mut query => panic!("blocked repository query finished early: {result:?}"),
+            started = tokio::time::timeout(Duration::from_secs(5), started_rx) => {
+                started.unwrap().unwrap();
+            },
+        }
+
+        if abort {
+            let task = tokio::spawn(query);
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+        } else {
+            // Own the pinned future: the timeout must drop the query itself,
+            // not merely a borrowed future or a detached JoinHandle.
+            assert!(tokio::time::timeout(Duration::ZERO, query).await.is_err());
+        }
+        assert_eq!(semaphore.available_permits(), 0);
+        let entered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        for _ in 0..4 {
+            let entered = entered.clone();
+            assert!(
+                bounded_repository_query(semaphore.clone(), move || {
+                    entered.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Ok(false)
+                })
+                .await
+                .is_err()
+            );
+        }
+        assert_eq!(entered.load(std::sync::atomic::Ordering::SeqCst), 0);
+        release_tx.send(()).unwrap();
+        let permit = tokio::time::timeout(Duration::from_secs(5), semaphore.clone().acquire_owned())
+            .await
+            .unwrap()
+            .unwrap();
+        drop(permit);
+        assert_eq!(bounded_repository_query(semaphore, || Ok(false)).await, Ok(false));
+    }
+
+    #[tokio::test]
+    async fn timed_out_repository_query_keeps_its_permit_until_blocking_work_exits() {
+        assert_repository_query_cancellation_keeps_its_permit(false).await;
+    }
+
+    #[tokio::test]
+    async fn aborted_repository_query_keeps_its_permit_until_blocking_work_exits() {
+        assert_repository_query_cancellation_keeps_its_permit(true).await;
     }
 
     #[tokio::test]
