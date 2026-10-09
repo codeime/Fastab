@@ -2,6 +2,7 @@
 
 ## v0.0.5
 
+- change: rename the PTY executable and new process titles to `fterm`; keep `fastabterm` compatibility entry points for existing shell integrations, with the Rust crate still named `fastab_term`.
 - change: release unused parsed spec trees after a 10-second grace, including when the input is cleared, executed, or its terminal disconnects. Re-entering a command reloads its specs on demand with the same suggestion content and order.
 - change: cooperatively cancel superseded completions and their scripts, reuse the engine, and prevent cancelled work from publishing incomplete cache or generator state.
 - change: reduce temporary spec-loading allocations with streamed snapshot hashing and shared-option fingerprints; add numeric resource diagnostics and persistent replay scenarios for release and cancellation checks.
@@ -23,6 +24,13 @@
 - change: Tab extends a shared prefix when possible, then accepts the selected non-action suggestion when no further prefix can be inserted; multi-row execution actions retain their Tab guard, and custom bindings still take precedence.
 - fix: recognize CSI-u Tab, Enter, Escape and Backspace sequences as functional keys so configured completion actions can intercept them.
 - change: release the completion window and its renderer after 10 seconds hidden, retaining suggestions for on-demand restoration; hidden caret updates no longer recreate a window just because an argument hint remains.
+- change: limit each asynchronous file/stdout log queue to 4,096 messages instead of 128,000, reducing permanent empty-queue storage while retaining non-blocking, lossy writes and shutdown flushing.
+- fix: repeated empty-input or hide notifications no longer postpone the hidden completion window's 10-second release deadline; showing the window or processing new results still cancels the old deadline.
+- fix: a delayed Show or multi-row Tab action without a caret keeps the overlay hidden and its retirement deadline intact; an available caret resumes completion once.
+- change: cap each hook cache at 4 MiB of estimated payload and release idle hook results after 10 seconds, including caches left by cancelled requests; release empty suggestion buffers with the hidden window.
+- fix: bound legacy acceptance preferences by count, size and key length, pruning old data while preserving newer timestamps, command isolation and the existing JSON format.
+- fix: limit concurrent AI repository probes through the lifetime of the actual filesystem work, so cancelled or timed-out requests cannot accumulate blocking jobs.
+- change: temporarily hide AI Settings and route its old links to Appearance without changing saved AI configuration or consent.
 
 ## v0.0.4
 

@@ -71,7 +71,7 @@
 
 ## 不变量与范围边界
 
-- 不改 `fastabterm` 一行 scrollback、两 worker、行缓存上限或 `fastab_util`/IME 的依赖边界。
+- 不改 `fterm` 一行 scrollback、两 worker、行缓存上限或 `fastab_util`/IME 的依赖边界。
 - 保留 Registry 48、hook 各 512、generate 32、history index 32 的容量上限与既有排序/插入/AI provenance 语义。
 - 保留宽限释放的语义，默认时长由 S8b 评估后调整；保留 pinned 规格、同路径多 Arc 释放、历史值独立持有、模板不保留运行期 bundle 树。
 - 本文明确扩展 `spec-idle-release-plan.md` 中“仅后续普通补全开始宽限”的边界：来自当前所有者的明确 EndInput 也可开始宽限。隐藏、发呆和 history-only 请求仍不代替结束输入。
@@ -395,7 +395,7 @@ cargo run --release --locked -p fastab_engine --example resource-replay -- bundl
 另一个可复现的条件缺陷是实际收到 CSI-u `ESC[9u` 时，解析结果为 `Char('\t')`，真实 KeyInterceptor 无法匹配 Tab。仅规范化功能码 9/13/27/127 为 Tab/Enter/Escape/Backspace，保留修饰键、原始字节及其它控制字符的既有区别；CSI-u 模式仍使用原有重编码转发，不能声称所有模式逐字透传。parser→interceptor 回归在旧代码上明确失败，新代码通过。现场 CSI-u 配置未开启，因此没有把此缺陷认定为用户此次现象的根因。
 
 
-**隐藏窗口资源回收。** 原先 `orderOut` 只隐藏窗口，renderer、图集、路径纹理和共享实例缓冲仍常驻。现在先立即 park，隐藏满 10 秒后作废排队的原生定位请求、通过 `AnyWindowHandle` 移除窗口并清空 handle；保留同一个 OverlayState 和当前行引用的小图，下一次显示再创建。显示/新结果取消旧 timer，每次隐藏重新获得完整宽限；没有动态图标也启动回收。独立复审又发现隐藏态残留的 `current_arg` 会让 caret/relayout 重建窗口却不再计时，已将这些创建入口限制为 visible，隐藏时仍更新 last_position。虚拟时钟覆盖期限重置、小图归属和隐藏参数提示不重建。
+**隐藏窗口资源回收。** 原先 `orderOut` 只隐藏窗口，renderer、图集、路径纹理和共享实例缓冲仍常驻。现在先立即 park，隐藏满 10 秒后作废排队的原生定位请求、通过 `AnyWindowHandle` 移除窗口并清空 handle；保留同一个 OverlayState 和当前行引用的小图，下一次显示再创建。显示/新结果取消旧 timer，随后隐藏重新获得完整宽限；没有动态图标也启动回收。独立复审又发现隐藏态残留的 `current_arg` 会让 caret/relayout 重建窗口却不再计时，已将这些创建入口限制为 visible，隐藏时仍更新 last_position。虚拟时钟覆盖期限重置、小图归属和隐藏参数提示不重建。连续隐藏通知的延期缺口在 2026-10-09 节修复。
 
 同一原生 Controller 探针对照均启用 `MTL_DEBUG_LAYER=1`；主动持有旧 NSView，覆盖无动态图标、保留图片的行、设置同时打开、真实帧回调、隐藏后的 caret 更新、Tab 恢复及 `insertCommonPrefixOrInsertSelected` 到 Figterm InsertText。两版最终均 `RESULT failures=0`。
 
@@ -413,3 +413,73 @@ cargo run --release --locked -p fastab_engine --example resource-replay -- bundl
 **追加审查修复：Tab 回退的执行保护。** 后续只读复审发现，直接将默认 Tab 绑定到已有回退动作，会绕过多候选 `auto-execute` / `special` 的公共前缀保护：显示执行建议时，`git status` 等精确匹配的置顶行带有 `\n`，回退接受会执行当前命令。现场当前隐藏执行建议，掩盖了这个默认配置下的回归。修复仅限制公共前缀失败后的回退接受，判断当前选中行；普通行仍可回退，拒绝的动作行保持列表和选择并提供 shake 反馈。保留此前单候选 `Full` 接受、显式 Enter 和 execute 的行为，没有修改通用插入函数。
 
 新增 headless GPUI Controller → FigtermCommand 回归，实际检查插入消息，覆盖两种动作类型、非零选择索引、同一列表随后按 Enter、单候选只插入一次、混排普通候选、前缀扩展与回退、空列表和显式 execute。测试不连接用户 PTY，也不写用户接受记录。旧 handler 明确红测，修复后通过；desktop 全量更新为 219 项通过，desktop all-targets Clippy `-D warnings`、格式及 diff 检查通过，测试源码与工作区逐字节一致。Astra 独立复审未发现剩余可操作问题。证据为 `/tmp/fastab-tab-action-guard-{red,green,desktop-tests,clippy}.log`。本次未重跑无改动的引擎/GPUI 全量或原生内存探针，也未安装、提交或推送。
+
+## 2026-10-09：隔夜空闲的日志常驻与重复隐藏延期
+
+**安装版证据。** 用户确认是主进程，输入已清空或命令已执行完，设置已关闭。PID 94109 的物理 footprint 在约五分钟采样中维持 48.7 MiB，峰值 82.3 MiB。已将安装二进制 SHA-256 与本次 `v0.0.5` Release DMG 对照，并核对运行进程 Mach-O UUID，确认来自 `c7709fae` 的成功打包；不是只凭相同版本号推断。取证未重启、替换或安装应用。
+
+本次 `GPUIView`、`GPUIPanel`、`GPUIWindow`、`CAMetalLayer` 数量均为 0；规格缓存为 0，历史约 6.8 KiB，脚本输出共 389 bytes，失败/watchdog/panic 均为 0。当前窗口与规格已经释放。live heap 约 24.7 MiB，malloc dirty/swap 碎片约 12.8 MiB，两者不能混同为可立即回收的泄漏；不能据此承诺完整桌面进程回到 20 MiB。证据：`/tmp/fastab-overnight-94109-{heap,vmmap,footprint,sample}.txt`。
+
+**修复一：减少空日志队列的固定占用。** 两块各 4,096,000 bytes 的存活分配，经引用链归属到文件和 stdout 的 `tracing-appender` 队列。锁定的 `tracing-appender 0.2.5` 默认每队列 128,000 槽，`crossbeam-channel 0.5.15` 在创建时初始化全部槽位，arm64 每槽 32 bytes。双队列即使无日志也保留 7.8125 MiB，不是隔夜不断增长的对象。
+
+共享 `non_blocking_writer` 将每路容量设为 4,096，双队列固定槽位变为 256 KiB，静态差值为 **7.5625 MiB**。选择 4,096 保留一定突发余量；继续使用 `lossy(true)`，保留双输出及各自 WorkerGuard 的退出刷新。慢输出或日志突发时会更早丢弃日志，不能切成阻塞模式而卡住 UI/PTY。容量限制消息数量，不能冒充 payload 总字节上限。公共日志库的修改也影响启用日志的 CLI 和 PTY。
+
+此前独立探针对比两路默认 128,000 与 1,024 容量，三轮 footprint 差值为 7.781–7.797 MiB，证明固定槽位的影响；该探针早于禁止本地构建的要求，且 **1,024 的测量不是本次 4,096 产品补丁的安装后实测**。证据：`/tmp/fastab-log-queue-footprint-probe-results.txt`。新增阻塞 sink 的真实队列回归：首条取出后阻塞消费，4,097 次写入应及时返回并恰好丢弃 1 条；发生超时也先释放 sink，再回收生产线程。
+
+**修复二：连续隐藏不能无限延期。** `complete_buffer_inner` 在重复输入去重前处理空输入并 dismiss；PTY 的异步提示符重绘可能每隔不到 10 秒重复通知。原 `schedule_idle` 每次重启计时，使隐藏窗口长期留存。这个条件缺陷不能解释本次原生窗口对象已经为 0 的现场，但需要单独修复。
+
+已有 idle task 时继续使用原截止时间；真正 show 或新结果 batch 仍取消旧 task，随后隐藏获得新的 10 秒宽限。到期先核对 generation，再取出并 detach 当前 task，避免取消正在执行的回调；之后清理隐藏窗口和不再被候选行引用的图标。即使 state 消失或已经 visible 而提前返回，也不会留下占用任务槽的完成句柄。虚拟时间回归覆盖第 6/9 秒重复隐藏仍在第 10 秒回收、取消后重开、正常到期后的第二轮、visible 与 state 消失两种提前返回。
+
+**本轮验证边界。** 按用户要求先删除项目 `target`（约 43 GB）、`build`、`proto/dist`、`website/dist`、`bundle/specs-ir` 和此前的临时验证副本；磁盘可用空间从约 6.3 GiB 回到 47 GiB。保留源码、依赖存储及无关未跟踪工作。`AGENTS.md` 与 `CLAUDE.md` 记录禁止本地构建；本轮新增回归未编译、未执行，之前章节的测试通过数不能用于本补丁。仅做源码/依赖审查、直接 rustfmt 检查和 diff 检查；编译、可执行回归与新安装包的实际 footprint 验收留给远端 CI 和后续安装验证。
+
+后续远端验证运行 `cargo test -p fastab_log`、`cargo test -p fastab_desktop overlay::file_icons::tests` 及相关目标的严格 Clippy。安装新包后复测主进程 `phys_footprint`、两个大日志分配是否消失，以及空提示符每隔不到 10 秒重绘时窗口是否仍在最初期限后销毁；同时验证重新显示能够取消旧期限并正常恢复候选。新增虚拟时钟测试使用空窗口槽验证共享回收任务与图像引用，不代替原生窗口验收。
+
+**静态复审结果。** 日志专项复审及 GPT-6 Astra ultra 整体独立复审未发现可行动的 P0–P2 问题；已核对真实调用链、锁定依赖的队列/Task 语义和测试超时退出路径。直接 `rustfmt --check` 与 `git diff --check` 通过，缓存目录保持不存在。此结论不扩大为编译或安装验收通过。
+
+## 2026-10-09 追加：隐藏竞态与其他常驻路径
+
+上述现场已经没有原生窗口，后续代码审计发现的五条路径不能都归因于当时的 48.7 MiB。现场 hook 数据只有 389 bytes，旧接受偏好索引只有 659 bytes，磁盘上的 AI 配置未启用；后三项主要消除其他输入、长期使用或慢挂载下的增长条件。
+
+### 1. 缺失光标时的迟到 Show / Tab
+
+`clear_caret_position` 已隐藏窗口并开始宽限，但同会话已经在队列中的显式 Show 或多候选 Tab 仍可将 `visible` 设为 true。`ensure_window` 随后取消 idle task，而布局因没有光标只能 park；布局重试也要求有光标，于是留下不可见却不再回收的窗口。
+
+`show_kept_items` 先检查光标；缺失时继续隐藏，解除显式显示抑制并记为 `WaitingForCaret`，保持原始释放期限。有效光标到达后走已有的一次性重新补全；单候选 Tab 的接受分支和多候选执行保护不变。回归源码驱动实际 Controller 与 EngineClient：第 6/9 秒重复光标失效及 Tab，第 10 秒仍回收空缓冲区，期间不提交引擎请求，有效光标连续到达两次仅完成一次补全。headless 测试不创建原生窗口；窗口销毁仍需安装版验收。
+
+### 2. Hook 缓存的字节预算与空闲释放
+
+建议、脚本 stdout 和生成规格三张缓存原先各限 512 项，但没有字节上限；脚本单次最多 256 KiB，单张缓存理论上可保留约 128 MiB。TTL 由读取者传入，过期项只在下次访问相同 key 时删除，`EndInput` 原先只让规格进入空闲，不能保证 hook 结果释放。
+
+每张 map 保留 512 项上限，并增加 **4 MiB 估算 payload** 预算。计费包含 key、值结构和拥有的缓冲区；String 与建议 Vec 计入容量，生成规格复用已有树估算，未包含全部 HashMap 桶、allocator 开销和规格字符串备用容量，不能称为进程或精确 heap 上限。超大结果正常返回但不存入缓存；替换先移除旧值，不能在拒绝超大新值后继续命中旧值。预算溢出沿用原先整张清空策略，空缓存释放 map 容量，累计诊断计数保留。
+
+Engine 独立记录 hook 的 active/idle 状态，与规格共用 10 秒宽限，worker 等待两者的最早期限，即使没有规格文件 deadline 也能回收。正常成功请求获得活跃归属；`EndInput` 只为首次空闲计时，重复结束不延期。history-only、失败和取消不获得活跃归属，也不延长已有非空缓存的期限；首次无主请求留下缓存时，从该请求返回开始获得完整宽限。保留既有会话 owner 规则，其他终端的 history 或被取消提交不能吞掉原 owner 的结束通知。TTL 查询语义不变，空闲释放后下次按需重算。
+
+回归源码覆盖三类超大结果、替换与字节总账、String 备用容量、清空 map 容量、无规格期限时的 worker 唤醒、首次取消留下部分缓存、跨会话 history/取消与已开始的期限。
+
+### 3. 旧接受偏好索引
+
+旧 `AcceptanceIndex` 按 root command / name 永久累积，并在启动加载及每次补全快照中整体持有。保留原 JSON 结构和 root 隔离，限制为 **2,048 项、256 KiB 估算字节**，root 最多 256 bytes、name 最多 1,024 bytes（trim 后按 UTF-8 字节计算）。计费为保守的 map/string 元数据和 JSON 转义后长度，包含时间戳与标点余量；这是逻辑存储预算，不是精确 heap 测量。按目录和参数位置学习的 scoped 索引保持独立。
+
+加载仍需通过现有 state API 读取旧 JSON，但裁剪过程消费旧 map，不再克隆整份无界索引；候选集合最多保留 2,048 个唯一 key，优先较新记录。trim 后的重复 key 必须先合并最高 timestamp 再计数，避免大量空白变体挤掉其他有效偏好。重建后释放旧 map 容量，仅在裁剪或规范化改变数据时 best-effort 写回迁移。预算不足的新条目先预检，不能先删掉部分旧项再发现仍放不下；旧 timestamp 不覆盖或驱逐较新项。`record_at` 对有效旧事件的 true 返回值仍保留：前台会先录入同一个事件，后台重放依赖这个返回值持久化，不能为了省一次空写而漏掉全部正常保存。
+
+回归源码覆盖计数上限、字节上限与 JSON 转义、UTF-8 字段边界、root 隔离、旧事件重放、拒绝大旧项前不破坏索引、旧 JSON 迁移、规范化重复 key，以及再次加载无需重复迁移。
+
+### 4. AI 仓库文件系统探测
+
+原 `tokio::fs` 探测虽受 200 ms 外层 timeout 限制，取消等待无法停止已经提交的 blocking I/O；限制 Tokio worker 数量也不限制其排队任务。增加独立的单许可 gate，在提交前 `try_acquire_owned`，将许可移入实际 `spawn_blocking` 闭包，直到 canonicalize、目录检查及父目录 `.git` 查询实际返回才释放。忙时本次上下文标记为不完整，不继续排队；不能终止一个已经卡住的系统调用，但它至多占一个探测槽。
+
+取消与超时回归源码使用可控阻塞闭包，验证取消等待后许可仍被持有、随后请求不会启动，实际工作结束后恢复。测试用独立 semaphore；使用全局 gate 的已有集成测试串行隔离，避免互相触发忙状态。
+
+### 5. 空候选与解析字符串的备用容量
+
+`OverlayState::dismiss` 清空内容但保留 Vec / String 容量；一次大历史列表结束后仍可常驻几 MiB。隐藏回收任务到期且确认 state 隐藏后，释放空 `items` 和四个空解析字符串的 capacity。非空的保留候选及上下文继续支持 Tab 恢复，不在每次输入时 shrink。虚拟时间回归检查 9 秒时仍保留、10 秒归还空容量，以及非空行、图标和参数提示仍保留。
+
+### 暂时隐藏 AI 设置
+
+`AI_SETTINGS_VISIBLE = false` 隐藏侧栏入口，原 AI/Jev 设置路径回到外观页；AI Entity 改为可选并延迟创建，隐藏时打开设置不启动该页面的凭据读取或保存任务。关闭、切页和权限页的调用均兼容空 Entity。已保存的配置、启用状态、凭据与同意记录保持原值；这是设置入口变更，不是关闭已启用的运行时 AI。
+
+### 追加修改的验证边界
+
+本轮继续遵守禁止本地构建：只做源码及依赖审查、直接 rustfmt 和 diff 检查，新增回归仅为源码，未编译或执行。远端 CI 需要运行 engine、desktop、GPUI、log 的相关回归及严格 Clippy；安装后再验证隐藏/恢复、Tab、设置路由和真实 footprint。现有安装版不能验收这些未打包改动，也不能把早期章节的测试结果当成本轮通过记录。
+
+**追加静态复审结果。** GPT-6 Astra ultra 分工实现并交叉审查，主代理核对实际 diff。复审修正了两处问题：旧偏好迁移在去重前限数会误删其他有效项；一个 worker 回归 fixture 缺少 `splitOn` 却断言产生候选。修正后独立复核未发现剩余可确认的 P0–P2。13 个修改 Rust 文件的直接 `rustfmt --check` 与 `git diff --check` 通过，五个已清理的构建缓存目录仍不存在；没有进行本地编译、测试、安装、提交或推送。首载历史 JSON 的临时峰值及一个不可取消的系统 I/O 不在这些内存预算的硬保证内。
