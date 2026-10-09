@@ -448,6 +448,7 @@ pub fn start_application(
     application.run(move |cx: &mut App| match setup(cx) {
         Ok((host, event_rx)) => {
             *reopen_proxy.borrow_mut() = Some(host.read(cx).proxy.clone());
+            fastab_gpui::install_idle_cache_release(cx);
             #[cfg(target_os = "macos")]
             crate::webview::menu::install(cx, host.read(cx).proxy.clone());
             run(host.clone(), event_rx, cx);

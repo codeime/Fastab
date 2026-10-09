@@ -28,6 +28,7 @@ use std::{
     cmp,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
+    mem,
     ops::{Deref, DerefMut, Range},
     sync::Arc,
 };
@@ -56,9 +57,31 @@ pub struct TextSystem {
     font_ids_by_font: RwLock<FxHashMap<Font, Result<FontId>>>,
     font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
     raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
-    wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
-    font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
+    pools: Mutex<TextPools>,
     fallback_font_stack: SmallVec<[Font; 2]>,
+}
+
+#[derive(Default)]
+struct TextPools {
+    generation: u64,
+    wrappers: FxHashMap<FontIdWithSize, Vec<LineWrapper>>,
+    font_runs: Vec<Vec<FontRun>>,
+}
+
+/// Derived text caches released while an application has no windows.
+/// These counts describe cache ownership, not physical memory reclaimed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextCacheRelease {
+    /// Cached font metric entries removed. Font identities remain registered.
+    pub font_metrics: usize,
+    /// Cached glyph raster bounds removed.
+    pub glyph_raster_bounds: usize,
+    /// Idle line wrappers dropped; borrowed wrappers are retired on return.
+    pub line_wrappers: usize,
+    /// Idle font-run buffers dropped.
+    pub font_run_buffers: usize,
+    /// Total element capacity of the dropped font-run buffers.
+    pub font_run_capacity: usize,
 }
 
 impl TextSystem {
@@ -68,8 +91,7 @@ impl TextSystem {
             font_metrics: RwLock::default(),
             raster_bounds: RwLock::default(),
             font_ids_by_font: RwLock::default(),
-            wrapper_pool: Mutex::default(),
-            font_runs_pool: Mutex::default(),
+            pools: Mutex::default(),
             fallback_font_stack: smallvec![
                 // TODO: Remove this when Linux have implemented setting fallbacks.
                 font(".ZedMono"),
@@ -83,6 +105,30 @@ impl TextSystem {
                 font("DejaVu Sans"),
                 font("Arial"), // macOS, Windows
             ],
+        }
+    }
+
+    pub(crate) fn release_idle_caches(&self) -> TextCacheRelease {
+        let metrics = mem::take(&mut *self.font_metrics.write());
+        let raster_bounds = mem::take(&mut *self.raster_bounds.write());
+        let (wrappers, font_runs) = {
+            let mut pools = self.pools.lock();
+            pools.generation = pools.generation.wrapping_add(1);
+            (
+                mem::take(&mut pools.wrappers),
+                mem::take(&mut pools.font_runs),
+            )
+        };
+
+        // Keep font resolution and the platform's font table: FontIds can
+        // remain in borrowed wrappers and layouts after their window closes.
+        // Drop retired buffers outside the pool mutex.
+        TextCacheRelease {
+            font_metrics: metrics.len(),
+            glyph_raster_bounds: raster_bounds.len(),
+            line_wrappers: wrappers.values().map(Vec::len).sum(),
+            font_run_buffers: font_runs.len(),
+            font_run_capacity: font_runs.iter().map(Vec::capacity).sum(),
         }
     }
 
@@ -290,9 +336,10 @@ impl TextSystem {
 
     /// Returns a handle to a line wrapper, for the given font and font size.
     pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
-        let lock = &mut self.wrapper_pool.lock();
         let font_id = self.resolve_font(&font);
-        let wrappers = lock
+        let mut pools = self.pools.lock();
+        let wrappers = pools
+            .wrappers
             .entry(FontIdWithSize { font_id, font_size })
             .or_default();
         let wrapper = wrappers.pop().unwrap_or_else(|| {
@@ -302,6 +349,7 @@ impl TextSystem {
         LineWrapperHandle {
             wrapper: Some(wrapper),
             text_system: self.clone(),
+            pool_generation: pools.generation,
         }
     }
 
@@ -415,7 +463,10 @@ impl WindowTextSystem {
         line_clamp: Option<usize>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
-        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        let (pool_generation, mut font_runs) = {
+            let mut pools = self.pools.lock();
+            (pools.generation, pools.font_runs.pop().unwrap_or_default())
+        };
 
         let mut lines = SmallVec::new();
         let mut line_start = 0;
@@ -519,7 +570,10 @@ impl WindowTextSystem {
             process_line(text);
         }
 
-        self.font_runs_pool.lock().push(font_runs);
+        let mut pools = self.pools.lock();
+        if pools.generation == pool_generation {
+            pools.font_runs.push(font_runs);
+        }
 
         Ok(lines)
     }
@@ -541,7 +595,10 @@ impl WindowTextSystem {
     ) -> Arc<LineLayout> {
         let mut last_run = None::<&TextRun>;
         let mut last_font: Option<FontId> = None;
-        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        let (pool_generation, mut font_runs) = {
+            let mut pools = self.pools.lock();
+            (pools.generation, pools.font_runs.pop().unwrap_or_default())
+        };
         font_runs.clear();
 
         for run in runs.iter() {
@@ -580,7 +637,10 @@ impl WindowTextSystem {
             force_width,
         );
 
-        self.font_runs_pool.lock().push(font_runs);
+        let mut pools = self.pools.lock();
+        if pools.generation == pool_generation {
+            pools.font_runs.push(font_runs);
+        }
 
         layout
     }
@@ -596,19 +656,23 @@ struct FontIdWithSize {
 pub struct LineWrapperHandle {
     wrapper: Option<LineWrapper>,
     text_system: Arc<TextSystem>,
+    pool_generation: u64,
 }
 
 impl Drop for LineWrapperHandle {
     fn drop(&mut self) {
-        let mut state = self.text_system.wrapper_pool.lock();
         let wrapper = self.wrapper.take().unwrap();
-        state
-            .get_mut(&FontIdWithSize {
-                font_id: wrapper.font_id,
-                font_size: wrapper.font_size,
-            })
-            .unwrap()
-            .push(wrapper);
+        let mut pools = self.text_system.pools.lock();
+        if pools.generation == self.pool_generation {
+            pools
+                .wrappers
+                .entry(FontIdWithSize {
+                    font_id: wrapper.font_id,
+                    font_size: wrapper.font_size,
+                })
+                .or_default()
+                .push(wrapper);
+        }
     }
 }
 

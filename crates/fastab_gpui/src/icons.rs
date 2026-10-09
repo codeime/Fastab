@@ -74,6 +74,8 @@ const HISTORY: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" h
 
 const AI: &str = include_str!("icons/ai.svg");
 
+static NAMED_IMAGE_CACHE: OnceLock<Mutex<HashMap<&'static str, Arc<Image>>>> = OnceLock::new();
+
 fn named_bytes(name: &str) -> Option<&'static [u8]> {
     match name {
         "folder" => Some(FOLDER),
@@ -106,9 +108,8 @@ pub fn icon_for_kind(kind: &str) -> SharedString {
 }
 
 fn cached_image(name: &str) -> Option<Arc<Image>> {
-    static CACHE: OnceLock<Mutex<HashMap<&'static str, Arc<Image>>>> = OnceLock::new();
     let key = canonical_icon_name(name)?;
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache = NAMED_IMAGE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut map = cache.lock().unwrap_or_else(|err| err.into_inner());
     if let Some(image) = map.get(key) {
         return Some(image.clone());
@@ -129,6 +130,19 @@ fn cached_image(name: &str) -> Option<Arc<Image>> {
     let image = Arc::new(Image::from_bytes(format, bytes));
     map.insert(key, image.clone());
     Some(image)
+}
+
+/// Release copied source bytes after the host has retired every GPUI window.
+/// The host also clears GPUI's decoded asset cache at that idle boundary.
+pub(crate) fn clear_named_icon_cache() {
+    let Some(cache) = NAMED_IMAGE_CACHE.get() else {
+        return;
+    };
+    let retired = {
+        let mut map = cache.lock().unwrap_or_else(|err| err.into_inner());
+        std::mem::take(&mut *map)
+    };
+    drop(retired);
 }
 
 fn canonical_icon_name(name: &str) -> Option<&'static str> {

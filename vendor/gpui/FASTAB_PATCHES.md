@@ -75,9 +75,30 @@ Additional lifecycle fixes:
   and `screen_capture.rs`, plus tabbing identifiers, use the existing autoreleased
   string helper.
 
+Application cache reclamation in `src/app.rs` and `src/text_system.rs`:
+
+- `App::release_idle_caches` releases cached asset task references, derived font
+  metrics and glyph bounds, and idle text scratch buffers only when the window
+  slot map is empty. A window temporarily taken out for an update still blocks
+  reclamation. Fastab calls this from a deferred last-window-close handler.
+- Retired maps and vectors are replaced with empty containers so their capacity
+  is released. Borrowed line wrappers and font-run buffers carry a pool generation;
+  returning a pre-reclamation lease drops it instead of repopulating the pool.
+  Buffer destruction happens outside the pool mutex.
+- Font lookup identities and the platform font table remain intact because
+  external wrappers and layouts may outlive their window. Outstanding asset
+  consumers may finish independently; completion does not reinsert a cache entry.
+- The return value reports counts of retired cache entries and font-run capacity,
+  not allocator or physical-memory savings. Four public-API regression tests live
+  in `crates/fastab_gpui/src/idle_cache_tests.rs`, within the existing crate test
+  target. They cover wrapper reuse, retained font/layout identities, old asset
+  completion, and the actual deferred close hook with an intervening window open.
+  The GPUI test platform uses its synthetic text backend; these tests do not
+  establish CoreText rendering or installed-app memory savings.
+
 The root `[patch.crates-io]` applies this copy to all GPUI consumers. Other
-`gpui_*` crates retain their registry dependencies. Font identities, text caches,
-rendering primitives and buffer allocation policy are unchanged.
+`gpui_*` crates retain their registry dependencies. Font identities, rendering
+primitives and buffer allocation policy are unchanged.
 
 This does not unregister private AppKit notification observers or promise that
 all native views and application-wide caches disappear on close. It separates

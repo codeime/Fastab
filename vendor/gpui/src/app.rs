@@ -41,7 +41,8 @@ use crate::{
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PromptBuilder,
     PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
     Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    TextCacheRelease, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -530,6 +531,17 @@ impl SystemWindowTabController {
             window.activate_window();
         });
     }
+}
+
+/// Cache references and buffers released while an application has no windows.
+/// Counts do not imply that the allocator returned physical memory to the OS.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IdleCacheRelease {
+    /// Cached asset task references removed, including completed results.
+    /// Tasks or results held by other consumers remain alive.
+    pub assets: usize,
+    /// Derived text caches released without invalidating font identities.
+    pub text: TextCacheRelease,
 }
 
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
@@ -1998,6 +2010,27 @@ impl App {
     pub fn remove_asset<A: Asset>(&mut self, source: &A::Source) {
         let asset_id = (TypeId::of::<A>(), hash(source));
         self.loading_assets.remove(&asset_id);
+    }
+
+    /// Release rebuildable application caches only when no windows remain.
+    ///
+    /// Returns `None` while any window exists, including one temporarily taken
+    /// out of its slot during an update. Call this from a deferred close handler
+    /// or an idle callback so the last closed window has finished dropping.
+    ///
+    /// Borrowed text wrappers and layouts remain valid. Outstanding asset
+    /// consumers may finish their tasks, but do not repopulate this cache.
+    /// A later asset request starts a fresh load, as with [`Self::remove_asset`].
+    pub fn release_idle_caches(&mut self) -> Option<IdleCacheRelease> {
+        if !self.windows.is_empty() {
+            return None;
+        }
+
+        let assets = mem::take(&mut self.loading_assets);
+        Some(IdleCacheRelease {
+            assets: assets.len(),
+            text: self.text_system.release_idle_caches(),
+        })
     }
 
     /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
