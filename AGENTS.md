@@ -112,6 +112,12 @@ The shared file-backed SQLite pool keeps capacity for four concurrent checkouts 
 - **Remote IPC**: `fastab_remote_ipc` — WebSocket-based, used for SSH/remote sessions
 - Protobuf `.proto` files live in `proto/`; generated Rust types in `fastab_proto`; generated TS types in `packages/api-bindings`
 
+### Resource lifecycle invariants
+
+The post-0.0.6 fixes and pending runtime acceptance are recorded in `docs/resource-audit-v0.0.6.md`. Parser-generated control events are drained locally through `MainLoopControl`; they must not synchronously send into the main loop's own bounded channel. Stdin reads are 16 KiB with a 64 KiB / first-byte 1 ms aggregation bound. Large raw paste events must transfer the entire backing allocation, not leave an empty shared tail in the parser. EOF and permanent errors settle pending keys before exiting.
+
+Desktop-to-fterm IPC uses one bounded encoded outbox (256 frames / 4 MiB including in-flight); interrupted partial writes retire the connection and must never replay an uncertain Insert. Engine initialization and ClearCaches share the watchdog boundary. Its 256-job / 8 MiB estimated mailbox reserves two EndInput slots for the committed owner and running attempt; do not coalesce across a retained Complete. File icons and delayed AX activation each use one native worker slot: an uninterruptible call continues occupying that slot, and stale results cannot refill hidden caches. Diagnostics report ownership and approximate capacities, not measured physical savings. The std-only rolling log and build identity leaves are shared with the IME by source inclusion; do not pull the desktop dependency graph back into it.
+
 ### Shell Integration
 
 `fastab_integrations` and `fastab_install` inject hooks into shell rc files (`.zshrc`, `.bashrc`, fish config). These hooks report shell state (CWD, command text, cursor position) back to `fastab_term` via IPC on every prompt and keystroke.
