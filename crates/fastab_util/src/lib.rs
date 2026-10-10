@@ -6,6 +6,7 @@ mod shell;
 pub mod system_info;
 pub mod terminal;
 
+pub mod build_identity;
 pub mod consts;
 #[cfg(target_os = "macos")]
 pub mod launchd_plist;

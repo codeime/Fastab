@@ -93,7 +93,40 @@ fn register_self_with_tis() {
     }
 }
 
+// The IME has no diagnostic socket. Record its own mapped identity once,
+// without starting another thread; readers must check that the PID is alive.
+fn record_build_identity() {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let Some(log) = crate::paths::log_file_path() else {
+        return;
+    };
+    let Some(parent) = log.parent() else { return };
+    if std::fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let temp = parent.join(format!("imk-identity-{}.tmp", std::process::id()));
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temp)
+    else {
+        return;
+    };
+    let written = (|| -> std::io::Result<()> {
+        file.write_all(crate::build_identity::json("fastab_input_method").as_bytes())?;
+        file.flush()?;
+        std::fs::rename(&temp, parent.join("imk-identity.json"))
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(temp);
+    }
+}
+
 pub fn main() {
+    crate::build_identity::initialize();
+    record_build_identity();
     // Default is ERROR, same as the desktop app. The previous `trace` filter
     // plus an INFO `respondsToSelector` probe wrote on every IMK query and
     // kept a multi-thread tokio runtime alive for a process that only needs

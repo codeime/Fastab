@@ -68,6 +68,9 @@ pub mod build {
     /// The datetime in rfc3339 format of the current build
     pub const DATETIME: Option<&str> = option_env!("AMAZON_Q_BUILD_DATETIME");
 
+    /// CI run that produced this binary, independent of the release version.
+    pub const RUN_ID: Option<&str> = option_env!("FASTAB_BUILD_RUN_ID");
+
     /// If `fish` tests should be skipped
     pub const SKIP_FISH_TESTS: bool = option_env!("AMAZON_Q_BUILD_SKIP_FISH_TESTS").is_some();
 

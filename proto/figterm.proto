@@ -124,6 +124,10 @@ message DiagnosticsResponse {
   optional string edit_buffer = 4;
   // The current cursor cursor position
   optional uint32 cursor_position = 5;
+  // Build and Mach-O UUID of the responding process, not its replacement on disk.
+  optional string build_identity_json = 6;
+  // Numeric resource counters only; never contains terminal input.
+  optional string resource_diagnostics_json = 7;
 }
 
 message InsertOnNewCmdRequest {

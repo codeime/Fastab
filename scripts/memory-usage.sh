@@ -41,40 +41,51 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Match the installed bundle layout and development output directories.
-# `fastab_term` rewrites its process title to
-# "<shell> (fterm)", which is why it is matched on the title rather than a path.
-# Keep matching the old title while pre-upgrade terminal sessions remain open.
-#
-# The negative match matters: an editor or terminal whose window happens to
-# mention this project shows up in `ps` with "fastab" in its title.
-readonly MATCH='Fastab\.app/Contents/(MacOS/(fastab|ftab|fterm|fastabterm)|Helpers/.*fastab_input_method)|target/(dist|release|debug)/(fastab|fastabterm|fastab_input_method|ftab)|\((fterm|fastabterm)\)'
-# An editor whose window title mentions this project shows up in `ps` with
-# "fastab" in its command line. The paths above are specific enough on
-# their own, but these are the ones actually seen in the wild.
-readonly EXCLUDE='Cursor Helper|Code Helper|extension-host'
-# The short name alone is ambiguous. Confirm development fterm candidates using
-# their mapped executable, including when argv[0] is relative to another cwd.
+# Titles and command lines only select candidates. Every candidate must also
+# have a matching mapped executable, including renamed fterm wrapper copies.
+# In-place upgrades may leave an older inode mapped: do not require its hash to
+# equal the new file on disk.
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 readonly REPO_ROOT
-readonly DEV_PTY_MATCH='(^|[[:space:]/])fterm([[:space:]]|$)'
+readonly CANDIDATE='fastab|Fastab|fterm|ftab'
+
+is_product_image() {
+    local image=$1
+    case "$image" in
+        */Fastab.app/Contents/MacOS/fastab|*/Fastab.app/Contents/MacOS/ftab|*/Fastab.app/Contents/MacOS/fterm|*/Fastab.app/Contents/MacOS/fastabterm|*/Fastab.app/Contents/Helpers/FastabInputMethod.app/Contents/MacOS/fastab_input_method)
+            return 0 ;;
+        "$REPO_ROOT"/target/debug/fastab|"$REPO_ROOT"/target/release/fastab|"$REPO_ROOT"/target/dist/fastab|"$REPO_ROOT"/target/debug/ftab|"$REPO_ROOT"/target/release/ftab|"$REPO_ROOT"/target/dist/ftab|"$REPO_ROOT"/target/debug/fterm|"$REPO_ROOT"/target/release/fterm|"$REPO_ROOT"/target/dist/fterm|"$REPO_ROOT"/target/debug/fastabterm|"$REPO_ROOT"/target/release/fastabterm|"$REPO_ROOT"/target/dist/fastabterm|"$REPO_ROOT"/target/debug/fastab_input_method|"$REPO_ROOT"/target/release/fastab_input_method|"$REPO_ROOT"/target/dist/fastab_input_method)
+            return 0 ;;
+        "$HOME"/.local/bin/*' (fterm)'|"$HOME"/.local/bin/*' (fastabterm)')
+            return 0 ;;
+    esac
+    [[ -n ${Q_TERM_PATH:-} && $image == "$Q_TERM_PATH" ]]
+}
 
 collect_pids() {
-    local snapshot pid command mapped_file
+    local snapshot pid command mapped_file mapped start verified
     snapshot=$(ps -Ao pid=,command=)
     while read -r pid command; do
-        [[ $command =~ $EXCLUDE ]] && continue
-        if [[ $command =~ $MATCH ]]; then
+        [[ $command =~ $CANDIDATE ]] || continue
+        start=$(ps -p "$pid" -o lstart= 2>/dev/null) || continue
+        if ! mapped=$(/usr/sbin/lsof -nP -a -p "$pid" -d txt -Fn 2>/dev/null); then
+            # A vanished process is normal. A live but unreadable candidate is
+            # unknown, not a measured zero-byte product process.
+            if [[ -n $start && $(ps -p "$pid" -o lstart= 2>/dev/null) == "$start" ]]; then
+                echo "Cannot verify executable for candidate PID $pid; excluded from total." >&2
+            fi
+            continue
+        fi
+        verified=0
+        while IFS= read -r mapped_file; do
+            [[ $mapped_file == n* ]] || continue
+            if is_product_image "${mapped_file#n}"; then
+                verified=1
+                break
+            fi
+        done <<<"$mapped"
+        if [[ $verified == 1 && $(ps -p "$pid" -o lstart= 2>/dev/null) == "$start" ]]; then
             printf '%s\n' "$pid"
-        elif [[ $command =~ $DEV_PTY_MATCH ]]; then
-            while IFS= read -r mapped_file; do
-                case "$mapped_file" in
-                    "n$REPO_ROOT/target/debug/fterm"|"n$REPO_ROOT/target/release/fterm"|"n$REPO_ROOT/target/dist/fterm")
-                        printf '%s\n' "$pid"
-                        break
-                        ;;
-                esac
-            done < <(/usr/sbin/lsof -nP -a -p "$pid" -d txt -Fn 2>/dev/null)
         fi
     done <<<"$snapshot"
 }

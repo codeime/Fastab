@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
   push:
@@ -120,6 +121,13 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+
+      - name: Record build identity
+        run: |
+          echo "AMAZON_Q_BUILD_HASH=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "AMAZON_Q_BUILD_DATETIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+          echo "AMAZON_Q_BUILD_TARGET_TRIPLE=aarch64-apple-darwin" >> "$GITHUB_ENV"
+          echo "FASTAB_BUILD_RUN_ID=$GITHUB_RUN_ID" >> "$GITHUB_ENV"
 
       - name: Verify Apple Silicon runner
         run: test "$(uname -m)" = "arm64"

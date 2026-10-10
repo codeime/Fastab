@@ -2734,6 +2734,7 @@ dependencies = [
  "objc2-input-method-kit",
  "plist",
  "serde",
+ "serde_json",
  "toml 1.1.4+spec-1.1.0",
 ]
 

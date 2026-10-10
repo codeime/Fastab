@@ -773,6 +773,7 @@ fn launch_shell(command: Option<&[String]>) -> Result<()> {
 }
 
 fn figterm_main(command: Option<&[String]>) -> Result<()> {
+    fastab_util::build_identity::initialize();
     fastab_settings::settings::init_global().ok();
 
     let context = Context::new();

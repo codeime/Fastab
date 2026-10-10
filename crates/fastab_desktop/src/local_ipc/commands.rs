@@ -331,9 +331,30 @@ pub async fn connect_to_ibus(proxy: EventLoopProxy, platform_state: &PlatformSta
 
 pub async fn bundle_metadata(ctx: &Context) -> LocalResult {
     match fastab_util::manifest::bundle_metadata_json(ctx).await {
-        Ok(json) => Ok(LocalResponse::Message(Box::new(CommandResponseTypes::BundleMetadata(
-            BundleMetadataResponse { json },
-        )))),
+        Ok(json) => {
+            // macOS has no packaged metadata. Still report the mapped process,
+            // and preserve any packaged fields on platforms that provide them.
+            let mut metadata = match json {
+                Some(json) => {
+                    serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&json).map_err(|error| {
+                        LocalResponse::Error {
+                            code: None,
+                            message: Some(format!("Invalid bundled metadata: {error}")),
+                        }
+                    })?
+                },
+                None => serde_json::Map::new(),
+            };
+            metadata.insert(
+                "running-process".into(),
+                serde_json::from_str(&fastab_util::build_identity::json("fastab")).unwrap(),
+            );
+            Ok(LocalResponse::Message(Box::new(CommandResponseTypes::BundleMetadata(
+                BundleMetadataResponse {
+                    json: Some(serde_json::Value::Object(metadata).to_string()),
+                },
+            ))))
+        },
         Err(err) => Err(LocalResponse::Error {
             code: None,
             message: Some(format!("Failed to get the bundled metadata: {err:?}")),
@@ -346,6 +367,21 @@ mod tests {
     use fastab_engine::{EngineClient, EngineClientDiagnostics};
 
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn bundle_metadata_reports_the_running_process_without_packaged_metadata() {
+        let context = Context::new();
+        let Ok(LocalResponse::Message(response)) = bundle_metadata(&context).await else {
+            panic!("expected running process metadata");
+        };
+        let CommandResponseTypes::BundleMetadata(response) = *response else {
+            panic!("expected bundle metadata response");
+        };
+        let metadata: serde_json::Value = serde_json::from_str(&response.json.unwrap()).unwrap();
+        assert_eq!(metadata["running-process"]["pid"], std::process::id());
+        assert_eq!(metadata["running-process"]["component"], "fastab");
+    }
 
     #[tokio::test]
     async fn engine_dump_reads_the_existing_worker_without_initializing_it() {

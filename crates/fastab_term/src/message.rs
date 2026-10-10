@@ -233,6 +233,8 @@ pub(crate) async fn process_figterm_request(
                 zsh_autosuggestion_style: term.shell_state().zsh_autosuggestion_color.as_ref().map(map_style),
                 edit_buffer,
                 cursor_position,
+                build_identity_json: Some(fastab_util::build_identity::json("fterm")),
+                resource_diagnostics_json: Some(crate::resource_diagnostics::json()),
             });
 
             Ok(Some(response))

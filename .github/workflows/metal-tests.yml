@@ -1,0 +1,34 @@
+name: Native Metal regression
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  metal:
+    # Hosted macOS runners may lack an accessible Metal device. This explicit
+    # entry point requires a registered Mac with a GUI session and real GPU.
+    runs-on: [self-hosted, macOS, ARM64, fastab-metal]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify host and pinned toolchain
+        run: |
+          test "$(uname -m)" = arm64
+          system_profiler SPDisplaysDataType
+          rustup show
+      - name: Run native Metal resource regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p gpui --lib platform::mac::metal_renderer::instance_buffer_pool_tests -- --ignored --test-threads=1 --nocapture 2>&1 | tee metal-tests.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' metal-tests.log
+      - name: Preserve native test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-metal-regression
+          path: metal-tests.log
+          if-no-files-found: warn

@@ -39,6 +39,8 @@ pub struct BuildDetails {
     pub hash: Option<&'static str>,
     pub date: Option<String>,
     pub variant: String,
+    pub target: Option<&'static str>,
+    pub run_id: Option<&'static str>,
 }
 
 impl BuildDetails {
@@ -56,6 +58,8 @@ impl BuildDetails {
             hash: HASH,
             date,
             variant: manifest().variant.to_string(),
+            target: fastab_util::consts::build::TARGET_TRIPLE,
+            run_id: fastab_util::consts::build::RUN_ID,
         }
     }
 }

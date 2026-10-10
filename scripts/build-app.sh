@@ -20,6 +20,14 @@ export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Embed the checked-out commit in every binary, including same-version rebuilds.
+# These values identify the build; disk bundle metadata is not proof of the
+# identity of an older process that stayed mapped across an upgrade.
+export AMAZON_Q_BUILD_HASH="${AMAZON_Q_BUILD_HASH:-$(git -C "$REPO_DIR" rev-parse HEAD)}"
+export AMAZON_Q_BUILD_DATETIME="${AMAZON_Q_BUILD_DATETIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+export AMAZON_Q_BUILD_TARGET_TRIPLE="aarch64-apple-darwin"
+export FASTAB_BUILD_RUN_ID="${FASTAB_BUILD_RUN_ID:-${GITHUB_RUN_ID:-local}}"
+
 # Rust embeds the icons from the repository bundle and the IR compiler below
 # reads that same directory. Refuse a redirected source tree before doing any
 # build work; custom source/output directories are still supported by the

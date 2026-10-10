@@ -1,3 +1,8 @@
+// Share only the std-only identity leaf, not fastab_util's dependencies.
+#[cfg(target_os = "macos")]
+#[path = "../../fastab_util/src/build_identity.rs"]
+mod build_identity;
+
 // `logging` must come first: it defines the `log_*` macros the other modules use.
 #[cfg(target_os = "macos")]
 #[macro_use]
