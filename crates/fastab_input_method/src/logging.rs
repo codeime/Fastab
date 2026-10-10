@@ -5,11 +5,14 @@
 //! level writes nothing. The file location and the `Q_LOG_LEVEL` default match
 //! `fastab_log`; the line format is plainer.
 
-use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// Share the std-only sink without linking fastab_log's tracing stack into the IME.
+#[path = "../../fastab_log/src/rolling.rs"]
+mod rolling;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
@@ -35,7 +38,7 @@ impl Level {
 
 /// Same default as `fastab_log`: only errors, unless `Q_LOG_LEVEL` says otherwise.
 static MAX_LEVEL: AtomicU8 = AtomicU8::new(Level::Error as u8);
-static SINK: Mutex<Option<File>> = Mutex::new(None);
+static SINK: Mutex<Option<rolling::RollingFile>> = Mutex::new(None);
 
 /// Accepts a bare level (`debug`) and the trailing level of a `tracing` directive
 /// (`fastab_input_method=debug`), which covers how `Q_LOG_LEVEL` is used in practice.
@@ -60,10 +63,7 @@ pub fn init() {
     let Some(path) = crate::paths::log_file_path() else {
         return;
     };
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    if let Ok(file) = OpenOptions::new().create(true).write(true).truncate(true).open(&path) {
+    if let Ok(file) = rolling::RollingFile::new(&path, true) {
         *SINK.lock().unwrap_or_else(|err| err.into_inner()) = Some(file);
     }
 }

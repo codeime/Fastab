@@ -1,4 +1,3 @@
-use std::fs::File;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -10,7 +9,8 @@ use tracing_subscriber::filter::Directive;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, Registry, fmt};
 
-const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+mod rolling;
+
 const DEFAULT_FILTER: LevelFilter = LevelFilter::ERROR;
 // Slots stay allocated even when empty. The upstream 128,000-slot default
 // costs about 3.9 MiB per writer on arm64; file + stdout need only 256 KiB here.
@@ -78,37 +78,7 @@ pub fn initialize_logging<T: AsRef<Path>>(args: LogArgs<T>) -> Result<LogGuard, 
         Some(log_file_path) => {
             let log_path = log_file_path.as_ref();
 
-            // Make the log path parent directory if it doesn't exist.
-            if let Some(parent) = log_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-
-            // We delete the old log file when requested each time the logger is initialized, otherwise we only
-            // delete the file when it has grown too large.
-            if args.delete_old_log_file {
-                std::fs::remove_file(log_path).ok();
-            } else if log_path.exists() && std::fs::metadata(log_path)?.len() > MAX_FILE_SIZE {
-                std::fs::remove_file(log_path)?;
-            }
-
-            // Create the new log file or append to the existing one.
-            let file = if args.delete_old_log_file {
-                File::create(log_path)?
-            } else {
-                File::options().append(true).create(true).open(log_path)?
-            };
-
-            // On posix-like systems, we modify permissions so that only the owner has access.
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(metadata) = file.metadata() {
-                    let mut permissions = metadata.permissions();
-                    permissions.set_mode(0o600);
-                    file.set_permissions(permissions).ok();
-                }
-            }
-
+            let file = rolling::RollingFile::new(log_path, args.delete_old_log_file)?;
             let (non_blocking, guard) = non_blocking_writer(file);
             let file_layer = fmt::layer().with_line_number(true).with_writer(non_blocking);
 
