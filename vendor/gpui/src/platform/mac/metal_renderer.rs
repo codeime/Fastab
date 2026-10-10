@@ -1,5 +1,6 @@
 // Modified by Fastab: retire idle instance buffers without recaching late GPU
-// completions. See FASTAB_PATCHES.md at the root of this vendored crate.
+// completions, and allocate path textures only when needed by a scene.
+// See FASTAB_PATCHES.md at the root of this vendored crate.
 
 use super::metal_atlas::MetalAtlas;
 use crate::{
@@ -327,29 +328,45 @@ impl MetalRenderer {
 
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
         let size = NSSize {
-            width: size.width.0 as f64,
-            height: size.height.0 as f64,
+            width: size.width.0.max(0) as f64,
+            height: size.height.0.max(0) as f64,
         };
+        let previous = self.layer.drawable_size();
+        if size.width == previous.width && size.height == previous.height {
+            return;
+        }
+        // A resized window does not need path targets until it paints a path.
+        // Already encoded commands retain their old textures until GPU completion.
+        self.path_intermediate_texture = None;
+        self.path_intermediate_msaa_texture = None;
         unsafe {
             let _: () = msg_send![
                 self.layer(),
                 setDrawableSize: size
             ];
         }
-        let device_pixels_size = Size {
-            width: DevicePixels(size.width as i32),
-            height: DevicePixels(size.height as i32),
-        };
-        self.update_path_intermediate_textures(device_pixels_size);
     }
 
-    fn update_path_intermediate_textures(&mut self, size: Size<DevicePixels>) {
+    fn prepare_path_intermediate_textures(&mut self, scene: &Scene, size: Size<DevicePixels>) {
         // We are uncertain when this happens, but sometimes size can be 0 here. Most likely before
         // the layout pass on window creation. Zero-sized texture creation causes SIGABRT.
         // https://github.com/zed-industries/zed/issues/36229
         if size.width.0 <= 0 || size.height.0 <= 0 {
             self.path_intermediate_texture = None;
             self.path_intermediate_msaa_texture = None;
+            return;
+        }
+        // Retain a same-size target across frames without paths to avoid churn
+        // when an AI icon appears intermittently. Resize and window drop retire it.
+        if scene.paths.is_empty()
+            || self
+                .path_intermediate_texture
+                .as_ref()
+                .is_some_and(|texture| {
+                    texture.width() == size.width.0 as u64
+                        && texture.height() == size.height.0 as u64
+                })
+        {
             return;
         }
 
@@ -387,6 +404,9 @@ impl MetalRenderer {
             (viewport_size.width.ceil() as i32).into(),
             (viewport_size.height.ceil() as i32).into(),
         );
+        if viewport_size.width.0 <= 0 || viewport_size.height.0 <= 0 {
+            return;
+        }
         let drawable = if let Some(drawable) = layer.next_drawable() {
             drawable
         } else {
@@ -396,6 +416,7 @@ impl MetalRenderer {
             );
             return;
         };
+        self.prepare_path_intermediate_textures(scene, viewport_size);
 
         loop {
             let mut instance_buffer = self.instance_buffer_pool.lock().acquire(&self.device);
@@ -1395,6 +1416,187 @@ mod instance_buffer_pool_tests {
     use super::*;
     use std::{sync::mpsc, time::Duration};
 
+    fn path_scene() -> Scene {
+        let mut path = Path::new(point(crate::px(0.), crate::px(0.)));
+        path.line_to(point(crate::px(8.), crate::px(0.)));
+        path.line_to(point(crate::px(0.), crate::px(8.)));
+        path.content_mask.bounds = path.bounds;
+        path.color = crate::rgb(0xffffff).into();
+        let mut scene = Scene::default();
+        scene.paths.push(path.scale(1.));
+        scene
+    }
+
+    #[test]
+    #[ignore = "requires a Metal-capable macOS host"]
+    fn path_textures_are_lazy_reused_and_invalidated_by_resize() {
+        objc::rc::autoreleasepool(|| {
+            let pool = Arc::new(Mutex::new(InstanceBufferPool::default()));
+            let mut renderer = MetalRenderer::new(pool);
+            let empty = Scene::default();
+            let paths = path_scene();
+            let original_size = size(DevicePixels(16), DevicePixels(16));
+            let resized = size(DevicePixels(32), DevicePixels(24));
+
+            renderer.update_drawable_size(original_size);
+            renderer.prepare_path_intermediate_textures(&empty, original_size);
+            assert!(renderer.path_intermediate_texture.is_none());
+            assert!(renderer.path_intermediate_msaa_texture.is_none());
+
+            renderer.prepare_path_intermediate_textures(&paths, original_size);
+            let texture = renderer.path_intermediate_texture.as_ref().unwrap().clone();
+            let msaa = renderer
+                .path_intermediate_msaa_texture
+                .as_ref()
+                .unwrap()
+                .clone();
+            assert_eq!((texture.width(), texture.height()), (16, 16));
+            assert_eq!(msaa.sample_count(), PATH_SAMPLE_COUNT as u64);
+            renderer.update_drawable_size(original_size);
+            renderer.prepare_path_intermediate_textures(&empty, original_size);
+            renderer.prepare_path_intermediate_textures(&paths, original_size);
+            assert_eq!(
+                renderer
+                    .path_intermediate_texture
+                    .as_ref()
+                    .unwrap()
+                    .as_ptr(),
+                texture.as_ptr()
+            );
+            assert_eq!(
+                renderer
+                    .path_intermediate_msaa_texture
+                    .as_ref()
+                    .unwrap()
+                    .as_ptr(),
+                msaa.as_ptr()
+            );
+
+            renderer.update_drawable_size(resized);
+            renderer.prepare_path_intermediate_textures(&empty, resized);
+            assert!(renderer.path_intermediate_texture.is_none());
+            assert!(renderer.path_intermediate_msaa_texture.is_none());
+            renderer.prepare_path_intermediate_textures(&paths, resized);
+            let replacement = renderer.path_intermediate_texture.as_ref().unwrap();
+            assert_eq!((replacement.width(), replacement.height()), (32, 24));
+            assert_ne!(replacement.as_ptr(), texture.as_ptr());
+
+            for invalid in [
+                size(DevicePixels(0), DevicePixels(24)),
+                size(DevicePixels(32), DevicePixels(-1)),
+            ] {
+                renderer.update_drawable_size(invalid);
+                renderer.prepare_path_intermediate_textures(&paths, invalid);
+                assert!(renderer.path_intermediate_texture.is_none());
+                assert!(renderer.path_intermediate_msaa_texture.is_none());
+                renderer.update_drawable_size(original_size);
+                renderer.prepare_path_intermediate_textures(&paths, original_size);
+                assert_eq!(
+                    renderer.path_intermediate_texture.as_ref().unwrap().width(),
+                    16
+                );
+            }
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a Metal-capable macOS host"]
+    fn committed_path_rasterization_survives_resize_and_resolves_msaa() {
+        struct ReleaseGate {
+            event: metal::SharedEvent,
+            deadline: mpsc::Sender<()>,
+        }
+        impl Drop for ReleaseGate {
+            fn drop(&mut self) {
+                self.event.set_signaled_value(1);
+                let _ = self.deadline.send(());
+            }
+        }
+
+        objc::rc::autoreleasepool(|| {
+            let pool = Arc::new(Mutex::new(InstanceBufferPool::default()));
+            let mut renderer = MetalRenderer::new(pool.clone());
+            let viewport = size(DevicePixels(16), DevicePixels(16));
+            let scene = path_scene();
+            renderer.update_drawable_size(viewport);
+            renderer.prepare_path_intermediate_textures(&scene, viewport);
+            let event = renderer.device.new_shared_event();
+            let command = renderer.command_queue.new_command_buffer().to_owned();
+            command.encode_wait_for_event(&event, 1);
+            let mut vertices = pool.lock().acquire(&renderer.device);
+            let mut offset = 0;
+            let output = renderer
+                .device
+                .new_buffer(256, MTLResourceOptions::StorageModeShared);
+            // Drain the render-pass descriptor's autoreleased references before
+            // resizing so it cannot accidentally keep the old textures alive.
+            objc::rc::autoreleasepool(|| {
+                assert!(renderer.draw_paths_to_intermediate(
+                    &scene.paths,
+                    &mut vertices,
+                    &mut offset,
+                    viewport,
+                    &command,
+                ));
+                vertices
+                    .metal_buffer
+                    .did_modify_range(NSRange::new(0, offset as u64));
+                let blit = command.new_blit_command_encoder();
+                blit.copy_from_texture_to_buffer(
+                    renderer.path_intermediate_texture.as_ref().unwrap(),
+                    0,
+                    0,
+                    metal::MTLOrigin { x: 1, y: 1, z: 0 },
+                    metal::MTLSize::new(1, 1, 1),
+                    &output,
+                    0,
+                    256,
+                    256,
+                    metal::MTLBlitOption::None,
+                );
+                blit.end_encoding();
+            });
+            let (completed_tx, completed_rx) = mpsc::channel();
+            let completion = ConcreteBlock::new(move |_| {
+                let _ = completed_tx.send(());
+            })
+            .copy();
+            command.add_completed_handler(&completion);
+            let deadline_event = event.to_owned();
+            let (deadline_tx, deadline_rx) = mpsc::channel();
+            let deadline = std::thread::spawn(move || {
+                let timed_out = matches!(
+                    deadline_rx.recv_timeout(Duration::from_millis(500)),
+                    Err(mpsc::RecvTimeoutError::Timeout)
+                );
+                deadline_event.set_signaled_value(1);
+                timed_out
+            });
+            let gate = ReleaseGate {
+                event,
+                deadline: deadline_tx,
+            };
+            command.commit();
+
+            renderer.update_drawable_size(size(DevicePixels(32), DevicePixels(24)));
+            assert!(renderer.path_intermediate_texture.is_none());
+            assert!(renderer.path_intermediate_msaa_texture.is_none());
+            assert_eq!(gate.event.signaled_value(), 0);
+            assert_eq!(completed_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
+            drop(gate);
+            assert!(
+                !deadline.join().unwrap(),
+                "Resize exceeded the GPU gate deadline"
+            );
+            completed_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("Path rasterization did not complete");
+            assert_eq!(command.status(), metal::MTLCommandBufferStatus::Completed);
+            let pixel = unsafe { std::slice::from_raw_parts(output.contents().cast::<u8>(), 4) };
+            assert_eq!(pixel, &[255; 4]);
+        });
+    }
+
     // Encode real GPU work, but let the caller commit after closing a renderer.
     // The completion owns the buffer until Metal is done, as in the draw path.
     fn encode_buffer_completion(
@@ -1537,7 +1739,9 @@ mod instance_buffer_pool_tests {
             assert_eq!(completed_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
             drop(gate);
             assert!(
-                !deadline.join().expect("Metal gate deadline thread panicked"),
+                !deadline
+                    .join()
+                    .expect("Metal gate deadline thread panicked"),
                 "Renderer teardown exceeded the gate deadline"
             );
 

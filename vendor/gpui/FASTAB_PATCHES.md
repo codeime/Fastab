@@ -30,6 +30,18 @@ Fastab changes `src/platform/mac/metal_renderer.rs`:
   A shared-event gate keeps an already committed command in flight
   while its renderer is dropped; releasing the gate verifies the GPU result and
   prevents a late return from repopulating the retired pool.
+- Path intermediate textures are allocated only for a scene containing paths.
+  Drawable-size changes release both the resolved target and its 4x MSAA target;
+  unchanged sizes reuse them, and a window containing only text, quads and sprites
+  never allocates them. Nonpositive dimensions cannot allocate a texture. After a
+  path disappears, same-size targets stay until resize or window destruction to
+  avoid allocation churn for intermittent icons. Submitted Metal commands retain
+  their old resources during resize; no GPU wait is added.
+- Two additional hardware tests cover real texture allocation/reuse, empty scenes,
+  repeated sizes, resize and invalid dimensions, plus a gated production path
+  rasterization that survives resize and reads back its MSAA-resolved pixel.
+  This reduces unnecessary texture allocation and potential peak usage; it does
+  not establish a reduction in the installed app's idle physical footprint.
 
 Fastab also changes `src/platform/mac/window.rs`:
 
@@ -98,7 +110,7 @@ Application cache reclamation in `src/app.rs` and `src/text_system.rs`:
 
 The root `[patch.crates-io]` applies this copy to all GPUI consumers. Other
 `gpui_*` crates retain their registry dependencies. Font identities, rendering
-primitives and buffer allocation policy are unchanged.
+primitives, MSAA quality and instance-buffer sizing are unchanged.
 
 This does not unregister private AppKit notification observers or promise that
 all native views and application-wide caches disappear on close. It separates
