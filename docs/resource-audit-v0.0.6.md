@@ -2,7 +2,7 @@
 
 调查日期：2026-10-10（Asia/Shanghai）。源码基线：`3644e59e6d5f955e853c773ce67e087a8cf264e7`。
 
-本文前五节保存 0.0.6 基线调查和实施计划，源码行号均指该基线；第六节记录后续实现与 review/fix。本批已实现 R1–R8 及配套节能、日志和诊断改进，并按内容拆分提交；发布和远端编译验收尚未完成。遵守禁止本地构建的要求；基线运行证据来自已安装 0.0.6 二进制，不能当作新代码的验收。Astra ultra 审查 engine、native UI 和交叉生命周期，GPT-6.1 Sol 处理 PTY/输入路径。
+本文前五节保存 0.0.6 基线调查和实施计划，源码行号均指该基线；第六节记录后续实现与 review/fix。本批已实现 R1–R8 及配套节能、日志和诊断改进，并按内容拆分提交；远端格式、Clippy、workspace 测试、资源回放与 dist 发布配置构建已通过，尚未发布新安装包。遵守禁止本地构建的要求；基线运行证据来自已安装 0.0.6 二进制，不能当作新代码的验收。Astra ultra 审查 engine、native UI 和交叉生命周期，GPT-6.1 Sol 处理 PTY/输入路径。
 
 ## 1. 当前安装版事实
 
@@ -217,7 +217,15 @@
 
 **已完成：**逐模块源码 review/fix 与交叉审查；直接 `rustfmt --check`、`git diff --check`；修改的 shell 脚本 `bash -n`、ShellCheck，以及改动的 TOML/lockfile、CI YAML 语法解析。新版内存脚本在本机做了只读验证：诊断 shell 命令文本含 ftab 路径时未被计入。测到 desktop 38.1 MiB、IME 9.0 MiB、两个 fterm 5.8/5.1 MiB，合计 58.0 MiB；进程数量和基线不同，且仍是旧安装代码，不能报告为本轮收益。
 
-**尚未完成：**新代码编译、clippy、任何新增 executable test、Metal tests、安装版 A/B。没有本地构建，也没有据此声称新代码已通过运行验收。
+**远端 CI 补充（2026-10-10）：** `87fb32a7` 的 [CI 38042674452](https://github.com/codeime/Fastab/actions/runs/38042674452) 整体结论为 success：JavaScript 全 job、Rust fmt、Clippy、workspace tests、engine resource replay 及四个二进制的 dist 编译全部通过。引擎为 517 passed / 0 failed / 2 ignored，原失败测试与两条新增 checkpoint 回归均实际执行通过。此前失败逐项处理：
+
+- `c3b8781e`：Mach-O 遍历 offset 显式使用 `usize`，修复 `checked_add` 类型推断失败。
+- `cd69598a`：日志格式错误保留为 `io::Error` 的 source，满足 `map_err_ignore` 规则。
+- `71f8852f`：终端测试通过 cfg(test) fixture 创建 disconnected sender，生产构造函数保持原有可见范围。
+- `387af13a`：首次 attempt 超时曾丢失已经加载成功的 registry；现在用 attempt 独立的单槽 checkpoint，在 Engine 构造及补全前交回 pristine registry。接收端随 attempt 结束关闭，旧任务迟到不能覆盖新代际。原 CI 失败测试保持不变，新增构造前超时恢复、ClearCaches 后迟到 checkpoint 隔离回归。
+- `87fb32a7`：workspace tests 使用 `--no-fail-fast` 收集全部包失败，保留非零退出及失败门槛。
+
+**尚未完成：**Metal tests、安装版 A/B。没有本地构建。CI 回归通过不等于已测得新安装版的内存降幅。
 
 ### 远端验收与真实使用对照
 
