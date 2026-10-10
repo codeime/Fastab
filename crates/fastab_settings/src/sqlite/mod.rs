@@ -73,6 +73,10 @@ impl Db {
     }
 
     fn open(path: &Path) -> Result<Self> {
+        Self::open_with_idle_timeout(path, std::time::Duration::from_secs(60))
+    }
+
+    fn open_with_idle_timeout(path: &Path, idle_timeout: std::time::Duration) -> Result<Self> {
         // make the parent dir if it doesnt exist
         if let Some(parent) = path.parent() {
             if !parent.exists() {
@@ -92,10 +96,16 @@ impl Db {
         // freezes every completion in the queue. Fail fast instead — callers
         // already treat database errors as best-effort.
         //
-        // Default max_size is 15. This process is one writer plus a couple of
-        // readers; fifteen idle SQLite connections are just page-cache.
+        // Keep room for concurrent readers without prebuilding four SQLite
+        // connections and retaining their page caches in every process.
+        // r2d2 otherwise defaults min_idle to max_size. Its 30s reaper closes
+        // expired idle connections, then replenishes the one-connection floor;
+        // it does not preserve a particular connection indefinitely. With the
+        // production timeout, a fully idle pool shrinks after about 60-90s.
         let pool = Pool::builder()
             .max_size(POOL_MAX_SIZE)
+            .min_idle(Some(1))
+            .idle_timeout(Some(idle_timeout))
             .connection_timeout(std::time::Duration::from_secs(3))
             .build(conn)?;
 
@@ -426,10 +436,74 @@ mod tests {
     }
 
     #[test]
-    fn the_pool_does_not_keep_fifteen_idle_connections() {
+    fn file_pool_starts_small_and_grows_for_concurrent_checkouts() {
         let tempdir = tempfile::tempdir().unwrap();
         let db = Db::open(&tempdir.path().join("data.sqlite3")).unwrap();
-        assert_eq!(db.pool.max_size(), POOL_MAX_SIZE);
+        assert_eq!(db.pool.state().connections, 1);
+        assert_eq!(db.pool.state().idle_connections, 1);
+
+        let connections: Vec<_> = (0..POOL_MAX_SIZE).map(|_| db.pool.get().unwrap()).collect();
+        assert_eq!(db.pool.state().connections, POOL_MAX_SIZE);
+        assert_eq!(db.pool.state().idle_connections, 0);
+        assert!(db.pool.try_get().is_none());
+        drop(connections);
+    }
+
+    #[test]
+    fn file_pool_retires_idle_connections_without_losing_data_or_a_checked_out_transaction() {
+        use std::time::{Duration, Instant};
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let path = tempdir.path().join("data.sqlite3");
+        // Exercise r2d2's real 30s reaper, shortening only the idle threshold.
+        let db = Db::open_with_idle_timeout(&path, Duration::from_millis(100)).unwrap();
+        db.migrate().unwrap();
+        db.set_state_value("retained", "before").unwrap();
+
+        let mut connections: Vec<_> = (0..POOL_MAX_SIZE).map(|_| db.pool.get().unwrap()).collect();
+        let mut held = connections.pop().unwrap();
+        let transaction = held.transaction().unwrap();
+        transaction
+            .execute_batch("CREATE TEMP TABLE held_connection(value); INSERT INTO held_connection VALUES (42)")
+            .unwrap();
+        transaction
+            .execute(
+                "UPDATE state SET value = ?1 WHERE key = 'retained'",
+                [serde_json::json!("after")],
+            )
+            .unwrap();
+        drop(connections);
+
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let state = db.pool.state();
+            if state.connections == 2 && state.idle_connections == 1 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "idle connections were not retired: {state:?}"
+            );
+            std::thread::sleep(Duration::from_millis(250));
+        }
+
+        assert_eq!(
+            db.get_state_value("retained").unwrap(),
+            Some(serde_json::json!("before"))
+        );
+        let held_value: i64 = transaction
+            .query_row("SELECT value FROM held_connection", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(held_value, 42);
+        transaction.commit().unwrap();
+        drop(held);
+        drop(db);
+
+        let reopened = Db::open(&path).unwrap();
+        assert_eq!(
+            reopened.get_state_value("retained").unwrap(),
+            Some(serde_json::json!("after"))
+        );
     }
 
     #[cfg(unix)]
