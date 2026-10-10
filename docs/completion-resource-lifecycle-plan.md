@@ -511,3 +511,32 @@ Engine 独立记录 hook 的 active/idle 状态，与规格共用 10 秒宽限�
 `ftab _ dump-state engine` 新增 `hook_catalog`：是否尝试加载、是否成功加载、typed/adapter 条目、去重 descriptor 及已解析 descriptor 数。诊断只读 `OnceLock` 状态，不触发解析，旧 JSON 缺失新字段时使用默认值。重载会读取并解析侧车，仍需远端与安装后的耗时及 footprint 对照；释放 owner 不保证分配器立即归还相同字节数。
 
 **本轮静态验证结果。** GPT-6 Astra ultra 与 GPT-6.1 Sol 分工实现并独立交叉审查，主代理核对实际 diff。复审修正了两条提前取消漏口：首次构造目录、以及代际刷新重新绑定目录后，请求都可能在取得活跃归属之前返回；现在这两处均建立空闲期限。修正后源码复核未发现剩余可确认的 P0–P2 问题。新增 7 项引擎回归及 4 项 GPUI 回归源码；12 个修改或新增 Rust 文件的直接 `rustfmt --check` 与 `git diff --check` 通过，已清理的构建缓存目录仍不存在。本轮没有本地编译或执行测试，也未安装、提交或推送；实际内存降幅及首次恢复延迟仍待远端 CI 和新包安装后验证，41.22 MiB 是修改前的安装版基线。
+
+## 2026-10-10 追加：长期后台对象与按需分配
+
+### 安装版现场
+
+上一轮改动已经随 `588e93af` 发布，CI 和 ARM DMG 工作流均成功。当前安装版主进程 PID 36454 从 10 月 9 日 16:25 起连续运行约 19 小时，二进制 SHA-256 为 `3548c1da2d8ea00c3b7a6bec6d34855e0811a81fb5f7f060cf0c6fe7e2d55bdc`，Mach-O UUID 为 `0A7CE535-298A-3B2E-9ACC-88AA67ACEF3D`。本轮未重启、替换或注入进程。
+
+11:11 的 `phys_footprint` 为 42,534,016 bytes（40.56 MiB），峰值 91.3 MiB，live heap 15,261,824 bytes（14.55 MiB），malloc dirty+swap 碎片约 15.2 MiB。规格、三类 hook 结果、hook 描述目录全部为 0；历史 163 行、7,116 bytes。167 次提交无失败、watchdog 或 panic，堆中没有 GPUIWindow、GPUIView、GPUIPanel 或 CAMetalLayer。上一轮的目录卸载在真实使用后生效；这不是缓存仍保留数十 MiB 的现场。与前一进程的 41.22 MiB / 17.6 MiB live heap 不是受控 A/B，不据此给出固定收益。
+
+证据为 `/tmp/fastab-idle-36454-{footprint,vmmap,heap,sample}.txt`。`leaks --noContent --autoreleasePools` 另存于 `/tmp/fastab-idle-36454-pools.txt`，仅统计对象类型和持有关系，不保存对象内容。
+
+### 实施范围与依据
+
+1. **同步 Objective-C 临时对象的释放边界。** 堆中有 1,055 个 NSRunningApplication；autorelease pool 引用主线程的 122 个、两个 ec-tokio 线程的 468 / 454 个。工具归因于 pool 的独占内存总计约 468 KiB（含 pool 本身），不能解释全部 40.56 MiB，但它是随后台查询积累的真实持有路径。为返回 Rust 自有值的 AppKit 查询建立同步局部 pool；桌面启动 prelude 在主线程 `block_on` 返回时排空，再启动 GPUI。不能让 pool 跨可迁移线程的 async future，也不能把整个 NSApplication 运行期包成一次释放周期。
+2. **按进程移除已退出应用的 AXObserver。** 观察者按 PID + bundle ID 建键，旧终止处理却等待同 bundle 所有实例都退出才清理。修复为按通知的具体身份移除，保留其他仍运行实例；这是另一个条件性增长路径，不把当前 NSRunningApplication 数量归因于 AXObserver。
+3. **文件数据库连接池按需增长、空闲收缩。** r2d2 0.8.10 的默认 `min_idle=None` 等同 `max_size`，现有 `max_size=4` 仍会预建并补满 4 个连接。文件池保留最大 4、checkout 3 秒、WAL 和 busy timeout，只把空闲目标改为 1、idle timeout 改为 60 秒。reaper 每 30 秒检查，只关闭已归还的连接；全闲约 60–90 秒后回到目标，符合超时的最后一个连接也可能关闭并重建。内存数据库 mock 与维护线程数量不改。SQLite 缓存按需分配，不能把配置上限乘连接数当作实测收益。
+4. **路径纹理只在场景需要时创建。** MetalRenderer 原本每次更新 drawable 尺寸都分配整窗 BGRA8 中间纹理及 4x MSAA 纹理，Settings 的普通 div/text 场景不使用它们。改为有效尺寸下首次出现路径时分配，resize 丢弃旧尺寸、后续需要时再建；相同尺寸不重建，保留 4x MSAA 和异步 GPU 资源寿命。820×640、2x 缩放下两张纹理名义容量约 40 MiB，这是可避免的使用期纹理分配，不是当前 idle malloc 碎片的归因或承诺降幅。
+
+当前历史仅约 7 KiB，不卸载整套历史以换取反复读取成本；不缩减数据库维护线程、不改变字体 ID 表、不引入未经验证的 allocator 强制回收。
+
+### 验证要求
+
+对同步查询的 owned 返回值、同 bundle 多实例的观察者移除、临时文件数据库的连接扩缩/在途事务/持久数据增加真实行为回归。应用枚举回归在查询线程退出后使用快照，验证值的所有权，不将它当作已测得 pool 内对象归零；pool 的实际增长趋势仍需安装后检查。数据库回收遵循依赖库真实 reaper，测试不能用自写模拟器代替。Metal 回归需实际设备，按 `vendor/gpui/FASTAB_PATCHES.md` 的显式硬件测试流程执行；现有 workspace CI 不会自动运行 vendored GPUI 的 ignored 测试。
+
+继续禁止本地编译、测试构建、安装和生成 IR；本轮可做源码复核、直接 rustfmt 与 diff 检查。后续远端 CI 和安装验收应同时观察：多次后台焦点切换后 NSRunningApplication/pool 是否持续增长，文件池在空闲后能否收缩，打开/关闭 Settings 的峰值与空闲 footprint，及有路径场景在 resize 后是否正常绘制。释放引用、减少纹理请求和物理页归还必须分别记录。
+
+**本轮复核结果。** GPT-6 Astra ultra 与 GPT-6.1 Sol 独立复核实际 diff，未发现剩余可确认的 P0–P2。复核修正了一处 Metal 回归的证明盲点：编码描述对象原先也能持有旧纹理；现在编码使用内层 autoreleasepool，并在 resize 和打开 GPU gate 前排空，避免它掩盖在途命令的资源寿命问题。5 个修改 Rust 文件的直接 `rustfmt --check`、`git diff --check` 通过，5 个构建缓存目录仍不存在。
+
+验证边界：两条文件数据库回归、调整后的应用枚举回归和真实 AXObserver 引用计数回归尚未编译或运行；后者直接检查精确移除及 sibling 保留，不代替真实系统终止通知验收。新增两条 Metal 测试是需要显式执行的硬件测试，普通 workspace CI 不会执行。当前仅完成源码及锁定依赖审查，没有本地构建、提交、推送或安装；40.56 MiB 仍是本次改动前的现场基线。
