@@ -95,7 +95,7 @@ impl Write for RollingFile {
         // `writeln!` on the IME calls this directly. Bound the whole formatted
         // record, not each individual fragment written by the formatter.
         let mut record = RecordBuffer(Vec::new());
-        std::fmt::write(&mut record, args).map_err(|_| io::Error::other("could not format log record"))?;
+        std::fmt::write(&mut record, args).map_err(io::Error::other)?;
         self.write_all(&record.0)
     }
 }
