@@ -693,15 +693,23 @@ impl EngineClient {
                         counts.started = counts.started.saturating_add(1);
                     });
                     let attempt_token = token.clone();
+                    // Preserve a verified registry even if native-hook loading
+                    // or the first completion never returns. This channel is
+                    // private to this attempt: dropping its receiver below
+                    // prevents a late abandoned attempt from publishing over
+                    // a newer generation.
+                    let (checkpoint, checkpoints) = mpsc::sync_channel(1);
                     // Registry capture and refresh may block in a filesystem
                     // call too. They belong inside the same watchdog boundary
                     // as generators, never on the supervisor itself.
-                    match run_supervised(attempt_timeout, Arc::clone(&operations), move || {
+                    let outcome = run_supervised(attempt_timeout, Arc::clone(&operations), move || {
                         let _scope = crate::cancellation::enter(attempt_token);
                         let initialized = current_engine.is_none();
                         let built = match current_engine {
                             Some(engine) => Ok(engine),
-                            None => rebuild_engine(&specs_dir, &mut template, &acceptance),
+                            None => rebuild_engine(&specs_dir, &mut template, &acceptance, |registry| {
+                                let _ = checkpoint.send(registry);
+                            }),
                         };
                         match built {
                             Ok(mut engine) => {
@@ -715,7 +723,12 @@ impl EngineClient {
                                 Err(anyhow!("completion engine initialization failed: {error}")),
                             ),
                         }
-                    }) {
+                    });
+                    if let Ok(checkpoint) = checkpoints.try_recv() {
+                        registry_template = Some(checkpoint);
+                    }
+                    drop(checkpoints);
+                    match outcome {
                         Ok((mut next_engine, next_template, initialized, result)) => {
                             if result.is_ok() && !history_only {
                                 active_session = Some(session);
@@ -1130,6 +1143,7 @@ fn rebuild_engine(
     specs_dir: &Path,
     template: &mut Option<Registry>,
     acceptance: &Arc<Mutex<AcceptanceIndex>>,
+    checkpoint: impl FnOnce(Registry),
 ) -> anyhow::Result<Engine> {
     #[cfg(test)]
     tests::pause_filesystem_if_requested(specs_dir);
@@ -1158,6 +1172,14 @@ fn rebuild_engine(
             template.get_or_insert(registry).clone()
         },
     };
+    // from_registry loads the native-hook catalog and can itself block on I/O.
+    // Publish only the pristine index, before handing a separate clone to the
+    // mutable Engine, and before either constructor or completion work begins.
+    #[cfg(test)]
+    tests::pause_initialization_if_requested(specs_dir, tests::InitializationStage::Checkpoint);
+    checkpoint(registry.clone());
+    #[cfg(test)]
+    tests::pause_initialization_if_requested(specs_dir, tests::InitializationStage::Construction);
     Ok(Engine::from_registry(specs_dir, registry, acceptance.clone()))
 }
 
@@ -1244,6 +1266,37 @@ mod tests {
     type FilesystemPause = (mpsc::Sender<()>, mpsc::Receiver<()>);
     static FILESYSTEM_PAUSES: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, FilesystemPause>>> =
         std::sync::OnceLock::new();
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    pub(super) enum InitializationStage {
+        Checkpoint,
+        Construction,
+    }
+
+    type InitializationPauses = std::collections::HashMap<(PathBuf, InitializationStage), FilesystemPause>;
+    static INITIALIZATION_PAUSES: std::sync::OnceLock<Mutex<InitializationPauses>> = std::sync::OnceLock::new();
+
+    pub(super) fn pause_initialization_if_requested(path: &Path, stage: InitializationStage) {
+        let pause = INITIALIZATION_PAUSES
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .remove(&(path.to_path_buf(), stage));
+        if let Some((entered, release)) = pause {
+            let _ = entered.send(());
+            let _ = release.recv();
+        }
+    }
+
+    fn pause_next_initialization(path: &Path, stage: InitializationStage) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered, observed) = mpsc::channel();
+        let (release, resumed) = mpsc::channel();
+        INITIALIZATION_PAUSES
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .insert((path.to_path_buf(), stage), (entered, resumed));
+        (observed, release)
+    }
 
     pub(super) fn pause_filesystem_if_requested(path: &Path) {
         let pause = FILESYSTEM_PAUSES
@@ -1598,14 +1651,14 @@ mod tests {
         let acceptance = Arc::new(Mutex::new(AcceptanceIndex::default()));
         let mut template = None;
 
-        rebuild_engine(dir.path(), &mut template, &acceptance).expect("first build");
+        rebuild_engine(dir.path(), &mut template, &acceptance, drop).expect("first build");
         assert!(template.is_some(), "the index should be retained for reuse");
 
         // Deleting the index proves the rebuild came from the cached template
         // rather than the disk, which is what keeps the first completion after
         // a timed-out attempt fast.
         std::fs::remove_file(dir.path().join("index.json")).unwrap();
-        let engine = rebuild_engine(dir.path(), &mut template, &acceptance).expect("rebuild without disk");
+        let engine = rebuild_engine(dir.path(), &mut template, &acceptance, drop).expect("rebuild without disk");
         assert!(!engine.registry().is_empty());
     }
 
@@ -1633,14 +1686,14 @@ mod tests {
         std::fs::rename(&generation_a, &canonical).unwrap();
         let acceptance = Arc::new(Mutex::new(AcceptanceIndex::default()));
         let mut template = None;
-        let _engine_a = rebuild_engine(&canonical, &mut template, &acceptance).expect("generation A");
+        let _engine_a = rebuild_engine(&canonical, &mut template, &acceptance, drop).expect("generation A");
 
         // The old template is retained for a missing-window fallback, but a
         // stable replacement must be indexed before a timed-out rebuild uses
         // it again.
         std::fs::rename(&canonical, &backup).unwrap();
         std::fs::rename(&generation_b, &canonical).unwrap();
-        let mut engine_b = rebuild_engine(&canonical, &mut template, &acceptance).expect("generation B");
+        let mut engine_b = rebuild_engine(&canonical, &mut template, &acceptance, drop).expect("generation B");
         let result = engine_b
             .complete(CompleteRequest {
                 buffer: "git ".into(),
@@ -2472,6 +2525,107 @@ mod tests {
             })
             .expect("the cached index should carry the reset engine");
         assert!(second.suggestions.iter().any(|suggestion| suggestion.name == "status"));
+    }
+
+    #[test]
+    fn registry_checkpoint_survives_a_timeout_before_engine_construction() {
+        let dir = tempfile::tempdir().unwrap();
+        write_checkpoint_specs(dir.path(), "from-checkpoint");
+        let (entered, release) = pause_next_initialization(dir.path(), InitializationStage::Construction);
+        let client = EngineClient::spawn_with_timeout(dir.path().to_path_buf(), WATCHDOG_UNDER_TEST).unwrap();
+        let request = CompleteRequest {
+            buffer: "git ".into(),
+            cwd: "/tmp".into(),
+            include_history: false,
+            ..CompleteRequest::default()
+        };
+        let first = client.complete(request.clone());
+        entered.recv_timeout(Duration::from_secs(3)).unwrap();
+        let error = futures::executor::block_on(first).unwrap_err();
+        assert!(error.to_string().contains("timed out"), "{error}");
+
+        // No Engine has been constructed yet. Its verified registry still
+        // belongs to the supervisor and can recover through a broken index.
+        std::fs::write(dir.path().join("index.json"), b"{").unwrap();
+        let recovered = client.complete_blocking(request).unwrap();
+        release.send(()).unwrap();
+        wait_for_operations_to_retire(&client);
+        assert!(recovered.suggestions.iter().any(|row| row.name == "from-checkpoint"));
+        assert_eq!(
+            futures::executor::block_on(client.diagnostics())
+                .unwrap()
+                .requests
+                .watchdog_timeouts,
+            1
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn late_checkpoint_cannot_replace_a_newer_clear_caches_generation() {
+        let root = tempfile::tempdir().unwrap();
+        let canonical = root.path().join("specs-ir");
+        let replacement = root.path().join("replacement");
+        let backup = root.path().join("backup");
+        std::fs::create_dir(&canonical).unwrap();
+        std::fs::create_dir(&replacement).unwrap();
+        write_checkpoint_specs(&canonical, "from-old");
+        write_checkpoint_specs(&replacement, "from-new");
+        let (entered, release) = pause_next_initialization(&canonical, InitializationStage::Checkpoint);
+        let client = EngineClient::spawn_with_timeout(canonical.clone(), WATCHDOG_UNDER_TEST).unwrap();
+        let request = CompleteRequest {
+            buffer: "git ".into(),
+            cwd: "/tmp".into(),
+            include_history: false,
+            ..CompleteRequest::default()
+        };
+        let first = client.complete(request.clone());
+        entered.recv_timeout(Duration::from_secs(3)).unwrap();
+        let error = futures::executor::block_on(first).unwrap_err();
+        assert!(error.to_string().contains("timed out"), "{error}");
+
+        // The abandoned attempt owns a captured old generation but has not
+        // published it. ClearCaches establishes a newer pristine template.
+        std::fs::rename(&canonical, &backup).unwrap();
+        std::fs::rename(&replacement, &canonical).unwrap();
+        client.clear_caches().unwrap();
+        assert!(
+            futures::executor::block_on(client.diagnostics())
+                .unwrap()
+                .engine
+                .is_none()
+        );
+        release.send(()).unwrap();
+        wait_for_operations_to_retire(&client);
+
+        // Prevent a disk refresh from hiding a late overwrite of the template.
+        // Recovery must still use ClearCaches' new generation, not the old one.
+        std::fs::write(canonical.join("index.json"), b"{").unwrap();
+        let recovered = client.complete_blocking(request).unwrap();
+        assert!(recovered.suggestions.iter().any(|row| row.name == "from-new"));
+        assert!(!recovered.suggestions.iter().any(|row| row.name == "from-old"));
+    }
+
+    fn write_checkpoint_specs(path: &Path, child: &str) {
+        std::fs::write(path.join("index.json"), r#"{"files":{"git":"git.json"}}"#).unwrap();
+        std::fs::write(
+            path.join("git.json"),
+            serde_json::json!({"names": ["git"], "subcommands": [{"names": [child]}]}).to_string(),
+        )
+        .unwrap();
+    }
+
+    fn wait_for_operations_to_retire(client: &EngineClient) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let snapshot = futures::executor::block_on(client.diagnostics()).unwrap();
+            if snapshot.worker.active_operations == 0 {
+                assert_eq!(snapshot.worker.abandoned_operations, 0);
+                return;
+            }
+            assert!(Instant::now() < deadline, "released operation must retire");
+            thread::sleep(Duration::from_millis(5));
+        }
     }
 
     #[test]
