@@ -420,6 +420,10 @@ mod test_support {
     }
 
     impl RemoteSender {
+        pub(crate) fn test_disconnected() -> Self {
+            Self::new()
+        }
+
         pub(crate) fn test_ready() -> Self {
             let sender = Self::new();
             let BeginAttempt::Started(generation) = sender.begin_attempt() else {

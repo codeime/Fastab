@@ -1417,7 +1417,7 @@ mod tests {
 
         #[tokio::test]
         async fn osc_burst_drains_local_controls_in_parser_order_without_self_send() {
-            let sender = RemoteSender::new();
+            let sender = RemoteSender::test_disconnected();
             let events = LocalEvents::default();
             let mut term = parser_term(&sender, &events, true);
             let mut processor = Processor::new();
@@ -1567,7 +1567,7 @@ mod tests {
                 let capacity = deferred.capacity();
                 let mut inserts = VecDeque::new();
                 let result = flush_settled_pty_input(
-                    &RemoteSender::new(),
+                    &RemoteSender::test_disconnected(),
                     &mut master,
                     &mut deferred,
                     &mut inserts,
@@ -1594,7 +1594,7 @@ mod tests {
             let mut retry = InsertionRetry::default();
             assert!(!retry.active());
             let events = LocalEvents::default();
-            let mut term = parser_term(&RemoteSender::new(), &events, false);
+            let mut term = parser_term(&RemoteSender::test_disconnected(), &events, false);
             let mut parser = Processor::new();
             for byte in b"\x1b]697;NewCmd\x07typed" {
                 parser.advance(&mut term, *byte);
