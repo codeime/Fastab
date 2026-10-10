@@ -1,6 +1,6 @@
 use std::sync::{Mutex, OnceLock};
 
-use objc2::rc::Retained;
+use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::Bool;
 use objc2::{ClassType, msg_send};
 use objc2_app_kit::{NSRunningApplication, NSWorkspace};
@@ -15,7 +15,9 @@ pub struct MacOSApplication {
 }
 
 pub fn running_applications() -> Vec<MacOSApplication> {
-    unsafe {
+    // These queries also run on Rust worker threads, where AppKit's temporary
+    // arrays would otherwise remain in a thread-lifetime autorelease pool.
+    autoreleasepool(|_| unsafe {
         let workspace = NSWorkspace::sharedWorkspace();
         let apps = workspace.runningApplications();
         apps.iter()
@@ -33,7 +35,7 @@ pub fn running_applications() -> Vec<MacOSApplication> {
                 }
             })
             .collect()
-    }
+    })
 }
 
 /// PIDs of the running applications with this bundle identifier.
@@ -42,9 +44,11 @@ pub fn running_applications() -> Vec<MacOSApplication> {
 /// and allocating its name, bundle id and path the way [`running_applications`]
 /// does, which makes it cheap enough to poll in a wait loop.
 pub fn running_application_pids(bundle_identifier: &str) -> Vec<libc::pid_t> {
-    let identifier = NSString::from_str(bundle_identifier);
-    let apps = unsafe { NSRunningApplication::runningApplicationsWithBundleIdentifier(&identifier) };
-    apps.iter().map(|app| unsafe { app.processIdentifier() }).collect()
+    autoreleasepool(|_| {
+        let identifier = NSString::from_str(bundle_identifier);
+        let apps = unsafe { NSRunningApplication::runningApplicationsWithBundleIdentifier(&identifier) };
+        apps.iter().map(|app| unsafe { app.processIdentifier() }).collect()
+    })
 }
 
 /// Read the bundle of the actual running process, not a LaunchServices match
@@ -52,30 +56,32 @@ pub fn running_application_pids(bundle_identifier: &str) -> Vec<libc::pid_t> {
 pub fn running_application_version(pid: libc::pid_t) -> Option<String> {
     type CachedVersion = (libc::pid_t, u64, Option<String>);
     static CACHE: OnceLock<Mutex<Option<CachedVersion>>> = OnceLock::new();
-    let app = unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) }?;
-    let launched_at = unsafe { app.launchDate()?.timeIntervalSince1970() }.to_bits();
-    let mut cache = CACHE
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
-    if let Some((cached_pid, cached_launch, version)) = cache.as_ref() {
-        if *cached_pid == pid && *cached_launch == launched_at {
-            return version.clone();
+    autoreleasepool(|_| {
+        let app = unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) }?;
+        let launched_at = unsafe { app.launchDate()?.timeIntervalSince1970() }.to_bits();
+        let mut cache = CACHE
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        if let Some((cached_pid, cached_launch, version)) = cache.as_ref() {
+            if *cached_pid == pid && *cached_launch == launched_at {
+                return version.clone();
+            }
         }
-    }
-    let version = (|| unsafe {
-        let bundle_url = app.bundleURL()?;
-        let bundle = NSBundle::bundleWithURL(&bundle_url)?;
-        let value = bundle.objectForInfoDictionaryKey(&NSString::from_str("CFBundleShortVersionString"))?;
-        let is_string: Bool = msg_send![&*value, isKindOfClass: NSString::class()];
-        if !is_string.as_bool() {
-            return None;
-        }
-        let version: Retained<NSString> = Retained::cast(value);
-        Some(version.to_string())
-    })();
-    *cache = Some((pid, launched_at, version.clone()));
-    version
+        let version = (|| unsafe {
+            let bundle_url = app.bundleURL()?;
+            let bundle = NSBundle::bundleWithURL(&bundle_url)?;
+            let value = bundle.objectForInfoDictionaryKey(&NSString::from_str("CFBundleShortVersionString"))?;
+            let is_string: Bool = msg_send![&*value, isKindOfClass: NSString::class()];
+            if !is_string.as_bool() {
+                return None;
+            }
+            let version: Retained<NSString> = Retained::cast(value);
+            Some(version.to_string())
+        })();
+        *cache = Some((pid, launched_at, version.clone()));
+        version
+    })
 }
 
 /// CLI callers know a terminal bundle rather than its GUI PID. Ambiguous
@@ -89,28 +95,27 @@ pub fn unique_running_application_version(bundle_identifier: &str) -> Option<Str
 }
 
 pub fn launch_application(bundle_path: &str) {
-    let bundle_nsstring = NSString::from_str(bundle_path);
-    let bundle_nsurl = unsafe { NSURL::fileURLWithPath_isDirectory(&bundle_nsstring, true) };
+    autoreleasepool(|_| {
+        let bundle_nsstring = NSString::from_str(bundle_path);
+        let bundle_nsurl = unsafe { NSURL::fileURLWithPath_isDirectory(&bundle_nsstring, true) };
 
-    let workspace = unsafe { NSWorkspace::sharedWorkspace() };
-    unsafe { workspace.openURL(&bundle_nsurl) };
+        let workspace = unsafe { NSWorkspace::sharedWorkspace() };
+        unsafe { workspace.openURL(&bundle_nsurl) };
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_running_applications() {
-        let applications = running_applications();
-        println!("{applications:#?}");
-    }
-
     /// [`running_application_pids`] decides whether callers consider a helper to
     /// be up, so it has to see everything the full enumeration sees.
     #[test]
-    fn pid_query_agrees_with_the_full_enumeration() {
-        for app in running_applications() {
+    fn pid_query_agrees_with_owned_snapshots_after_the_query_thread_exits() {
+        // Every query's pool has drained, and the originating thread is gone,
+        // before the returned bundle strings are used for another AppKit query.
+        let applications = std::thread::spawn(running_applications).join().unwrap();
+        for app in applications {
             let Some(bundle_id) = app.bundle_identifier.as_deref() else {
                 continue;
             };

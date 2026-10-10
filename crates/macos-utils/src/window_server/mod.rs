@@ -20,7 +20,7 @@ use core_foundation::string::{CFString, CFStringRef};
 use dashmap::DashMap;
 use flume::Sender;
 use objc2::mutability::InteriorMutable;
-use objc2::rc::{Allocated, Retained};
+use objc2::rc::{Allocated, Retained, autoreleasepool};
 use objc2::runtime::AnyObject;
 use objc2::{ClassType, DeclaredClass, declare_class, msg_send_id, sel};
 use objc2_app_kit::{
@@ -138,10 +138,14 @@ pub fn is_frontmost_application(expected: &ApplicationSpecifier) -> bool {
 
 /// Read the current app identity without querying its accessibility tree.
 pub fn frontmost_application() -> Option<ApplicationSpecifier> {
-    let frontmost = unsafe { NSWorkspace::sharedWorkspace().frontmostApplication() }?;
-    Some(ApplicationSpecifier {
-        pid: unsafe { frontmost.processIdentifier() },
-        bundle_id: unsafe { frontmost.bundleIdentifier() }?.to_string(),
+    // Focus notifications are checked on Tokio workers as well as the UI
+    // thread. Only Rust-owned identity data escapes this synchronous pool.
+    autoreleasepool(|_| {
+        let frontmost = unsafe { NSWorkspace::sharedWorkspace().frontmostApplication() }?;
+        Some(ApplicationSpecifier {
+            pid: unsafe { frontmost.processIdentifier() },
+            bundle_id: unsafe { frontmost.bundleIdentifier() }?.to_string(),
+        })
     })
 }
 
@@ -390,7 +394,7 @@ impl WindowServerInner {
 
         if self.observers.contains_key(&key) {
             debug!("app {} is already registered", key.bundle_id);
-            self.deregister(&key.bundle_id)
+            self.deregister(&key)
         }
 
         if from_activation {
@@ -464,14 +468,14 @@ impl WindowServerInner {
         self.observers.insert(key, observer);
     }
 
-    fn deregister(&mut self, bundle_id: &str) {
-        self.observers.retain(|key, _| bundle_id != key.bundle_id);
+    fn deregister(&mut self, app: &ApplicationSpecifier) {
+        self.observers.remove(app);
     }
 
     fn register_all(&mut self) {
         self.deregister_all();
 
-        unsafe {
+        autoreleasepool(|_| unsafe {
             let workspace = NSWorkspace::sharedWorkspace();
             if let Some(app) = workspace.frontmostApplication() {
                 self.register(&app, true);
@@ -480,7 +484,7 @@ impl WindowServerInner {
             for app in workspace.runningApplications().iter() {
                 self.register(app, false)
             }
-        }
+        });
 
         info!("Tracking {:?} applications", self.observers.len());
     }
@@ -531,18 +535,15 @@ impl WindowServerHandler for WindowServerInner {
         unsafe {
             if let Some(ns_app) = get_app_from_notification(notif) {
                 if let Some(bundle_id) = app_bundle_id(&ns_app) {
-                    trace!("Terminated application - {bundle_id:?}");
-
-                    let apps = NSWorkspace::sharedWorkspace().runningApplications();
-
-                    let has_running = apps
-                        .iter()
-                        .any(|running| app_bundle_id(running).map(|id| id == bundle_id).unwrap_or(false));
-
-                    if !has_running {
-                        trace!("Deregistering app {bundle_id:?} since no other instances are running");
-                        self.deregister(bundle_id.as_str());
-                    }
+                    let app = ApplicationSpecifier {
+                        pid: ns_app.processIdentifier(),
+                        bundle_id,
+                    };
+                    trace!(?app, "Deregistering terminated application instance");
+                    // The map is keyed by process, not just bundle. Keeping a
+                    // sibling alive must not keep this dead instance's AX
+                    // observer, element and run-loop source alive with it.
+                    self.deregister(&app);
                 }
             }
         }
@@ -654,6 +655,63 @@ unsafe extern "C" fn application_ax_callback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deregistering_one_instance_releases_its_observer_and_preserves_its_sibling() {
+        use core_foundation::base::CFGetRetainCount;
+
+        let pid = std::process::id() as pid_t;
+        let terminated = ApplicationSpecifier {
+            pid,
+            bundle_id: "app.fastab.observer-test".into(),
+        };
+        let sibling = ApplicationSpecifier {
+            pid: pid + 1,
+            bundle_id: terminated.bundle_id.clone(),
+        };
+        let (sender, _receiver) = flume::unbounded();
+        let mut server = WindowServerInner::new(sender.clone());
+        let terminated_element = UIElement::application(pid);
+        let sibling_element = UIElement::application(pid);
+        let retain_count = |element: &UIElement| unsafe { CFGetRetainCount(element.get_ref().cast()) };
+        let terminated_baseline = retain_count(&terminated_element);
+        let sibling_baseline = retain_count(&sibling_element);
+
+        for (app, element) in [(&terminated, &terminated_element), (&sibling, &sibling_element)] {
+            // Use real native observers without subscribing to another app's
+            // AX tree. The logical instance keys differ; both native observer
+            // fixtures watch this process and need no Accessibility grant.
+            let observer = unsafe {
+                AXObserver::create(
+                    pid,
+                    element.clone(),
+                    AccessibilityCallbackData {
+                        app: app.clone(),
+                        sender: sender.clone(),
+                        last_focused_element: None,
+                    },
+                    application_ax_callback,
+                )
+            }
+            .expect("create an observer for the test process");
+            server.observers.insert(app.clone(), observer);
+        }
+        assert_eq!(retain_count(&terminated_element), terminated_baseline + 1);
+        assert_eq!(retain_count(&sibling_element), sibling_baseline + 1);
+
+        server.deregister(&terminated);
+        assert!(!server.observers.contains_key(&terminated));
+        assert!(server.observers.contains_key(&sibling));
+        assert_eq!(retain_count(&terminated_element), terminated_baseline);
+        assert_eq!(retain_count(&sibling_element), sibling_baseline + 1);
+
+        // Duplicate termination notifications are harmless; the remaining
+        // instance stays observed until its own lifetime ends.
+        server.deregister(&terminated);
+        assert_eq!(server.observers.len(), 1);
+        drop(server);
+        assert_eq!(retain_count(&sibling_element), sibling_baseline);
+    }
 
     #[test]
     fn failed_ax_queries_do_not_destroy_the_focused_window() {

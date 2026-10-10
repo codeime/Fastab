@@ -66,7 +66,15 @@ fn main() -> ExitCode {
         .build()
         .expect("tokio runtime");
 
-    let Launch { setup, _log_guard } = match runtime.block_on(async_main()) {
+    // The prelude runs on this thread before AppKit starts managing event
+    // pools. Drain its temporaries before entering the long-lived UI loop.
+    // `block_on` polls its root future here; the pool never migrates with a
+    // spawned worker future or spans `NSApplication::run`.
+    #[cfg(target_os = "macos")]
+    let launch = objc2::rc::autoreleasepool(|_| runtime.block_on(async_main()));
+    #[cfg(not(target_os = "macos"))]
+    let launch = runtime.block_on(async_main());
+    let Launch { setup, _log_guard } = match launch {
         Ok(launch) => launch,
         Err(exit_code) => return exit_code,
     };
