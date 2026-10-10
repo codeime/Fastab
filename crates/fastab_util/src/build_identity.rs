@@ -72,7 +72,7 @@ fn mapped_image_uuid() -> Option<String> {
         let count = header.add(16).cast::<u32>().read_unaligned() as usize;
         let size = header.add(20).cast::<u32>().read_unaligned() as usize;
         let commands = std::slice::from_raw_parts(header.add(32), size);
-        let mut offset = 0;
+        let mut offset: usize = 0;
         for _ in 0..count {
             let prefix = commands.get(offset..offset.checked_add(8)?)?;
             let kind = u32::from_ne_bytes(prefix[..4].try_into().ok()?);
