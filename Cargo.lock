@@ -73,7 +73,7 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "bitflags 2.13.1",
  "camino",
@@ -223,7 +223,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "appkit-nsworkspace-bindings"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "bindgen 0.71.1",
  "objc",
@@ -2486,7 +2486,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_cli"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "anstream 1.0.0",
  "appkit-nsworkspace-bindings",
@@ -2564,7 +2564,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_desktop"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "accessibility-sys",
  "anyhow",
@@ -2640,7 +2640,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_desktop_api"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "anstream 1.0.0",
  "cfg-if",
@@ -2656,7 +2656,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_diagnostic"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "cfg-if",
  "clap",
@@ -2675,7 +2675,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_engine"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "anyhow",
  "fancy-regex 0.16.2",
@@ -2693,7 +2693,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_gpui"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "anyhow",
  "cocoa 0.26.0",
@@ -2712,7 +2712,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_hitoolbox"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "core-foundation 0.10.0",
  "core-foundation-sys",
@@ -2720,7 +2720,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_input_method"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "apple-bundle",
  "core-foundation 0.10.0",
@@ -2739,7 +2739,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_install"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "bitflags 2.13.1",
  "bytes",
@@ -2773,7 +2773,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_integrations"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "accessibility-sys",
  "async-trait",
@@ -2805,7 +2805,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_ipc"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2828,7 +2828,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_log"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "fastab_os_shim",
  "fastab_util",
@@ -2842,7 +2842,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_os_shim"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "cfg-if",
  "dirs 5.0.1",
@@ -2855,7 +2855,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_overlay_spike"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "fastab_gpui",
  "gpui",
@@ -2863,7 +2863,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_proto"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "arbitrary",
  "bytes",
@@ -2886,7 +2886,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_remote_ipc"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2904,7 +2904,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_settings"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "fastab_util",
  "fd-lock",
@@ -2924,7 +2924,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_telemetry"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "chrono",
  "fastab_os_shim",
@@ -2940,7 +2940,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_term"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -2984,7 +2984,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_term2"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3000,7 +3000,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_test_macro"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "quote",
  "syn 2.0.108",
@@ -3008,7 +3008,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_test_utils"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "bytes",
  "fastab_os_shim",
@@ -3026,7 +3026,7 @@ dependencies = [
 
 [[package]]
 name = "fastab_util"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "bstr",
  "camino",
@@ -5153,7 +5153,7 @@ dependencies = [
 
 [[package]]
 name = "macos-utils"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "accessibility",
  "accessibility-sys",

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.0.6
+
+- fix: drain temporary AppKit objects after synchronous background queries and startup, preventing them from accumulating in thread autorelease pools.
+- fix: replace and remove Accessibility observers by process identity, preserving other live instances of the same app.
+- change: start the file-backed database pool with one idle connection and retire excess idle connections while preserving four concurrent checkouts.
+- change: allocate Metal path textures only when a frame needs them, reusing matching sizes and retiring obsolete targets on resize.
+
 ## v0.0.5
 
 - change: release rebuildable application-wide image and text caches after the last native window closes, preserving font identities and safely retiring buffers returned by older work.
