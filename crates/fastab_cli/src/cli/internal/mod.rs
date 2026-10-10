@@ -877,6 +877,7 @@ mod tests {
                 submitted: 7,
                 ..Default::default()
             },
+            ..Default::default()
         };
         let mut response = serde_json::to_value(snapshot).expect("snapshot JSON");
         response["unexpected_shell_content"] = serde_json::json!("private command");

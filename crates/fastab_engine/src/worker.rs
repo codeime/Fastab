@@ -1,7 +1,8 @@
+use std::collections::VecDeque;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::task::{Context, Poll};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -20,7 +21,7 @@ use anyhow::anyhow;
 use futures::channel::oneshot;
 
 use crate::cancellation::{CancellationToken, CompletionCancelled};
-use crate::diagnostics::{EngineClientDiagnostics, RequestDiagnostics};
+use crate::diagnostics::{EngineClientDiagnostics, RequestDiagnostics, WorkerResourceDiagnostics};
 use crate::ir::Registry;
 use crate::rank::AcceptanceIndex;
 use crate::runtime::{CompleteRequest, CompleteResult, Engine};
@@ -28,7 +29,7 @@ use crate::runtime::{CompleteRequest, CompleteResult, Engine};
 /// Thread-safe handle around the completion [`Engine`].
 #[derive(Clone)]
 pub struct EngineClient {
-    tx: mpsc::Sender<Job>,
+    tx: JobSender,
     acceptance: Arc<Mutex<AcceptanceIndex>>,
     submission: Arc<Mutex<Submission>>,
 }
@@ -93,6 +94,254 @@ impl Drop for CompletionTask {
 
 struct Job {
     kind: JobKind,
+}
+
+// Completion submissions are latest-wins, while controls retain FIFO order.
+// Bound controls as well: a stalled filesystem must not grow a mailbox forever.
+const MAX_QUEUED_JOBS: usize = 256;
+const MAX_QUEUED_BYTES: usize = 8 * 1024 * 1024;
+// Only the committed owner and the running attempt can still own resources
+// after queued, cancelled completions are removed. Their EndInput notifications
+// must remain enqueueable even when ordinary control traffic fills the mailbox.
+const RESERVED_END_INPUT_JOBS: usize = 2;
+
+struct JobQueue {
+    state: Mutex<JobQueueState>,
+    ready: Condvar,
+}
+
+struct JobQueueState {
+    jobs: VecDeque<(Job, usize)>,
+    bytes: usize,
+    senders: usize,
+    receiver_alive: bool,
+    resource_session: Option<SessionId>,
+    attempt_session: Option<SessionId>,
+}
+
+struct JobSender(Arc<JobQueue>);
+struct JobReceiver(Arc<JobQueue>);
+
+struct JobSendError(Box<Job>, &'static str, usize);
+
+impl std::fmt::Debug for JobSendError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.1)
+    }
+}
+
+fn job_channel() -> (JobSender, JobReceiver) {
+    let queue = Arc::new(JobQueue {
+        state: Mutex::new(JobQueueState {
+            jobs: VecDeque::new(),
+            bytes: 0,
+            senders: 1,
+            receiver_alive: true,
+            resource_session: None,
+            attempt_session: None,
+        }),
+        ready: Condvar::new(),
+    });
+    (JobSender(Arc::clone(&queue)), JobReceiver(queue))
+}
+
+impl Clone for JobSender {
+    fn clone(&self) -> Self {
+        self.0.state.lock().unwrap_or_else(|error| error.into_inner()).senders += 1;
+        Self(Arc::clone(&self.0))
+    }
+}
+
+impl Drop for JobSender {
+    fn drop(&mut self) {
+        self.0.state.lock().unwrap_or_else(|error| error.into_inner()).senders -= 1;
+        self.0.ready.notify_one();
+    }
+}
+
+impl JobSender {
+    /// Returns the number of superseded requests removed before enqueueing.
+    fn send(&self, job: Job) -> Result<usize, JobSendError> {
+        let bytes = job.payload_bytes();
+        let mut state = self.0.state.lock().unwrap_or_else(|error| error.into_inner());
+        if !state.receiver_alive {
+            return Err(JobSendError(Box::new(job), "engine thread is gone", 0));
+        }
+        let mut removed = 0;
+        let mut retired_bytes = 0;
+        state.jobs.retain_mut(|(queued, bytes)| {
+            if let JobKind::Complete { token, reply, .. } = &queued.kind
+                && (token.is_cancelled() || reply.is_canceled())
+            {
+                removed += 1;
+                retired_bytes += *bytes;
+                if let JobKind::Complete { reply, .. } = std::mem::replace(&mut queued.kind, JobKind::ClearCaches) {
+                    let _ = reply.send(Err(CompletionCancelled.into()));
+                }
+                false
+            } else {
+                true
+            }
+        });
+        state.bytes -= retired_bytes;
+        let end_input = if let JobKind::EndInput { session } = &job.kind {
+            // A queued request from this session has already been cancelled
+            // above. No other session may acquire its resources later.
+            if state.resource_session != Some(*session) && state.attempt_session != Some(*session) {
+                return Ok(removed);
+            }
+            // Keep the first notification at its original FIFO position. A
+            // retained completion for this session is the only boundary that
+            // could make a later notification meaningful again.
+            for (queued, _) in state.jobs.iter().rev() {
+                match &queued.kind {
+                    JobKind::Complete {
+                        session: queued_session,
+                        ..
+                    } if queued_session == session => break,
+                    JobKind::EndInput {
+                        session: queued_session,
+                    } if queued_session == session => return Ok(removed),
+                    _ => {},
+                }
+            }
+            true
+        } else {
+            false
+        };
+        let reserved_jobs = if end_input { 0 } else { RESERVED_END_INPUT_JOBS };
+        let job_limit = MAX_QUEUED_JOBS - reserved_jobs;
+        let byte_limit = MAX_QUEUED_BYTES - reserved_jobs * std::mem::size_of::<Job>();
+        if state.jobs.len() >= job_limit || bytes > byte_limit.saturating_sub(state.bytes) {
+            return Err(JobSendError(
+                Box::new(job),
+                "engine request queue capacity exceeded",
+                removed,
+            ));
+        }
+        state.bytes += bytes;
+        state.jobs.push_back((job, bytes));
+        self.0.ready.notify_one();
+        Ok(removed)
+    }
+}
+
+impl Drop for JobReceiver {
+    fn drop(&mut self) {
+        let mut state = self.0.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.receiver_alive = false;
+        state.jobs.clear();
+        state.bytes = 0;
+    }
+}
+
+impl JobReceiver {
+    fn set_resource_session(&self, session: Option<SessionId>) {
+        let mut state = self.0.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.resource_session = session;
+        state.attempt_session = None;
+    }
+
+    fn diagnostics(&self, operations: &OperationCounters) -> WorkerResourceDiagnostics {
+        let state = self.0.state.lock().unwrap_or_else(|error| error.into_inner());
+        let operations = operations.0.lock().unwrap_or_else(|error| error.into_inner());
+        WorkerResourceDiagnostics {
+            queued_jobs: state.jobs.len(),
+            queued_payload_bytes: state.bytes,
+            active_operations: operations.active,
+            abandoned_operations: operations.abandoned,
+        }
+    }
+
+    fn recv(&self) -> Result<Job, mpsc::RecvTimeoutError> {
+        self.receive(None)
+    }
+
+    fn recv_timeout(&self, timeout: Duration) -> Result<Job, mpsc::RecvTimeoutError> {
+        self.receive(Some(Instant::now() + timeout))
+    }
+
+    #[cfg(test)]
+    fn try_recv(&self) -> Result<Job, mpsc::RecvTimeoutError> {
+        self.recv_timeout(Duration::ZERO)
+    }
+
+    fn receive(&self, deadline: Option<Instant>) -> Result<Job, mpsc::RecvTimeoutError> {
+        let mut state = self.0.state.lock().unwrap_or_else(|error| error.into_inner());
+        loop {
+            if let Some((job, bytes)) = state.jobs.pop_front() {
+                state.bytes -= bytes;
+                if let JobKind::Complete { session, .. } = &job.kind {
+                    state.attempt_session = Some(*session);
+                }
+                return Ok(job);
+            }
+            if state.senders == 0 {
+                return Err(mpsc::RecvTimeoutError::Disconnected);
+            }
+            state = match deadline {
+                Some(deadline) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Err(mpsc::RecvTimeoutError::Timeout);
+                    }
+                    self.0
+                        .ready
+                        .wait_timeout(state, remaining)
+                        .unwrap_or_else(|error| error.into_inner())
+                        .0
+                },
+                None => self.0.ready.wait(state).unwrap_or_else(|error| error.into_inner()),
+            };
+        }
+    }
+}
+
+impl Job {
+    fn payload_bytes(&self) -> usize {
+        let payload = match &self.kind {
+            JobKind::Complete { request, .. } => {
+                // Count the shared environment conservatively for each queued
+                // owner; it is not cloned for each completion.
+                let strings = [
+                    Some(&request.buffer),
+                    Some(&request.cwd),
+                    request.current_shell.as_ref(),
+                    request.current_process.as_ref(),
+                    request.alias.as_ref(),
+                ];
+                strings
+                    .into_iter()
+                    .flatten()
+                    .map(String::capacity)
+                    .chain(
+                        request
+                            .environment_variables
+                            .iter()
+                            .flat_map(|(key, value)| [key.capacity(), value.capacity()]),
+                    )
+                    .fold(
+                        request
+                            .environment_variables
+                            .capacity()
+                            .saturating_mul(std::mem::size_of::<(String, String)>()),
+                        usize::saturating_add,
+                    )
+            },
+            JobKind::RecordAcceptance {
+                root_command,
+                accepted_name,
+                ..
+            } => root_command.capacity().saturating_add(accepted_name.capacity()),
+            JobKind::RecordScopedAcceptance {
+                scope, accepted_name, ..
+            } => scope.capacity().saturating_add(accepted_name.capacity()),
+            #[cfg(test)]
+            JobKind::InspectIdle { relative, .. } => relative.capacity(),
+            _ => 0,
+        };
+        std::mem::size_of::<Self>().saturating_add(payload)
+    }
 }
 
 enum JobKind {
@@ -199,6 +448,55 @@ enum AttemptFailure {
     Panicked,
 }
 
+#[derive(Default)]
+struct OperationCounters(Mutex<OperationCounts>);
+
+#[derive(Default)]
+struct OperationCounts {
+    active: usize,
+    abandoned: usize,
+}
+
+#[derive(Default)]
+struct OperationProgress {
+    finished: bool,
+    abandoned: bool,
+}
+
+struct OperationState {
+    counters: Arc<OperationCounters>,
+    progress: Mutex<OperationProgress>,
+}
+
+impl OperationState {
+    fn abandon(&self) {
+        let mut progress = self.progress.lock().unwrap_or_else(|error| error.into_inner());
+        if !progress.finished && !progress.abandoned {
+            progress.abandoned = true;
+            self.counters
+                .0
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .abandoned += 1;
+        }
+    }
+}
+
+struct OperationGuard(Arc<OperationState>);
+
+impl Drop for OperationGuard {
+    fn drop(&mut self) {
+        let mut progress = self.0.progress.lock().unwrap_or_else(|error| error.into_inner());
+        progress.finished = true;
+        let mut counters = self.0.counters.0.lock().unwrap_or_else(|error| error.into_inner());
+        counters.active -= 1;
+        if progress.abandoned {
+            counters.abandoned -= 1;
+        }
+    }
+}
+
+#[cfg(test)]
 type AttemptResult = Result<(Engine, anyhow::Result<CompleteResult>), AttemptFailure>;
 
 impl EngineClient {
@@ -229,12 +527,13 @@ impl EngineClient {
         fixed_attempt_timeout: Option<Duration>,
         idle_grace: Duration,
     ) -> anyhow::Result<Self> {
-        let (tx, rx) = mpsc::channel::<Job>();
+        let (tx, rx) = job_channel();
         let supervisor_specs_dir = specs_dir.clone();
         let acceptance = Arc::new(Mutex::new(AcceptanceIndex::load()));
         let worker_acceptance = acceptance.clone();
         let submission = Arc::new(Mutex::new(Submission::default()));
         let worker_submission = Arc::clone(&submission);
+        let operations = Arc::new(OperationCounters::default());
 
         thread::Builder::new()
             .name("ec-engine".into())
@@ -254,6 +553,7 @@ impl EngineClient {
                 let mut registry_template: Option<Registry> = None;
                 let mut jobs_without_attempt = 0;
                 loop {
+                    rx.set_resource_session(active_session);
                     let first = match wait_for_engine_job(&rx, engine.as_ref(), idle_grace) {
                         Ok(job) => job,
                         Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -306,8 +606,26 @@ impl EngineClient {
                             continue;
                         },
                         JobKind::ClearCaches => {
-                            if clear_caches(&supervisor_specs_dir, &mut engine, &mut registry_template) {
-                                active_session = None;
+                            let mut current_engine = engine.take();
+                            let mut template = registry_template.clone();
+                            let specs_dir = supervisor_specs_dir.clone();
+                            let timeout = fixed_attempt_timeout.unwrap_or_else(engine_attempt_timeout);
+                            match run_supervised(timeout, Arc::clone(&operations), move || {
+                                let cleared = clear_caches(&specs_dir, &mut current_engine, &mut template);
+                                (current_engine, template, cleared)
+                            }) {
+                                Ok((next_engine, next_template, cleared)) => {
+                                    engine = next_engine;
+                                    registry_template = next_template;
+                                    if cleared {
+                                        active_session = None;
+                                    }
+                                },
+                                Err(failure) => {
+                                    active_session = None;
+                                    tracing::error!(?failure, "engine cache refresh abandoned; engine reset");
+                                    record_attempt_failure(&worker_submission, &failure, false);
+                                },
                             }
                             continue;
                         },
@@ -328,6 +646,8 @@ impl EngineClient {
                             }
                             let snapshot = EngineClientDiagnostics {
                                 engine: engine.as_ref().map(|engine| engine.diagnostics_with_grace(idle_grace)),
+                                worker: rx.diagnostics(&operations),
+                                host: None,
                                 requests: worker_submission
                                     .lock()
                                     .unwrap_or_else(|error| error.into_inner())
@@ -357,26 +677,14 @@ impl EngineClient {
                         let _ = reply.send(Err(CompletionCancelled.into()));
                         continue;
                     }
-                    let current_engine = match engine.take() {
-                        Some(engine) => engine,
-                        None => {
-                            match rebuild_engine(&supervisor_specs_dir, &mut registry_template, &worker_acceptance) {
-                                Ok(engine) => {
-                                    update_requests(&worker_submission, |counts| {
-                                        counts.engine_initializations = counts.engine_initializations.saturating_add(1);
-                                    });
-                                    engine
-                                },
-                                Err(err) => {
-                                    update_requests(&worker_submission, |counts| {
-                                        counts.failed = counts.failed.saturating_add(1);
-                                    });
-                                    let _ = reply.send(Err(anyhow!("completion engine initialization failed: {err}")));
-                                    continue;
-                                },
-                            }
-                        },
+                    let current_engine = engine.take();
+                    let mut template = if current_engine.is_none() {
+                        registry_template.clone()
+                    } else {
+                        None
                     };
+                    let specs_dir = supervisor_specs_dir.clone();
+                    let acceptance = Arc::clone(&worker_acceptance);
                     let history_only = request.history_only;
                     let attempt_timeout = fixed_attempt_timeout.unwrap_or_else(engine_attempt_timeout);
                     let attempt_context = attempt_log_context(&request);
@@ -384,8 +692,31 @@ impl EngineClient {
                     update_requests(&worker_submission, |counts| {
                         counts.started = counts.started.saturating_add(1);
                     });
-                    match run_engine_attempt_with_token(current_engine, request, attempt_timeout, token.clone()) {
-                        Ok((mut next_engine, result)) => {
+                    let attempt_token = token.clone();
+                    // Registry capture and refresh may block in a filesystem
+                    // call too. They belong inside the same watchdog boundary
+                    // as generators, never on the supervisor itself.
+                    match run_supervised(attempt_timeout, Arc::clone(&operations), move || {
+                        let _scope = crate::cancellation::enter(attempt_token);
+                        let initialized = current_engine.is_none();
+                        let built = match current_engine {
+                            Some(engine) => Ok(engine),
+                            None => rebuild_engine(&specs_dir, &mut template, &acceptance),
+                        };
+                        match built {
+                            Ok(mut engine) => {
+                                let result = engine.complete(request);
+                                (Some(engine), template, initialized, result)
+                            },
+                            Err(error) => (
+                                None,
+                                template,
+                                false,
+                                Err(anyhow!("completion engine initialization failed: {error}")),
+                            ),
+                        }
+                    }) {
+                        Ok((mut next_engine, next_template, initialized, result)) => {
                             if result.is_ok() && !history_only {
                                 active_session = Some(session);
                             }
@@ -393,9 +724,17 @@ impl EngineClient {
                             // this attempt is younger than the grace, so this
                             // only releases files whose grace elapsed while the
                             // attempt held the engine.
-                            next_engine.release_idle_specs(Instant::now(), idle_grace);
-                            engine = Some(next_engine);
+                            if let Some(engine) = next_engine.as_mut() {
+                                engine.release_idle_specs(Instant::now(), idle_grace);
+                            }
+                            engine = next_engine;
+                            if next_template.is_some() {
+                                registry_template = next_template;
+                            }
                             update_requests(&worker_submission, |counts| {
+                                if initialized {
+                                    counts.engine_initializations = counts.engine_initializations.saturating_add(1);
+                                }
                                 if result.as_ref().is_err_and(|error| error.is::<CompletionCancelled>()) {
                                     counts.cancelled = counts.cancelled.saturating_add(1);
                                 } else if result.is_ok() {
@@ -408,15 +747,7 @@ impl EngineClient {
                         },
                         Err(failure) => {
                             token.cancel();
-                            update_requests(&worker_submission, |counts| {
-                                counts.failed = counts.failed.saturating_add(1);
-                                match failure {
-                                    AttemptFailure::TimedOut => {
-                                        counts.watchdog_timeouts = counts.watchdog_timeouts.saturating_add(1);
-                                    },
-                                    AttemptFailure::Panicked => counts.panics = counts.panics.saturating_add(1),
-                                }
-                            });
+                            record_attempt_failure(&worker_submission, &failure, true);
                             // The default log filter is ERROR, so this is the
                             // only durable evidence of a wedged or crashed
                             // generator. Keep it at that level.
@@ -465,7 +796,7 @@ impl EngineClient {
         submission.latest = Some(token.clone());
         submission.requests.submitted = submission.requests.submitted.saturating_add(1);
         let sequence = submission.sequence;
-        if let Err(error) = self.tx.send(Job {
+        let sent = self.tx.send(Job {
             kind: JobKind::Complete {
                 request,
                 reply,
@@ -473,10 +804,16 @@ impl EngineClient {
                 session,
                 sequence,
             },
-        }) {
-            if let JobKind::Complete { reply, .. } = error.0.kind {
-                let _ = reply.send(Err(anyhow!("engine thread is gone")));
-            }
+        });
+        match sent {
+            Ok(removed) => submission.requests.cancelled = submission.requests.cancelled.saturating_add(removed as u64),
+            Err(error) => {
+                submission.requests.cancelled = submission.requests.cancelled.saturating_add(error.2 as u64);
+                submission.requests.failed = submission.requests.failed.saturating_add(1);
+                if let JobKind::Complete { reply, .. } = error.0.kind {
+                    let _ = reply.send(Err(anyhow!(error.1)));
+                }
+            },
         }
         CompletionTask { receiver, token }
     }
@@ -498,13 +835,9 @@ impl EngineClient {
             submission.owner = None;
         }
         submission.sequence = submission.sequence.wrapping_add(1);
-        // Always keep the notification in FIFO order. Only the worker knows
-        // whether intervening attempts actually committed a new resource owner.
-        self.tx
-            .send(Job {
-                kind: JobKind::EndInput { session },
-            })
-            .map_err(|_disconnected| anyhow!("engine thread is gone"))
+        // The mailbox keeps retained notifications in FIFO order and reserves
+        // capacity for the committed owner and the currently running attempt.
+        send_with_counters(&self.tx, &mut submission, JobKind::EndInput { session })
     }
 
     /// An ordered, read-only snapshot. Does not initialize or interrupt Engine.
@@ -520,14 +853,12 @@ impl EngineClient {
     }
 
     fn send_control(&self, kind: JobKind) -> anyhow::Result<()> {
-        let _submission = self.submission.lock().unwrap_or_else(|error| error.into_inner());
-        self.tx
-            .send(Job { kind })
-            .map_err(|_disconnected| anyhow!("engine thread is gone"))
+        let mut submission = self.submission.lock().unwrap_or_else(|error| error.into_inner());
+        send_with_counters(&self.tx, &mut submission, kind)
     }
 
     /// Queue a successful acceptance without participating in completion
-    /// latest-job cancellation. Sending is unbounded and returns immediately;
+    /// latest-job cancellation. Sending is bounded and returns immediately;
     /// the worker applies the record between completion attempts and persists
     /// it best-effort. This keeps shell/UI acceptance independent of a slow or
     /// timed-out generator.
@@ -547,10 +878,6 @@ impl EngineClient {
             root_command,
             accepted_name,
             timestamp,
-        })
-        .map_err(|_err| {
-            self.acceptance.lock().unwrap_or_else(|err| err.into_inner()).persist();
-            anyhow!("engine thread is gone")
         })
     }
 
@@ -577,7 +904,6 @@ impl EngineClient {
             accepted_name,
             timestamp,
         })
-        .map_err(|_err| anyhow!("engine thread is gone"))
     }
 
     /// Forget every cached spec and generator result. Applied on the worker
@@ -606,7 +932,34 @@ fn update_requests(submission: &Mutex<Submission>, update: impl FnOnce(&mut Requ
     update(&mut submission.lock().unwrap_or_else(|error| error.into_inner()).requests);
 }
 
+fn send_with_counters(tx: &JobSender, submission: &mut Submission, kind: JobKind) -> anyhow::Result<()> {
+    match tx.send(Job { kind }) {
+        Ok(removed) => {
+            submission.requests.cancelled = submission.requests.cancelled.saturating_add(removed as u64);
+            Ok(())
+        },
+        Err(error) => {
+            submission.requests.cancelled = submission.requests.cancelled.saturating_add(error.2 as u64);
+            Err(anyhow!(error.1))
+        },
+    }
+}
+
+fn record_attempt_failure(submission: &Mutex<Submission>, failure: &AttemptFailure, completion: bool) {
+    update_requests(submission, |counts| {
+        if completion {
+            counts.failed = counts.failed.saturating_add(1);
+        }
+        match failure {
+            AttemptFailure::TimedOut => counts.watchdog_timeouts = counts.watchdog_timeouts.saturating_add(1),
+            AttemptFailure::Panicked => counts.panics = counts.panics.saturating_add(1),
+        }
+    });
+}
+
 fn clear_caches(specs_dir: &Path, engine: &mut Option<Engine>, registry_template: &mut Option<Registry>) -> bool {
+    #[cfg(test)]
+    tests::pause_filesystem_if_requested(specs_dir);
     if let Some(engine) = engine.as_mut() {
         // Keep the old snapshot/template when the canonical directory is
         // temporarily absent during publication. A failed reset must not
@@ -649,6 +1002,7 @@ fn run_engine_attempt(engine: Engine, request: CompleteRequest, timeout: Duratio
     run_engine_attempt_with_token(engine, request, timeout, CancellationToken::new())
 }
 
+#[cfg(test)]
 fn run_engine_attempt_with_token(
     engine: Engine,
     request: CompleteRequest,
@@ -662,16 +1016,34 @@ fn run_engine_attempt_with_token(
     })
 }
 
+#[cfg(test)]
 fn run_attempt<F>(engine: Engine, request: CompleteRequest, timeout: Duration, complete: F) -> AttemptResult
 where
     F: FnOnce(Engine, CompleteRequest) -> (Engine, anyhow::Result<CompleteResult>) + Send + 'static,
 {
+    run_supervised(timeout, Arc::new(OperationCounters::default()), move || {
+        complete(engine, request)
+    })
+}
+
+fn run_supervised<T: Send + 'static>(
+    timeout: Duration,
+    counters: Arc<OperationCounters>,
+    operation: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, AttemptFailure> {
     let (tx, rx) = mpsc::sync_channel(1);
+    counters.0.lock().unwrap_or_else(|error| error.into_inner()).active += 1;
+    let state = Arc::new(OperationState {
+        counters,
+        progress: Mutex::new(OperationProgress::default()),
+    });
+    let guard = OperationGuard(Arc::clone(&state));
     let spawn_result = thread::Builder::new()
         .name("ec-engine-attempt".into())
         .stack_size(ENGINE_THREAD_STACK)
         .spawn(move || {
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| complete(engine, request)));
+            let _guard = guard;
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation));
             let message = match outcome {
                 Ok(result) => Ok(result),
                 Err(_) => Err(()),
@@ -685,7 +1057,10 @@ where
     match rx.recv_timeout(timeout) {
         Ok(Ok(result)) => Ok(result),
         Ok(Err(())) | Err(mpsc::RecvTimeoutError::Disconnected) => Err(AttemptFailure::Panicked),
-        Err(mpsc::RecvTimeoutError::Timeout) => Err(AttemptFailure::TimedOut),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            state.abandon();
+            Err(AttemptFailure::TimedOut)
+        },
     }
 }
 
@@ -756,6 +1131,8 @@ fn rebuild_engine(
     template: &mut Option<Registry>,
     acceptance: &Arc<Mutex<AcceptanceIndex>>,
 ) -> anyhow::Result<Engine> {
+    #[cfg(test)]
+    tests::pause_filesystem_if_requested(specs_dir);
     let registry = match template {
         Some(registry) if !registry.needs_refresh() => registry.clone(),
         Some(registry) => {
@@ -810,7 +1187,7 @@ fn maintain_idle_between_queued_jobs(
 /// Block until the next job, or until the earliest idle deadline.
 /// A job already queued is returned without waiting out the grace.
 fn wait_for_engine_job(
-    rx: &mpsc::Receiver<Job>,
+    rx: &JobReceiver,
     engine: Option<&Engine>,
     grace: Duration,
 ) -> Result<Job, mpsc::RecvTimeoutError> {
@@ -863,6 +1240,323 @@ fn specs_ir_in_bundle(macos_dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    type FilesystemPause = (mpsc::Sender<()>, mpsc::Receiver<()>);
+    static FILESYSTEM_PAUSES: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, FilesystemPause>>> =
+        std::sync::OnceLock::new();
+
+    pub(super) fn pause_filesystem_if_requested(path: &Path) {
+        let pause = FILESYSTEM_PAUSES
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .remove(path);
+        if let Some((entered, release)) = pause {
+            let _ = entered.send(());
+            let _ = release.recv();
+        }
+    }
+
+    fn pause_next_filesystem_operation(path: &Path) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered, observed) = mpsc::channel();
+        let (release, resumed) = mpsc::channel();
+        FILESYSTEM_PAUSES
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .insert(path.to_path_buf(), (entered, resumed));
+        (observed, release)
+    }
+
+    #[test]
+    fn blocked_initialization_is_supervised_and_submissions_coalesce_around_controls() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("git.json"),
+            r#"{"names":["git"],"subcommands":[{"names":["status"]}]}"#,
+        )
+        .unwrap();
+        let (entered, release) = pause_next_filesystem_operation(dir.path());
+        let client = EngineClient::spawn_with_timeout(dir.path().to_path_buf(), Duration::from_secs(2)).unwrap();
+        let first = client.complete(CompleteRequest::default());
+        entered.recv_timeout(Duration::from_secs(3)).unwrap();
+
+        let mut latest = None;
+        for index in 0..1000 {
+            latest = Some(client.complete(CompleteRequest {
+                buffer: "x".repeat(32 * 1024),
+                include_history: false,
+                ..CompleteRequest::default()
+            }));
+            if index == 250 {
+                client.end_input(SessionId::ANONYMOUS).unwrap();
+            }
+            if index == 500 {
+                client.clear_caches().unwrap();
+            }
+        }
+        {
+            let state = client.tx.0.state.lock().unwrap();
+            assert_eq!(state.jobs.len(), 3);
+            assert!(state.bytes < 256 * 1024);
+            assert!(matches!(state.jobs[0].0.kind, JobKind::EndInput { .. }));
+            assert!(matches!(state.jobs[1].0.kind, JobKind::ClearCaches));
+            assert!(matches!(state.jobs[2].0.kind, JobKind::Complete { .. }));
+        }
+        drop(latest);
+        let (done, result) = mpsc::channel();
+        let waiter = thread::spawn(move || {
+            let _ = done.send(futures::executor::block_on(first));
+        });
+        let observed = result.recv_timeout(Duration::from_secs(5));
+        // Release even on regression: a missing watchdog must fail rather
+        // than leaving the fixture's engine thread permanently blocked.
+        release.send(()).unwrap();
+        waiter.join().unwrap();
+        assert!(observed.unwrap().unwrap_err().to_string().contains("timed out"));
+        let recovered = client
+            .complete_blocking(CompleteRequest {
+                buffer: "git ".into(),
+                cwd: "/tmp".into(),
+                include_history: false,
+                ..CompleteRequest::default()
+            })
+            .unwrap();
+        assert!(
+            recovered
+                .suggestions
+                .iter()
+                .any(|suggestion| suggestion.name == "status")
+        );
+        let diagnostics = futures::executor::block_on(client.diagnostics()).unwrap();
+        assert_eq!(diagnostics.requests.watchdog_timeouts, 1);
+        assert!(diagnostics.requests.cancelled >= 999);
+    }
+
+    #[test]
+    fn blocked_clear_caches_times_out_and_the_following_diagnostic_progresses() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("git.json"), r#"{"names":["git"]}"#).unwrap();
+        let client = EngineClient::spawn_with_timeout(dir.path().to_path_buf(), Duration::from_millis(500)).unwrap();
+        client
+            .complete_blocking(CompleteRequest {
+                include_history: false,
+                ..CompleteRequest::default()
+            })
+            .unwrap();
+        let (entered, release) = pause_next_filesystem_operation(dir.path());
+        client.clear_caches().unwrap();
+        entered.recv_timeout(Duration::from_secs(3)).unwrap();
+        let diagnostic = client.diagnostics();
+        let (done, result) = mpsc::channel();
+        let waiter = thread::spawn(move || {
+            let _ = done.send(futures::executor::block_on(diagnostic));
+        });
+        let observed = result.recv_timeout(Duration::from_secs(3));
+        release.send(()).unwrap();
+        waiter.join().unwrap();
+        let snapshot = observed.unwrap().unwrap();
+        assert_eq!(snapshot.requests.watchdog_timeouts, 1);
+        assert_eq!(
+            snapshot.requests.failed, 0,
+            "control failures are not failed completions"
+        );
+        assert!(snapshot.engine.is_none());
+        assert_eq!(snapshot.worker.active_operations, 1);
+        assert_eq!(snapshot.worker.abandoned_operations, 1);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let snapshot = futures::executor::block_on(client.diagnostics()).unwrap();
+            if snapshot.worker.active_operations == 0 {
+                assert_eq!(snapshot.worker.abandoned_operations, 0);
+                break;
+            }
+            assert!(Instant::now() < deadline, "released operation must retire its counters");
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_initialization_and_clear_caches_recover_after_removal() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("git.json"),
+            r#"{"names":["git"],"subcommands":[{"names":["status"]}]}"#,
+        )
+        .unwrap();
+        let fifo_path = dir.path().join("unrelated-file");
+        let c_path = std::ffi::CString::new(fifo_path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: a new fixture FIFO with a valid, terminated pathname.
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+        let client = EngineClient::spawn_with_timeout(dir.path().to_path_buf(), Duration::from_secs(2)).unwrap();
+        let request = CompleteRequest {
+            buffer: "git ".into(),
+            cwd: "/tmp".into(),
+            include_history: false,
+            ..CompleteRequest::default()
+        };
+        let error = client.complete_blocking(request.clone()).unwrap_err();
+        assert!(error.to_string().contains("initialization failed"));
+        std::fs::remove_file(&fifo_path).unwrap();
+        assert!(
+            client
+                .complete_blocking(request.clone())
+                .unwrap()
+                .suggestions
+                .iter()
+                .any(|row| row.name == "status")
+        );
+        // A failed refresh preserves the previous usable generation and lets
+        // the next ordered control run, even with no writer on this FIFO.
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+        client.clear_caches().unwrap();
+        let snapshot = futures::executor::block_on(client.diagnostics()).unwrap();
+        assert!(snapshot.engine.is_some());
+        assert_eq!(snapshot.requests.watchdog_timeouts, 0);
+        std::fs::remove_file(&fifo_path).unwrap();
+        client.clear_caches().unwrap();
+        assert!(
+            client
+                .complete_blocking(request)
+                .unwrap()
+                .suggestions
+                .iter()
+                .any(|row| row.name == "status")
+        );
+    }
+
+    #[test]
+    fn queued_controls_and_request_allocations_have_explicit_budgets() {
+        let (tx, rx) = job_channel();
+        for _ in 0..MAX_QUEUED_JOBS - RESERVED_END_INPUT_JOBS {
+            tx.send(Job {
+                kind: JobKind::ClearCaches,
+            })
+            .unwrap();
+        }
+        assert_eq!(
+            tx.send(Job {
+                kind: JobKind::ClearCaches
+            })
+            .unwrap_err()
+            .1,
+            "engine request queue capacity exceeded"
+        );
+        for _ in 0..MAX_QUEUED_JOBS - RESERVED_END_INPUT_JOBS {
+            rx.recv().unwrap();
+        }
+        let (reply, _receiver) = oneshot::channel();
+        let request = CompleteRequest {
+            buffer: String::with_capacity(MAX_QUEUED_BYTES),
+            ..CompleteRequest::default()
+        };
+        assert_eq!(
+            tx.send(completion_job(request, reply)).unwrap_err().1,
+            "engine request queue capacity exceeded"
+        );
+        assert_eq!(tx.0.state.lock().unwrap().bytes, 0);
+    }
+
+    #[test]
+    fn saturated_mailbox_reserves_ordered_end_notifications_for_both_possible_owners() {
+        let (tx, rx) = job_channel();
+        let client = EngineClient {
+            tx,
+            acceptance: Arc::new(Mutex::new(AcceptanceIndex::default())),
+            submission: Arc::new(Mutex::new(Submission::default())),
+        };
+        let committed = SessionId::new(1);
+        let running = SessionId::new(2);
+        rx.set_resource_session(Some(committed));
+        let task = client.complete_for_session(running, CompleteRequest::default());
+        let _attempt = rx.recv().unwrap();
+        for _ in 0..MAX_QUEUED_JOBS - RESERVED_END_INPUT_JOBS {
+            client.clear_caches().unwrap();
+        }
+        assert!(client.clear_caches().is_err());
+        // Unrelated and duplicate ends cannot exhaust the reserved capacity.
+        for session in 3..1000 {
+            client.end_input(SessionId::new(session)).unwrap();
+            client.end_input(committed).unwrap();
+        }
+        client.end_input(running).unwrap();
+        assert!(task.token.is_cancelled());
+        let counts = rx.diagnostics(&OperationCounters::default());
+        assert_eq!(counts.queued_jobs, MAX_QUEUED_JOBS);
+        assert!(counts.queued_payload_bytes <= MAX_QUEUED_BYTES);
+        for _ in 0..MAX_QUEUED_JOBS - RESERVED_END_INPUT_JOBS {
+            assert!(matches!(rx.recv().unwrap().kind, JobKind::ClearCaches));
+        }
+        assert!(matches!(rx.recv().unwrap().kind, JobKind::EndInput { session } if session == committed));
+        assert!(matches!(rx.recv().unwrap().kind, JobKind::EndInput { session } if session == running));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn end_notifications_keep_their_byte_reservation_when_payload_budget_is_full() {
+        let (tx, rx) = job_channel();
+        rx.set_resource_session(Some(SessionId::new(1)));
+        let payload = MAX_QUEUED_BYTES - (RESERVED_END_INPUT_JOBS + 1) * std::mem::size_of::<Job>();
+        tx.send(Job {
+            kind: JobKind::RecordAcceptance {
+                root_command: String::with_capacity(payload),
+                accepted_name: String::new(),
+                timestamp: 0,
+            },
+        })
+        .unwrap();
+        assert!(
+            tx.send(Job {
+                kind: JobKind::ClearCaches
+            })
+            .is_err()
+        );
+        tx.send(Job {
+            kind: JobKind::EndInput {
+                session: SessionId::new(1),
+            },
+        })
+        .unwrap();
+        assert!(rx.diagnostics(&OperationCounters::default()).queued_payload_bytes <= MAX_QUEUED_BYTES);
+        assert!(matches!(rx.recv().unwrap().kind, JobKind::RecordAcceptance { .. }));
+        assert!(matches!(rx.recv().unwrap().kind, JobKind::EndInput { .. }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saturated_controls_cannot_swallow_the_committed_owners_end() {
+        let dir = tempfile::tempdir().unwrap();
+        slow_fixture(dir.path());
+        let client = EngineClient::spawn(dir.path().to_path_buf()).unwrap();
+        futures::executor::block_on(
+            client.complete_for_session(SessionId::new(1), fixture_request(dir.path(), "fast ")),
+        )
+        .unwrap();
+        let running = client.complete_for_session(SessionId::new(2), fixture_request(dir.path(), "slow "));
+        await_fixture_start(dir.path());
+        let diagnostics: Vec<_> = (0..MAX_QUEUED_JOBS - RESERVED_END_INPUT_JOBS)
+            .map(|_| client.diagnostics())
+            .collect();
+        assert!(client.clear_caches().is_err());
+        client.end_input(SessionId::new(1)).unwrap();
+        drop(running);
+        for diagnostic in diagnostics {
+            futures::executor::block_on(diagnostic).unwrap();
+        }
+        let state = client.inspect_idle("fast").unwrap();
+        assert!(
+            state.mark.is_none_or(|mark| mark.is_some()),
+            "the committed owner's end must reach the engine"
+        );
+        let snapshot = futures::executor::block_on(client.diagnostics()).unwrap();
+        assert_eq!(snapshot.requests.submitted, 2);
+        assert_eq!(snapshot.requests.completed, 1);
+        assert_eq!(snapshot.requests.cancelled, 1);
+        assert_eq!(snapshot.requests.failed, 0);
+    }
 
     fn completion_job(request: CompleteRequest, reply: oneshot::Sender<anyhow::Result<CompleteResult>>) -> Job {
         Job {
@@ -968,7 +1662,7 @@ mod tests {
 
     #[test]
     fn synchronous_submission_cancels_only_older_tasks_and_preserves_control_order() {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = job_channel();
         let client = EngineClient {
             tx,
             acceptance: Arc::new(Mutex::new(AcceptanceIndex::default())),
@@ -981,7 +1675,6 @@ mod tests {
         assert!(older.token.is_cancelled());
         drop(older);
         assert!(!newer.token.is_cancelled());
-        assert!(matches!(rx.recv().unwrap().kind, JobKind::Complete { sequence: 1, .. }));
         assert!(matches!(rx.recv().unwrap().kind, JobKind::ClearCaches));
         assert!(matches!(rx.recv().unwrap().kind, JobKind::Diagnostics { .. }));
         assert!(matches!(rx.recv().unwrap().kind, JobKind::Complete { sequence: 2, .. }));
@@ -1105,7 +1798,8 @@ mod tests {
 
     #[test]
     fn end_input_is_ordered_with_submission_and_does_not_initialize_engine() {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = job_channel();
+        rx.set_resource_session(Some(SessionId::new(1)));
         let client = EngineClient {
             tx,
             acceptance: Arc::new(Mutex::new(AcceptanceIndex::default())),
@@ -1117,8 +1811,6 @@ mod tests {
         client.end_input(SessionId::new(1)).unwrap();
         let fresh = client.complete_for_session(SessionId::new(1), CompleteRequest::default());
         assert!(!fresh.token.is_cancelled());
-        assert!(matches!(rx.recv().unwrap().kind, JobKind::Complete { .. }));
-        assert!(matches!(rx.recv().unwrap().kind, JobKind::EndInput { .. }));
         assert!(matches!(rx.recv().unwrap().kind, JobKind::EndInput { .. }));
         assert!(matches!(rx.recv().unwrap().kind, JobKind::Complete { .. }));
         assert!(rx.try_recv().is_err());
@@ -1974,7 +2666,7 @@ mod tests {
         assert_eq!(engine.diagnostics().registry.cached_file_count, 0);
         engine.end_input();
         let grace = Duration::from_millis(20);
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = job_channel();
         let (done, received) = mpsc::channel();
         let waiter = thread::spawn(move || {
             let result = wait_for_engine_job(&rx, Some(&engine), grace);
@@ -2009,7 +2701,7 @@ mod tests {
         assert_eq!(engine.diagnostics().hooks, Default::default());
         engine.end_input();
         let grace = Duration::from_millis(20);
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = job_channel();
         let (done, received) = mpsc::channel();
         let waiter = thread::spawn(move || {
             let result = wait_for_engine_job(&rx, Some(&engine), grace);

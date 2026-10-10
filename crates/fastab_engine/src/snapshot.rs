@@ -392,7 +392,10 @@ fn open_relative(parent_fd: i32, relative: &Path) -> io::Result<OwnedFd> {
                 format!("relative path contains NUL: {error}"),
             )
         })?;
-        let mut flags = libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW;
+        // The final entry may have been replaced by a FIFO since capture.
+        // Open without waiting for a writer, then validate the opened object
+        // with fstat in read_file; a pre-open path check would race replacement.
+        let mut flags = libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK;
         if index + 1 < components.len() {
             flags |= libc::O_DIRECTORY;
         }
@@ -426,7 +429,9 @@ fn capture_tree(
             libc::openat(
                 parent_fd,
                 c_name.as_ptr(),
-                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                // Inspect the opened object before reading it. In particular,
+                // an unrelated FIFO must not block the entire tree capture.
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
             )
         };
         if fd < 0 {
@@ -653,6 +658,64 @@ fn digest_hex(digest: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    fn fifo(path: &Path) {
+        let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: the fixture path is a valid, terminated string.
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    }
+
+    #[cfg(unix)]
+    fn rejects_fifo_without_a_writer(path: &Path, read: impl FnOnce() -> io::Result<()> + Send + 'static) {
+        use std::os::unix::fs::OpenOptionsExt;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let (tx, rx) = mpsc::channel();
+        let reader = std::thread::spawn(move || tx.send(read()).unwrap());
+        let result = rx.recv_timeout(Duration::from_secs(2));
+        // Unblock a regressed blocking open before failing, so the test does
+        // not leave a thread or FIFO behind for the rest of the suite.
+        let writer = result.is_err().then(|| {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(path)
+                .unwrap()
+        });
+        reader.join().unwrap();
+        drop(writer);
+        assert_eq!(
+            result.expect("FIFO open waited for a writer").unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_rejects_unrelated_fifo_before_reading_it() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("unrelated-file");
+        fifo(&path);
+        let directory = root.path().to_path_buf();
+        rejects_fifo_without_a_writer(&path, move || DirectorySnapshot::open(&directory).map(|_| ()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_rejects_a_regular_file_replaced_with_fifo_on_lazy_read() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("git.json");
+        std::fs::write(&path, "{}").unwrap();
+        let snapshot = DirectorySnapshot::open(root.path()).unwrap();
+        let observer = snapshot.clone();
+        std::fs::remove_file(&path).unwrap();
+        fifo(&path);
+        rejects_fifo_without_a_writer(&path, move || snapshot.read_file(Path::new("git.json")).map(|_| ()));
+        assert!(observer.is_stale());
+    }
 
     #[cfg(unix)]
     fn open_fd_count() -> Option<usize> {

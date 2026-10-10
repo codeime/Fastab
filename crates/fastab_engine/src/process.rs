@@ -422,8 +422,8 @@ fn wait_child_unix(mut child: Child, timeout: Duration, require_success: bool) -
             }
         }
 
-        match child.try_wait() {
-            Ok(Some(status)) => {
+        match child_has_exited(pid) {
+            Ok(true) => {
                 if !stdout_eof {
                     stdout_eof = drain_stdout(&mut stdout, &mut tmp, &mut buf);
                 }
@@ -433,12 +433,19 @@ fn wait_child_unix(mut child: Child, timeout: Duration, require_success: bool) -
                 if !stdout_eof {
                     kill_process_group(pid);
                 }
+                // waitid left the leader unreaped, reserving its PID until
+                // the final group signal. Never signal this group after wait.
+                let status = match child.wait() {
+                    Ok(status) => status,
+                    Err(_) => return RunResult::Failed,
+                };
                 if require_success && !status.success() {
                     return RunResult::Failed;
                 }
                 return RunResult::Output(String::from_utf8_lossy(&buf).into_owned());
             },
-            Ok(None) => {},
+            Ok(false) => {},
+            Err(error) if error.kind() == ErrorKind::Interrupted => {},
             Err(_) => {
                 kill_and_reap(&mut child, pid);
                 return RunResult::Failed;
@@ -483,6 +490,28 @@ fn wait_child_unix(mut child: Child, timeout: Duration, require_success: bool) -
             stdout_eof = true;
         }
     }
+}
+
+/// Observe an exited leader without releasing its PID for reuse. Both macOS
+/// and Linux support WNOWAIT; only the following Child::wait consumes status.
+#[cfg(unix)]
+fn child_has_exited(pid: u32) -> std::io::Result<bool> {
+    let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+    // SAFETY: info is writable, pid names our unreaped direct child, and the
+    // zeroed si_pid distinguishes WNOHANG's no-status result on older systems.
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            info.as_mut_ptr(),
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: waitid initialized info, including the child identity field.
+    Ok(unsafe { info.assume_init().si_pid() } != 0)
 }
 
 #[cfg(unix)]
@@ -617,6 +646,12 @@ fn kill_and_reap(child: &mut Child, pid: u32) {
 fn kill_process_group(pid: u32) {
     #[cfg(unix)]
     {
+        #[cfg(test)]
+        GROUP_SIGNAL_OBSERVATIONS.with(|observations| {
+            if let Some(observations) = observations.borrow_mut().as_mut() {
+                observations.push(child_has_exited(pid).map_err(|error| error.raw_os_error()));
+            }
+        });
         let pgid = pid as i32;
         // SAFETY: the child was started with process_group(0) or setsid(), so its
         // pgid equals pid. Negative pgid sends the signal to the whole group.
@@ -628,6 +663,11 @@ fn kill_process_group(pid: u32) {
     {
         let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/F"]).status();
     }
+}
+
+#[cfg(all(test, unix))]
+std::thread_local! {
+    static GROUP_SIGNAL_OBSERVATIONS: std::cell::RefCell<Option<Vec<Result<bool, Option<i32>>>>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -751,6 +791,137 @@ pub(crate) mod mock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn plain_exited_leader_keeps_pid_reserved_until_descendant_group_cleanup() {
+        GROUP_SIGNAL_OBSERVATIONS.with(|observations| *observations.borrow_mut() = Some(Vec::new()));
+        let started = std::time::Instant::now();
+        let result = run(
+            "/bin/sh",
+            &["-c".into(), "sleep 5 & printf leader-done".into()],
+            "/",
+            Duration::from_secs(8),
+            false,
+            true,
+        );
+        let observations = GROUP_SIGNAL_OBSERVATIONS.with(|observations| observations.borrow_mut().take().unwrap());
+        assert_eq!(result, RunResult::Output("leader-done".into()));
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "must not wait for the descendant's pipe EOF"
+        );
+        // WNOWAIT can still observe the exited leader at the exact group-kill
+        // boundary. A consuming try_wait before that signal yields ECHILD.
+        assert_eq!(observations, vec![Ok(true)]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn plain_escaped_descendant_does_not_delay_return_or_release_leader_before_signal() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixStream;
+        use std::os::unix::process::CommandExt;
+
+        // Keep the escaped child alive through an owned pipe, then release it
+        // by closing that pipe even if an assertion fails. No Python, global
+        // signal handler, PID churn, or delayed orphan cleanup is needed.
+        let (release, hold) = UnixStream::pair().unwrap();
+        let (ready_read, ready_write) = UnixStream::pair().unwrap();
+        let release_fd = release.as_raw_fd();
+        let hold_fd = hold.as_raw_fd();
+        let ready_read_fd = ready_read.as_raw_fd();
+        let ready_write_fd = ready_write.as_raw_fd();
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "printf leader-done"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .process_group(0);
+        // SAFETY: the post-fork closure only invokes async-signal-safe libc
+        // functions and constructs an OS error. The escaped child never
+        // returns into Rust or runs the copied test harness's destructors.
+        unsafe {
+            command.pre_exec(move || {
+                libc::close(release_fd);
+                let child = libc::fork();
+                if child < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if child == 0 {
+                    libc::close(ready_read_fd);
+                    let status = u8::from(libc::setsid() >= 0);
+                    loop {
+                        let written = libc::write(ready_write_fd, (&status as *const u8).cast(), 1);
+                        if written >= 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+                            break;
+                        }
+                    }
+                    libc::close(ready_write_fd);
+                    libc::dup2(hold_fd, libc::STDIN_FILENO);
+                    libc::close(hold_fd);
+                    // Exec also closes std::process's CLOEXEC spawn-error
+                    // pipe. Holding it open here would deadlock spawn itself.
+                    let argv = [c"cat".as_ptr(), std::ptr::null()];
+                    libc::execv(c"/bin/cat".as_ptr(), argv.as_ptr());
+                    libc::_exit(127);
+                }
+                libc::close(hold_fd);
+                libc::close(ready_write_fd);
+                let mut ready = libc::pollfd {
+                    fd: ready_read_fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                if libc::poll(&mut ready, 1, 3000) <= 0 {
+                    return Err(std::io::Error::from_raw_os_error(libc::ETIMEDOUT));
+                }
+                let mut status = 0_u8;
+                let read = loop {
+                    let read = libc::read(ready_read_fd, (&mut status as *mut u8).cast(), 1);
+                    if read >= 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+                        break read;
+                    }
+                };
+                libc::close(ready_read_fd);
+                if read != 1 || status != 1 {
+                    return Err(std::io::Error::from_raw_os_error(libc::EIO));
+                }
+                Ok(())
+            });
+        }
+        let child = command.spawn().unwrap();
+        drop((hold, ready_read, ready_write));
+        GROUP_SIGNAL_OBSERVATIONS.with(|observations| *observations.borrow_mut() = Some(Vec::new()));
+        let started = std::time::Instant::now();
+        let result = wait_child(child, Duration::from_secs(5), true);
+        drop(release);
+        let observations = GROUP_SIGNAL_OBSERVATIONS.with(|observations| observations.borrow_mut().take().unwrap());
+        assert_eq!(result, RunResult::Output("leader-done".into()));
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "must not await EOF from an escaped descendant"
+        );
+        assert_eq!(observations, vec![Ok(true)]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn observing_exit_does_not_consume_the_real_child_status() {
+        let mut child = Command::new("/bin/sh").args(["-c", "exit 7"]).spawn().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !child_has_exited(child.id()).unwrap() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(child_has_exited(child.id()).unwrap());
+        assert_eq!(child.wait().unwrap().code(), Some(7));
+        assert_eq!(
+            child_has_exited(child.id()).unwrap_err().raw_os_error(),
+            Some(libc::ECHILD)
+        );
+    }
 
     #[cfg(unix)]
     #[test]

@@ -75,14 +75,44 @@ pub struct RequestDiagnostics {
     pub cancelled: u64,
     pub failed: u64,
     pub engine_initializations: u64,
+    /// Includes supervised initialization and cache-refresh operations.
     pub watchdog_timeouts: u64,
+    /// Includes supervised initialization and cache-refresh operations.
     pub panics: u64,
+}
+
+/// Mailbox payload is an estimate of owned capacities, not physical footprint.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkerResourceDiagnostics {
+    pub queued_jobs: usize,
+    pub queued_payload_bytes: usize,
+    pub active_operations: usize,
+    pub abandoned_operations: usize,
+}
+
+/// Read-only host counters, collected without constructing a window or asset.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HostResourceDiagnostics {
+    pub gpui_windows: usize,
+    pub overlay_visible: bool,
+    pub file_icon_paths: usize,
+    pub file_icon_images: usize,
+    pub file_icon_worker_active: bool,
+    pub file_icon_pending_paths: usize,
+    pub ipc_sessions: usize,
+    pub ipc_pending_messages: usize,
+    pub ipc_pending_bytes: usize,
+    pub ipc_pending_responses: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EngineClientDiagnostics {
     pub engine: Option<EngineDiagnostics>,
     pub requests: RequestDiagnostics,
+    #[serde(default)]
+    pub worker: WorkerResourceDiagnostics,
+    #[serde(default)]
+    pub host: Option<HostResourceDiagnostics>,
 }
 
 #[cfg(test)]
