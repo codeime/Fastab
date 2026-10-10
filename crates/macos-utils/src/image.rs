@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use objc2::ClassType;
-use objc2::rc::Retained;
+use objc2::rc::{Retained, autoreleasepool};
 use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSGraphicsContext, NSImage, NSWorkspace};
 use objc2_foundation::{NSDictionary, NSFileTypeDirectory, NSPoint, NSRect, NSSize, NSString};
 
@@ -23,35 +23,39 @@ unsafe fn resize_image(image: &NSImage, size: NSSize) -> Option<Retained<NSImage
 
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn png_for_name(name: &str) -> Option<Vec<u8>> {
-    let shared = NSWorkspace::sharedWorkspace();
+    autoreleasepool(|_| {
+        let shared = NSWorkspace::sharedWorkspace();
 
-    let file_type = NSString::from_str(name);
+        let file_type = NSString::from_str(name);
 
-    #[allow(deprecated, reason = "iconForContentType is not available in objc2")]
-    let image = shared.iconForFileType(&file_type);
+        #[allow(deprecated, reason = "iconForContentType is not available in objc2")]
+        let image = shared.iconForFileType(&file_type);
 
-    convert_image(&image)
+        convert_image(&image)
+    })
 }
 
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn png_for_path(path: &Path) -> Option<Vec<u8>> {
-    let shared = NSWorkspace::sharedWorkspace();
-    let image = if path.exists() {
-        let file_path = NSString::from_str(path.to_str()?);
-        shared.iconForFile(&file_path)
-    } else {
-        let is_dir = std::fs::metadata(path).ok().map(|meta| meta.is_dir()).unwrap_or(false);
-        let file_type = if is_dir {
-            NSFileTypeDirectory
+    autoreleasepool(|_| {
+        let shared = NSWorkspace::sharedWorkspace();
+        let image = if path.exists() {
+            let file_path = NSString::from_str(path.to_str()?);
+            shared.iconForFile(&file_path)
         } else {
-            &NSString::from_str(path.extension()?.to_str()?)
+            let is_dir = std::fs::metadata(path).ok().map(|meta| meta.is_dir()).unwrap_or(false);
+            let file_type = if is_dir {
+                NSFileTypeDirectory
+            } else {
+                &NSString::from_str(path.extension()?.to_str()?)
+            };
+
+            #[allow(deprecated, reason = "iconForContentType is not available in objc2")]
+            shared.iconForFileType(file_type)
         };
 
-        #[allow(deprecated, reason = "iconForContentType is not available in objc2")]
-        shared.iconForFileType(file_type)
-    };
-
-    convert_image(&image)
+        convert_image(&image)
+    })
 }
 
 fn convert_image(image: &NSImage) -> Option<Vec<u8>> {

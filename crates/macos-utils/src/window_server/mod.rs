@@ -6,7 +6,8 @@ use std::boxed::Box;
 use std::ffi::c_void;
 use std::hash::Hash;
 use std::pin::Pin;
-use std::sync::OnceLock;
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use accessibility_sys::{
     AXError, AXIsProcessTrusted, AXObserverRef, AXUIElementRef, kAXApplicationActivatedNotification,
@@ -207,6 +208,173 @@ unsafe impl Sync for WindowServer {}
 pub struct WindowServerInner {
     observers: DashMap<ApplicationSpecifier, AXObserver<AccessibilityCallbackData>, fnv::FnvBuildHasher>,
     sender: Sender<WindowServerEvent>,
+    activation_queries: ActivationQueries,
+}
+
+type ActivationQuery = dyn Fn(&ApplicationSpecifier) -> Option<WindowServerEvent> + Send + Sync;
+
+struct ActivationRequest {
+    app: ApplicationSpecifier,
+    generation: u64,
+    deadline: Instant,
+}
+
+#[derive(Default)]
+struct ActivationState {
+    generation: u64,
+    current: Option<ApplicationSpecifier>,
+    pending: Option<ActivationRequest>,
+    running: bool,
+    closed: bool,
+}
+
+#[derive(Default)]
+struct ActivationShared {
+    state: Mutex<ActivationState>,
+    changed: Condvar,
+}
+
+/// One real native call at a time, with only the newest delayed request retained.
+/// Cancelling/replacing a request never releases the worker slot while AX is blocked.
+struct ActivationQueries {
+    shared: Arc<ActivationShared>,
+    sender: Sender<WindowServerEvent>,
+    query: Arc<ActivationQuery>,
+}
+
+impl ActivationQueries {
+    fn new(sender: Sender<WindowServerEvent>) -> Self {
+        Self::with_query(sender, query_activated_window)
+    }
+
+    fn with_query(
+        sender: Sender<WindowServerEvent>,
+        query: impl Fn(&ApplicationSpecifier) -> Option<WindowServerEvent> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            shared: Arc::default(),
+            sender,
+            query: Arc::new(query),
+        }
+    }
+
+    fn cancel(&self, only_app: Option<&ApplicationSpecifier>) {
+        let mut state = self.shared.state.lock().unwrap_or_else(|err| err.into_inner());
+        if only_app.is_some_and(|app| state.current.as_ref() != Some(app)) {
+            return;
+        }
+        state.generation = state.generation.wrapping_add(1);
+        state.current = None;
+        state.pending = None;
+        self.shared.changed.notify_one();
+    }
+
+    fn schedule(&self, app: ApplicationSpecifier, delay: Duration) {
+        let mut state = self.shared.state.lock().unwrap_or_else(|err| err.into_inner());
+        if state.closed {
+            return;
+        }
+        state.generation = state.generation.wrapping_add(1);
+        state.current = Some(app.clone());
+        state.pending = Some(ActivationRequest {
+            app,
+            generation: state.generation,
+            deadline: Instant::now() + delay,
+        });
+        self.shared.changed.notify_one();
+        if state.running {
+            return;
+        }
+        state.running = true;
+        let shared = self.shared.clone();
+        let sender = self.sender.clone();
+        let query = self.query.clone();
+        if let Err(error) = std::thread::Builder::new()
+            .name("fastab-ax-activation".into())
+            .spawn(move || activation_worker(shared, sender, query))
+        {
+            state.running = false;
+            warn!(%error, "Could not start delayed AX query worker");
+        }
+    }
+}
+
+impl Drop for ActivationQueries {
+    fn drop(&mut self) {
+        let mut state = self.shared.state.lock().unwrap_or_else(|err| err.into_inner());
+        state.closed = true;
+        state.generation = state.generation.wrapping_add(1);
+        state.pending = None;
+        state.current = None;
+        self.shared.changed.notify_one();
+    }
+}
+
+fn activation_worker(shared: Arc<ActivationShared>, sender: Sender<WindowServerEvent>, query: Arc<ActivationQuery>) {
+    loop {
+        let request = {
+            let mut state = shared.state.lock().unwrap_or_else(|err| err.into_inner());
+            loop {
+                let deadline = state.pending.as_ref().map(|request| request.deadline);
+                let Some(deadline) = deadline.filter(|_| !state.closed) else {
+                    // Clear the slot under the same mutex used by schedule: a new
+                    // activation cannot be stranded between this check and exit.
+                    state.running = false;
+                    shared.changed.notify_all();
+                    return;
+                };
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break state.pending.take().expect("pending deadline belongs to a request");
+                }
+                (state, _) = shared
+                    .changed
+                    .wait_timeout(state, remaining)
+                    .unwrap_or_else(|err| err.into_inner());
+            }
+        };
+        let current = || {
+            let state = shared.state.lock().unwrap_or_else(|err| err.into_inner());
+            !state.closed && state.generation == request.generation
+        };
+        if !current() {
+            continue;
+        }
+        // The synchronous leaf checks the frontmost identity both before and
+        // after AX. It never runs on either Tokio worker or the AppKit thread.
+        if let Some(event) = query(&request.app) {
+            let state = shared.state.lock().unwrap_or_else(|err| err.into_inner());
+            if !state.closed && state.generation == request.generation {
+                // The production channel is unbounded. Do not block under the
+                // scheduling mutex even if a caller supplies a bounded channel.
+                if let Err(error) = sender.try_send(event) {
+                    warn!(%error, "Could not send delayed AX focus event");
+                }
+            }
+        }
+    }
+}
+
+fn query_activated_window(app: &ApplicationSpecifier) -> Option<WindowServerEvent> {
+    autoreleasepool(|_| {
+        if !is_frontmost_application(app) {
+            return None;
+        }
+        let result = UIElement::application(app.pid).focused_window();
+        if !is_frontmost_application(app) {
+            return None;
+        }
+        match result {
+            Ok(window) => Some(WindowServerEvent::FocusChanged {
+                window,
+                app: app.clone(),
+            }),
+            Err(error) => {
+                warn!(?error, bundle_id = %app.bundle_id, "Could not read focused window after activation");
+                None
+            },
+        }
+    })
 }
 
 impl WindowServer {
@@ -338,15 +506,13 @@ impl WindowServerInner {
     pub fn new(sender: Sender<WindowServerEvent>) -> Self {
         Self {
             observers: Default::default(),
+            activation_queries: ActivationQueries::new(sender.clone()),
             sender,
         }
     }
 
     pub fn new_with_observer(sender: Sender<WindowServerEvent>) -> (Pin<Box<Self>>, Retained<ObserverClass>) {
-        let pin = Box::pin(Self {
-            observers: Default::default(),
-            sender,
-        });
+        let pin = Box::pin(Self::new(sender));
         let handler = &*pin as *const Self as *mut c_void;
         let r = ObserverClass::new(handler);
         (pin, r)
@@ -354,6 +520,10 @@ impl WindowServerInner {
 
     #[allow(clippy::missing_safety_doc)]
     unsafe fn register(&mut self, ns_app: &NSRunningApplication, from_activation: bool) {
+        if from_activation {
+            // A blocked/unobservable app still supersedes the previous focus.
+            self.activation_queries.cancel(None);
+        }
         if !AXIsProcessTrusted() {
             info!("Cannot register to observer window events without accessibility perms");
             return;
@@ -398,25 +568,8 @@ impl WindowServerInner {
         }
 
         if from_activation {
-            // In Swift had 0.25s delay before this...?
-            let elem = app_element.clone();
-            let sender = self.sender.clone();
-            let app = key.clone();
-            let activated_bundle_id = key.bundle_id.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                match elem.focused_window() {
-                    Ok(window) => {
-                        if let Err(e) = sender.send(WindowServerEvent::FocusChanged { window, app }) {
-                            warn!("Error sending focus changed event: {e:?}");
-                        }
-                    },
-                    Err(err) => warn!(
-                        ?err,
-                        "Could not read focused window of {activated_bundle_id:?} after activation"
-                    ),
-                }
-            });
+            self.activation_queries
+                .schedule(key.clone(), Duration::from_millis(250));
         }
 
         let is_xterm = XTERM_BUNDLE_IDS.contains(&key.bundle_id.as_str());
@@ -494,6 +647,7 @@ impl WindowServerInner {
     }
 
     fn deregister_all(&mut self) {
+        self.activation_queries.cancel(None);
         self.observers.clear();
     }
 }
@@ -540,6 +694,7 @@ impl WindowServerHandler for WindowServerInner {
                         bundle_id,
                     };
                     trace!(?app, "Deregistering terminated application instance");
+                    self.activation_queries.cancel(Some(&app));
                     // The map is keyed by process, not just bundle. Keeping a
                     // sibling alive must not keep this dead instance's AX
                     // observer, element and run-loop source alive with it.
@@ -554,7 +709,9 @@ impl WindowServerHandler for WindowServerInner {
             if let Some(app) = get_app_from_notification(notif) {
                 let bundle_id = app_bundle_id(&app);
                 trace!("Launched application - {bundle_id:?}");
-                self.register(&app, true)
+                // A background launch must not replace the current activation
+                // timer. Its activation notification schedules the focus query.
+                self.register(&app, false)
             }
         }
     }
@@ -655,6 +812,103 @@ unsafe extern "C" fn application_ax_callback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn activation_app(pid: pid_t) -> ApplicationSpecifier {
+        ApplicationSpecifier {
+            pid,
+            bundle_id: "app.fastab.activation-test".into(),
+        }
+    }
+
+    fn wait_for_activation_idle(shared: &ActivationShared) {
+        let state = shared.state.lock().unwrap();
+        let (state, _) = shared
+            .changed
+            .wait_timeout_while(state, Duration::from_secs(5), |state| state.running)
+            .unwrap();
+        assert!(!state.running, "activation worker did not retire");
+    }
+
+    fn receive_activation(receiver: &flume::Receiver<WindowServerEvent>, pid: pid_t) {
+        let event = receiver.recv_timeout(Duration::from_secs(5)).expect("activation event");
+        assert!(matches!(event, WindowServerEvent::WindowDestroyed { app } if app.pid == pid));
+    }
+
+    #[test]
+    fn delayed_activations_coalesce_and_the_idle_worker_restarts() {
+        let (sender, receiver) = flume::unbounded();
+        let owner_thread = std::thread::current().id();
+        let queries = ActivationQueries::with_query(sender, move |app| {
+            assert_ne!(std::thread::current().id(), owner_thread);
+            Some(WindowServerEvent::WindowDestroyed { app: app.clone() })
+        });
+        queries.schedule(activation_app(1), Duration::from_secs(60));
+        queries.schedule(activation_app(2), Duration::ZERO);
+        receive_activation(&receiver, 2);
+        wait_for_activation_idle(&queries.shared);
+        queries.schedule(activation_app(3), Duration::ZERO);
+        receive_activation(&receiver, 3);
+        wait_for_activation_idle(&queries.shared);
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn blocked_activation_keeps_its_slot_and_discards_the_superseded_reply() {
+        let (sender, receiver) = flume::unbounded();
+        let (started_tx, started_rx) = flume::unbounded();
+        let (release_tx, release_rx) = flume::unbounded::<()>();
+        let queries = ActivationQueries::with_query(sender, move |app| {
+            let _ = started_tx.send(app.pid);
+            if app.pid == 1 {
+                let _ = release_rx.recv();
+            }
+            Some(WindowServerEvent::WindowDestroyed { app: app.clone() })
+        });
+        queries.schedule(activation_app(1), Duration::ZERO);
+        assert_eq!(started_rx.recv_timeout(Duration::from_secs(5)).unwrap(), 1);
+        queries.schedule(activation_app(2), Duration::ZERO);
+        queries.schedule(activation_app(3), Duration::ZERO);
+        assert!(started_rx.try_recv().is_err());
+        // Dropping also releases the blocked closure if an assertion above fails.
+        drop(release_tx);
+        assert_eq!(started_rx.recv_timeout(Duration::from_secs(5)).unwrap(), 3);
+        receive_activation(&receiver, 3);
+        wait_for_activation_idle(&queries.shared);
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn activation_cancellation_matches_the_instance_and_drop_rejects_inflight_results() {
+        let (sender, receiver) = flume::unbounded();
+        let (started_tx, started_rx) = flume::unbounded();
+        let (release_tx, release_rx) = flume::unbounded();
+        let queries = ActivationQueries::with_query(sender, move |app| {
+            let _ = started_tx.send(());
+            let _ = release_rx.recv();
+            Some(WindowServerEvent::WindowDestroyed { app: app.clone() })
+        });
+        queries.schedule(activation_app(1), Duration::ZERO);
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        queries.cancel(Some(&activation_app(2)));
+        release_tx.send(()).unwrap();
+        receive_activation(&receiver, 1);
+        wait_for_activation_idle(&queries.shared);
+
+        queries.schedule(activation_app(1), Duration::ZERO);
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        queries.cancel(Some(&activation_app(1)));
+        release_tx.send(()).unwrap();
+        wait_for_activation_idle(&queries.shared);
+        assert!(receiver.try_recv().is_err());
+
+        queries.schedule(activation_app(1), Duration::ZERO);
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let shared = queries.shared.clone();
+        drop(queries);
+        release_tx.send(()).unwrap();
+        wait_for_activation_idle(&shared);
+        assert!(receiver.try_recv().is_err());
+    }
 
     #[test]
     fn deregistering_one_instance_releases_its_observer_and_preserves_its_sibling() {

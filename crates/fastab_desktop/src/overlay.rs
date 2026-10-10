@@ -324,6 +324,12 @@ impl OverlayController {
         }
     }
 
+    pub(crate) fn resource_diagnostics(&self, cx: &App) -> fastab_engine::HostResourceDiagnostics {
+        let mut snapshot = self.file_icons.read(cx).diagnostics();
+        snapshot.overlay_visible = self.state.read(cx).visible;
+        snapshot
+    }
+
     pub(crate) fn engine_diagnostics(
         &self,
     ) -> impl std::future::Future<Output = anyhow::Result<fastab_engine::EngineClientDiagnostics>> + Send + 'static
@@ -971,6 +977,14 @@ impl OverlayController {
                 cx,
             );
             icons.finish_batch(&self.state, &self.handle, cx);
+            icons.load_requested(
+                cwd,
+                self.state.downgrade(),
+                self.handle.clone(),
+                self.generation.clone(),
+                generation,
+                cx,
+            );
             if !self.state.read(cx).visible {
                 icons.schedule_idle(self.state.downgrade(), self.handle.clone(), cx);
             }

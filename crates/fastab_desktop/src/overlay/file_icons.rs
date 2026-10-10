@@ -6,7 +6,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -26,6 +27,21 @@ struct CachedIcon {
     cached: bool,
 }
 
+struct PreparedIcon {
+    content: u64,
+    image: Arc<RenderImage>,
+}
+
+struct IconBatch {
+    paths: Vec<PathBuf>,
+    cwd: String,
+    state: WeakEntity<OverlayState>,
+    slot: Arc<Mutex<Option<OverlayHandle>>>,
+    generation: Arc<AtomicU64>,
+    expected_generation: u64,
+    batch_generation: u64,
+}
+
 #[derive(Default)]
 pub(super) struct FileIconCache {
     paths: HashMap<PathBuf, (u64, u64)>,
@@ -34,12 +50,31 @@ pub(super) struct FileIconCache {
     clock: u64,
     idle_generation: u64,
     idle_task: Option<Task<()>>,
+    requested: Vec<PathBuf>,
+    pending: Option<IconBatch>,
+    load_task: Option<Task<()>>,
+    batch_generation: u64,
+    #[cfg(test)]
+    provider: Option<Arc<dyn Fn(&Path) -> Option<Vec<u8>> + Send + Sync>>,
 }
 
 impl FileIconCache {
+    pub(super) fn diagnostics(&self) -> fastab_engine::HostResourceDiagnostics {
+        fastab_engine::HostResourceDiagnostics {
+            file_icon_paths: self.paths.len(),
+            file_icon_images: self.images.len(),
+            file_icon_worker_active: self.load_task.is_some(),
+            file_icon_pending_paths: self.pending.as_ref().map_or(0, |batch| batch.paths.len()),
+            ..Default::default()
+        }
+    }
+
     pub(super) fn begin_batch(&mut self) {
         self.cancel_idle();
         self.batch.clear();
+        self.requested.clear();
+        self.pending = None;
+        self.batch_generation = self.batch_generation.wrapping_add(1);
     }
 
     pub(super) fn cancel_idle(&mut self) {
@@ -57,7 +92,7 @@ impl FileIconCache {
         if kind != "file" && kind != "folder" {
             return None;
         }
-        let path = PathBuf::from(if cwd.is_empty() { "." } else { cwd }).join(name.trim_end_matches('/'));
+        let path = icon_path(cwd, name);
         if let Some(&(content, _)) = self.paths.get(&path) {
             return self.touch(path, content);
         }
@@ -65,37 +100,30 @@ impl FileIconCache {
             return None;
         }
         *uncached += 1;
-        #[cfg(target_os = "macos")]
-        {
-            // AppKit can return a large source representation even after its
-            // point size was changed. Bound decoding and the retained pixels.
-            let bytes = unsafe { macos_utils::image::png_for_path(&path) }?;
-            self.insert_png(path, bytes)
+        // No filesystem or AppKit work on the foreground executor. The first
+        // frame uses the bundled fallback while one bounded worker loads icons.
+        if !self.requested.contains(&path) {
+            self.requested.push(path);
         }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = path;
-            None
-        }
+        None
     }
 
+    #[cfg(test)]
     fn insert_png(&mut self, path: PathBuf, bytes: Vec<u8>) -> Option<Arc<RenderImage>> {
-        if bytes.len() > MAX_SOURCE_BYTES {
-            return None;
-        }
-        let source = Image::from_bytes(gpui::ImageFormat::Png, bytes);
-        let content = source.id();
+        self.insert_prepared(path, prepare_icon(bytes)?)
+    }
+
+    fn insert_prepared(&mut self, path: PathBuf, prepared: PreparedIcon) -> Option<Arc<RenderImage>> {
+        let content = prepared.content;
         if !self.images.get(&content).is_some_and(|entry| entry.cached) {
             self.reserve_content()?;
             if let Some(entry) = self.images.get_mut(&content) {
-                // The same PNG may still be awaiting scene retirement.
                 entry.cached = true;
             } else {
-                let image = decode_icon(&source.bytes)?;
                 self.images.insert(
                     content,
                     CachedIcon {
-                        image,
+                        image: prepared.image,
                         last_used: 0,
                         cached: true,
                     },
@@ -103,6 +131,112 @@ impl FileIconCache {
             }
         }
         self.touch(path, content)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn load_requested(
+        &mut self,
+        cwd: &str,
+        state: WeakEntity<OverlayState>,
+        slot: Arc<Mutex<Option<OverlayHandle>>>,
+        generation: Arc<AtomicU64>,
+        expected_generation: u64,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.requested.is_empty() {
+            return;
+        }
+        self.pending = Some(IconBatch {
+            paths: std::mem::take(&mut self.requested),
+            cwd: cwd.to_owned(),
+            state,
+            slot,
+            generation,
+            expected_generation,
+            batch_generation: self.batch_generation,
+        });
+        self.start_pending(cx);
+    }
+
+    fn start_pending(&mut self, cx: &mut Context<'_, Self>) {
+        // Keep the real worker's slot occupied until it returns, including a
+        // synchronous native call that cannot be cancelled. New results replace
+        // just one pending batch; hiding never spawns replacement workers.
+        if self.load_task.is_some() {
+            return;
+        }
+        let Some(mut batch) = self.pending.take() else { return };
+        let Some(state) = batch.state.upgrade() else { return };
+        if !state.read(cx).visible || batch.generation.load(Ordering::Relaxed) != batch.expected_generation {
+            return;
+        }
+        let paths = std::mem::take(&mut batch.paths);
+        let generation = batch.generation.clone();
+        let expected = batch.expected_generation;
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        #[cfg(test)]
+        let provider = self.provider.clone();
+        let spawned = std::thread::Builder::new()
+            .name("fastab-file-icons".into())
+            .spawn(move || {
+                #[cfg(test)]
+                let provider = |path: &Path| provider.as_ref().map_or_else(|| native_png(path), |load| load(path));
+                #[cfg(not(test))]
+                let provider = native_png;
+                let icons = load_icons(paths, &generation, expected, provider);
+                let _ = sender.send(icons);
+            });
+        if let Err(error) = spawned {
+            tracing::warn!(%error, "Could not start file icon worker");
+            return;
+        }
+        self.load_task = Some(cx.spawn(async move |this, cx| {
+            let result = receiver.await;
+            let _ = this.update(cx, |cache, cx| {
+                if let Some(task) = cache.load_task.take() {
+                    task.detach();
+                }
+                if let Ok(icons) = result {
+                    cache.apply_loaded(&batch, icons, cx);
+                }
+                cache.start_pending(cx);
+            });
+        }));
+    }
+
+    fn apply_loaded(&mut self, batch: &IconBatch, icons: Vec<(PathBuf, PreparedIcon)>, cx: &mut App) {
+        if self.batch_generation != batch.batch_generation
+            || batch.generation.load(Ordering::Relaxed) != batch.expected_generation
+        {
+            return;
+        }
+        let Some(state) = batch.state.upgrade() else { return };
+        if !state.read(cx).visible {
+            return;
+        }
+        let used = row_images(&state, cx);
+        self.batch = self
+            .images
+            .iter()
+            .filter(|(_, icon)| used.contains(&icon.image.id))
+            .map(|(&id, _)| id)
+            .collect();
+        let images = icons
+            .into_iter()
+            .filter_map(|(path, icon)| self.insert_prepared(path.clone(), icon).map(|image| (path, image)))
+            .collect::<HashMap<_, _>>();
+        state.update(cx, |state, cx| {
+            for item in &mut state.items {
+                if item.kind == "file" || item.kind == "folder" {
+                    let path = icon_path(&batch.cwd, &item.name);
+                    if let Some(image) = images.get(&path) {
+                        item.icon_png = Some(image.clone());
+                    }
+                }
+            }
+            cx.notify();
+        });
+        self.finish_batch(&state, &batch.slot, cx);
     }
 
     fn reserve_content(&mut self) -> Option<()> {
@@ -207,6 +341,9 @@ impl FileIconCache {
                     });
                     super::clear_overlay_handle_if(&slot, handle);
                 }
+                cache.batch_generation = cache.batch_generation.wrapping_add(1);
+                cache.pending = None;
+                cache.requested.clear();
                 cache.paths.clear();
                 for entry in cache.images.values_mut() {
                     entry.cached = false;
@@ -219,6 +356,53 @@ impl FileIconCache {
             });
         }));
     }
+}
+
+fn icon_path(cwd: &str, name: &str) -> PathBuf {
+    PathBuf::from(if cwd.is_empty() { "." } else { cwd }).join(name.trim_end_matches('/'))
+}
+
+fn native_png(path: &Path) -> Option<Vec<u8>> {
+    #[cfg(target_os = "macos")]
+    {
+        // Each synchronous leaf drains its own autorelease pool; only owned
+        // bytes leave AppKit, never an NSImage or graphics context.
+        unsafe { macos_utils::image::png_for_path(path) }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+fn load_icons(
+    paths: Vec<PathBuf>,
+    generation: &AtomicU64,
+    expected: u64,
+    provider: impl Fn(&Path) -> Option<Vec<u8>>,
+) -> Vec<(PathBuf, PreparedIcon)> {
+    let mut icons = Vec::new();
+    for path in paths {
+        if generation.load(Ordering::Relaxed) != expected {
+            break;
+        }
+        if let Some(icon) = provider(&path).and_then(prepare_icon) {
+            icons.push((path, icon));
+        }
+    }
+    icons
+}
+
+fn prepare_icon(bytes: Vec<u8>) -> Option<PreparedIcon> {
+    if bytes.len() > MAX_SOURCE_BYTES {
+        return None;
+    }
+    let source = Image::from_bytes(gpui::ImageFormat::Png, bytes);
+    Some(PreparedIcon {
+        content: source.id(),
+        image: decode_icon(&source.bytes)?,
+    })
 }
 
 fn decode_icon(bytes: &[u8]) -> Option<Arc<RenderImage>> {
@@ -283,6 +467,145 @@ mod tests {
         let mut bytes = Cursor::new(Vec::new());
         image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
         bytes.into_inner()
+    }
+
+    #[gpui::test]
+    fn blocked_worker_keeps_one_slot_and_latest_pending_batch(cx: &mut gpui::TestAppContext) {
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let release = Arc::new(Mutex::new(release_rx));
+        let generation = Arc::new(AtomicU64::new(1));
+        let slot = Arc::new(Mutex::new(None));
+        let (cache, state) = cx.update(|cx| {
+            let state = cx.new(|_| OverlayState::new());
+            state.update(cx, |state, _| state.visible = true);
+            let cache = cx.new(|_| FileIconCache {
+                provider: Some(Arc::new(move |path| {
+                    started_tx.send(path.to_owned()).unwrap();
+                    release.lock().unwrap().recv_timeout(Duration::from_secs(5)).unwrap();
+                    Some(png(1))
+                })),
+                ..Default::default()
+            });
+            cache.update(cx, |icons, cx| {
+                icons.begin_batch();
+                icons.lookup("/tmp", "first", "file", &mut 0);
+                icons.load_requested("/tmp", state.downgrade(), slot.clone(), generation.clone(), 1, cx);
+            });
+            (cache, state)
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            started_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            PathBuf::from("/tmp/first")
+        );
+        for (next, name) in [(2, "superseded"), (3, "latest")] {
+            generation.store(next, Ordering::Relaxed);
+            cx.update(|cx| {
+                cache.update(cx, |icons, cx| {
+                    icons.begin_batch();
+                    icons.lookup("/tmp", name, "file", &mut 0);
+                    icons.load_requested("/tmp", state.downgrade(), slot.clone(), generation.clone(), next, cx);
+                })
+            });
+        }
+        assert!(
+            started_rx.try_recv().is_err(),
+            "blocked native call retains the only worker slot"
+        );
+        release_tx.send(()).unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            cx.run_until_parked();
+            if let Ok(path) = started_rx.try_recv() {
+                assert_eq!(path, PathBuf::from("/tmp/latest"));
+                break;
+            }
+            assert!(std::time::Instant::now() < until, "latest pending worker did not start");
+            std::thread::yield_now();
+        }
+        cx.update(|cx| {
+            state.update(cx, |state, _| state.visible = false);
+            cache.update(cx, |icons, cx| icons.schedule_idle(state.downgrade(), slot.clone(), cx));
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(IDLE_TIMEOUT);
+        cx.run_until_parked();
+        release_tx.send(()).unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            cx.run_until_parked();
+            if cx.update(|cx| cache.read(cx).load_task.is_none()) {
+                break;
+            }
+            assert!(std::time::Instant::now() < until, "native worker did not settle");
+            std::thread::yield_now();
+        }
+        cx.update(|cx| {
+            assert!(cache.read(cx).paths.is_empty());
+            assert!(cache.read(cx).images.is_empty());
+            assert!(slot.lock().unwrap().is_none());
+        });
+    }
+
+    #[test]
+    fn stale_native_work_stops_before_the_next_path() {
+        let generation = AtomicU64::new(1);
+        let calls = std::cell::Cell::new(0);
+        let result = load_icons(
+            vec![PathBuf::from("first"), PathBuf::from("second")],
+            &generation,
+            1,
+            |_| {
+                calls.set(calls.get() + 1);
+                generation.store(2, Ordering::Relaxed);
+                Some(png(1))
+            },
+        );
+        assert_eq!(calls.get(), 1);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[gpui::test]
+    fn late_icons_do_not_refill_hidden_or_replaced_results(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let state = cx.new(|_| OverlayState::new());
+            state.update(cx, |state, _| {
+                state.visible = true;
+                state.items.push(fastab_gpui::SuggestionItem {
+                    name: "file".into(),
+                    kind: "file".into(),
+                    ..Default::default()
+                });
+            });
+            let mut cache = FileIconCache::default();
+            cache.begin_batch();
+            let generation = Arc::new(AtomicU64::new(1));
+            let batch = IconBatch {
+                paths: Vec::new(),
+                cwd: "/tmp".into(),
+                state: state.downgrade(),
+                slot: Arc::new(Mutex::new(None)),
+                generation: generation.clone(),
+                expected_generation: 1,
+                batch_generation: cache.batch_generation,
+            };
+            let result = || vec![(PathBuf::from("/tmp/file"), prepare_icon(png(1)).unwrap())];
+            generation.store(2, Ordering::Relaxed);
+            cache.apply_loaded(&batch, result(), cx);
+            assert!(cache.images.is_empty());
+            generation.store(1, Ordering::Relaxed);
+            state.update(cx, |state, _| state.visible = false);
+            cache.apply_loaded(&batch, result(), cx);
+            assert!(cache.images.is_empty());
+            state.update(cx, |state, _| state.visible = true);
+            cache.apply_loaded(&batch, result(), cx);
+            assert!(state.read(cx).items[0].icon_png.is_some());
+            cache.begin_batch();
+            let before = cache.images.len();
+            cache.apply_loaded(&batch, result(), cx);
+            assert_eq!(cache.images.len(), before);
+        });
     }
 
     #[gpui::test]

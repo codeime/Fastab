@@ -116,6 +116,19 @@ impl DesktopHost {
                     return;
                 }
                 let diagnostics = self.overlay.engine_diagnostics();
+                let mut host = self.overlay.resource_diagnostics(cx);
+                host.gpui_windows = cx.windows().len();
+                {
+                    let sessions = self.figterm_state.inner.lock();
+                    host.ipc_sessions = sessions.linked_sessions.len();
+                    for session in sessions.linked_sessions.values() {
+                        let pending = session.sender.diagnostics();
+                        host.ipc_pending_messages = host.ipc_pending_messages.saturating_add(pending.pending_messages);
+                        host.ipc_pending_bytes = host.ipc_pending_bytes.saturating_add(pending.pending_bytes);
+                        host.ipc_pending_responses =
+                            host.ipc_pending_responses.saturating_add(pending.pending_responses);
+                    }
+                }
                 // GPUI only submits the read-only job. Wait off the foreground
                 // executor and stop waiting if the IPC deadline expires.
                 tokio::spawn(async move {
@@ -123,7 +136,10 @@ impl DesktopHost {
                         snapshot = diagnostics => snapshot,
                         _ = reply.cancellation() => return,
                     };
-                    let _ = reply.send(snapshot);
+                    let _ = reply.send(snapshot.map(|mut snapshot| {
+                        snapshot.host = Some(host);
+                        snapshot
+                    }));
                 });
             },
             Event::SetTrayVisible(visible) => {
