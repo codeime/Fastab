@@ -36,6 +36,10 @@ impl ReadBuffer {
         self.storage.len()
     }
 
+    pub fn capacity(&self) -> usize {
+        self.storage.capacity()
+    }
+
     /// Mark `len` bytes as consumed, discarding them and shunting
     /// the contents of the buffer such that the remainder of the
     /// bytes are available at the front of the buffer.

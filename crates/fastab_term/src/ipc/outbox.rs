@@ -36,8 +36,7 @@ pub(crate) enum BeginAttempt {
 struct KeyDelivery {
     status: AtomicU8,
     changed: Arc<Notify>,
-    // Used by the test-only settlement barrier to retire the right generation.
-    #[cfg_attr(not(test), allow(dead_code))]
+    // The EOF settlement barrier retires the generation owning a pending key.
     generation: Generation,
 }
 
@@ -362,14 +361,12 @@ impl RemoteSender {
     }
 
     /// Preserve the position of ordinary/rejected input after older intercepted
-    /// keys. Kept for tests that pin barrier ordering; the PTY main loop uses
-    /// the non-blocking [`take_failed_keys`] + [`has_pending_keys`] path instead.
-    #[cfg(test)]
+    /// keys when input ends. Ordinary input uses the non-blocking
+    /// [`take_failed_keys`] + [`has_pending_keys`] path instead.
     pub(crate) async fn take_failed_keys_before_input(&self) -> Vec<Bytes> {
         self.take_failed_keys_with_timeout(WRITE_TIMEOUT).await
     }
 
-    #[cfg(test)]
     async fn take_failed_keys_with_timeout(&self, limit: Duration) -> Vec<Bytes> {
         let mut failed = Vec::new();
         let deadline = tokio::time::sleep(limit);
@@ -403,6 +400,46 @@ impl RemoteSender {
             }
         }
         failed
+    }
+}
+
+#[cfg(test)]
+mod test_support {
+    use super::*;
+
+    // Keep private outbox state and frame internals inside their owner while
+    // exercising the production EOF consumer from main.rs.
+    pub(crate) struct HeldFrame {
+        _frame: PendingFrame,
+    }
+
+    impl HeldFrame {
+        pub(crate) async fn write_to(&mut self, writer: &mut (impl AsyncWrite + Unpin)) -> io::Result<()> {
+            self._frame.write_to(writer).await
+        }
+    }
+
+    impl RemoteSender {
+        pub(crate) fn test_ready() -> Self {
+            let sender = Self::new();
+            let BeginAttempt::Started(generation) = sender.begin_attempt() else {
+                panic!("fresh sender must start a generation");
+            };
+            sender.set_handshaking(generation);
+            sender.set_ready(generation);
+            sender
+        }
+
+        pub(crate) async fn test_hold_frame(&self) -> HeldFrame {
+            let generation = self.phase().ready_generation().unwrap();
+            HeldFrame {
+                _frame: self.next_frame(generation).await.unwrap(),
+            }
+        }
+
+        pub(crate) fn test_retire(&self) {
+            self.retire(self.phase().ready_generation().unwrap(), "EOF test retirement");
+        }
     }
 }
 

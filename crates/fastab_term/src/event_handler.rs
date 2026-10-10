@@ -3,7 +3,9 @@ use alacritty_terminal::term::ShellState;
 use fastab_proto::remote::Hostbound;
 use fastab_proto::remote_hooks::{hook_to_message, new_postexec_hook, new_preexec_hook, new_prompt_hook};
 // use fastab_telemetry::sentry::configure_scope;
-use flume::Sender;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tracing::level_filters::LevelFilter;
 use tracing::{debug, error};
 
@@ -11,10 +13,39 @@ use crate::history::{HistoryCommand, HistorySender};
 use crate::ipc::{ContextAdmission, RemoteSender};
 use crate::{INSERT_ON_NEW_CMD, MainLoopEvent, shell_context_epoch, shell_state_to_context};
 
+// Parsed events never cross an async producer boundary. The main loop drains
+// this collection after every byte, before parsing another OSC.
+#[derive(Clone, Default)]
+pub(crate) struct LocalEvents(Arc<LocalEventQueue>);
+
+#[derive(Default)]
+struct LocalEventQueue {
+    events: Mutex<VecDeque<MainLoopEvent>>,
+    pending: AtomicBool,
+}
+
+impl LocalEvents {
+    fn push(&self, event: MainLoopEvent) {
+        self.0.events.lock().unwrap().push_back(event);
+        self.0.pending.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn has_pending(&self) -> bool {
+        self.0.pending.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn pop(&self) -> Option<MainLoopEvent> {
+        let mut events = self.0.events.lock().unwrap();
+        let event = events.pop_front();
+        self.0.pending.store(!events.is_empty(), Ordering::Release);
+        event
+    }
+}
+
 pub(crate) struct EventHandler {
     socket_sender: RemoteSender,
     history_sender: HistorySender,
-    main_loop_sender: Sender<MainLoopEvent>,
+    local_events: LocalEvents,
     csi_u_enabled: bool,
 }
 
@@ -22,13 +53,14 @@ impl EventHandler {
     pub(crate) fn new(
         socket_sender: RemoteSender,
         history_sender: HistorySender,
-        main_loop_sender: Sender<MainLoopEvent>,
+        local_events: LocalEvents,
+        csi_u_enabled: bool,
     ) -> Self {
         Self {
             socket_sender,
             history_sender,
-            main_loop_sender,
-            csi_u_enabled: fastab_settings::settings::get_bool_or("qterm.csi-u.enabled", false),
+            local_events,
+            csi_u_enabled,
         }
     }
 
@@ -64,28 +96,22 @@ impl EventListener for EventHandler {
 
                 if let Some(pending) = insert_on_new_cmd {
                     if pending.origin.is_current(self.socket_sender.phase().ready_generation()) {
-                        self.main_loop_sender
-                            .send(MainLoopEvent::Insert {
-                                insert: pending.text.into_bytes(),
-                                unlock: false,
-                                bracketed: pending.bracketed,
-                                execute: pending.execute,
-                                origin: pending.origin,
-                            })
-                            .unwrap();
+                        self.local_events.push(MainLoopEvent::Insert {
+                            insert: pending.text.into_bytes(),
+                            unlock: false,
+                            bracketed: pending.bracketed,
+                            execute: pending.execute,
+                            origin: pending.origin,
+                        });
                     }
                 }
 
-                self.main_loop_sender
-                    .send(MainLoopEvent::SetImmediateMode(false))
-                    .unwrap();
+                self.local_events.push(MainLoopEvent::SetImmediateMode(false));
 
                 self.send_full_context_hook(message);
 
                 if self.csi_u_enabled {
-                    if let Err(err) = self.main_loop_sender.send(MainLoopEvent::SetCsiU) {
-                        error!(%err, "Sender error");
-                    }
+                    self.local_events.push(MainLoopEvent::SetCsiU);
                 }
             },
             Event::PreExec => {
@@ -93,17 +119,13 @@ impl EventListener for EventHandler {
                 let hook = new_preexec_hook(Some(context));
                 let message = hook_to_message(hook);
 
-                self.main_loop_sender.send(MainLoopEvent::UnlockInterception).unwrap();
-                self.main_loop_sender
-                    .send(MainLoopEvent::SetImmediateMode(true))
-                    .unwrap();
+                self.local_events.push(MainLoopEvent::UnlockInterception);
+                self.local_events.push(MainLoopEvent::SetImmediateMode(true));
 
                 self.send_full_context_hook(message);
 
                 if self.csi_u_enabled {
-                    if let Err(err) = self.main_loop_sender.send(MainLoopEvent::UnsetCsiU) {
-                        error!(%err, "Sender error");
-                    }
+                    self.local_events.push(MainLoopEvent::UnsetCsiU);
                 }
             },
             Event::CommandInfo(command_info) => {

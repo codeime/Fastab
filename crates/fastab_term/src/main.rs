@@ -9,6 +9,7 @@ pub mod ipc;
 pub mod logger;
 mod message;
 pub mod pty;
+mod resource_diagnostics;
 pub mod term;
 pub mod update;
 
@@ -46,7 +47,7 @@ use tokio::sync::oneshot;
 use tokio::{runtime, select};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::event_handler::EventHandler;
+use crate::event_handler::{EventHandler, LocalEvents};
 use crate::input::{InputEvent, KeyCode, KeyCodeEncodeModes, KeyboardEncoding, Modifiers};
 use crate::interceptor::KeyInterceptor;
 use crate::ipc::{
@@ -80,26 +81,59 @@ async fn flush_settled_pty_input(
     key_interceptor: &mut KeyInterceptor,
     bracketed_paste: bool,
 ) -> Result<()> {
-    for failed in remote_sender.take_failed_keys() {
+    resource_diagnostics::deferred(deferred.len(), deferred.capacity(), deferred_inserts.len());
+    let result = async {
+        for failed in remote_sender.take_failed_keys() {
+            master.write_all(&failed).await?;
+        }
+        if remote_sender.has_pending_keys() {
+            return Ok(());
+        }
+        if !deferred.is_empty() {
+            master.write_all(deferred).await?;
+            deferred.clear();
+            if deferred.capacity() > 64 * 1024 {
+                *deferred = BytesMut::new();
+            }
+        }
+        while let Some(item) = deferred_inserts.pop_front() {
+            if !item.origin.is_current(remote_sender.phase().ready_generation()) {
+                continue;
+            }
+            write_insert_bytes(master, &item, bracketed_paste).await?;
+            if item.unlock {
+                key_interceptor.reset();
+            }
+        }
+        Ok(())
+    }
+    .await;
+    resource_diagnostics::deferred(deferred.len(), deferred.capacity(), deferred_inserts.len());
+    result
+}
+
+async fn finish_pty_input(
+    remote_sender: &RemoteSender,
+    master: &mut (dyn AsyncMasterPty + Send),
+    deferred: &mut BytesMut,
+    deferred_inserts: &mut VecDeque<DeferredInsert>,
+    key_interceptor: &mut KeyInterceptor,
+    bracketed_paste: bool,
+) -> Result<()> {
+    // EOF cannot overtake an admitted intercepted key. The existing bounded
+    // settlement barrier retires an unresponsive connection before replay.
+    for failed in remote_sender.take_failed_keys_before_input().await {
         master.write_all(&failed).await?;
     }
-    if remote_sender.has_pending_keys() {
-        return Ok(());
-    }
-    if !deferred.is_empty() {
-        master.write_all(deferred).await?;
-        deferred.clear();
-    }
-    while let Some(item) = deferred_inserts.pop_front() {
-        if !item.origin.is_current(remote_sender.phase().ready_generation()) {
-            continue;
-        }
-        write_insert_bytes(master, &item, bracketed_paste).await?;
-        if item.unlock {
-            key_interceptor.reset();
-        }
-    }
-    Ok(())
+    flush_settled_pty_input(
+        remote_sender,
+        master,
+        deferred,
+        deferred_inserts,
+        key_interceptor,
+        bracketed_paste,
+    )
+    .await
 }
 
 async fn write_insert_bytes(
@@ -123,6 +157,136 @@ async fn write_insert_bytes(
     }
     if item.execute {
         master.write_all(b"\r").await?;
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct InsertionRetry {
+    owner: Option<SystemTime>,
+    deadline: Option<tokio::time::Instant>,
+}
+
+impl InsertionRetry {
+    fn update(&mut self, owner: Option<SystemTime>) {
+        if self.owner != owner {
+            self.owner = owner;
+            self.deadline = owner.map(|_| tokio::time::Instant::now() + Duration::from_millis(16));
+        }
+    }
+
+    fn active(&self) -> bool {
+        self.deadline.is_some()
+    }
+
+    async fn wait(&self) {
+        match self.deadline {
+            Some(deadline) => tokio::time::sleep_until(deadline).await,
+            None => std::future::pending().await,
+        }
+    }
+
+    fn tick(&mut self) {
+        self.deadline = self
+            .owner
+            .map(|_| tokio::time::Instant::now() + Duration::from_millis(16));
+    }
+}
+
+struct MainLoopControl<'a> {
+    remote_sender: &'a RemoteSender,
+    master: &'a mut (dyn AsyncMasterPty + Send),
+    deferred_pty_input: &'a mut BytesMut,
+    deferred_inserts: &'a mut VecDeque<DeferredInsert>,
+    key_interceptor: &'a mut KeyInterceptor,
+    terminal: &'a mut dyn Terminal,
+    stdout: &'a mut (dyn tokio::io::AsyncWrite + Unpin),
+    csi_u_set: &'a mut bool,
+    bracketed_paste: bool,
+}
+
+impl MainLoopControl<'_> {
+    async fn apply(&mut self, event: MainLoopEvent) -> Result<()> {
+        match event {
+            MainLoopEvent::Insert {
+                insert,
+                unlock,
+                bracketed,
+                execute,
+                origin,
+            } => {
+                if !origin.is_current(self.remote_sender.phase().ready_generation()) {
+                    return Ok(());
+                }
+                // Queue behind any still-pending intercepted keys so Insert
+                // cannot overtake deferred ordinary input.
+                self.deferred_inserts.push_back(DeferredInsert {
+                    insert,
+                    unlock,
+                    bracketed,
+                    execute,
+                    origin,
+                });
+                let bracketed_paste = self.bracketed_paste;
+                flush_settled_pty_input(
+                    self.remote_sender,
+                    self.master,
+                    self.deferred_pty_input,
+                    self.deferred_inserts,
+                    self.key_interceptor,
+                    bracketed_paste,
+                )
+                .await?;
+            },
+            MainLoopEvent::UnlockInterception => {
+                self.key_interceptor.reset();
+            },
+            MainLoopEvent::SetImmediateMode(mode) => {
+                if let Err(err) = self.terminal.set_immediate_mode(mode) {
+                    error!(%err, "Failed to set immediate mode");
+                }
+            },
+            MainLoopEvent::SetCsiU => {
+                // Send CSI > 1 u
+                self.stdout.write_all(b"\x1b[>1u").await?;
+                self.stdout.flush().await?;
+                *self.csi_u_set = true;
+            },
+            MainLoopEvent::UnsetCsiU => {
+                // Send CSI < u
+                self.stdout.write_all(b"\x1b[<u").await?;
+                self.stdout.flush().await?;
+                *self.csi_u_set = false;
+            },
+            // SSH remote-install prompting is currently disabled.
+            MainLoopEvent::PromptSSH { .. } => {},
+        }
+        Ok(())
+    }
+
+    async fn drain_local(&mut self, events: &LocalEvents) -> Result<()> {
+        while let Some(event) = events.pop() {
+            self.apply(event).await?;
+        }
+        Ok(())
+    }
+}
+
+async fn process_pty_bytes(
+    bytes: &[u8],
+    processor: &mut Processor,
+    term: &mut Term<EventHandler>,
+    events: &LocalEvents,
+    control: &mut MainLoopControl<'_>,
+) -> Result<()> {
+    for byte in bytes {
+        processor.advance(term, *byte);
+        if events.has_pending() {
+            control.bracketed_paste = term
+                .mode()
+                .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+            control.drain_local(events).await?;
+        }
     }
     Ok(())
 }
@@ -425,7 +589,16 @@ where
     let preexec = term.shell_state().preexec;
 
     let mut handle = INSERTION_LOCK.lock().unwrap();
-    let insertion_locked = match handle.as_ref() {
+    let insertion_locked = insertion_lock_is_active(&mut handle, term);
+    drop(handle);
+
+    trace!(%shell_enabled, %preexec, %insertion_locked, "can_send_edit_buffer");
+
+    shell_enabled && !insertion_locked && !preexec
+}
+
+fn insertion_lock_is_active<T: EventListener>(handle: &mut Option<InsertionLock>, term: &Term<T>) -> bool {
+    match handle.as_ref() {
         Some(lock) => {
             let lock_expired = lock.at.elapsed().unwrap_or(Duration::ZERO) > Duration::from_millis(16);
             let should_unlock = lock_expired
@@ -445,12 +618,7 @@ where
             }
         },
         None => false,
-    };
-    drop(handle);
-
-    trace!(%shell_enabled, %preexec, %insertion_locked, "can_send_edit_buffer");
-
-    shell_enabled && !insertion_locked && !preexec
+    }
 }
 
 const Q_DISABLE_AUTOCOMPLETE: &str = "Q_DISABLE_AUTOCOMPLETE";
@@ -718,7 +886,13 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
 
         let mut processor = Processor::new();
         let size = SizeInfo::new(pty_size.rows as usize, pty_size.cols as usize);
-        let event_sender = EventHandler::new(remote_sender.clone(), history_sender.clone(), main_loop_tx.clone());
+        let local_events = LocalEvents::default();
+        let event_sender = EventHandler::new(
+            remote_sender.clone(),
+            history_sender.clone(),
+            local_events.clone(),
+            fastab_settings::settings::get_bool_or("qterm.csi-u.enabled", false),
+        );
         let mut term = alacritty_terminal::Term::new(size, event_sender, 1, session_id.clone());
 
         #[cfg(target_os = "windows")]
@@ -729,7 +903,7 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
         let mut key_interceptor = KeyInterceptor::new();
         key_interceptor.load_key_intercepts()?;
 
-        let mut edit_buffer_interval = tokio::time::interval(Duration::from_millis(16));
+        let mut insertion_retry = InsertionRetry::default();
 
         let mut first_time = true;
 
@@ -769,6 +943,7 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                 first_time = false;
             }
 
+            insertion_retry.update(INSERTION_LOCK.lock().unwrap().as_ref().map(|lock| lock.at));
             let select_result: Result<()> = select! {
                 biased;
                 _ = remote_state_changes.changed() => {
@@ -800,82 +975,17 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                 res = main_loop_rx.recv_async() => {
                     match res {
                         Ok(event) => {
-                            match event {
-                                MainLoopEvent::Insert { insert, unlock, bracketed, execute, origin } => {
-                                    if !origin.is_current(remote_sender.phase().ready_generation()) {
-                                        continue 'select_loop;
-                                    }
-                                    // Queue behind any still-pending intercepted keys so Insert
-                                    // cannot overtake deferred ordinary input.
-                                    deferred_inserts.push_back(DeferredInsert {
-                                        insert,
-                                        unlock,
-                                        bracketed,
-                                        execute,
-                                        origin,
-                                    });
-                                    let bracketed_paste = term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
-                                    flush_settled_pty_input(
-                                        &remote_sender,
-                                        master.as_mut(),
-                                        &mut deferred_pty_input,
-                                        &mut deferred_inserts,
-                                        &mut key_interceptor,
-                                        bracketed_paste,
-                                    )
-                                    .await?;
-                                },
-                                MainLoopEvent::UnlockInterception => {
-                                    key_interceptor.reset();
-                                },
-                                MainLoopEvent::SetImmediateMode(mode) => {
-                                    if let Err(err) = terminal.set_immediate_mode(mode) {
-                                        error!(%err, "Failed to set immediate mode");
-                                    }
-                                },
-                                MainLoopEvent::SetCsiU => {
-                                    // Send CSI > 1 u
-                                    stdout.write_all(b"\x1b[>1u").await?;
-                                    stdout.flush().await?;
-                                    csi_u_set = true;
-                                },
-                                MainLoopEvent::UnsetCsiU => {
-                                    // Send CSI < u
-                                    stdout.write_all(b"\x1b[<u").await?;
-                                    stdout.flush().await?;
-                                    csi_u_set = false;
-                                },
-                                MainLoopEvent::PromptSSH { uuid: _, remote_host: _ } => {
-                                    // let should_install = should_install_remote_ssh_integration(
-                                    //     uuid,
-                                    //     remote_host.clone(),
-                                    //     main_loop_tx.clone(),
-                                    //     remote_receiver.clone(),
-                                    //     remote_sender.clone(),
-                                    //     &term,
-                                    //     &mut master,
-                                    //     &mut key_interceptor,
-                                    // ).await;
-
-                                    // let should_install = match should_install {
-                                    //     Some(val) => val,
-                                    //     None => {
-                                    //         prompt_remote_integration_install(
-                                    //             remote_host,
-                                    //             console_term.clone(),
-                                    //             console_term_key_tx.clone(),
-                                    //             &mut terminal,
-                                    //             input_rx.clone(),
-                                    //         ).await.unwrap_or(false)
-                                    //     }
-                                    // };
-
-                                    // if should_install {
-                                    //     let installation_command = "curl -fSsL https://fig.io/install-minimal.sh | bash; exec $SHELL\n";
-                                    //     master.write_all(installation_command.as_bytes()).await?;
-                                    // }
-                                }
-                            }
+                            MainLoopControl {
+                                remote_sender: &remote_sender,
+                                master: master.as_mut(),
+                                deferred_pty_input: &mut deferred_pty_input,
+                                deferred_inserts: &mut deferred_inserts,
+                                key_interceptor: &mut key_interceptor,
+                                terminal: &mut terminal,
+                                stdout: &mut stdout,
+                                csi_u_set: &mut csi_u_set,
+                                bracketed_paste: term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE),
+                            }.apply(event).await?;
                         }
                         Err(err) => warn!("Failed to recv: {err}"),
                     };
@@ -1037,9 +1147,20 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                                 ),
                             )
                             .await?;
+                            if input_res.is_err() {
+                                finish_pty_input(
+                                    &remote_sender,
+                                    master.as_mut(),
+                                    &mut deferred_pty_input,
+                                    &mut deferred_inserts,
+                                    &mut key_interceptor,
+                                    term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE),
+                                ).await?;
+                            }
                         }
-                        Err(err) => {
-                            warn!("Failed recv: {err}");
+                        Err(_) => {
+                            finish_pty_input(&remote_sender, master.as_mut(), &mut deferred_pty_input, &mut deferred_inserts, &mut key_interceptor, term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE)).await?;
+                            break 'select_loop Ok(());
                         }
                     };
                     input_res
@@ -1056,9 +1177,18 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                             trace!("Read {size} bytes from master");
 
                             let old_delayed_count = term.get_delayed_events_count();
-                            for byte in &write_buffer[..size] {
-                                processor.advance(&mut term, *byte);
-                            }
+                            let mut control = MainLoopControl {
+                                remote_sender: &remote_sender,
+                                master: master.as_mut(),
+                                deferred_pty_input: &mut deferred_pty_input,
+                                deferred_inserts: &mut deferred_inserts,
+                                key_interceptor: &mut key_interceptor,
+                                terminal: &mut terminal,
+                                stdout: &mut stdout,
+                                csi_u_set: &mut csi_u_set,
+                                bracketed_paste: term.mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE),
+                            };
+                            process_pty_bytes(&write_buffer[..size], &mut processor, &mut term, &local_events, &mut control).await?;
 
                             let delayed_count = term.get_delayed_events_count();
 
@@ -1066,6 +1196,7 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                             // delayed events now.
                             if delayed_count > 0 && delayed_count == old_delayed_count {
                                 term.flush_delayed_events();
+                                control.drain_local(&local_events).await?;
                             }
 
                             stdout.write_all(&write_buffer[..size]).await?;
@@ -1133,7 +1264,8 @@ fn figterm_main(command: Option<&[String]>) -> Result<()> {
                     Ok(())
                 }
                 // Check if to send the edit buffer because of timeout
-                _ = edit_buffer_interval.tick() => {
+                _ = insertion_retry.wait(), if insertion_retry.active() => {
+                    insertion_retry.tick();
                     reconcile_remote_state(&remote_sender, &mut key_interceptor);
                     let send_eb = INSERTION_LOCK.lock().unwrap().is_some();
                     if send_eb && can_send_edit_buffer(&term) {
@@ -1208,6 +1340,293 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    mod resource_regressions {
+        use std::future::Future;
+        use std::task::Poll;
+
+        use tokio::io::AsyncReadExt;
+        use tokio::net::UnixStream;
+
+        use super::*;
+        use crate::term::{InputEventResult, ScreenSize};
+
+        // Exercise the production PTY consumer against actual async socket I/O
+        // without launching or instrumenting a user's shell.
+        struct SocketMaster(UnixStream);
+
+        #[async_trait::async_trait]
+        impl AsyncMasterPty for SocketMaster {
+            async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.0.read(buf).await
+            }
+
+            async fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.write(buf).await
+            }
+
+            fn resize(&self, _: PtySize) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        #[derive(Default)]
+        struct ModeTerminal(Vec<bool>);
+
+        impl Terminal for ModeTerminal {
+            fn set_raw_mode(&mut self) -> Result<()> {
+                Ok(())
+            }
+            fn set_cooked_mode(&mut self) -> Result<()> {
+                Ok(())
+            }
+            fn get_screen_size(&mut self) -> Result<ScreenSize> {
+                Ok(ScreenSize {
+                    rows: 24,
+                    cols: 80,
+                    xpixel: 0,
+                    ypixel: 0,
+                })
+            }
+            fn set_screen_size(&mut self, _: ScreenSize) -> Result<()> {
+                Ok(())
+            }
+            fn flush(&mut self) -> Result<()> {
+                Ok(())
+            }
+            fn read_input(&mut self) -> Result<Receiver<InputEventResult>> {
+                unreachable!()
+            }
+            fn set_immediate_mode(&mut self, mode: bool) -> Result<()> {
+                self.0.push(mode);
+                Ok(())
+            }
+        }
+
+        fn parser_term(sender: &RemoteSender, events: &LocalEvents, csi_u: bool) -> Term<EventHandler> {
+            let (history, _receiver) = flume::unbounded();
+            Term::new(
+                SizeInfo::new(24, 80),
+                EventHandler::new(sender.clone(), history, events.clone(), csi_u),
+                1,
+                "resource-regression".into(),
+            )
+        }
+
+        #[tokio::test]
+        async fn osc_burst_drains_local_controls_in_parser_order_without_self_send() {
+            let sender = RemoteSender::new();
+            let events = LocalEvents::default();
+            let mut term = parser_term(&sender, &events, true);
+            let mut processor = Processor::new();
+            let (socket, _peer) = UnixStream::pair().unwrap();
+            let mut master = SocketMaster(socket);
+            let mut deferred = BytesMut::new();
+            let mut inserts = VecDeque::new();
+            let mut interceptor = KeyInterceptor::new();
+            let mut terminal = ModeTerminal::default();
+            let (mut stdout, mut capture) = tokio::io::duplex(4096);
+            let mut csi_u_set = false;
+            let mut control = MainLoopControl {
+                remote_sender: &sender,
+                master: &mut master,
+                deferred_pty_input: &mut deferred,
+                deferred_inserts: &mut inserts,
+                key_interceptor: &mut interceptor,
+                terminal: &mut terminal,
+                stdout: &mut stdout,
+                csi_u_set: &mut csi_u_set,
+                bracketed_paste: false,
+            };
+            // Each iteration produces five control events, far beyond the old
+            // 16-slot channel in a single PTY read. Parsing must apply Prompt
+            // before PreExec and keep CSI-u changes in that same order.
+            let input = b"\x1b]697;NewCmd\x07\x1b]697;PreExec\x07".repeat(64);
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                process_pty_bytes(&input, &mut processor, &mut term, &events, &mut control),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(terminal.0, [false, true].repeat(64));
+            assert!(!events.has_pending());
+            assert!(events.pop().is_none());
+            assert!(!csi_u_set);
+            drop(stdout);
+            let mut output = Vec::new();
+            capture.read_to_end(&mut output).await.unwrap();
+            assert_eq!(output, b"\x1b[>1u\x1b[<u".repeat(64));
+        }
+
+        #[tokio::test]
+        async fn eof_waits_for_actual_key_settlement_then_replays_before_input_and_insert() {
+            for delivered in [false, true] {
+                let sender = RemoteSender::test_ready();
+                let generation = sender.phase().ready_generation().unwrap();
+                let bound = sender.for_generation(generation);
+                let message = || {
+                    hook_to_message(fastab_proto::remote_hooks::new_intercepted_key_hook(
+                        None,
+                        "navigateDown",
+                        "x",
+                    ))
+                };
+                bound
+                    .try_send_key(message(), bytes::Bytes::from_static(b"\xffA"))
+                    .unwrap();
+                let mut frame = sender.test_hold_frame().await;
+                bound.try_send_key(message(), bytes::Bytes::from_static(b"B")).unwrap();
+                let (socket, mut peer) = UnixStream::pair().unwrap();
+                let mut master = SocketMaster(socket);
+                let mut deferred = BytesMut::from(b"ordinary".as_slice());
+                let mut inserts = VecDeque::from([
+                    DeferredInsert {
+                        insert: b"stale".to_vec(),
+                        unlock: false,
+                        bracketed: false,
+                        execute: false,
+                        origin: RequestOrigin::Remote(generation),
+                    },
+                    DeferredInsert {
+                        insert: b"local".to_vec(),
+                        unlock: false,
+                        bracketed: false,
+                        execute: false,
+                        origin: RequestOrigin::Local,
+                    },
+                ]);
+                let mut interceptor = KeyInterceptor::new();
+                let ending = finish_pty_input(
+                    &sender,
+                    &mut master,
+                    &mut deferred,
+                    &mut inserts,
+                    &mut interceptor,
+                    false,
+                );
+                tokio::pin!(ending);
+                std::future::poll_fn(|cx| {
+                    assert!(ending.as_mut().poll(cx).is_pending());
+                    Poll::Ready(())
+                })
+                .await;
+                if delivered {
+                    frame.write_to(&mut tokio::io::sink()).await.unwrap();
+                }
+                sender.test_retire();
+                // Retirement alone cannot authorize replay of the in-flight
+                // frame. Dropping it is the real writer cancellation boundary.
+                if !delivered {
+                    std::future::poll_fn(|cx| {
+                        assert!(ending.as_mut().poll(cx).is_pending());
+                        Poll::Ready(())
+                    })
+                    .await;
+                }
+                drop(frame);
+                tokio::time::timeout(Duration::from_secs(2), &mut ending)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let expected = if delivered {
+                    b"Bordinarylocal".as_slice()
+                } else {
+                    b"\xffABordinarylocal".as_slice()
+                };
+                let mut output = vec![0; expected.len()];
+                tokio::time::timeout(Duration::from_secs(2), peer.read_exact(&mut output))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(output, expected);
+                assert!(!sender.has_pending_keys());
+            }
+        }
+
+        #[tokio::test]
+        async fn deferred_large_input_releases_capacity_only_after_successful_write() {
+            for success in [false, true] {
+                let (socket, peer) = UnixStream::pair().unwrap();
+                let mut master = SocketMaster(socket);
+                let capture = if success {
+                    Some(tokio::spawn(async move {
+                        let mut peer = peer;
+                        let mut output = Vec::new();
+                        peer.read_to_end(&mut output).await.unwrap();
+                        output
+                    }))
+                } else {
+                    drop(peer);
+                    None
+                };
+                let expected = vec![b'x'; 128 * 1024];
+                let mut deferred = BytesMut::from(expected.as_slice());
+                let capacity = deferred.capacity();
+                let mut inserts = VecDeque::new();
+                let result = flush_settled_pty_input(
+                    &RemoteSender::new(),
+                    &mut master,
+                    &mut deferred,
+                    &mut inserts,
+                    &mut KeyInterceptor::new(),
+                    false,
+                )
+                .await;
+                if success {
+                    result.unwrap();
+                    assert!(deferred.is_empty());
+                    assert!(deferred.capacity() <= 64 * 1024);
+                    drop(master);
+                    assert_eq!(capture.unwrap().await.unwrap(), expected);
+                } else {
+                    assert!(result.is_err());
+                    assert_eq!(deferred.as_ref(), expected);
+                    assert_eq!(deferred.capacity(), capacity);
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn insertion_timer_is_idle_without_lock_and_still_expires_pending_insert() {
+            let mut retry = InsertionRetry::default();
+            assert!(!retry.active());
+            let events = LocalEvents::default();
+            let mut term = parser_term(&RemoteSender::new(), &events, false);
+            let mut parser = Processor::new();
+            for byte in b"\x1b]697;NewCmd\x07typed" {
+                parser.advance(&mut term, *byte);
+            }
+            let mut lock = Some(InsertionLock {
+                at: SystemTime::now(),
+                expected: "pending".into(),
+                origin: RequestOrigin::Local,
+            });
+            retry.update(lock.as_ref().map(|lock| lock.at));
+            assert!(retry.active());
+            let deadline = retry.deadline;
+            retry.update(lock.as_ref().map(|lock| lock.at));
+            assert_eq!(
+                retry.deadline, deadline,
+                "input must not extend an existing retry deadline"
+            );
+            assert!(insertion_lock_is_active(&mut lock, &term));
+            retry.wait().await;
+            retry.tick();
+            assert!(!insertion_lock_is_active(&mut lock, &term));
+            assert!(lock.is_none());
+            retry.update(None);
+            assert!(!retry.active());
+            let waiting = retry.wait();
+            tokio::pin!(waiting);
+            std::future::poll_fn(|cx| {
+                assert!(waiting.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+        }
+    }
 
     #[test]
     fn pty_wrapper_suffix_is_stripped_for_shell_matching() {

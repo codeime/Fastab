@@ -1055,14 +1055,22 @@ impl Default for InputParser {
     }
 }
 
+impl Drop for InputParser {
+    fn drop(&mut self) {
+        crate::resource_diagnostics::parser(0, 0, 0, 0);
+    }
+}
+
 impl InputParser {
     pub fn new() -> Self {
-        Self {
+        let parser = Self {
             key_map: Self::build_basic_key_map(),
             buf: ReadBuffer::new(),
             state: InputState::Normal,
             raw_byte_stack: BytesMut::new(),
-        }
+        };
+        parser.record_resources();
+        parser
     }
 
     fn build_basic_key_map() -> KeyMap<InputEvent> {
@@ -1437,6 +1445,16 @@ impl InputParser {
         }
     }
 
+    fn take_raw(&mut self) -> BytesMut {
+        // split() leaves an empty tail sharing the entire allocation. Transfer
+        // a large backing outright, even if that tail would have zero capacity.
+        if self.raw_byte_stack.len() > 64 * 1024 {
+            std::mem::take(&mut self.raw_byte_stack)
+        } else {
+            self.raw_byte_stack.split()
+        }
+    }
+
     fn dispatch_callback<F: FnMut(Option<Bytes>, InputEvent)>(&mut self, mut callback: F, event: InputEvent) {
         match (self.state, event) {
             (
@@ -1457,7 +1475,7 @@ impl InputParser {
             ) => {
                 // The prior ESC was not part of an ALT sequence, so emit
                 // it before we start collecting for paste.
-                let raw = self.raw_byte_stack.split();
+                let raw = self.take_raw();
                 callback(
                     Some(raw.freeze()),
                     InputEvent::Key(KeyEvent {
@@ -1470,7 +1488,7 @@ impl InputParser {
             (InputState::EscapeMaybeAlt, InputEvent::Key(KeyEvent { key, modifiers })) => {
                 // Treat this as ALT-key
                 self.state = InputState::Normal;
-                let raw = self.raw_byte_stack.split();
+                let raw = self.take_raw();
                 callback(
                     Some(raw.freeze()),
                     InputEvent::Key(KeyEvent {
@@ -1490,11 +1508,11 @@ impl InputParser {
                         modifiers: Modifiers::NONE,
                     }),
                 );
-                let raw = self.raw_byte_stack.split();
+                let raw = self.take_raw();
                 callback(Some(raw.freeze()), event);
             },
             (_, event) => {
-                let raw = self.raw_byte_stack.split();
+                let raw = self.take_raw();
                 callback(Some(raw.freeze()), event);
             },
         }
@@ -1507,8 +1525,8 @@ impl InputParser {
                     let end_paste = PASTE_END.as_bytes();
                     if let Some(idx) = self.buf.find_subsequence(offset, end_paste) {
                         let pasted = String::from_utf8_lossy(&self.buf.as_slice()[0..idx]).to_string();
-                        self.advance_buf(pasted.len() + end_paste.len());
-                        let raw = self.raw_byte_stack.split();
+                        self.advance_buf(idx + end_paste.len());
+                        let raw = self.take_raw();
                         callback(Some(raw.freeze()), InputEvent::Paste(pasted));
                         self.state = InputState::Normal;
                     } else {
@@ -1635,6 +1653,30 @@ impl InputParser {
         self.buf.extend_with(bytes);
         self.process_bytes(callback, maybe_more);
         self.buf.release_large_empty_buffer();
+        self.record_resources();
+    }
+
+    /// Finish a finite input stream without losing incomplete UTF-8, escape
+    /// sequences or an unfinished bracketed paste. Preserve their raw bytes.
+    pub fn finish<F: FnMut(Option<Bytes>, InputEvent)>(&mut self, mut callback: F) {
+        self.process_bytes(&mut callback, false);
+        self.advance_buf(self.buf.len());
+        if !self.raw_byte_stack.is_empty() {
+            let raw = self.take_raw();
+            callback(Some(raw.freeze()), InputEvent::RawString);
+        }
+        self.state = InputState::Normal;
+        self.buf.release_large_empty_buffer();
+        self.record_resources();
+    }
+
+    fn record_resources(&self) {
+        crate::resource_diagnostics::parser(
+            self.buf.len(),
+            self.buf.capacity(),
+            self.raw_byte_stack.len(),
+            self.raw_byte_stack.capacity(),
+        );
     }
 
     fn advance_buf(&mut self, len: usize) {
@@ -1916,6 +1958,80 @@ mod test {
             KeyCode::Function(1).encode(Modifiers::NONE, mode, true).unwrap(),
             "\x1bOP".to_string()
         );
+    }
+
+    #[test]
+    fn invalid_utf8_paste_preserves_raw_and_following_key_boundaries() {
+        for suffix in [b"".as_slice(), b"xyZ".as_slice()] {
+            for split_end in [false, true] {
+                let mut parser = InputParser::new();
+                let mut events = Vec::new();
+                let mut input = b"\x1b[200~\xff\x1b[201~".to_vec();
+                input.extend_from_slice(suffix);
+                let split = if split_end { 10 } else { input.len() };
+                parser.parse(&input[..split], |raw, event| events.push((raw, event)), false);
+                parser.parse(&input[split..], |raw, event| events.push((raw, event)), false);
+                assert_eq!(events[0].0.as_deref(), Some(b"\x1b[200~\xff\x1b[201~".as_slice()));
+                assert_eq!(events[0].1, InputEvent::Paste("\u{fffd}".into()));
+                assert_eq!(events.len(), 1 + suffix.len());
+                for (index, byte) in suffix.iter().enumerate() {
+                    assert_eq!(events[index + 1].0.as_deref(), Some(std::slice::from_ref(byte)));
+                    assert_eq!(
+                        events[index + 1].1,
+                        InputEvent::Key(KeyEvent {
+                            key: KeyCode::Char(char::from(*byte)),
+                            modifiers: Modifiers::NONE
+                        })
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn large_raw_paste_transfers_the_entire_backing_away_from_parser() {
+        let mut parser = InputParser::new();
+        let mut input = PASTE_START.as_bytes().to_vec();
+        input.extend(std::iter::repeat_n(b'x', 128 * 1024));
+        input.extend_from_slice(PASTE_END.as_bytes());
+        // Keep the produced Bytes alive; is_unique proves the parser no longer
+        // shares its backing, including an empty tail with zero view capacity.
+        let mut emitted = None;
+        parser.parse(&input, |raw, _| emitted = raw, false);
+        let raw = emitted.unwrap();
+        assert_eq!(raw.as_ref(), input);
+        assert!(raw.is_unique());
+        assert!(parser.raw_byte_stack.is_empty());
+        assert!(parser.raw_byte_stack.capacity() <= 64 * 1024);
+        assert!(parser.buf.as_slice().is_empty());
+        let mut next = Vec::new();
+        parser.parse(b"a", |raw, event| next.push((raw, event)), false);
+        assert_eq!(next[0].0.as_deref(), Some(b"a".as_slice()));
+        assert_eq!(raw.as_ref(), input);
+    }
+
+    #[test]
+    fn finish_preserves_incomplete_paste_utf8_and_escape_raw() {
+        for input in [
+            b"\x1b[200~unfinished".as_slice(),
+            b"\xe2\x82".as_slice(),
+            b"\x1b[".as_slice(),
+        ] {
+            let mut parser = InputParser::new();
+            let mut output = Vec::new();
+            parser.parse(
+                input,
+                |raw, _| output.extend_from_slice(raw.as_deref().unwrap_or_default()),
+                false,
+            );
+            parser.finish(|raw, _| output.extend_from_slice(raw.as_deref().unwrap_or_default()));
+            assert_eq!(output, input);
+            assert!(parser.buf.is_empty());
+            assert!(parser.raw_byte_stack.is_empty());
+            let mut duplicate = false;
+            parser.finish(|_, _| duplicate = true);
+            assert!(!duplicate);
+        }
     }
 
     #[test]
