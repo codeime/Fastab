@@ -154,62 +154,56 @@ pub async fn spawn_figterm_ipc(
             if let Ok((stream, _)) = socket_listener.accept().await {
                 let incoming_tx = incoming_tx.clone();
 
-                let (read_half, mut write_half) = tokio::io::split(stream);
-                let (response_tx, response_rx) = unbounded::<FigtermResponseMessage>();
-
-                tokio::spawn(async move {
-                    let mut read_half = BufferedReader::new(read_half);
-                    let mut rx_thread = tokio::spawn(async move {
-                        loop {
-                            match read_half.recv_message::<FigtermRequestMessage>().await {
-                                Ok(Some(message)) => {
-                                    // debug!("Received message: {message:?}");
-                                    incoming_tx
-                                        .clone()
-                                        .send_async((message, response_tx.clone()))
-                                        .await
-                                        .unwrap();
-                                },
-                                Ok(None) => {
-                                    debug!("Received EOF");
-                                    break;
-                                },
-                                Err(err) => {
-                                    error!("Error receiving message: {err}");
-                                    break;
-                                },
-                            }
-                        }
-                    });
-
-                    loop {
-                        tokio::select! {
-                            // Break once the rx_thread quits
-                            _ = &mut rx_thread => break,
-                            res = response_rx.recv_async() => {
-                                match res {
-                                    Ok(response) => {
-                                        match response.encode_fastab_protobuf() {
-                                            Ok(protobuf) => {
-                                                if let Err(err) = write_half.write_all(&protobuf).await {
-                                                    error!(%err, "Failed to send response");
-                                                    break;
-                                                }
-                                            },
-                                            Err(err) => error!(%err, "Failed to encode protobuf")
-                                        }
-                                    }
-                                    Err(_) => break,
-                                }
-                            }
-                        }
-                    }
-                });
+                tokio::spawn(handle_local_connection(stream, incoming_tx));
             }
         }
     });
 
     Ok(incoming_rx)
+}
+
+async fn handle_local_connection(
+    stream: tokio::net::UnixStream,
+    incoming_tx: Sender<(FigtermRequestMessage, Sender<FigtermResponseMessage>)>,
+) {
+    let (read_half, mut write_half) = tokio::io::split(stream);
+    let (response_tx, response_rx) = unbounded::<FigtermResponseMessage>();
+    let reader = async move {
+        let mut reader = BufferedReader::new(read_half);
+        loop {
+            match reader.recv_message::<FigtermRequestMessage>().await {
+                Ok(Some(message)) => {
+                    if incoming_tx.send_async((message, response_tx.clone())).await.is_err() {
+                        break;
+                    }
+                },
+                Ok(None) => break,
+                Err(error) => {
+                    debug!(%error, "Local IPC read failed");
+                    break;
+                },
+            }
+        }
+    };
+    let writer = async move {
+        while let Ok(response) = response_rx.recv_async().await {
+            let Ok(protobuf) = response.encode_fastab_protobuf() else {
+                break;
+            };
+            if !matches!(
+                timeout(CONNECTION_TIMEOUT, write_half.write_all(&protobuf)).await,
+                Ok(Ok(()))
+            ) {
+                break;
+            }
+        }
+    };
+    // Both directions belong to this scope. A write failure or half-close
+    // drops the other future as well; no detached reader keeps the socket alive.
+    tokio::select! {
+        _ = reader => {},
+        _ = writer => {},
+    }
 }
 
 /// Connects to the desktop app and allows for a remote connection from remote hosts
@@ -388,4 +382,32 @@ pub(crate) async fn spawn_remote_ipc(
     });
 
     Ok((outgoing, incoming_rx, stop_ipc_tx))
+}
+
+#[cfg(test)]
+mod local_connection_tests {
+    use super::*;
+    use fastab_proto::figterm::{DiagnosticsRequest, figterm_request_message};
+
+    #[tokio::test]
+    async fn local_peer_half_close_retires_reader_and_writer_together() {
+        let (mut client, server) = tokio::net::UnixStream::pair().unwrap();
+        let (incoming, requests) = unbounded();
+        let task = tokio::spawn(handle_local_connection(server, incoming));
+        client
+            .send_message(FigtermRequestMessage {
+                request: Some(figterm_request_message::Request::Diagnostics(DiagnosticsRequest {})),
+            })
+            .await
+            .unwrap();
+        // Hold a response sender past peer EOF. Its lifetime must not keep the
+        // connection's writer waiting indefinitely.
+        let (_, response) = timeout(Duration::from_secs(2), requests.recv_async())
+            .await
+            .unwrap()
+            .unwrap();
+        client.shutdown().await.unwrap();
+        timeout(Duration::from_secs(2), task).await.unwrap().unwrap();
+        assert!(response.is_disconnected());
+    }
 }

@@ -1479,10 +1479,6 @@ impl OverlayController {
         let Some(session_id) = self.current_session() else {
             return false;
         };
-        let Some(sender) = figterm_state.with(&session_id, |session| session.sender.clone()) else {
-            warn!(%session_id, "no figterm session for insert");
-            return false;
-        };
         let snapshot = self.current_input_snapshot();
         *self.self_insertion.lock().unwrap_or_else(|err| err.into_inner()) = snapshot
             .as_ref()
@@ -1497,21 +1493,28 @@ impl OverlayController {
             })
             .map(|(predicted, _)| predicted);
         let insertion_buffer = snapshot.map(|(buffer, _)| buffer);
-        if let Err(err) = sender.send(FigtermCommand::InsertText {
-            insertion: Some(insertion.to_string()),
-            deletion: Some(deletion),
-            offset,
-            // An auto-execute suggestion already carries its `\n` insertValue;
-            // adding the immediate carriage return would execute twice.
-            immediate: Some(immediate_for_insert(execute, insertion)),
-            insertion_buffer,
-            insert_during_command: None,
-        }) {
-            error!(%err, "failed to insert suggestion");
-            false
-        } else {
-            fastab_telemetry::count("autocomplete_accepted");
-            true
+        let sent = figterm_state.with(&session_id, |session| {
+            session.send(FigtermCommand::InsertText {
+                insertion: Some(insertion.to_string()),
+                deletion: Some(deletion),
+                offset,
+                // An auto-execute suggestion already carries its `\n` insertValue;
+                // adding the immediate carriage return would execute twice.
+                immediate: Some(immediate_for_insert(execute, insertion)),
+                insertion_buffer,
+                insert_during_command: None,
+            })
+        });
+        match sent {
+            Some(Ok(())) => {
+                fastab_telemetry::count("autocomplete_accepted");
+                true
+            },
+            error => {
+                self.take_self_insertion();
+                error!(?error, %session_id, "failed to insert suggestion");
+                false
+            },
         }
     }
 
@@ -2621,8 +2624,6 @@ fn set_intercept_flags(figterm_state: &FigtermState, session_id: Uuid, intercept
             continue;
         }
         let (next_intercept, next_global) = desired;
-        session.intercept = next_intercept;
-        session.intercept_global = next_global;
         let enable = next_intercept == InterceptMode::Locked;
         let enable_global = next_global == InterceptMode::Locked;
         let actions = if enable || enable_global {
@@ -2630,15 +2631,20 @@ fn set_intercept_flags(figterm_state: &FigtermState, session_id: Uuid, intercept
         } else {
             vec![]
         };
-        let _ = session.sender.send(FigtermCommand::InterceptFigJs {
-            intercept_keystrokes: enable,
-            intercept_global_keystrokes: enable_global,
-            actions,
-            override_actions: enable || enable_global,
-        });
-        let _ = session
-            .sender
-            .send(FigtermCommand::InterceptFigJSVisible { visible: enable });
+        let admitted = session
+            .send(FigtermCommand::InterceptFigJs {
+                intercept_keystrokes: enable,
+                intercept_global_keystrokes: enable_global,
+                actions,
+                override_actions: enable || enable_global,
+            })
+            .and_then(|()| session.send(FigtermCommand::InterceptFigJSVisible { visible: enable }));
+        if admitted.is_ok() {
+            session.intercept = next_intercept;
+            session.intercept_global = next_global;
+        } else {
+            session.sender.close();
+        }
     }
 }
 

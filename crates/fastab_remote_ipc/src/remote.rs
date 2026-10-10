@@ -1,26 +1,41 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
-use fastab_ipc::{BufferedReader, RecvMessage, SendMessage};
-use fastab_proto::figterm::{InsertTextRequest, InterceptRequest, SetBufferRequest, intercept_request};
+use fastab_ipc::{BufferedReader, RecvMessage};
 use fastab_proto::local::ShellContext;
-use fastab_proto::remote::clientbound::request::Request;
 use fastab_proto::remote::clientbound::{self, HandshakeResponse};
-use fastab_proto::remote::{Clientbound, Hostbound, RunProcessRequest, hostbound};
+use fastab_proto::remote::{Clientbound, Hostbound, hostbound};
 use fastab_util::PTY_BINARY_NAME;
-use time::OffsetDateTime;
+use tokio::io::AsyncWriteExt;
 use tokio::net::{UnixListener, UnixStream};
-use tokio::select;
-use tokio::sync::Notify;
 use tokio::time::{Duration, Instant, MissedTickBehavior};
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use crate::RemoteHookHandler;
-use crate::figterm::{EditBuffer, FigtermCommand, FigtermSession, FigtermState, InterceptMode};
+use crate::figterm::{EditBuffer, FigtermSession, FigtermState, InterceptMode};
+use crate::outbox::{self, FigtermSender, Outbox};
+
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Own the background tasks and session even while an awaited hook is pending.
+/// Aborting the parent future must not detach a live writer or heartbeat loop.
+struct RemoteConnection {
+    sender: FigtermSender,
+    state: Arc<FigtermState>,
+    session_id: Uuid,
+    tasks: tokio::task::JoinSet<()>,
+}
+
+impl Drop for RemoteConnection {
+    fn drop(&mut self) {
+        self.sender.close();
+        let _ = self.state.remove_id(&self.session_id);
+        // JoinSet's Drop aborts any child that normal cleanup has not joined.
+        // Async hook notifications run only in the normal cleanup path below.
+    }
+}
 
 pub async fn start_remote_ipc(
     socket_path: PathBuf,
@@ -57,35 +72,31 @@ pub async fn handle_remote_ipc(
     mut hook: impl RemoteHookHandler + Send,
 ) {
     let (reader, writer) = tokio::io::split(stream);
-    let (clientbound_tx, clientbound_rx) = flume::unbounded();
-
-    let bad_connection = Arc::new(Notify::new());
-
-    let (on_close_tx, mut on_close_rx) = tokio::sync::broadcast::channel(1);
-
-    let outgoing_task = tokio::spawn(handle_outgoing(
-        writer,
-        clientbound_rx,
-        bad_connection.clone(),
-        on_close_tx.subscribe(),
-    ));
-
-    let ping_task = tokio::spawn(send_pings(clientbound_tx.clone(), on_close_tx.subscribe()));
-
+    let (clientbound_tx, clientbound_rx) = outbox::channel();
     let mut initialized = false;
     let session_id = Uuid::new_v4();
+    let mut connection = RemoteConnection {
+        sender: clientbound_tx.clone(),
+        state: figterm_state.clone(),
+        session_id,
+        tasks: tokio::task::JoinSet::new(),
+    };
+    connection
+        .tasks
+        .spawn(handle_outgoing(writer, clientbound_rx, clientbound_tx.clone()));
+    connection.tasks.spawn(send_pings(clientbound_tx.clone()));
 
     let mut reader = BufferedReader::new(reader);
+    // A hook can itself await work. Retirement must also cancel that wait,
+    // rather than being observed only after the next reader select iteration.
+    tokio::select! {
+        biased;
+        _ = clientbound_tx.closed() => {},
+        _ = async {
     loop {
         tokio::select! {
-            _ = on_close_rx.recv() => {
+            _ = clientbound_tx.closed() => {
                 debug!("Connection closed");
-                break;
-            }
-            _ = bad_connection.notified() => {
-                // A failed writer does not necessarily close the peer's write
-                // half. Retire the session even if the reader is still waiting.
-                debug!("Connection writer failed");
                 break;
             }
             message = reader.recv_message::<Hostbound>() => match message {
@@ -98,39 +109,13 @@ pub async fn handle_remote_ipc(
                                 Some(clientbound::Packet::HandshakeResponse(HandshakeResponse {
                                     success: false,
                                 }))
-                            } else if let Some(success) = figterm_state.with_update(session_id, |session| {
-                                if session.secret == handshake.secret {
-                                    initialized = true;
-                                    session.writer = Some(clientbound_tx.clone());
-                                    session.dead_since = None;
-                                    session.on_close_tx = on_close_tx.clone();
-                                    debug!(
-                                        "Client auth for {} accepted because of secret match ({} = {})",
-                                        handshake.id, session.secret, handshake.secret
-                                    );
-                                    true
-                                } else {
-                                    debug!(
-                                        "Client auth for {} rejected because of secret mismatch ({} =/= {})",
-                                        handshake.id, session.secret, handshake.secret
-                                    );
-                                    false
-                                }
-                            }) {
-                                Some(clientbound::Packet::HandshakeResponse(HandshakeResponse { success }))
                             } else {
                                 initialized = true;
-                                let (command_tx, command_rx) = flume::unbounded();
-                                tokio::spawn(handle_commands(command_rx, figterm_state.clone(), session_id));
-                                debug!(
-                                    "Client auth for {} accepted because of new id with secret {}",
-                                    handshake.id, handshake.secret
-                                );
+                                debug!(id = %handshake.id, "Client auth accepted for new session");
                                 figterm_state.insert(FigtermSession {
                                     id: session_id,
                                     secret: handshake.secret.clone(),
-                                    sender: command_tx,
-                                    writer: Some(clientbound_tx.clone()),
+                                    sender: clientbound_tx.clone(),
                                     dead_since: None,
                                     last_receive: Instant::now(),
                                     edit_buffer: EditBuffer {
@@ -141,9 +126,6 @@ pub async fn handle_remote_ipc(
                                     flattened_env: Arc::new(Vec::new()),
                                     terminal_cursor_coordinates: None,
                                     current_session_metrics: None,
-                                    response_map: HashMap::new(),
-                                    nonce_counter: Arc::new(AtomicU64::new(0)),
-                                    on_close_tx: on_close_tx.clone(),
                                     intercept: InterceptMode::Unlocked,
                                     intercept_global: InterceptMode::Unlocked
                                 });
@@ -159,11 +141,11 @@ pub async fn handle_remote_ipc(
                                     let inner = figterm_state.inner.lock();
                                     let sessions = inner.linked_sessions.values();
                                     for session in sessions {
-                                        if let Some(ref writer) = session.writer {
+                                        {
                                             let notification = clientbound::Packet::NotifyChildSessionStarted(
                                                 clientbound::NotifyChildSessionStarted { parent_id: parent_id.clone() }
                                             );
-                                            writer.send(
+                                            session.sender.send_packet(
                                                 Clientbound {
                                                     packet: Some(notification)
                                                 }
@@ -250,10 +232,7 @@ pub async fn handle_remote_ipc(
                         })) => {
                             if initialized {
                                 if let Some(nonce) = nonce {
-                                    figterm_state
-                                        .with(&session_id, |session| session.response_map.remove(&nonce))
-                                        .flatten()
-                                        .map(|channel| channel.send(response));
+                                    clientbound_tx.respond(nonce, response);
                                 }
                             }
                             None
@@ -272,7 +251,7 @@ pub async fn handle_remote_ipc(
                             None
                         }
                     } {
-                        let _ = clientbound_tx.send(Clientbound { packet: Some(response) });
+                        let _ = clientbound_tx.send_packet(Clientbound { packet: Some(response) });
                     }
                 }
                 Ok(None) => {
@@ -289,24 +268,22 @@ pub async fn handle_remote_ipc(
         }
     }
 
-    let _ = on_close_tx.send(());
-    drop(clientbound_tx);
+        } => {},
+    }
+    clientbound_tx.close();
 
-    // figterm_state.with_update(session_id.clone(), |session| {
-    //     session.writer = None;
-    //     session.dead_since = Some(Instant::now());
-    // });
+    // Retire both socket halves and background tasks before cleanup hooks can
+    // await arbitrary work. A pending notification must not keep a PTY bound.
+    drop(reader);
+    while let Some(result) = connection.tasks.join_next().await {
+        if let Err(err) = result {
+            error!(%err, "remote connection task join error");
+        }
+    }
+
     if figterm_state.remove_id(&session_id).is_some() {
         hook.session_closed(session_id).await;
         hook.sessions_changed(&figterm_state).await;
-    }
-
-    if let Err(err) = ping_task.await {
-        error!(%err, "remote ping task join error");
-    }
-
-    if let Err(err) = outgoing_task.await {
-        error!(%err, "remote outgoing task join error");
     }
 
     info!("Disconnect from {session_id:?}");
@@ -314,156 +291,52 @@ pub async fn handle_remote_ipc(
 
 async fn handle_outgoing(
     mut writer: tokio::io::WriteHalf<UnixStream>,
-    outgoing: flume::Receiver<Clientbound>,
-    bad_connection: Arc<Notify>,
-    mut on_close_rx: tokio::sync::broadcast::Receiver<()>,
+    mut outgoing: Outbox,
+    connection: FigtermSender,
 ) {
-    loop {
-        tokio::select! {
-            _ = on_close_rx.recv() => {
-                debug!("remote outgoing task exiting");
+    while let Some(frame) = outgoing.recv().await {
+        // Cancellation of a partially written frame retires the entire socket.
+        // Never return to the queue after interrupting write_all.
+        let sent = tokio::select! {
+            biased;
+            _ = connection.closed() => break,
+            result = tokio::time::timeout(WRITE_TIMEOUT, async {
+                writer.write_all(frame.bytes()).await?;
+                writer.flush().await
+            }) => result,
+        };
+        match sent {
+            Ok(Ok(())) => {},
+            Ok(Err(error)) => {
+                debug!(%error, "remote outgoing write failed");
                 break;
             },
-            message = outgoing.recv_async() => {
-                if let Ok(message) = message {
-                    trace!(?message, "Sending remote message");
-                    if let Err(err) = writer.send_message(message).await {
-                        error!(%err, "remote outgoing task send error");
-                        bad_connection.notify_one();
-                        return;
-                    }
-                } else {
-                    debug!("remote outgoing task exiting");
+            Err(_) => {
+                debug!("remote outgoing write timed out");
+                break;
+            },
+        }
+    }
+    connection.close();
+    // Dropping both halves in the parent closes the connection; no shutdown
+    // await is needed (and a stalled writer must not delay retirement).
+}
+
+async fn send_pings(outgoing: FigtermSender) {
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+    interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            biased;
+            _ = outgoing.closed() => break,
+            _ = interval.tick() => {
+                outgoing.maintain();
+                if outgoing.send_packet(Clientbound {
+                    packet: Some(clientbound::Packet::Ping(())),
+                }).is_err() {
                     break;
                 }
             }
-        }
-    }
-}
-
-async fn handle_commands(
-    incoming: flume::Receiver<FigtermCommand>,
-    figterm_state: Arc<FigtermState>,
-    session_id: Uuid,
-) -> Option<()> {
-    while let Ok(command) = incoming.recv_async().await {
-        let (request, nonce_channel) = match command {
-            FigtermCommand::InterceptFigJs {
-                intercept_keystrokes,
-                intercept_global_keystrokes,
-                actions,
-                override_actions,
-            } => (
-                Request::Intercept(InterceptRequest {
-                    intercept_command: Some(intercept_request::InterceptCommand::SetFigjsIntercepts(
-                        intercept_request::SetFigjsIntercepts {
-                            intercept_bound_keystrokes: intercept_keystrokes,
-                            intercept_global_keystrokes,
-                            actions,
-                            override_actions,
-                        },
-                    )),
-                }),
-                None,
-            ),
-            FigtermCommand::InterceptFigJSVisible { visible } => (
-                Request::Intercept(InterceptRequest {
-                    intercept_command: Some(intercept_request::InterceptCommand::SetFigjsVisible(
-                        intercept_request::SetFigjsVisible { visible },
-                    )),
-                }),
-                None,
-            ),
-            FigtermCommand::InsertText {
-                insertion,
-                deletion,
-                offset,
-                immediate,
-                insertion_buffer,
-                insert_during_command,
-            } => (
-                Request::InsertText(InsertTextRequest {
-                    insertion,
-                    deletion: deletion.map(|x| x as u64),
-                    offset,
-                    immediate,
-                    insertion_buffer,
-                    insert_during_command,
-                }),
-                None,
-            ),
-            FigtermCommand::SetBuffer { text, cursor_position } => {
-                (Request::SetBuffer(SetBufferRequest { text, cursor_position }), None)
-            },
-            FigtermCommand::RunProcess {
-                channel,
-                executable,
-                arguments,
-                working_directory,
-                env,
-                timeout,
-            } => (
-                Request::RunProcess(RunProcessRequest {
-                    executable,
-                    arguments,
-                    working_directory,
-                    env,
-                    timeout: timeout.map(Into::into),
-                }),
-                Some(channel),
-            ),
-        };
-
-        let nonce = if let Some(channel) = nonce_channel {
-            Some(figterm_state.with(&session_id, |session| {
-                let nonce = session.nonce_counter.fetch_add(1, Ordering::Relaxed);
-                session.response_map.insert(nonce, channel);
-                nonce
-            })?)
-        } else {
-            None
-        };
-
-        let is_insert_request = matches!(request, Request::InsertText(_));
-        figterm_state.with(&session_id, |session| {
-            if let Some(writer) = &session.writer {
-                if writer
-                    .try_send(Clientbound {
-                        packet: Some(clientbound::Packet::Request(clientbound::Request {
-                            request: Some(request),
-                            nonce,
-                        })),
-                    })
-                    .is_ok()
-                {
-                    if is_insert_request {
-                        if let Some(ref mut metrics) = session.current_session_metrics {
-                            metrics.num_insertions += 1;
-                            metrics.end_time =
-                                OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
-                        }
-                    }
-                    session.last_receive = Instant::now();
-                };
-            }
-        })?;
-    }
-
-    None
-}
-
-async fn send_pings(outgoing: flume::Sender<Clientbound>, mut on_close_rx: tokio::sync::broadcast::Receiver<()>) {
-    let mut interval = tokio::time::interval(Duration::from_secs(5));
-    interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
-    loop {
-        select! {
-            _ = interval.tick() => {
-                let _ = outgoing.try_send(Clientbound {
-                    packet: Some(clientbound::Packet::Ping(())),
-                });
-            }
-            _ = on_close_rx.recv() => break
         }
     }
 }
@@ -479,33 +352,57 @@ fn sanitize_fn(context: &mut Option<ShellContext>, session_id: Uuid) {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+    use crate::figterm::FigtermCommand;
+    use fastab_ipc::SendMessage;
     use fastab_proto::local::{EditBufferHook, InterceptedKeyHook, PostExecHook, PreExecHook, PromptHook};
 
     #[derive(Debug)]
     enum Lifecycle {
         Changed(Vec<Uuid>),
         Closed(Uuid),
+        HookBlocked(Uuid),
     }
 
     #[derive(Clone)]
-    struct Hook(tokio::sync::mpsc::UnboundedSender<Lifecycle>);
+    struct Hook {
+        events: tokio::sync::mpsc::UnboundedSender<Lifecycle>,
+        block_edit: bool,
+        cleanup_release: Option<Arc<tokio::sync::Notify>>,
+    }
+
+    impl Hook {
+        fn new(events: tokio::sync::mpsc::UnboundedSender<Lifecycle>) -> Self {
+            Self {
+                events,
+                block_edit: false,
+                cleanup_release: None,
+            }
+        }
+    }
 
     #[async_trait::async_trait]
     impl RemoteHookHandler for Hook {
         type Error = anyhow::Error;
         async fn sessions_changed(&mut self, state: &Arc<FigtermState>) {
             let ids = state.inner.lock().linked_sessions.keys().copied().collect();
-            self.0.send(Lifecycle::Changed(ids)).unwrap();
+            self.events.send(Lifecycle::Changed(ids)).unwrap();
         }
         async fn session_closed(&mut self, id: Uuid) {
-            self.0.send(Lifecycle::Closed(id)).unwrap();
+            self.events.send(Lifecycle::Closed(id)).unwrap();
+            if let Some(release) = &self.cleanup_release {
+                release.notified().await;
+            }
         }
         async fn edit_buffer(
             &mut self,
             _: &EditBufferHook,
-            _: Uuid,
+            id: Uuid,
             _: &Arc<FigtermState>,
         ) -> Result<Option<clientbound::response::Response>> {
+            if self.block_edit {
+                self.events.send(Lifecycle::HookBlocked(id)).unwrap();
+                std::future::pending::<()>().await;
+            }
             Ok(None)
         }
         async fn prompt(
@@ -548,6 +445,191 @@ mod lifecycle_tests {
             .unwrap()
     }
 
+    struct BlockedConnection {
+        client: BufferedReader<UnixStream>,
+        server: tokio::task::JoinHandle<()>,
+        state: Arc<FigtermState>,
+        session_id: Uuid,
+        events: tokio::sync::mpsc::UnboundedReceiver<Lifecycle>,
+    }
+
+    impl BlockedConnection {
+        async fn new(cleanup_release: Option<Arc<tokio::sync::Notify>>) -> Self {
+            let state = Arc::new(FigtermState::new());
+            let (tx, mut events) = tokio::sync::mpsc::unbounded_channel();
+            let (client, server) = UnixStream::pair().unwrap();
+            let server = tokio::spawn(handle_remote_ipc(
+                server,
+                state.clone(),
+                Hook {
+                    events: tx,
+                    block_edit: true,
+                    cleanup_release,
+                },
+            ));
+            let mut client = BufferedReader::new(client);
+            client
+                .send_message(Hostbound {
+                    packet: Some(hostbound::Packet::Handshake(hostbound::Handshake {
+                        id: "blocked-hook".into(),
+                        secret: "fixture".into(),
+                        parent_id: None,
+                    })),
+                })
+                .await
+                .unwrap();
+            let Lifecycle::Changed(ids) = next_event(&mut events).await else {
+                panic!("session created")
+            };
+            let [session_id] = ids.as_slice() else {
+                panic!("one session")
+            };
+            let session_id = *session_id;
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    match client.recv_message::<Clientbound>().await.unwrap().unwrap().packet {
+                        Some(clientbound::Packet::HandshakeResponse(response)) => {
+                            assert!(response.success);
+                            break;
+                        },
+                        Some(clientbound::Packet::Ping(())) => {},
+                        packet => panic!("unexpected handshake packet: {packet:?}"),
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            client
+                .send_message(Hostbound {
+                    packet: Some(hostbound::Packet::Request(hostbound::Request {
+                        request: Some(hostbound::request::Request::EditBuffer(EditBufferHook {
+                            text: "fixture".into(),
+                            ..Default::default()
+                        })),
+                        nonce: None,
+                    })),
+                })
+                .await
+                .unwrap();
+            assert!(matches!(next_event(&mut events).await, Lifecycle::HookBlocked(id) if id == session_id));
+            Self {
+                client,
+                server,
+                state,
+                session_id,
+                events,
+            }
+        }
+
+        fn sender(&self) -> FigtermSender {
+            self.state.get(&self.session_id).unwrap().sender.clone()
+        }
+
+        async fn expect_eof(&mut self) {
+            use tokio::io::AsyncReadExt;
+            // Drain bytes rather than framed messages: cancellation may leave
+            // a partial frame, which must still be followed by actual EOF.
+            let mut remaining = Vec::new();
+            tokio::time::timeout(Duration::from_secs(3), self.client.read_to_end(&mut remaining))
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn close_cancels_a_blocked_hook_and_retires_the_socket_before_cleanup_hooks() {
+        let release = Arc::new(tokio::sync::Notify::new());
+        let mut connection = BlockedConnection::new(Some(release.clone())).await;
+        connection.sender().close();
+        assert!(
+            matches!(next_event(&mut connection.events).await, Lifecycle::Closed(id) if id == connection.session_id)
+        );
+        assert!(connection.state.get(&connection.session_id).is_none());
+        assert!(!connection.server.is_finished(), "cleanup hook should still be blocked");
+        connection.expect_eof().await;
+        release.notify_one();
+        assert!(matches!(next_event(&mut connection.events).await, Lifecycle::Changed(ids) if ids.is_empty()));
+        tokio::time::timeout(Duration::from_secs(3), connection.server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn aborting_a_parent_in_a_hook_retires_its_children_session_and_pending_rpc() {
+        let mut connection = BlockedConnection::new(None).await;
+        let sender = connection.sender();
+        let (command, reply) = FigtermCommand::run_process("fixture".into(), vec![], None, vec![], None);
+        sender.send(command).unwrap();
+        connection.server.abort();
+        let result = tokio::time::timeout(Duration::from_secs(3), &mut connection.server)
+            .await
+            .unwrap();
+        assert!(result.unwrap_err().is_cancelled());
+        assert!(sender.diagnostics().closed);
+        assert!(connection.state.get(&connection.session_id).is_none());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(3), reply)
+                .await
+                .unwrap()
+                .is_err()
+        );
+        connection.expect_eof().await;
+        assert_eq!(sender.diagnostics().pending_bytes, 0);
+        assert_eq!(sender.diagnostics().pending_messages, 0);
+    }
+
+    #[tokio::test]
+    async fn blocked_partial_write_is_cancelled_by_connection_close() {
+        use tokio::io::AsyncReadExt;
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let (_reader, writer) = tokio::io::split(server);
+        let (sender, receiver) = outbox::channel();
+        sender
+            .send(FigtermCommand::SetBuffer {
+                text: "x".repeat(3 * 1024 * 1024),
+                cursor_position: None,
+            })
+            .unwrap();
+        let task = tokio::spawn(handle_outgoing(writer, receiver, sender.clone()));
+        let mut prefix = [0; 64];
+        tokio::time::timeout(Duration::from_secs(2), client.read_exact(&mut prefix))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&prefix[..2], b"\x1b@");
+        // The peer read only a frame prefix, then stays connected without
+        // reading. Close must interrupt the in-progress write, not the next one.
+        sender.close();
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(sender.diagnostics().pending_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn stopped_reader_hits_the_write_deadline_without_an_external_close() {
+        let (_client, server) = UnixStream::pair().unwrap();
+        let (_reader, writer) = tokio::io::split(server);
+        let (sender, receiver) = outbox::channel();
+        sender
+            .send(FigtermCommand::SetBuffer {
+                text: "x".repeat(3 * 1024 * 1024),
+                cursor_position: None,
+            })
+            .unwrap();
+        tokio::time::timeout(
+            WRITE_TIMEOUT + Duration::from_secs(2),
+            handle_outgoing(writer, receiver, sender.clone()),
+        )
+        .await
+        .unwrap();
+        assert!(sender.diagnostics().closed);
+        assert_eq!(sender.diagnostics().pending_messages, 0);
+    }
+
     #[tokio::test]
     async fn write_failure_closes_session_while_read_half_remains_open() {
         let state = Arc::new(FigtermState::new());
@@ -561,7 +643,7 @@ mod lifecycle_tests {
         let server = tokio::spawn(handle_remote_ipc(
             UnixStream::from_std(server).unwrap(),
             state.clone(),
-            Hook(tx),
+            Hook::new(tx),
         ));
         let mut client = BufferedReader::new(client);
         client
@@ -627,7 +709,7 @@ mod lifecycle_tests {
     async fn disconnect_notifies_only_the_removed_server_session_before_session_list_change() {
         let state = Arc::new(FigtermState::new());
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let hook = Hook(tx);
+        let hook = Hook::new(tx);
         let mut clients = Vec::new();
         let mut servers = Vec::new();
         let mut ids: Vec<Uuid> = Vec::new();

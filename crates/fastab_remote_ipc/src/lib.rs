@@ -7,6 +7,7 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 pub mod figterm;
+pub mod outbox;
 pub mod remote;
 
 pub type AuthCode = Option<(u32, Instant)>;

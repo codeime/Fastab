@@ -9,19 +9,22 @@ fn row(name: &str, kind: &str) -> SuggestionItem {
     }
 }
 
-fn insertions(commands: &flume::Receiver<FigtermCommand>) -> Vec<(Option<String>, Option<i64>, Option<bool>)> {
-    commands
-        .try_iter()
-        .filter_map(|command| match command {
-            FigtermCommand::InsertText {
-                insertion,
-                deletion,
-                immediate,
-                ..
-            } => Some((insertion, deletion, immediate)),
-            _ => None,
-        })
-        .collect()
+fn insertions(commands: &mut fastab_remote_ipc::outbox::Outbox) -> Vec<(Option<String>, Option<i64>, Option<bool>)> {
+    let mut inserted = Vec::new();
+    while let Some(frame) = commands.try_recv() {
+        let (_, message) = fastab_proto::FigMessage::parse(&mut frame.bytes()).unwrap();
+        let message = message.decode::<fastab_proto::remote::Clientbound>().unwrap();
+        if let Some(fastab_proto::remote::clientbound::Packet::Request(request)) = message.packet {
+            if let Some(fastab_proto::remote::clientbound::request::Request::InsertText(insert)) = request.request {
+                inserted.push((
+                    insert.insertion,
+                    insert.deletion.map(|value| value as i64),
+                    insert.immediate,
+                ));
+            }
+        }
+    }
+    inserted
 }
 
 #[gpui::test]
@@ -160,14 +163,12 @@ fn default_tab_preserves_action_guards_and_normal_completion(cx: &mut gpui::Test
     let figterm = Arc::new(FigtermState::new());
     let platform = Arc::new(PlatformState::new(proxy.clone()));
     let session = Uuid::new_v4();
-    let (sender, commands) = flume::unbounded();
-    let (on_close_tx, _) = tokio::sync::broadcast::channel(1);
+    let (sender, mut commands) = fastab_remote_ipc::outbox::channel();
     // Capture the real controller's output without connecting to a user's PTY.
     figterm.insert(FigtermSession {
         id: session,
         secret: String::new(),
         sender,
-        writer: None,
         dead_since: None,
         edit_buffer: EditBuffer::default(),
         last_receive: tokio::time::Instant::now(),
@@ -175,9 +176,6 @@ fn default_tab_preserves_action_guards_and_normal_completion(cx: &mut gpui::Test
         flattened_env: Arc::new(Vec::new()),
         terminal_cursor_coordinates: None,
         current_session_metrics: None,
-        response_map: HashMap::new(),
-        nonce_counter: Arc::new(AtomicU64::new(0)),
-        on_close_tx,
         intercept: InterceptMode::Unlocked,
         intercept_global: InterceptMode::Unlocked,
     });
@@ -218,20 +216,23 @@ fn default_tab_preserves_action_guards_and_normal_completion(cx: &mut gpui::Test
             cx.update(|cx| {
                 show(&mut controller, rows, "status", selected, cx);
                 controller.handle_action(tab, session, &figterm, cx);
-                assert!(insertions(&commands).is_empty(), "Tab accepted {kind} at {selected}");
+                assert!(
+                    insertions(&mut commands).is_empty(),
+                    "Tab accepted {kind} at {selected}"
+                );
                 let state = controller.state.read(cx);
                 assert!(state.visible);
                 assert_eq!(state.items.len(), 2);
                 assert_eq!(state.selected, selected);
                 controller.handle_action(enter, session, &figterm, cx);
-                assert_eq!(insertions(&commands), newline, "Enter must still accept {kind}");
+                assert_eq!(insertions(&mut commands), newline, "Enter must still accept {kind}");
             });
         }
         cx.update(|cx| {
             // Preserve the existing sole-action Full acceptance contract.
             show(&mut controller, vec![action], "status", 0, cx);
             controller.handle_action(tab, session, &figterm, cx);
-            assert_eq!(insertions(&commands), newline, "sole {kind} must be accepted once");
+            assert_eq!(insertions(&mut commands), newline, "sole {kind} must be accepted once");
         });
     }
     for (search, expected) in [("ch", "e"), ("che", "ckout")] {
@@ -250,7 +251,7 @@ fn default_tab_preserves_action_guards_and_normal_completion(cx: &mut gpui::Test
             );
             controller.handle_action(tab, session, &figterm, cx);
             assert_eq!(
-                insertions(&commands),
+                insertions(&mut commands),
                 vec![(Some(expected.into()), Some(0), Some(false))]
             );
         });
@@ -258,9 +259,48 @@ fn default_tab_preserves_action_guards_and_normal_completion(cx: &mut gpui::Test
     cx.update(|cx| {
         show(&mut controller, Vec::new(), "", 0, cx);
         controller.handle_action(tab, session, &figterm, cx);
-        assert!(insertions(&commands).is_empty());
+        assert!(insertions(&mut commands).is_empty());
         show(&mut controller, vec![row("status", "subcommand")], "status", 0, cx);
         controller.handle_action("execute", session, &figterm, cx);
-        assert_eq!(insertions(&commands), newline, "explicit execution stays available");
+        assert_eq!(insertions(&mut commands), newline, "explicit execution stays available");
+    });
+}
+
+#[gpui::test]
+fn rejected_insert_clears_prediction_and_does_not_advance_intercept_state(cx: &mut gpui::TestAppContext) {
+    let _settings = fastab_settings::settings::install_override(fastab_settings::Settings::new_fake());
+    let specs = tempfile::tempdir().unwrap();
+    let engine = EngineClient::spawn(specs.path().to_path_buf()).unwrap();
+    let (proxy, _events) = crate::event_loop::channel();
+    let figterm = Arc::new(FigtermState::new());
+    let platform = Arc::new(PlatformState::new(proxy.clone()));
+    let session = Uuid::new_v4();
+    let (sender, receiver) = fastab_remote_ipc::outbox::channel();
+    figterm.insert(FigtermSession {
+        id: session,
+        secret: String::new(),
+        sender,
+        dead_since: None,
+        edit_buffer: EditBuffer::default(),
+        last_receive: tokio::time::Instant::now(),
+        context: None,
+        flattened_env: Arc::new(Vec::new()),
+        terminal_cursor_coordinates: None,
+        current_session_metrics: None,
+        intercept: InterceptMode::Unlocked,
+        intercept_global: InterceptMode::Unlocked,
+    });
+    drop(receiver);
+    cx.update(|cx| {
+        let controller = OverlayController::start(cx, engine, proxy, figterm.clone(), platform).unwrap();
+        controller.set_session(session);
+        *controller.self_insertion.lock().unwrap() = Some("old prediction".into());
+        assert!(!controller.insert_text("x", 0, false, &figterm, cx));
+        assert!(controller.self_insertion.lock().unwrap().is_none());
+        set_intercept_flags(&figterm, session, true, true);
+        let session = figterm.get(&session).unwrap();
+        assert_eq!(session.intercept, InterceptMode::Unlocked);
+        assert_eq!(session.intercept_global, InterceptMode::Unlocked);
+        assert!(session.sender.diagnostics().closed);
     });
 }

@@ -1,16 +1,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use fastab_proto::fig::EnvironmentVariable;
 use fastab_proto::local::{ShellContext, TerminalCursorCoordinates};
-use fastab_proto::remote::{Clientbound, hostbound};
+use fastab_proto::remote::hostbound;
 use parking_lot::lock_api::MutexGuard;
 use parking_lot::{FairMutex, MappedFairMutexGuard, RawFairMutex};
 use serde::Serialize;
 use time::OffsetDateTime;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::oneshot;
 use tokio::time::Instant;
 use uuid::Uuid;
 
@@ -168,9 +167,7 @@ pub struct FigtermSession {
     pub id: Uuid,
     pub secret: String,
     #[serde(skip)]
-    pub sender: flume::Sender<FigtermCommand>,
-    #[serde(skip)]
-    pub writer: Option<flume::Sender<Clientbound>>,
+    pub sender: crate::outbox::FigtermSender,
     #[serde(skip)]
     pub dead_since: Option<Instant>, // TODO: prune old sessions
     #[serde(skip)]
@@ -186,14 +183,22 @@ pub struct FigtermSession {
     #[serde(skip)]
     pub terminal_cursor_coordinates: Option<TerminalCursorCoordinates>,
     pub current_session_metrics: Option<SessionMetrics>,
-    #[serde(skip)]
-    pub response_map: HashMap<u64, oneshot::Sender<hostbound::response::Response>>,
-    #[serde(skip)]
-    pub nonce_counter: Arc<AtomicU64>,
-    #[serde(skip)]
-    pub on_close_tx: broadcast::Sender<()>,
     pub intercept: InterceptMode,
     pub intercept_global: InterceptMode,
+}
+
+impl FigtermSession {
+    pub fn send(&mut self, command: FigtermCommand) -> Result<(), crate::outbox::SendError> {
+        let insertion = matches!(&command, FigtermCommand::InsertText { .. });
+        self.sender.send(command)?;
+        if insertion {
+            if let Some(metrics) = &mut self.current_session_metrics {
+                metrics.num_insertions += 1;
+                metrics.end_time = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -334,13 +339,11 @@ mod tests {
     use fastab_proto::local::EnvironmentVariable;
 
     fn dummy_session() -> FigtermSession {
-        let (sender, _) = flume::unbounded();
-        let (on_close_tx, _) = broadcast::channel(1);
+        let (sender, _outbox) = crate::outbox::channel();
         FigtermSession {
             id: Uuid::nil(),
             secret: String::new(),
             sender,
-            writer: None,
             dead_since: None,
             edit_buffer: EditBuffer::default(),
             last_receive: Instant::now(),
@@ -348,9 +351,6 @@ mod tests {
             flattened_env: Arc::new(Vec::new()),
             terminal_cursor_coordinates: None,
             current_session_metrics: None,
-            response_map: HashMap::new(),
-            nonce_counter: Arc::new(AtomicU64::new(0)),
-            on_close_tx,
             intercept: InterceptMode::Unlocked,
             intercept_global: InterceptMode::Unlocked,
         }

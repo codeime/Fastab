@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+bytes.workspace = true
 fastab_ipc.workspace = true
 fastab_proto.workspace = true
 fastab_util.workspace = true

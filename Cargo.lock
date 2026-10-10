@@ -2890,6 +2890,7 @@ version = "0.0.6"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bytes",
  "fastab_ipc",
  "fastab_proto",
  "fastab_util",

@@ -300,9 +300,9 @@ async fn forward_packet_to_figterm(
 
             match handle_clientbound(message, figterm_state, host_sender).await {
                 Ok(Some((msg, session_id))) => {
-                    if let Some(session) = figterm_state.get(&session_id) {
+                    if let Some(mut session) = figterm_state.get(&session_id) {
                         info!("sending to session {}", session.id);
-                        if let Err(err) = session.sender.send(msg) {
+                        if let Err(err) = session.send(msg) {
                             error!(?err, "error sending to session");
                         }
                     } else {
